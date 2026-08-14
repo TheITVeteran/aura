@@ -760,13 +760,38 @@ def _live_mind_controls_bound(
     live_mind_context: Any,
     generation_controls: Any,
 ) -> bool:
+    """Whether a live-mind snapshot may steer generation for this turn.
+
+    The snapshot arrives inside the caller's ``context`` dict and used to
+    vouch for itself: its own ``ready`` flag said it was ready, and nothing
+    established that this runtime had produced it. ``think()`` accepts an
+    arbitrary context, so anything reaching that entry point could hand over a
+    dictionary and take control of temperature, top_p and recurrent depth.
+
+    Two conditions now: the payload carries this process's stamp, and the
+    subsystems the snapshot itself declares as required are actually healthy.
+    ``required_subsystems_ok`` was computed and recorded beside this and never
+    consulted by it — a check that ran, produced an answer, and gated nothing.
+    """
     if not isinstance(live_mind_context, dict) or not isinstance(generation_controls, dict):
+        return False
+    from core.utils.injected_blocks import is_stamped_runtime_payload
+
+    if not is_stamped_runtime_payload(live_mind_context):
+        logger.debug(
+            "Live-mind controls refused: the snapshot carries no runtime stamp."
+        )
         return False
     quality = live_mind_context.get("mind_snapshot_quality")
     snapshot = live_mind_context.get("mind_snapshot")
     if not isinstance(quality, dict) or not bool(quality.get("ready")):
         return False
     if not isinstance(snapshot, dict):
+        return False
+    if not bool(live_mind_context.get("required_subsystems_ok")):
+        logger.debug(
+            "Live-mind controls refused: required subsystems are not healthy."
+        )
         return False
     return REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
         generation_controls.keys()
@@ -1287,6 +1312,10 @@ class CognitiveEngine:
             confidence -= 0.25
         confidence -= min(0.2, 0.05 * max(0, int(degraded_subsystems)))
         return round(max(0.3, min(0.95, confidence)), 3)
+
+    def phase_rollback_receipt(self) -> dict[str, Any]:
+        """What the last phase-failure rollback restored, and what it could not."""
+        return dict(getattr(self, "_last_phase_rollback", {}) or {})
 
     def pipeline_receipt(self) -> dict[str, Any]:
         """What setup() built, against what the blueprint declares."""
@@ -2655,7 +2684,33 @@ class CognitiveEngine:
                 try:
                     # vResilience: Avoid locals().get() for type stability
                     if not success and "backup_state" in locals():
+                        # This restores a LOCAL REFERENCE and nothing else.
+                        #
+                        # A deep copy of the state object cannot undo what a
+                        # phase already did outside it: events published, tools
+                        # invoked, rows written, in-place mutations to
+                        # collaborators the phase was handed. Calling this
+                        # "rollback" invites the next reader to rely on a
+                        # transaction that does not exist, so the receipt says
+                        # what was and was not restored.
                         state = backup_state
+                        self._last_phase_rollback = {
+                            "restored": "cognitive_state_snapshot",
+                            "not_restored": [
+                                "external_service_writes",
+                                "published_events",
+                                "tool_invocations",
+                                "database_rows",
+                                "in_place_collaborator_mutations",
+                            ],
+                            "at": time.time(),
+                        }
+                        record_degradation(
+                            "cognitive_engine",
+                            RuntimeError("phase_failure_partial_rollback"),
+                            severity="warning",
+                            action="restored the cognitive state snapshot; external phase effects are not reversible here",
+                        )
                 except (OSError, ConnectionError, TimeoutError) as _e:
                     record_degradation(
                         "cognitive_engine",
@@ -3017,17 +3072,44 @@ class CognitiveEngine:
         )
 
         # ── ACTION IMPERATIVE FALLBACK ──
+        #
+        # This used to emit [SOMATIC:key='.'] for ANY turn whose objective
+        # contained "[ACTION IMPERATIVE]" — text a user can type and injected
+        # content can carry — and called it a safe no-op. A keystroke is not a
+        # no-op: it goes to whatever holds focus, which may be a terminal, an
+        # editor, or a form. The legitimate somatic reflex
+        # (orchestrator/mixins/incoming_logic.py) fires only on a message
+        # carrying [EMBODIED CONTROL CONTRACT] and only when a real CLI prompt
+        # pattern matched. The same condition governs it here: without the
+        # contract, a turn that produced no response says so.
         if is_action_imperative:
+            embodied_control = "[EMBODIED CONTROL CONTRACT]" in objective or (
+                "[EMBODIED CONTROL CONTRACT]" in routed_obj
+            )
+            if embodied_control:
+                logger.warning(
+                    "⚠️ [COGNITION] Embodied control turn produced no response. "
+                    "Falling back to the pager-advance key."
+                )
+                return Thought(
+                    id=str(uuid.uuid4()),
+                    content="[SOMATIC:key='.']",
+                    mode=mode,
+                    confidence=0.5,
+                    reasoning=["Embodied control fallback (pager advance)."],
+                    metadata={"embodied_control_contract": True},
+                )
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("action_imperative_without_embodied_contract"),
+                severity="warning",
+                action="refused a motor fallback for an action imperative with no embodied control contract",
+            )
             logger.warning(
-                "⚠️ [COGNITION] Action Imperative active but no response generated. Falling back to motor no-op."
+                "⚠️ [COGNITION] Action Imperative active but no response generated, "
+                "and no embodied control contract authorises a keystroke."
             )
-            return Thought(
-                id=str(uuid.uuid4()),
-                content="[SOMATIC:key='.']",  # Safe 'wait' or 'clear' key
-                mode=mode,
-                confidence=0.5,
-                reasoning=["Action Imperative fallback (no-op)."],
-            )
+            return self._empty_thought(mode, "action_imperative_no_response")
 
         if is_background:
             logger.debug(
@@ -3049,7 +3131,20 @@ class CognitiveEngine:
 
         # If the objective requires a strict answer format, do not return conversational evasive fallbacks.
         # Instead, attempt a direct, single-turn LLM generation as a high-fidelity recovery mechanism.
-        is_strict_answer = "<answer>" in objective.lower() or "answer_format" in kwargs
+        # A literal "<answer>" ANYWHERE in the objective used to activate this
+        # recovery — text a person can type, and text injected content can
+        # carry — and the recovery sends the full objective to a cloud
+        # provider. Routing to a third party is not something the prompt gets
+        # to decide. The caller's answer_format kwarg is an explicit contract
+        # and still counts; a substring in the user's words does not.
+        is_strict_answer = "answer_format" in kwargs or bool(
+            context.get("strict_answer_contract", False)
+        )
+        if "<answer>" in objective.lower() and not is_strict_answer:
+            logger.info(
+                "🛡️ [COGNITION] '<answer>' appears in the objective but no caller "
+                "declared a strict-answer contract; not activating cloud recovery."
+            )
         if is_strict_answer:
             logger.warning("⚠️ [COGNITION] Structured answer required but phase execution produced no response. Running last-resort direct recovery...")
             try:
@@ -3076,16 +3171,32 @@ class CognitiveEngine:
                     proof_evaluation_contract=is_test_run,
                     foreground_request=True,
                 )
-                if content and len(content.strip()) > 0:
+                # Nonempty was the whole postcondition: the recovery claimed
+                # success at confidence 0.8 for any text at all, including
+                # text with no <answer> envelope — the one thing the contract
+                # promised. A strict answer that does not carry its envelope
+                # did not satisfy the contract, and saying it did is what the
+                # caller then parses and fails on.
+                cleaned = str(content or "").strip()
+                envelope_ok = "<answer>" in cleaned.lower() and "</answer>" in cleaned.lower()
+                if cleaned and envelope_ok:
                     thought = Thought(
                         id=str(uuid.uuid4()),
                         content=content,
                         mode=mode,
                         confidence=0.8,
                         reasoning=["Last-resort direct structured recovery succeeded."],
+                        metadata={"strict_answer_envelope_verified": True},
                     )
                     self.thoughts.append(thought)
                     return thought
+                if cleaned:
+                    record_degradation(
+                        "cognitive_engine",
+                        ValueError("strict answer recovery returned no <answer> envelope"),
+                        severity="warning",
+                        action="refused a strict-answer recovery that did not carry its envelope",
+                    )
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as rec_err:
                 record_degradation(
                     "cognitive_engine",

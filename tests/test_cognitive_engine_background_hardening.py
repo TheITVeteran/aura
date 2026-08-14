@@ -3,6 +3,7 @@ import copy
 from types import SimpleNamespace
 
 import pytest
+from core.utils.injected_blocks import stamp_runtime_payload
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.types import ThinkingMode, Thought
@@ -618,6 +619,12 @@ async def test_cognitive_engine_capability_inventory_contract_uses_catalog_witho
                 "must_answer_from_full_mind_path": True,
                 "required_subsystems_ok": True,
                 "required_subsystems": {"kernel": True, "memory": True},
+                # Part of the binding contract now: the snapshot carries this
+                # runtime's stamp and declares its required subsystems healthy.
+                # Neither was checked before, so a caller-supplied dictionary
+                # could steer generation on its own say-so.
+                **stamp_runtime_payload({}),
+                "required_subsystems_ok": True,
                 "lane": {"state": "ready"},
                 "voice": {"mode": "normal"},
                 "substrate": {"curiosity": 0.8, "verbose_blob": "x" * 5000},
@@ -1056,6 +1063,10 @@ async def test_cognitive_engine_strict_answer_recovery_propagates_cancellation(m
             "Solve exactly. <answer>required</answer>",
             ThinkingMode.FAST,
             "user",
+            # The contract comes from the CALLER now. A "<answer>" substring
+            # in the objective is text a person can type, and this recovery
+            # sends the whole objective to a cloud provider.
+            {"strict_answer_contract": True},
         )
 
 
@@ -1083,11 +1094,19 @@ async def test_cognitive_engine_strict_answer_recovery_records_typed_failure(mon
         "Solve exactly. <answer>required</answer>",
         ThinkingMode.FAST,
         "user",
+        {"strict_answer_contract": True},
     )
 
     assert thought.content == ""
     assert "strict_answer_recovery_failed" in thought.reasoning[0]
-    records = tracker.recent(subsystem="cognitive_engine", limit=1)
+    records = tracker.recent(subsystem="cognitive_engine", limit=8)
     assert records
-    assert records[-1].action == "returned strict answer recovery failure after direct recovery failed"
+    # Searched, not indexed: this turn legitimately records more than one
+    # degradation (an engine with no repository also withholds closure), and
+    # asserting a position makes the test fail on an unrelated true record.
+    assert any(
+        record.action
+        == "returned strict answer recovery failure after direct recovery failed"
+        for record in records
+    )
     tracker.reset()

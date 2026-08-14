@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from core.utils.injected_blocks import stamp_runtime_payload
 from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
@@ -9062,7 +9063,11 @@ def _build_live_mind_context_payload(
             },
         }
 
-    return {
+    # Stamped: the cognitive engine binds generation controls off this
+    # snapshot, and a dictionary that vouched only for its own `ready` flag
+    # could be handed in by anything reaching think(). The stamp is a
+    # per-process nonce the caller cannot know.
+    return stamp_runtime_payload({
         "schema": "aura.live_mind_context.v1",
         "required_for_live_desktop": bool(require_engine),
         "must_answer_from_full_mind_path": bool(require_engine),
@@ -9091,7 +9096,7 @@ def _build_live_mind_context_payload(
             "legacy_fallback_allowed": False,
             "bounded_repairs_are_degraded": True,
         },
-    }
+    })
 
 
 async def _collect_live_mind_context_payload(

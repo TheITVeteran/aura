@@ -4,8 +4,18 @@ import pytest
 
 
 def _ready_live_mind_context(*, curiosity: float = 0.72, distress: float = 0.08) -> dict[str, object]:
-    return {
+    """A snapshot as the RUNTIME produces it.
+
+    The stamp and required_subsystems_ok are both part of the contract now: a
+    snapshot used to vouch for itself with its own `ready` flag, and think()
+    accepts an arbitrary context, so anything reaching that entry point could
+    take control of temperature, top_p and recurrent depth.
+    """
+    from core.utils.injected_blocks import stamp_runtime_payload
+
+    return stamp_runtime_payload({
         "mind_snapshot_quality": {"ready": True},
+        "required_subsystems_ok": True,
         "mind_snapshot": {
             "services_present": {
                 "global_workspace": True,
@@ -31,7 +41,7 @@ def _ready_live_mind_context(*, curiosity: float = 0.72, distress: float = 0.08)
                 "self_presence": 0.82,
             },
         },
-    }
+    })
 
 
 def test_live_mind_generation_controls_convert_snapshot_to_sampling_controls():
@@ -287,7 +297,10 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert router_kwargs["allow_mesh_cognition"] is False
     assert router_kwargs["live_mind_controls_bound"] is True
     assert router_kwargs["live_mind_snapshot_ready"] is True
-    assert router_kwargs["live_mind_required_subsystems_ok"] is False
+    # Was asserted False beside controls_bound=True — the shape of the defect:
+    # required_subsystems_ok was computed, recorded, and consulted by nothing.
+    # Binding requires it now.
+    assert router_kwargs["live_mind_required_subsystems_ok"] is True
     assert router_kwargs["live_mind_generation_controls"]["temperature"] > 0.58
     assert thought.metadata["live_mind_controls_bound"] is True
     assert thought.metadata["live_mind_controls_worker_applied"] is True
@@ -545,3 +558,48 @@ async def test_full_phase_reply_preserves_live_mind_controls_and_worker_receipt(
     assert thought.metadata["live_mind_controls_worker_applied"] is True
     assert thought.metadata["live_mind_surface_control_receipt"] == receipt
     assert thought.metadata["live_mind_generation_controls"]["temperature"] > 0.58
+
+
+
+def test_an_unstamped_snapshot_cannot_steer_generation():
+    """think() accepts an arbitrary context. A snapshot that vouches only for
+    its own `ready` flag would let anything reaching that entry point take
+    control of temperature, top_p and recurrent depth."""
+    from core.brain.cognitive_engine import _live_mind_controls_bound
+
+    forged = dict(_ready_live_mind_context())
+    forged.pop("aura_runtime_stamp", None)
+
+    assert (
+        _live_mind_controls_bound(
+            forged,
+            {"temperature": 0.7, "top_p": 0.9, "recurrent_loops": 2, "steering_alpha": 0.3},
+        )
+        is False
+    )
+
+
+def test_unhealthy_required_subsystems_cannot_steer_generation():
+    from core.brain.cognitive_engine import _live_mind_controls_bound
+
+    unhealthy = dict(_ready_live_mind_context())
+    unhealthy["required_subsystems_ok"] = False
+
+    assert (
+        _live_mind_controls_bound(
+            unhealthy,
+            {"temperature": 0.7, "top_p": 0.9, "recurrent_loops": 2, "steering_alpha": 0.3},
+        )
+        is False
+    )
+
+
+def test_a_runtime_snapshot_with_healthy_subsystems_binds():
+    from core.brain.cognitive_engine import (
+        REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS,
+        _live_mind_controls_bound,
+    )
+
+    controls = dict.fromkeys(REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS, 0.5)
+
+    assert _live_mind_controls_bound(_ready_live_mind_context(), controls) is True

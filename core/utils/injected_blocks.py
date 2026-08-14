@@ -32,7 +32,9 @@ __all__ = [
     "INJECTED_BANNERS",
     "contains_injected_block",
     "is_stamped_grounding",
+    "is_stamped_runtime_payload",
     "stamp_grounding",
+    "stamp_runtime_payload",
     "strip_injected_blocks",
 ]
 
@@ -60,6 +62,28 @@ def stamp_grounding(message: dict) -> dict:
         message["metadata"] = metadata
     metadata[_STAMP_KEY] = GROUNDING_STAMP
     return message
+
+
+#: The same per-process proof, for payloads that are not messages. A
+#: live-mind snapshot arrives inside the caller's context dict, and control
+#: binding used to trust its own ``ready`` flag and its own
+#: ``required_subsystems_ok`` boolean — a dictionary vouching for itself.
+_PAYLOAD_STAMP_KEY = "aura_runtime_stamp"
+
+
+def stamp_runtime_payload(payload: dict) -> dict:
+    """Mark a dict as produced by THIS runtime. Mutates and returns it."""
+    if isinstance(payload, dict):
+        payload[_PAYLOAD_STAMP_KEY] = GROUNDING_STAMP
+    return payload
+
+
+def is_stamped_runtime_payload(payload: Any) -> bool:
+    """Whether this process produced this payload."""
+    return (
+        isinstance(payload, dict)
+        and payload.get(_PAYLOAD_STAMP_KEY) == GROUNDING_STAMP
+    )
 
 
 def is_stamped_grounding(message: Any) -> bool:

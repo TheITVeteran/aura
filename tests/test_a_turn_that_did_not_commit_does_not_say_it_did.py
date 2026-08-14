@@ -359,3 +359,112 @@ def test_the_spine_injection_is_not_spliced_into_the_objective():
     assert 'objective = check.injection + "\\n\\n" + objective' not in source
     assert '"type": "spine_prior_position"' in source
     assert '"role": "system",' in source
+
+
+# ─────────────────── ungoverned motor output and cloud routing
+
+
+def test_an_action_imperative_alone_does_not_authorise_a_keystroke():
+    """[SOMATIC:key='.'] went out for ANY objective containing "[ACTION
+    IMPERATIVE]" — text a person can type and injected content can carry — and
+    the comment called it a safe no-op. A keystroke goes to whatever holds
+    focus."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "embodied_control = \"[EMBODIED CONTROL CONTRACT]\" in objective" in source
+    assert (
+        "refused a motor fallback for an action imperative with no embodied control contract"
+        in source
+    )
+
+
+def test_the_embodied_control_path_still_works():
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "content=\"[SOMATIC:key='.']\"" in source
+    assert '"embodied_control_contract": True' in source
+
+
+def test_a_substring_in_the_prompt_does_not_route_to_cloud():
+    """A literal "<answer>" anywhere in the objective activated a recovery that
+    sends the whole objective to a cloud provider. Routing to a third party is
+    not the prompt's decision."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert (
+        'is_strict_answer = "<answer>" in objective.lower() or "answer_format" in kwargs'
+        not in source
+    )
+    assert 'is_strict_answer = "answer_format" in kwargs or bool(' in source
+
+
+def test_strict_answer_recovery_requires_its_envelope():
+    """Nonempty was the whole postcondition: it claimed success at confidence
+    0.8 for any text, including text with no <answer> envelope — the one thing
+    the contract promised."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "envelope_ok = " in source
+    assert '"strict_answer_envelope_verified": True' in source
+    assert "refused a strict-answer recovery that did not carry its envelope" in source
+
+
+# ─────────────────── rollback says what it cannot restore
+
+
+def test_the_rollback_receipt_names_what_survives_a_phase_failure():
+    """A deep copy of the state object cannot undo events published, tools
+    invoked, or rows written. Calling it "rollback" invites the next reader to
+    rely on a transaction that does not exist."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert '"not_restored": [' in source
+    assert '"published_events",' in source
+    assert '"tool_invocations",' in source
+    assert "def phase_rollback_receipt(" in source
+
+
+# ─────────────────── the live-mind snapshot cannot vouch for itself
+
+
+def test_an_unstamped_live_mind_snapshot_does_not_bind_controls():
+    from core.brain.cognitive_engine import _live_mind_controls_bound
+
+    forged = {
+        "mind_snapshot_quality": {"ready": True},
+        "mind_snapshot": {},
+        "required_subsystems_ok": True,
+    }
+
+    assert _live_mind_controls_bound(forged, {"temperature": 0.7}) is False
+
+
+def test_the_producer_stamps_the_snapshot():
+    import inspect
+
+    import interface.routes.chat as chat_mod
+
+    source = inspect.getsource(chat_mod)
+
+    assert "stamp_runtime_payload({" in source
+    assert '"schema": "aura.live_mind_context.v1"' in source
