@@ -213,6 +213,55 @@ def _adam(learning_rate: float) -> Any:
     )
 
 
+def _ownership_optimizer(
+    learning_rate: float,
+    *,
+    transformer_rate_scale: float = 1.0,
+) -> Any:
+    """Use distinct Adam moments and rates for tissue and controller readouts."""
+
+    if (
+        isinstance(transformer_rate_scale, bool)
+        or not isinstance(transformer_rate_scale, (int, float))
+        or not 0.0 <= float(transformer_rate_scale) <= 1.0
+    ):
+        raise ValueError("transformer optimizer rate scale must be inside [0, 1]")
+    return optim.MultiOptimizer(
+        [
+            _adam(float(learning_rate) * float(transformer_rate_scale)),
+            _adam(float(learning_rate)),
+        ],
+        filters=[
+            lambda name, _value: (
+                _gradient_ownership_group(name) == "scoped_transformer_bridge"
+            )
+        ],
+    )
+
+
+def _set_ownership_optimizer_rates(
+    optimizer: Any,
+    learning_rate: float,
+    *,
+    transformer_rate_scale: float,
+) -> None:
+    """Restore phase rates without collapsing MultiOptimizer group identity."""
+
+    if not isinstance(optimizer, optim.MultiOptimizer) or len(optimizer.optimizers) != 2:
+        raise TypeError("unified recurrence optimizer topology differs")
+    if (
+        isinstance(transformer_rate_scale, bool)
+        or not isinstance(transformer_rate_scale, (int, float))
+        or not 0.0 <= float(transformer_rate_scale) <= 1.0
+    ):
+        raise ValueError("transformer optimizer rate scale must be inside [0, 1]")
+    optimizer.optimizers[0].learning_rate = float(learning_rate) * float(
+        transformer_rate_scale
+    )
+    optimizer.optimizers[1].learning_rate = float(learning_rate)
+    mx.eval(*(candidate.learning_rate for candidate in optimizer.optimizers))
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1027,10 +1076,8 @@ def _process_component_gradients(
 def _clip_gradient_groups(
     gradients: Any,
     max_norm: float,
-    *,
-    postclip_group_scales: dict[str, float] | None = None,
 ) -> tuple[Any, Any, dict[str, Any]]:
-    """Clip mechanisms independently, then apply intentional trust multipliers."""
+    """Clip independent mechanisms without letting one starve the others."""
 
     if (
         isinstance(max_norm, bool)
@@ -1041,16 +1088,6 @@ def _clip_gradient_groups(
     flattened = tree_flatten(gradients)
     if not flattened:
         raise ValueError("gradient tree must not be empty")
-    requested_scales = dict(postclip_group_scales or {})
-    for group, scale in requested_scales.items():
-        if (
-            not isinstance(group, str)
-            or not group
-            or isinstance(scale, bool)
-            or not isinstance(scale, (int, float))
-            or not 0.0 <= float(scale) <= 1.0
-        ):
-            raise ValueError("post-clip gradient group scales must be inside [0, 1]")
     grouped: dict[str, list[Any]] = {}
     for name, value in flattened:
         grouped.setdefault(_gradient_ownership_group(name), []).append(value)
@@ -1068,9 +1105,7 @@ def _clip_gradient_groups(
         [
             (
                 name,
-                value
-                * scales[_gradient_ownership_group(name)].astype(value.dtype)
-                * float(requested_scales.get(_gradient_ownership_group(name), 1.0)),
+                value * scales[_gradient_ownership_group(name)].astype(value.dtype),
             )
             for name, value in flattened
         ]
@@ -1091,7 +1126,6 @@ def _apply_training_gradients(
     totals: dict[str, Any],
     loss: Any,
     process_component: str | None = None,
-    process_transformer_gradient_scale: float = 1.0,
 ) -> None:
     """Apply one ownership-masked update and retain pre-clip diagnostics."""
 
@@ -1106,11 +1140,6 @@ def _apply_training_gradients(
     gradients, gradient_norm, gradient_group_norms = _clip_gradient_groups(
         gradients,
         max_norm,
-        postclip_group_scales=(
-            {"scoped_transformer_bridge": process_transformer_gradient_scale}
-            if process_component is not None
-            else None
-        ),
     )
     mx.eval(gradient_norm, *gradient_group_norms.values())
     totals["max_preclip_gradient_norm"] = max(
@@ -3340,8 +3369,8 @@ def main() -> int:
         type=float,
         default=1.0,
         help=(
-            "relative process-gradient scale applied only to scoped transformer "
-            "adapters after ownership-group clipping"
+            "relative Adam learning-rate scale applied only to scoped transformer "
+            "adapters during typed-process optimization"
         ),
     )
     parser.add_argument(
@@ -4049,10 +4078,17 @@ def main() -> int:
             "source_sha256s": source_sha256s,
             "campaign_binding": campaign_binding,
             "optimizer_contract": {
-                "class": "mlx.optimizers.Adam",
+                "class": "mlx.optimizers.MultiOptimizer[Adam,Adam]",
                 "betas": [0.9, 0.999],
                 "eps": 1e-8,
                 "bias_correction": False,
+                "ownership_groups": {
+                    "scoped_transformer_bridge": "independent_adam",
+                    "controller_and_readouts": "independent_adam",
+                },
+                "process_transformer_rate_scale": (
+                    args.process_transformer_gradient_scale
+                ),
                 "phase_learning_rates": {
                     "semantic_anchor": args.learning_rate,
                     "answer_bridge": answer_bridge_learning_rate,
@@ -4086,15 +4122,21 @@ def main() -> int:
                 "recurrence": recurrent_learning_rate,
             }[phase]
 
-        optimizer = _adam(
+        initial_phase = _optimization_phase(
+            0,
+            args.semantic_warmup_steps,
+            args.state_warmup_steps,
+            args.answer_bridge_steps,
+        )
+        optimizer = _ownership_optimizer(
             phase_learning_rate(
-                _optimization_phase(
-                    0,
-                    args.semantic_warmup_steps,
-                    args.state_warmup_steps,
-                    args.answer_bridge_steps,
-                )
-            )
+                initial_phase,
+            ),
+            transformer_rate_scale=(
+                args.process_transformer_gradient_scale
+                if initial_phase == "state_transition"
+                else 1.0
+            ),
         )
         should_restore = args.resume or args.resume_if_available
         step, history, restored_training_state = (
@@ -4118,15 +4160,21 @@ def main() -> int:
             args.max_steps,
             args.max_invocation_steps,
         )
-        optimizer.learning_rate = phase_learning_rate(
-            _optimization_phase(
-                step,
-                args.semantic_warmup_steps,
-                args.state_warmup_steps,
-                args.answer_bridge_steps,
-            )
+        resumed_phase = _optimization_phase(
+            step,
+            args.semantic_warmup_steps,
+            args.state_warmup_steps,
+            args.answer_bridge_steps,
         )
-        mx.eval(optimizer.learning_rate)
+        _set_ownership_optimizer_rates(
+            optimizer,
+            phase_learning_rate(resumed_phase),
+            transformer_rate_scale=(
+                args.process_transformer_gradient_scale
+                if resumed_phase == "state_transition"
+                else 1.0
+            ),
+        )
         resource_guard_receipt: dict[str, Any] | None = None
         if resource_guard_enabled:
             resource_guard_receipt = _await_resource_guard(
@@ -4585,9 +4633,6 @@ def main() -> int:
                             process_component=(
                                 process_policy["component"] if process_policy is not None else None
                             ),
-                            process_transformer_gradient_scale=(
-                                args.process_transformer_gradient_scale
-                            ),
                         )
                 step += 1
                 next_phase = _optimization_phase(
@@ -4607,7 +4652,14 @@ def main() -> int:
                     process_policy is not None
                     and next_process_component != process_policy["component"]
                 ):
-                    optimizer = _adam(phase_learning_rate(next_phase))
+                    optimizer = _ownership_optimizer(
+                        phase_learning_rate(next_phase),
+                        transformer_rate_scale=(
+                            args.process_transformer_gradient_scale
+                            if next_phase == "state_transition"
+                            else 1.0
+                        ),
+                    )
                 if step % 5 == 0:
                     print(
                         f"[step {step}] phase={phase} "

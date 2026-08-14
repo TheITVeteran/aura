@@ -78,6 +78,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
+    _ownership_optimizer,
     _phase_gradients,
     _phase_schedule,
     _process_component_gradients,
@@ -91,6 +92,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _rollin_report,
     _save_checkpoint,
     _semantic_execution_depth,
+    _set_ownership_optimizer_rates,
     _streamed_recurrent_objective_gradients,
     _student_rollin_probability,
     _trainable,
@@ -2043,36 +2045,37 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     assert float(mx.linalg.norm(flat["controller.transport_bias"]).item()) == pytest.approx(0.5)
 
 
-def test_gradient_trust_multiplier_survives_saturated_group_clipping() -> None:
-    gradients = {
-        "model": {"layer": {"lora_a": mx.array([30.0, 40.0])}},
-        "controller": {"action_workspace_output": mx.array([0.0, 12.0])},
+def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:
+    parameters = {
+        "model": {"layer": {"lora_a": mx.array([1.0])}},
+        "controller": {"action_workspace_output": mx.array([1.0])},
     }
-    clipped, global_before, groups = _clip_gradient_groups(
-        gradients,
-        1.0,
-        postclip_group_scales={"scoped_transformer_bridge": 0.1},
-    )
-    flat = dict(tree_flatten(clipped))
-    mx.eval(clipped, global_before, *groups.values())
+    gradients = {
+        "model": {"layer": {"lora_a": mx.array([50.0])}},
+        "controller": {"action_workspace_output": mx.array([50.0])},
+    }
+    optimizer = _ownership_optimizer(0.01, transformer_rate_scale=0.1)
+    updated = optimizer.apply_gradients(gradients, parameters)
+    mx.eval(updated, optimizer.state)
+    flat = dict(tree_flatten(updated))
+    tissue_delta = 1.0 - float(flat["model.layer.lora_a"].item())
+    controller_delta = 1.0 - float(flat["controller.action_workspace_output"].item())
 
-    assert float(groups["scoped_transformer_bridge"].item()) == pytest.approx(50.0)
-    assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(0.1)
-    assert float(
-        mx.linalg.norm(flat["controller.action_workspace_output"]).item()
-    ) == pytest.approx(1.0)
+    assert tissue_delta > 0.0
+    assert controller_delta > tissue_delta
+    assert tissue_delta / controller_delta == pytest.approx(0.1, rel=1e-4)
+
+    _set_ownership_optimizer_rates(optimizer, 0.02, transformer_rate_scale=0.25)
+    assert float(optimizer.optimizers[0].learning_rate.item()) == pytest.approx(0.005)
+    assert float(optimizer.optimizers[1].learning_rate.item()) == pytest.approx(0.02)
 
     with pytest.raises(ValueError, match=r"inside \[0, 1\]"):
-        _clip_gradient_groups(
-            gradients,
-            1.0,
-            postclip_group_scales={"scoped_transformer_bridge": 1.1},
-        )
+        _ownership_optimizer(0.01, transformer_rate_scale=1.1)
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:
     bundle, _wiring = _bundle()
-    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer = _ownership_optimizer(0.01, transformer_rate_scale=0.1)
     optimizer.init(bundle.trainable_parameters())
     mx.eval(optimizer.state)
     identity_body = {"schema": "test", "depths": (1, 2, 4)}
