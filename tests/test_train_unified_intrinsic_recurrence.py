@@ -55,6 +55,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _evaluate,
     _evaluate_answer_bridge_admission,
     _evaluate_answer_bridge_diagnostic,
+    _evaluate_process_admission,
     _freeze_dataset,
     _generate_student_rollin,
     _ground_state_value_embeddings,
@@ -297,6 +298,7 @@ def test_controller_only_tissue_leaves_every_model_projection_frozen() -> None:
         "readout_adapted": False,
         "ordinary_inference_requires_scope": False,
         "recurrence_phase_trains_shared_state_bridge": False,
+        "state_transition_trains_shared_process_parser": False,
         "state_bridge": "typed_recurrent_controller_only",
     }
     assert trainable
@@ -399,6 +401,7 @@ def test_training_verdict_never_promotes_an_incomplete_invocation() -> None:
         _training_verdict(
             complete=False,
             answer_bridge_admission=None,
+            process_admission=None,
             final=final,
         )
         == "incomplete_checkpoint"
@@ -407,6 +410,7 @@ def test_training_verdict_never_promotes_an_incomplete_invocation() -> None:
         _training_verdict(
             complete=True,
             answer_bridge_admission={"admitted": False},
+            process_admission=None,
             final=final,
         )
         == "answer_bridge_not_admitted"
@@ -415,9 +419,19 @@ def test_training_verdict_never_promotes_an_incomplete_invocation() -> None:
         _training_verdict(
             complete=True,
             answer_bridge_admission={"admitted": True},
+            process_admission={"admitted": True},
             final=final,
         )
         == "heldout_depth_gain"
+    )
+    assert (
+        _training_verdict(
+            complete=True,
+            answer_bridge_admission=None,
+            process_admission={"admitted": False},
+            final=final,
+        )
+        == "autonomous_process_not_admitted"
     )
 
 
@@ -1216,6 +1230,58 @@ def test_answer_bridge_admission_rejects_correct_text_from_wrong_process(
     assert report["admitted"] is False
 
 
+def test_process_admission_requires_every_unseen_task_without_teacher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+    tasks = [
+        type(
+            "Task",
+            (),
+            {
+                "family": "frontier_mathematics",
+                "task_id": f"process-{index}",
+                "depth": 2,
+            },
+        )()
+        for index in range(2)
+    ]
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]], dtype=mx.int32), mx.array([[2]], dtype=mx.int32)),
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._capture_autonomous_process",
+        lambda *_args: {},
+    )
+    calls = 0
+
+    def process_evidence(_task: object, _depth: int, _capture: object) -> dict:
+        nonlocal calls
+        calls += 1
+        exact = calls == 1
+        return {
+            "process_exact": exact,
+            "evidence_sha256": ("a" if exact else "b") * 64,
+        }
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        process_evidence,
+    )
+
+    report = _evaluate_process_admission(bundle, object(), tasks, spec, "")
+
+    assert calls == 2
+    assert report["teacher_available"] is False
+    assert report["tasks"] == 2
+    assert report["process_exact"] == 1
+    assert report["exact_accuracy"] == 0.5
+    assert report["admitted"] is False
+    assert len(report["admission_sha256"]) == 64
+
+
 def test_process_evidence_ignores_unrequired_post_completion_action_rows() -> None:
     logits = (
         mx.array([[[0.0, 5.0], [4.0, 0.0]]]),
@@ -1436,7 +1502,7 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     assert bool(mx.all(answer_bridge["controller.answer_output"] == 1))
     assert bool(mx.all(answer_bridge["controller.process_reader_1_output"] == 1))
     assert bool(mx.all(answer_bridge["controller.transport_bias"] == 0))
-    assert bool(mx.all(state["model.layer.lora_a"] == 0))
+    assert bool(mx.all(state["model.layer.lora_a"] == 1))
     assert bool(mx.all(state["model.layer.continuous_depth_b.0"] == 1))
     assert bool(mx.all(state["controller.answer_output"] == 0))
     assert bool(mx.all(state["controller.process_reader_1_output"] == 0))

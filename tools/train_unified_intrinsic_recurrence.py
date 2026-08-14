@@ -517,6 +517,7 @@ def _attach_window_adapters(
         "readout_adapted": False,
         "ordinary_inference_requires_scope": True,
         "recurrence_phase_trains_shared_state_bridge": False,
+        "state_transition_trains_shared_process_parser": True,
         "state_bridge": "continuous_depth_residual_preserves_t1",
     }
 
@@ -556,6 +557,7 @@ def _configure_window_tissue(
         "readout_adapted": False,
         "ordinary_inference_requires_scope": False,
         "recurrence_phase_trains_shared_state_bridge": False,
+        "state_transition_trains_shared_process_parser": False,
         "state_bridge": "typed_recurrent_controller_only",
     }
 
@@ -783,6 +785,12 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
             keep = shared_adapter
         elif phase == "answer_bridge":
             keep = neural_answer_bridge
+        elif phase == "state_transition":
+            # Continuous-depth features are exactly zero at T1. The scoped
+            # shared adapter is therefore the only transformer surface that
+            # can learn the first process step. It remains inert outside an
+            # explicit recurrence scope, preserving ordinary inference.
+            keep = not neural_answer_bridge
         else:
             keep = not (shared_adapter or neural_answer_bridge)
         masked.append((name, value if keep else mx.zeros_like(value)))
@@ -1821,6 +1829,62 @@ def _evaluate_answer_bridge_admission(
     return {**body, "admission_sha256": _canonical_sha256(body)}
 
 
+def _evaluate_process_admission(
+    bundle: UnifiedTrainingBundle,
+    tokenizer: Any,
+    tasks: list[Any],
+    spec: UnifiedIntrinsicTrainingSpec,
+    bridge: str,
+) -> dict[str, Any]:
+    """Require exact teacher-removed state/action execution on every unseen task."""
+
+    selected = sorted(
+        tasks,
+        key=lambda task: (str(task.family), int(task.depth), str(task.task_id)),
+    )
+    task_ids = [str(task.task_id) for task in selected]
+    cells = {(str(task.family), int(task.depth)) for task in selected}
+    if not selected or len(task_ids) != len(set(task_ids)):
+        raise ValueError("process admission requires unique unseen tasks")
+    rows: list[dict[str, Any]] = []
+    depth = max(spec.train_depths)
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    with recurrence_adapter_scope(start=None, stop=None):
+        for task in selected:
+            prompt, _answer = encode_example(tokenizer, task, bridge)
+            capture = _capture_autonomous_process(
+                bundle,
+                prompt,
+                spec.plan_at(depth),
+            )
+            evidence = _process_evidence_from_capture(task, depth, capture)
+            rows.append(
+                {
+                    "task_id": task.task_id,
+                    "family": task.family,
+                    "task_depth": task.depth,
+                    "process_exact": evidence["process_exact"],
+                    "process_evidence": evidence,
+                }
+            )
+    exact = sum(row["process_exact"] for row in rows)
+    body = {
+        "schema": "aura.unified_intrinsic.process_admission.v1",
+        "teacher_available": False,
+        "depth": depth,
+        "cells": len(cells),
+        "tasks": len(rows),
+        "process_exact": exact,
+        "exact_accuracy": exact / len(rows),
+        "admitted": exact == len(rows),
+        "rows": rows,
+    }
+    return {**body, "admission_sha256": _canonical_sha256(body)}
+
+
 def _residual_hidden_size(model: Any) -> int:
     """Infer model width from an unquantized residual-space parameter.
 
@@ -1871,6 +1935,7 @@ def _training_verdict(
     *,
     complete: bool,
     answer_bridge_admission: dict[str, Any] | None,
+    process_admission: dict[str, Any] | None,
     final: dict[str, Any] | None,
 ) -> str:
     """Label only terminal evidence as a scientific training verdict."""
@@ -1879,6 +1944,8 @@ def _training_verdict(
         return "incomplete_checkpoint"
     if answer_bridge_admission is not None and not answer_bridge_admission["admitted"]:
         return "answer_bridge_not_admitted"
+    if process_admission is not None and not process_admission["admitted"]:
+        return "autonomous_process_not_admitted"
     if final and final["heldout_depth_helps"]:
         return "heldout_depth_gain"
     if final and final["trained_depth_helps"]:
@@ -4056,6 +4123,17 @@ def main() -> int:
             if args.answer_bridge_steps > 0 and step >= args.max_steps
             else None
         )
+        process_admission = (
+            _evaluate_process_admission(
+                bundle,
+                tokenizer,
+                holdout,
+                spec,
+                bridge,
+            )
+            if args.answer_bridge_steps == 0 and step >= args.max_steps
+            else None
+        )
         if answer_bridge_admission is not None and answer_bridge_admission["admitted"]:
             _save_checkpoint(
                 out_dir,
@@ -4065,6 +4143,23 @@ def main() -> int:
                 history=history,
                 identity=identity,
                 stem="checkpoint_answer_bridge_admitted",
+                optimization_phase=_optimization_phase(
+                    step,
+                    args.semantic_warmup_steps,
+                    args.state_warmup_steps,
+                    args.answer_bridge_steps,
+                ),
+                training_state={"rollin_totals": rollin_totals},
+            )
+        if process_admission is not None and process_admission["admitted"]:
+            _save_checkpoint(
+                out_dir,
+                bundle,
+                optimizer,
+                step=step,
+                history=history,
+                identity=identity,
+                stem="checkpoint_process_admitted",
                 optimization_phase=_optimization_phase(
                     step,
                     args.semantic_warmup_steps,
@@ -4113,10 +4208,12 @@ def main() -> int:
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
             "answer_bridge_diagnostic": answer_bridge_diagnostic,
             "answer_bridge_admission": answer_bridge_admission,
+            "process_admission": process_admission,
             "phase_schedule": phase_schedule,
             "verdict": _training_verdict(
                 complete=step >= args.max_steps,
                 answer_bridge_admission=answer_bridge_admission,
+                process_admission=process_admission,
                 final=final,
             ),
         }
