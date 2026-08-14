@@ -487,6 +487,7 @@ def empty_learning_state(
             "supervised_trajectory_map": {},
             "query_gate": {},
             "output_associative_memory": {},
+            "episodic_neural_readout": {},
             "verifier_gain_search": {},
             "test_time_training": (
                 build_test_time_training_receipt(
@@ -622,6 +623,7 @@ def validate_fast_weight_learning_receipt(
         "supervised_trajectory_map",
         "query_gate",
         "output_associative_memory",
+        "episodic_neural_readout",
     }
     if (
         not isinstance(controls, Mapping)
@@ -681,6 +683,7 @@ def validate_fast_weight_learning_receipt(
     supervised_trajectory_map = controls.get("supervised_trajectory_map", {})
     query_gate = controls.get("query_gate", {})
     output_associative_memory = controls.get("output_associative_memory", {})
+    episodic_neural_readout = controls.get("episodic_neural_readout", {})
     gain_search = controls["verifier_gain_search"]
     if not isinstance(trajectory_transplant, Mapping):
         raise ValueError("fast-weight trajectory transplant receipt is invalid")
@@ -738,6 +741,8 @@ def validate_fast_weight_learning_receipt(
             raise ValueError("fast-weight trajectory transplant lacks a teaching event")
     if not isinstance(output_associative_memory, Mapping):
         raise ValueError("fast-weight output-memory receipt is invalid")
+    if not isinstance(episodic_neural_readout, Mapping):
+        raise ValueError("fast-weight neural-readout receipt is invalid")
     if not isinstance(supervised_trajectory_map, Mapping):
         raise ValueError("fast-weight supervised trajectory receipt is invalid")
     if not isinstance(query_gate, Mapping):
@@ -776,6 +781,14 @@ def validate_fast_weight_learning_receipt(
         validate_output_memory_experiment_receipt(output_associative_memory)
         if not teaching_event:
             raise ValueError("fast-weight output memory lacks a teaching event")
+    if episodic_neural_readout:
+        from core.brain.llm.latent_cortex.episodic_neural_readout_contract import (
+            validate_neural_readout_experiment_receipt,
+        )
+
+        validate_neural_readout_experiment_receipt(episodic_neural_readout)
+        if not teaching_event:
+            raise ValueError("fast-weight neural readout lacks a teaching event")
     if not isinstance(gain_search, Mapping):
         raise ValueError("fast-weight verifier gain-search receipt is invalid")
     if gain_search:

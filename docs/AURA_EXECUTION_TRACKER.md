@@ -48827,3 +48827,39 @@ task-level tissue lift, general reasoning gain, fusion, frontier performance or
 The next bounded action is to improve semantic selectivity at the rank-2
 late-four live-query site, with outright teacher-free task correctness required
 before a multi-task campaign or resident-32B allocation.
+
+## Checkpoint 2026-08-13-392: Verified Corrections Survive as Neural Tissue
+
+CP391 localized the strongest safe decoder effect but still could not make the
+frozen model produce a correct answer. CP392 first separated representation
+failure from output transfer. An ordered associative control replayed all 35
+private verified target tokens after the teacher was removed, proving that the
+teacher-forced trajectory remained reachable at the output boundary. That
+control was token-addressed, however, so it could not establish neural
+internalization.
+
+CP392 therefore adds a query-scoped low-rank neural readout. It has no cursor,
+token lookup or similarity threshold. A ridge fit maps normalized hidden states
+to sparse logit corrections, is frozen before generation, and is erased after
+the causal probe. A pure contract independently reconstructs treatment/sham
+matching, gain selection, exact token replay, task verification and erase.
+Unknown, teacherless or malformed readout evidence is rejected by the enclosing
+fast-weight receipt.
+
+On the same frozen Qwen2.5-1.5B task used by CP389-391, the rank-21 treatment
+exactly replayed the 35-token verified correction at gain 1.0 and passed the
+independent exact-objective verifier. The equal-fit deterministic wrong-target
+sham also exactly replayed its own 35-token target but failed the task verifier.
+Treatment therefore passed for the semantic reason under test, not merely
+because any fitted readout can force a sequence. Both operators erased exactly
+and the checkpoint parameters remained unchanged.
+
+This proves a bounded Level-3 mechanism result: temporary neural tissue can
+internalize and express one independently verified correction after its teacher
+is removed. It does not prove task-disjoint transfer, general reasoning gain,
+resident-32B improvement, fusion or `WOW Signal`. Evidence is recorded in
+`artifacts/closeout/latent_cortex/cp392_verified_correction_neural_internalization.json`.
+The next bounded action is a persistent-process mechanistic lab that fits on
+verified calibration trajectories and measures fresh held-out tasks in seconds
+per operator; only a task-disjoint positive result returns to the full RLC and
+resident-32B campaign.

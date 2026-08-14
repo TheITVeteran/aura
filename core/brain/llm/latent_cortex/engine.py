@@ -37,6 +37,11 @@ from core.brain.llm.latent_cortex.capability_canaries import (
     canary_verdict,
     compare_canaries,
 )
+from core.brain.llm.latent_cortex.episodic_neural_readout import (
+    NEURAL_READOUT_GAIN_GRID,
+    EpisodicNeuralReadout,
+    build_neural_readout_experiment_receipt,
+)
 from core.brain.llm.latent_cortex.episodic_output_memory import (
     OUTPUT_MEMORY_GAIN_GRID,
     EpisodicOutputMemory,
@@ -1304,11 +1309,17 @@ class LatentCortexEngine:
         else:
             logits = inner.embed_tokens.as_linear(h)
         output_memory = getattr(self, "_active_output_memory", None)
+        neural_readout = getattr(self, "_active_neural_readout", None)
         semantic_adapter = getattr(self, "_active_semantic_output_adapter", None)
-        if output_memory is not None and semantic_adapter is not None:
+        if sum(
+            mechanism is not None
+            for mechanism in (output_memory, neural_readout, semantic_adapter)
+        ) > 1:
             raise RuntimeError("multiple output-boundary plasticity mechanisms are active")
         if output_memory is not None:
             logits = output_memory.apply(h, logits)
+        if neural_readout is not None:
+            logits = neural_readout.apply(h, logits)
         if semantic_adapter is not None:
             logits = semantic_adapter.apply(h, logits)
         return logits
@@ -3053,6 +3064,7 @@ class LatentCortexEngine:
                 * self.n_layers
             )
             + (2 * len(OUTPUT_MEMORY_GAIN_GRID) * fast_weight_verifier_probe_cost)
+            + (2 * len(NEURAL_READOUT_GAIN_GRID) * fast_weight_verifier_probe_cost)
             if self.config.fast_weights.enabled
             and self.config.fast_weights.output_memory_diagnostic_enabled
             else 0
@@ -6471,23 +6483,29 @@ class LatentCortexEngine:
                         and fast_weight_candidate_verifier is not None
                         and fw_verifier_pre is not None
                     ):
-                        treatment_keys = self._capture_forced_output_keys(
-                            winner,
-                            cache,
-                            runner,
-                            budget,
-                            bridge_tokens=bridge_tokens,
-                            target_tokens=fast_weight_target_tokens,
-                            operation="output_memory_treatment_capture",
+                        treatment_keys, treatment_required_margins = (
+                            self._capture_forced_output_keys(
+                                winner,
+                                cache,
+                                runner,
+                                budget,
+                                bridge_tokens=bridge_tokens,
+                                target_tokens=fast_weight_target_tokens,
+                                operation="output_memory_treatment_capture",
+                                include_required_margins=True,
+                            )
                         )
-                        sham_keys = self._capture_forced_output_keys(
-                            winner,
-                            cache,
-                            runner,
-                            budget,
-                            bridge_tokens=bridge_tokens,
-                            target_tokens=fw_sham_target_tokens,
-                            operation="output_memory_sham_capture",
+                        sham_keys, sham_required_margins = (
+                            self._capture_forced_output_keys(
+                                winner,
+                                cache,
+                                runner,
+                                budget,
+                                bridge_tokens=bridge_tokens,
+                                target_tokens=fw_sham_target_tokens,
+                                operation="output_memory_sham_capture",
+                                include_required_margins=True,
+                            )
                         )
                         fast_weight_learning_state["controls"][
                             "output_associative_memory"
@@ -6504,7 +6522,39 @@ class LatentCortexEngine:
                             sham_keys=sham_keys,
                             sham_tokens=fw_sham_target_tokens,
                         )
+                        from core.brain.llm.latent_cortex.objective_program_verifier import (
+                            verify_objective_program,
+                        )
+
+                        def exact_task_verifier(candidate: str) -> bool:
+                            verdict = verify_objective_program(
+                                candidate,
+                                objective=verification_objective,
+                            )
+                            return bool(
+                                verdict is not None
+                                and verdict.get("outcome") == "verified"
+                            )
+
+                        fast_weight_learning_state["controls"][
+                            "episodic_neural_readout"
+                        ] = self._evaluate_neural_readout_controls(
+                            winner,
+                            cache,
+                            runner,
+                            budget,
+                            bridge_tokens=bridge_tokens,
+                            verifier=fast_weight_candidate_verifier,
+                            task_verifier=exact_task_verifier,
+                            treatment_keys=treatment_keys,
+                            treatment_tokens=fast_weight_target_tokens,
+                            treatment_required_margins=treatment_required_margins,
+                            sham_keys=sham_keys,
+                            sham_tokens=fw_sham_target_tokens,
+                            sham_required_margins=sham_required_margins,
+                        )
                         receipt.flag("output_associative_memory_diagnostic_completed")
+                        receipt.flag("episodic_neural_readout_diagnostic_completed")
                     if fast_weight_teaching_event:
                         (
                             _target_input_features,
@@ -7009,49 +7059,15 @@ class LatentCortexEngine:
                         decision=canary_decision,
                     )
                     fast_weight_learning_state["controls"] = {
+                        **fast_weight_learning_state["controls"],
                         "decision": canary_decision,
                         "capability_canaries": dict(receipt.fast_weight_canaries),
-                        "trajectory_transplant": fast_weight_learning_state["controls"][
-                            "trajectory_transplant"
-                        ],
-                        "supervised_trajectory_map": fast_weight_learning_state[
-                            "controls"
-                        ]["supervised_trajectory_map"],
-                        "query_gate": fast_weight_learning_state["controls"][
-                            "query_gate"
-                        ],
-                        "output_associative_memory": fast_weight_learning_state["controls"][
-                            "output_associative_memory"
-                        ],
-                        "verifier_gain_search": fast_weight_learning_state["controls"][
-                            "verifier_gain_search"
-                        ],
-                        "test_time_training": fast_weight_learning_state["controls"][
-                            "test_time_training"
-                        ],
                     }
                 else:
                     fast_weight_learning_state["controls"] = {
+                        **fast_weight_learning_state["controls"],
                         "decision": "accepted",
                         "capability_canaries": {},
-                        "trajectory_transplant": fast_weight_learning_state["controls"][
-                            "trajectory_transplant"
-                        ],
-                        "supervised_trajectory_map": fast_weight_learning_state[
-                            "controls"
-                        ]["supervised_trajectory_map"],
-                        "query_gate": fast_weight_learning_state["controls"][
-                            "query_gate"
-                        ],
-                        "output_associative_memory": fast_weight_learning_state["controls"][
-                            "output_associative_memory"
-                        ],
-                        "verifier_gain_search": fast_weight_learning_state["controls"][
-                            "verifier_gain_search"
-                        ],
-                        "test_time_training": fast_weight_learning_state["controls"][
-                            "test_time_training"
-                        ],
                     }
                 if (
                     fast_weight_candidate_verifier is not None
@@ -9259,6 +9275,7 @@ class LatentCortexEngine:
         bridge_tokens: Sequence[int],
         target_tokens: Sequence[int],
         operation: str,
+        include_required_margins: bool = False,
     ):
         """Capture the exact normalized output states preceding target tokens."""
 
@@ -9275,15 +9292,25 @@ class LatentCortexEngine:
             raise ValueError("output-memory target token sequence is empty")
         snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
         prior_memory = getattr(self, "_active_output_memory", None)
+        prior_readout = getattr(self, "_active_neural_readout", None)
         prior_hidden = getattr(self, "_last_output_hidden", None)
         try:
             self._active_output_memory = None
-            self._persist_branch(branch, cache, runner, budget)
+            self._active_neural_readout = None
+            logits = self._persist_branch(branch, cache, runner, budget)
             if bridge_tokens:
-                self._apply_decode_bridge(cache, budget, list(bridge_tokens))
+                logits = self._apply_decode_bridge(cache, budget, list(bridge_tokens))
             keys = [mx.stop_gradient(self._last_output_hidden[0, -1].astype(mx.float32))]
+            row = (
+                logits.astype(mx.float32)
+                if logits.ndim == 1
+                else logits[0, -1].astype(mx.float32)
+            )
+            required_margins = [
+                float(mx.maximum(mx.max(row) - row[targets[0]] + 4.0, 4.0))
+            ]
             inner = self.model.model
-            for token in targets[:-1]:
+            for target_index, token in enumerate(targets[:-1]):
                 if not budget.can_afford(1, self.n_layers):
                     raise RuntimeError("compute budget cannot admit output-memory capture")
                 context_tokens = self._cache_context_tokens(cache)
@@ -9297,17 +9324,31 @@ class LatentCortexEngine:
                 h = inner.embed_tokens(mx.array([[token]]))
                 mask = create_attention_mask(h, cache)
                 with self._coda_scope():
-                    for index, layer in enumerate(inner.layers):
-                        h = layer(h, mask, cache[index])
-                self._logits(h)
+                    for layer_index, layer in enumerate(inner.layers):
+                        h = layer(h, mask, cache[layer_index])
+                logits = self._logits(h)
                 keys.append(
                     mx.stop_gradient(self._last_output_hidden[0, -1].astype(mx.float32))
                 )
+                row = logits[0, -1].astype(mx.float32)
+                required_margins.append(
+                    float(
+                        mx.maximum(
+                            mx.max(row) - row[targets[target_index + 1]] + 4.0,
+                            4.0,
+                        )
+                    )
+                )
             stacked = mx.stack(keys)
             mx.eval(stacked)
-            return stacked
+            return (
+                (stacked, required_margins)
+                if include_required_margins
+                else stacked
+            )
         finally:
             self._active_output_memory = prior_memory
+            self._active_neural_readout = prior_readout
             if prior_hidden is None:
                 if hasattr(self, "_last_output_hidden"):
                     delattr(self, "_last_output_hidden")
@@ -9387,6 +9428,92 @@ class LatentCortexEngine:
                 treatment.erased
                 and sham.erased
                 and getattr(self, "_active_output_memory", None) is None
+            ),
+        )
+
+    def _evaluate_neural_readout_controls(
+        self,
+        branch: BranchState,
+        cache,
+        runner: WindowRunner,
+        budget: ComputeBudget,
+        *,
+        bridge_tokens: Sequence[int],
+        verifier: Callable[[str], float],
+        task_verifier: Callable[[str], bool],
+        treatment_keys,
+        treatment_tokens: Sequence[int],
+        treatment_required_margins: Sequence[float],
+        sham_keys,
+        sham_tokens: Sequence[int],
+        sham_required_margins: Sequence[float],
+    ) -> dict[str, Any]:
+        """Fit and causally probe matched low-rank output-boundary tissue."""
+
+        treatment = EpisodicNeuralReadout(
+            treatment_keys,
+            treatment_tokens,
+            treatment_required_margins,
+        )
+        sham = EpisodicNeuralReadout(
+            sham_keys,
+            sham_tokens,
+            sham_required_margins,
+        )
+        treatment_identity = treatment.receipt()
+        sham_identity = sham.receipt()
+
+        def run_arm(label: str, readout: EpisodicNeuralReadout) -> list[dict[str, Any]]:
+            rows: list[dict[str, Any]] = []
+            target_sha256 = token_sequence_sha256(readout.target_tokens)
+            for gain in NEURAL_READOUT_GAIN_GRID:
+                readout.reset(gain=gain)
+                self._active_neural_readout = readout
+                try:
+                    probe = self._decode_probe(
+                        branch,
+                        cache,
+                        runner,
+                        budget,
+                        max_tokens=len(readout.target_tokens),
+                        bridge_tokens=list(bridge_tokens),
+                        use_cache=False,
+                        force_exact_tokens=True,
+                    )
+                finally:
+                    self._active_neural_readout = None
+                text = self.tokenizer.decode(probe)
+                probe_sha256 = token_sequence_sha256(probe)
+                rows.append(
+                    {
+                        "arm": label,
+                        "gain": gain,
+                        "score": float(verifier(text)),
+                        "probe_tokens_sha256": probe_sha256,
+                        "probe_token_count": len(probe),
+                        "target_replayed_exactly": probe_sha256 == target_sha256,
+                        "task_verified": bool(task_verifier(text)),
+                        "applications": readout.applications,
+                    }
+                )
+            return rows
+
+        try:
+            treatment_rows = run_arm("treatment", treatment)
+            sham_rows = run_arm("sham", sham)
+        finally:
+            self._active_neural_readout = None
+            treatment.erase()
+            sham.erase()
+        return build_neural_readout_experiment_receipt(
+            treatment_identity=treatment_identity,
+            sham_identity=sham_identity,
+            treatment_rows=treatment_rows,
+            sham_rows=sham_rows,
+            erase_proven=(
+                treatment.erased
+                and sham.erased
+                and getattr(self, "_active_neural_readout", None) is None
             ),
         )
 

@@ -1,0 +1,54 @@
+{
+  "schema": "aura.closeout.latent_cortex.cp392.v1",
+  "checkpoint": "CP392",
+  "recorded_at": "2026-08-13",
+  "experiment": {
+    "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "checkpoint_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+    "worker_source_sha256": "9f61cb26408d30e07598bc7729c5ebc4ca375f22638f2a8f975f47fac0b697b6",
+    "task_id": "rlc_frontier:novel_algorithms:899fd901afcb41c67e0ee61b0c771125ce88d3c9798e98704b8e5259b669bc12",
+    "task_registry_version": "2026.08.06.1",
+    "seed": 41037613,
+    "difficulty": 2,
+    "input_tokens_sha256": "124284e67755785b05f44975de32c7b9eba3a15032f166ff10558929a7308e08",
+    "episode_id": "7980e3797049",
+    "runtime_receipt_sha256": "d5309f84c856e2ac0dd211274cc8f407eb36d07bbdc645a670e86731402bec15",
+    "neural_readout_receipt_sha256": "f2f57a726dadeeed04068444f11c09b1c5c2af8ef6aa80c044c9a2633d01cc58"
+  },
+  "mechanism": {
+    "kind": "query_scoped_low_rank_hidden_state_to_sparse_logit_readout",
+    "cursor": false,
+    "token_lookup": false,
+    "teacher_in_probe_context": false,
+    "sample_count": 35,
+    "hidden_width": 1536,
+    "effective_rank": 21,
+    "unique_target_tokens": 21,
+    "ridge": 0.0001,
+    "margin": 4.0,
+    "treatment_weights_sha256": "965375814f465f48e1fb842d61bf4af186ef0378ad89c3a7bcc877edd66d9140",
+    "sham_weights_sha256": "2925ad106bf0af94194fb25811a581ca2f412d4419c0b153b7c6bbf91b134ba2"
+  },
+  "result": {
+    "accepted": true,
+    "selected_treatment_gain": 1.0,
+    "selected_treatment_score": 0.798611,
+    "treatment_target_replayed_exactly": true,
+    "treatment_independent_task_verified": true,
+    "selected_sham_gain": 1.0,
+    "selected_sham_score": 0.296296,
+    "sham_target_replayed_exactly": true,
+    "sham_independent_task_verified": false,
+    "erase_proven": true,
+    "checkpoint_parameters_unchanged": true
+  },
+  "decision": {
+    "bounded_single_query_neural_internalization_proven": true,
+    "task_disjoint_transfer_proven": false,
+    "general_reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "fusion_authorized": false,
+    "wow_signal_authorized": false,
+    "next": "fit one frozen task-disjoint operator across verified calibration trajectories and require held-out gains before any resident-32B allocation"
+  }
+}
