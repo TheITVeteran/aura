@@ -240,6 +240,31 @@ def test_coda_plasticity_site_selects_decoder_layers(tiny_model):
     ) == (engine.coda_start, engine.n_layers - 1)
 
 
+def test_narrow_coda_plasticity_sites_have_fixed_decoder_width(tiny_model):
+    for placement, expected_width in (
+        ("coda_late4", 4),
+        ("coda_late2", 2),
+        ("coda_terminal", 1),
+    ):
+        engine = LatentCortexEngine(
+            tiny_model,
+            config=_config(
+                fast_weights=FastWeightsConfig(
+                    enabled=True,
+                    layer_placement=placement,
+                    max_wrapped_layers=8,
+                )
+            ),
+        )
+        selected = engine.plasticity_site.layer_indices(
+            *engine.plasticity_layer_range,
+            8,
+        )
+        assert engine.plasticity_layer_range == (engine.coda_start, engine.n_layers)
+        assert len(selected) == min(expected_width, engine.n_layers - engine.coda_start)
+        assert selected[-1] == engine.n_layers - 1
+
+
 def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
     tiny_model,
 ):

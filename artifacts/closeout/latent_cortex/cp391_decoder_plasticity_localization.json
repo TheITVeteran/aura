@@ -1,0 +1,42 @@
+{
+  "schema": "aura.rlc.decoder_plasticity_localization.v1",
+  "checkpoint": "CP391",
+  "claim_boundary": "bounded_mechanism_localization_not_task_level_reasoning_gain",
+  "frozen_cell": {
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "seed": 41037613,
+    "task_registry_version": "2026.08.06.1",
+    "domain": "novel_algorithms",
+    "difficulty": 2,
+    "ordinary_decode_correct": false,
+    "complete_system_correct": true,
+    "adaptation_ablation_correct": true,
+    "executable_ablation_correct": false
+  },
+  "site_results": [
+    {"site": "o_proj:coda_terminal", "rank": 2, "key_source": "live_query", "baseline_score": 0.25, "treatment_score": 0.296296, "sham_score": 0.25, "canaries": "accepted", "disposition": "accepted_probe_not_output_under_incumbent_policy"},
+    {"site": "o_proj:coda_late2", "rank": 2, "key_source": "live_query", "baseline_score": 0.25, "treatment_score": 0.303241, "sham_score": 0.310185, "canaries": "accepted", "disposition": "rejected_matched_control"},
+    {"site": "o_proj:coda_late4", "rank": 2, "key_source": "live_query", "baseline_score": 0.25, "treatment_score": 0.407407, "sham_score": 0.25, "canaries": "accepted", "causal_probe_score": 0.407407, "disposition": "accepted_probe_not_output_under_incumbent_policy"},
+    {"site": "o_proj:coda_late4", "rank": 8, "key_source": "live_query", "baseline_score": 0.25, "treatment_score": 0.324074, "sham_score": 0.407407, "canaries": "erased", "canary_regressions": ["basic_reasoning"], "disposition": "rejected_capability_regression"},
+    {"site": "o_proj:coda_late4", "rank": 2, "key_source": "incumbent_trajectory", "baseline_score": 0.25, "treatment_score": 0.25, "treatment_gain": 0.0, "sham_score": 0.289791, "canaries": "identity_no_check", "disposition": "rejected_identity_delta"}
+  ],
+  "implementation_results": {
+    "registered_fixed_width_coda_sites": ["coda_late4", "coda_late2", "coda_terminal"],
+    "fast_weight_rank_is_fingerprint_bound": true,
+    "supervised_key_source_is_fingerprint_bound": true,
+    "optimizer_loss_is_monotonic_against_last_commit": true,
+    "direct_write_identity_is_measured": true,
+    "identity_after_gain_search_has_distinct_disposition": true,
+    "key_provenance_is_receipt_bound": true
+  },
+  "verdict": {
+    "best_bounded_site": "o_proj:coda_late4",
+    "best_rank": 2,
+    "best_key_source": "live_query",
+    "teacher_free_task_correct": false,
+    "task_level_tissue_lift_proven": false,
+    "fusion_authorized": false,
+    "frontier_level_proven": false,
+    "wow_signal_authorized": false
+  }
+}

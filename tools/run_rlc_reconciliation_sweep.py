@@ -535,6 +535,8 @@ def decode_fingerprint(
     campaign_stage: str = "certificate",
     fast_weight_target: str = "o_proj",
     fast_weight_layer_placement: str = "early",
+    fast_weight_rank: int = 2,
+    fast_weight_key_source: str = "live_query",
     output_memory_diagnostic: bool = False,
     integrated_recurrent_package_sha256: str = "",
     integrated_recurrent_max_tokens: int = 2048,
@@ -560,6 +562,8 @@ def decode_fingerprint(
             "difficulty": int(difficulty),
             "episode_wall_s": float(episode_wall_s),
             "fast_weight_layer_placement": str(fast_weight_layer_placement),
+            "fast_weight_rank": int(fast_weight_rank),
+            "fast_weight_key_source": str(fast_weight_key_source),
             "fast_weight_target": str(fast_weight_target),
             "output_memory_diagnostic": bool(output_memory_diagnostic),
             "implementation_sha256": (implementation_sha256 or _implementation_sha256()),
@@ -766,6 +770,8 @@ def _build_config(
     profile: str = "mechanism",
     fast_weight_target: str = "o_proj",
     fast_weight_layer_placement: str = "early",
+    fast_weight_rank: int = 2,
+    fast_weight_key_source: str = "live_query",
     output_memory_diagnostic: bool = False,
     # Full-system research cells use the same explicit terminal contract as the
     # task and verifier lane. The current engine retains incomplete output at
@@ -830,7 +836,8 @@ def _build_config(
         verifier_accept_non_regression=adaptive_neural,
         fast_weights=FastWeightsConfig(
             enabled=adaptive_neural,
-            rank=2,
+            rank=fast_weight_rank,
+            supervised_trajectory_key_source=fast_weight_key_source,
             opt_steps=4,
             target=fast_weight_target,
             layer_placement=fast_weight_layer_placement,
@@ -2159,15 +2166,32 @@ def _manifest_integrity_issues(
     # under its own committed implementation digest. New campaigns always
     # emit this field and additionally bind it inside every arm fingerprint.
     if fast_weight_site is not None:
-        if not isinstance(fast_weight_site, dict) or set(fast_weight_site) != {
+        if not isinstance(fast_weight_site, dict) or not {
             "target",
             "layer_placement",
+        }.issubset(fast_weight_site) or set(fast_weight_site) - {
+            "target",
+            "layer_placement",
+            "rank",
+            "key_source",
         }:
             issues.append("fast_weight_site_invalid")
         elif (
             fast_weight_site["target"] not in {"o_proj", "down_proj"}
             or fast_weight_site["layer_placement"]
-            not in {"early", "distributed", "late", "coda"}
+            not in {
+                "early",
+                "distributed",
+                "late",
+                "coda",
+                "coda_late4",
+                "coda_late2",
+                "coda_terminal",
+            }
+            or type(fast_weight_site.get("rank", 2)) is not int
+            or not 1 <= int(fast_weight_site.get("rank", 2)) <= 64
+            or fast_weight_site.get("key_source", "live_query")
+            not in {"live_query", "incumbent_trajectory"}
         ):
             issues.append("fast_weight_site_invalid")
 
@@ -2843,8 +2867,28 @@ def main() -> int:
     )
     parser.add_argument(
         "--fast-weight-layer-placement",
-        choices=("early", "distributed", "late", "coda"),
+        choices=(
+            "early",
+            "distributed",
+            "late",
+            "coda",
+            "coda_late4",
+            "coda_late2",
+            "coda_terminal",
+        ),
         default="early",
+    )
+    parser.add_argument(
+        "--fast-weight-rank",
+        type=int,
+        choices=range(1, 65),
+        default=2,
+        metavar="[1-64]",
+    )
+    parser.add_argument(
+        "--fast-weight-key-source",
+        choices=("live_query", "incumbent_trajectory"),
+        default="live_query",
     )
     parser.add_argument(
         "--output-memory-diagnostic",
@@ -2988,6 +3032,8 @@ def main() -> int:
                     "fast_weight_site": {
                         "target": args.fast_weight_target,
                         "layer_placement": args.fast_weight_layer_placement,
+                        "rank": args.fast_weight_rank,
+                        "key_source": args.fast_weight_key_source,
                     },
                     "output_memory_diagnostic": args.output_memory_diagnostic,
                     "integrated_recurrent_package_required": (
@@ -3073,6 +3119,8 @@ def main() -> int:
             campaign_stage=args.campaign_stage,
             fast_weight_target=args.fast_weight_target,
             fast_weight_layer_placement=args.fast_weight_layer_placement,
+            fast_weight_rank=args.fast_weight_rank,
+            fast_weight_key_source=args.fast_weight_key_source,
             output_memory_diagnostic=args.output_memory_diagnostic,
             integrated_recurrent_package_sha256=(
                 integrated_recurrent_identity.get("manifest_sha256", "")
@@ -3102,6 +3150,8 @@ def main() -> int:
                 "fast_weight_site": {
                     "target": args.fast_weight_target,
                     "layer_placement": args.fast_weight_layer_placement,
+                    "rank": args.fast_weight_rank,
+                    "key_source": args.fast_weight_key_source,
                 },
                 "output_memory_diagnostic": args.output_memory_diagnostic,
                 "integrated_recurrent_package": integrated_recurrent_identity,
@@ -3353,6 +3403,8 @@ def main() -> int:
                     fast_weight_layer_placement=(
                         args.fast_weight_layer_placement
                     ),
+                    fast_weight_rank=args.fast_weight_rank,
+                    fast_weight_key_source=args.fast_weight_key_source,
                     output_memory_diagnostic=args.output_memory_diagnostic,
                 )
             )

@@ -766,6 +766,52 @@ def test_fast_weight_matched_arm_snapshot_restore_and_fixed_schedule(tiny_model)
     fw.detach()
 
 
+def test_fast_weight_optimizer_rejects_objective_drift_past_committed_loss(
+    tiny_model,
+):
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(
+            enabled=True,
+            rank=2,
+            target="down_proj",
+            opt_steps=2,
+            lr=0.05,
+        )
+    )
+    fw.attach(
+        tiny_model.model,
+        (P_END, P_END + 1),
+        seed_stat=0.4,
+        episode_id="ep-drifting-objective",
+    )
+    calls = {"count": 0}
+
+    def drifting_loss():
+        out = _probe(tiny_model)[0, -1]
+        base = -(out[42] - mx.logsumexp(out))
+        # One optimizer step performs one gradient evaluation and two fixed
+        # line-search evaluations. The second step sees a uniformly shifted
+        # objective: candidates can beat that recomputation while remaining
+        # worse than the previously committed state.
+        offset = 100.0 if calls["count"] >= 3 else 0.0
+        calls["count"] += 1
+        return base + offset
+
+    try:
+        fw.optimize(
+            drifting_loss,
+            steps=2,
+            fixed_line_search_evaluations=2,
+        )
+        trail = fw.lifecycle.loss_trail
+        assert fw.lifecycle.optimized_steps == 1
+        assert fw.lifecycle.rejected_steps == 1
+        assert len(trail) == 2
+        assert trail[1] < trail[0]
+    finally:
+        fw.detach()
+
+
 def test_fast_weight_optimizer_is_visible_at_resident_parameter_scale():
     wrapper = SimpleNamespace(
         U=mx.zeros((8192, 2)),
@@ -1374,7 +1420,7 @@ def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
     assert result.ok
     arbitration = result.receipt.fast_weight_verifier
     assert arbitration["evaluated"] is False
-    assert arbitration["decision"] == "erased_no_accepted_step"
+    assert arbitration["decision"] == "erased_identity_delta"
     assert result.receipt.fast_weight_learning["disposition"] == (
         "rejected_no_accepted_step"
     )

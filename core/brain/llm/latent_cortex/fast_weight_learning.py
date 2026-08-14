@@ -100,6 +100,7 @@ _LEARNING_FIELDS = {
 _DISPOSITIONS = {
     "not_admitted_high_confidence_evidence_absent",
     "rejected_no_accepted_step",
+    "rejected_identity_delta",
     "rejected_capability_regression",
     "rejected_no_causal_effect",
     "rejected_non_improvement",
@@ -692,7 +693,9 @@ def validate_fast_weight_learning_receipt(
             "target_context_sha256",
             "incumbent_context_sha256",
             "sham_context_sha256",
+            "supervised_key_source",
             "query_activation_sha256s",
+            "incumbent_input_sha256s",
             "target_direction_sha256s",
             "sham_direction_sha256s",
         }
@@ -703,6 +706,8 @@ def validate_fast_weight_learning_receipt(
             or not isinstance(trajectory_transplant["site_id"], str)
             or type(trajectory_transplant["rank"]) is not int
             or trajectory_transplant["rank"] <= 0
+            or trajectory_transplant["supervised_key_source"]
+            not in {"live_query", "incumbent_trajectory"}
             or not isinstance(trajectory_transplant["layers"], list)
             or not trajectory_transplant["layers"]
             or any(type(layer) is not int or layer < 0 for layer in trajectory_transplant["layers"])
@@ -718,6 +723,7 @@ def validate_fast_weight_learning_receipt(
             raise ValueError("fast-weight trajectory transplant receipt is malformed")
         for field in (
             "query_activation_sha256s",
+            "incumbent_input_sha256s",
             "target_direction_sha256s",
             "sham_direction_sha256s",
         ):
@@ -782,7 +788,10 @@ def validate_fast_weight_learning_receipt(
             or (
                 map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
                 and supervised_trajectory_map["key_source"]
-                != "captured_query_activation"
+                not in {
+                    "captured_query_activation",
+                    "verified_incumbent_trajectory",
+                }
             )
             or not _is_finite_number(supervised_trajectory_map["gain"])
             or not 0.0 < float(supervised_trajectory_map["gain"]) <= 16.0
@@ -841,16 +850,28 @@ def validate_fast_weight_learning_receipt(
                 )
             ):
                 raise ValueError("fast-weight supervised trajectory row is invalid")
-            if (
-                map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
-                and row["inputs_sha256"]
-                != trajectory_transplant["query_activation_sha256s"].get(
-                    str(row["layer"])
+            if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
+                receipt_key_source = supervised_trajectory_map["key_source"]
+                expected_key_source = (
+                    "captured_query_activation"
+                    if trajectory_transplant["supervised_key_source"] == "live_query"
+                    else "verified_incumbent_trajectory"
                 )
-            ):
-                raise ValueError(
-                    "fast-weight supervised trajectory key is not the live query"
+                commitment_field = (
+                    "query_activation_sha256s"
+                    if receipt_key_source == "captured_query_activation"
+                    else "incumbent_input_sha256s"
                 )
+                if (
+                    receipt_key_source != expected_key_source
+                    or row["inputs_sha256"]
+                    != trajectory_transplant[commitment_field].get(
+                        str(row["layer"])
+                    )
+                ):
+                    raise ValueError(
+                        "fast-weight supervised trajectory key provenance differs"
+                    )
         if not teaching_event:
             raise ValueError("fast-weight supervised trajectory lacks a teaching event")
     if output_associative_memory:
@@ -1075,6 +1096,12 @@ def validate_fast_weight_learning_receipt(
         or causal["evaluated"]
     ):
         raise ValueError("no-step fast-weight rejection is contradictory")
+    if disposition == "rejected_identity_delta" and (
+        not gain_search
+        or float(gain_search.get("selected_treatment_gain", 1.0)) != 0.0
+        or causal["evaluated"]
+    ):
+        raise ValueError("identity-delta fast-weight rejection is contradictory")
     if disposition == "rejected_capability_regression" and (
         controls["decision"] != "erased"
         or causal["evaluated"]

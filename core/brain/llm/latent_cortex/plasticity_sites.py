@@ -14,7 +14,21 @@ from dataclasses import dataclass
 
 PLASTICITY_SITE_REGISTRY_SCHEMA = "aura.rlc.plasticity_site_registry.v1"
 PLASTICITY_TARGETS = ("o_proj", "down_proj")
-PLASTICITY_LAYER_PLACEMENTS = ("early", "distributed", "late", "coda")
+PLASTICITY_LAYER_PLACEMENTS = (
+    "early",
+    "distributed",
+    "late",
+    "coda",
+    "coda_late4",
+    "coda_late2",
+    "coda_terminal",
+)
+
+_FIXED_PLACEMENT_WIDTHS = {
+    "coda_late4": 4,
+    "coda_late2": 2,
+    "coda_terminal": 1,
+}
 
 
 def _sha(value: object) -> str:
@@ -45,12 +59,22 @@ def select_plasticity_layers(
     if placement not in PLASTICITY_LAYER_PLACEMENTS:
         raise ValueError("plasticity layer placement is unsupported")
     inventory = tuple(range(start, end))
-    count = min(maximum, len(inventory))
+    fixed_width = _FIXED_PLACEMENT_WIDTHS.get(placement)
+    count = min(
+        fixed_width if fixed_width is not None else maximum,
+        len(inventory),
+    )
     if count == len(inventory):
         return inventory
     if placement == "early":
         return inventory[:count]
-    if placement in {"late", "coda"}:
+    if placement in {
+        "late",
+        "coda",
+        "coda_late4",
+        "coda_late2",
+        "coda_terminal",
+    }:
         return inventory[-count:]
     if count == 1:
         return (inventory[(len(inventory) - 1) // 2],)

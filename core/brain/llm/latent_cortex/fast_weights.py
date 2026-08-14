@@ -1112,6 +1112,7 @@ class EpisodicFastWeights:
         gain: float,
         regularization: float,
         normalize_corrections: bool = True,
+        key_source: str = "live_query",
     ) -> dict[str, Any]:
         """Install the minimum-norm map from live-query states to corrections.
 
@@ -1145,6 +1146,8 @@ class EpisodicFastWeights:
             )
         if type(normalize_corrections) is not bool:
             raise TypeError("normalize_corrections must be boolean")
+        if key_source not in {"live_query", "incumbent_trajectory"}:
+            raise ValueError("supervised trajectory key source is unsupported")
         expected = {int(handle.layer_index) for handle in self.handles}
         if (
             not expected
@@ -1160,7 +1163,7 @@ class EpisodicFastWeights:
             inputs = input_features_by_layer[layer].astype(mx.float32)
             corrections = output_corrections_by_layer[layer].astype(mx.float32)
             captured_query = wrapper.last_input_features
-            if (
+            if key_source == "live_query" and (
                 captured_query is None
                 or tensor_sha256(inputs) != tensor_sha256(captured_query)
             ):
@@ -1253,7 +1256,11 @@ class EpisodicFastWeights:
         self._notify_function_change("fast_weights_supervised_trajectory_map_installed")
         return {
             "schema": "aura.fast_weight_supervised_trajectory_map.v2",
-            "key_source": "captured_query_activation",
+            "key_source": (
+                "captured_query_activation"
+                if key_source == "live_query"
+                else "verified_incumbent_trajectory"
+            ),
             "gain": float(gain),
             "regularization": float(regularization),
             "corrections_normalized": normalize_corrections,
@@ -1799,10 +1806,21 @@ class EpisodicFastWeights:
                     bind_params(params)
                     raise
                 candidate_loss = float(candidate_value)
-                minimum_improvement = max(1e-6, abs(current_loss) * 1e-7)
+                # Some model objectives exhibit small repeat-evaluation drift
+                # even with identical parameters.  Acceptance must improve
+                # both the value observed for this step and the last state we
+                # committed to the signed trace; otherwise a locally lower
+                # candidate can still make the authoritative trail regress.
+                committed_loss = (
+                    self.lifecycle.loss_trail[-1]
+                    if self.lifecycle.loss_trail
+                    else current_loss
+                )
+                reference_loss = min(current_loss, committed_loss)
+                minimum_improvement = max(1e-6, abs(reference_loss) * 1e-7)
                 if (
                     math.isfinite(candidate_loss)
-                    and current_loss - candidate_loss >= minimum_improvement
+                    and reference_loss - candidate_loss >= minimum_improvement
                 ):
                     if fixed_line_search_evaluations is None:
                         best_candidate = candidate

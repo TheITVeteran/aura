@@ -48790,3 +48790,40 @@ next bounded action is to localize decoder plasticity more narrowly: preserve
 the safer CP389 output-projection effect without applying the globally damaging
 MLP down-projection write, then require task correctness before any larger
 campaign.
+
+## Checkpoint 2026-08-13-391: Decoder Plasticity Is Localized, Not Yet Correct
+
+CP391 replaced the broad coda search with fixed, registered decoder sites and
+bound both adapter rank and supervised-key provenance into the campaign
+fingerprint. It also closed two lifecycle defects exposed by the experiments:
+optimizer proposals must improve against the last committed loss rather than a
+fresh drifting observation, and a gain search that restores a zero delta now
+records `rejected_identity_delta` instead of falsely claiming that no optimizer
+step was accepted. Direct-write activity and key provenance are validated from
+measured receipts rather than inferred counters.
+
+Five configurations were measured on the same frozen Qwen2.5-1.5B task, seed,
+registry and four-arm design. Rank-2 `o_proj:coda_terminal` improved `0.25` to
+`0.296296`; rank-2 `o_proj:coda_late2` reached `0.303241` but lost to its
+`0.310185` sham. Rank-2 `o_proj:coda_late4` was the clear best site: treatment
+reached `0.407407`, sham stayed at `0.25`, protected canaries passed, and the
+teacher-free causal probe reproduced `0.407407`.
+
+More capacity did not help. At the same late-four site, rank 8 reached only
+`0.324074` while its matched sham reached `0.407407`; it also regressed the
+protected basic-reasoning canary and was erased. Replacing live-query keys with
+the discarded incumbent teacher-trajectory inputs also failed: every
+structurally admissible treatment point was at or below the `0.25` baseline, so
+the signed selector chose gain zero while the sham reached `0.289791`.
+
+The best neural probe is treatment-specific and safe, but it is still not a
+correct task answer. The complete system remains correct through executable
+reasoning; disabling adaptation preserves that answer and disabling the
+producer removes it. CP391 therefore proves a bounded decoder-plasticity
+localization and retires several evidence-lifecycle faults. It does not prove a
+task-level tissue lift, general reasoning gain, fusion, frontier performance or
+`WOW Signal`. Evidence is recorded in
+`artifacts/closeout/latent_cortex/cp391_decoder_plasticity_localization.json`.
+The next bounded action is to improve semantic selectivity at the rank-2
+late-four live-query site, with outright teacher-free task correctness required
+before a multi-task campaign or resident-32B allocation.

@@ -1449,8 +1449,34 @@ def test_decode_identity_binds_fast_weight_site():
         fast_weight_layer_placement="late",
         **common,
     )
+    terminal_attention = sweep.decode_fingerprint(
+        fast_weight_target="o_proj",
+        fast_weight_layer_placement="coda_terminal",
+        **common,
+    )
+    wider_terminal_attention = sweep.decode_fingerprint(
+        fast_weight_target="o_proj",
+        fast_weight_layer_placement="coda_terminal",
+        fast_weight_rank=8,
+        **common,
+    )
+    incumbent_keyed_attention = sweep.decode_fingerprint(
+        fast_weight_target="o_proj",
+        fast_weight_layer_placement="coda_terminal",
+        fast_weight_key_source="incumbent_trajectory",
+        **common,
+    )
 
-    assert len({early_attention, late_attention, late_mlp}) == 3
+    assert len(
+        {
+            early_attention,
+            late_attention,
+            late_mlp,
+            terminal_attention,
+            wider_terminal_attention,
+            incumbent_keyed_attention,
+        }
+    ) == 6
 
 
 def test_decode_identity_binds_the_task_registry():

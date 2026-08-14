@@ -3,8 +3,8 @@
 The protected battery is the safety boundary between "the proxy loss went
 down" and "the adapted function is safe to decode with":
 - the battery is deterministic and its budget cost is declared up front;
-- an identity ΔW (no accepted optimization step) is never charged for a
-  measurement it cannot fail;
+- an identity ΔW is never charged for a measurement it cannot fail, while a
+  direct write is measured even if the optional optimizer accepted no step;
 - a behaviorally destructive ΔW is rescaled and, if still regressing,
   erased BEFORE decode — and such an episode never exports a
   consolidation candidate;

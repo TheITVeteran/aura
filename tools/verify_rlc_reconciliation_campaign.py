@@ -465,6 +465,10 @@ def _decode_fingerprint(
         "difficulty": int(config["difficulty"]),
         "episode_wall_s": float(config["episode_wall_s"]),
         "fast_weight_layer_placement": str(fast_weight_site.get("layer_placement") or ""),
+        "fast_weight_rank": int(fast_weight_site.get("rank", 2)),
+        "fast_weight_key_source": str(
+            fast_weight_site.get("key_source", "live_query")
+        ),
         "fast_weight_target": str(fast_weight_site.get("target") or ""),
         "output_memory_diagnostic": bool(fingerprint.get("output_memory_diagnostic")),
         "implementation_sha256": implementation_sha256,

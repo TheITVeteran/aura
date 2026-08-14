@@ -361,6 +361,32 @@ def test_supervised_trajectory_map_rejects_non_query_keys():
         fast_weights.detach()
 
 
+def test_supervised_trajectory_map_accepts_bound_incumbent_trajectory_keys():
+    model = _model()
+    fast_weights = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=1, max_wrapped_layers=1)
+    )
+    fast_weights.attach(
+        model.model,
+        (1, 2),
+        seed_stat=0.5,
+        episode_id="supervised-map-incumbent-trajectory",
+    )
+    try:
+        fast_weights.handles[0].wrapper.last_input_features = mx.ones((1, 32))
+        receipt = fast_weights.install_supervised_trajectory_map(
+            {1: mx.full((1, 32), 2.0)},
+            {1: mx.ones((1, 32))},
+            gain=0.5,
+            regularization=1e-4,
+            key_source="incumbent_trajectory",
+        )
+        assert receipt["key_source"] == "verified_incumbent_trajectory"
+        assert fast_weights.has_effective_delta() is True
+    finally:
+        fast_weights.detach()
+
+
 def test_teacher_forced_answer_loss_trains_ordered_tokens_through_fast_weights():
     model = _model()
     fast_weights = EpisodicFastWeights(

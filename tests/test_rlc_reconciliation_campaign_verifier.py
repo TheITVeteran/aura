@@ -89,7 +89,12 @@ def _write_complete_campaign(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "difficulty": 2,
         "task_registry_version": ft.CONTAMINATION_SAFE_REGISTRY_VERSION,
         "completion_budget_policy": "semantic_completion_floor.v1",
-        "fast_weight_site": {"target": "o_proj", "layer_placement": "early"},
+        "fast_weight_site": {
+            "target": "o_proj",
+            "layer_placement": "early",
+            "rank": 2,
+            "key_source": "live_query",
+        },
         "output_memory_diagnostic": False,
         "integrated_recurrent_package": {
             "package_id": "package",

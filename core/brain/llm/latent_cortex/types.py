@@ -132,7 +132,9 @@ class FastWeightsConfig:
     # Where inside the recurrent region the bounded wrappers attach. ``early``
     # preserves the historical serving function; other placements are
     # explicit, source-bound experimental choices until causally promoted.
-    layer_placement: str = "early"  # early | distributed | late | coda
+    # Named narrow-coda variants are fixed-width registered sites; they do not
+    # inherit max_wrapped_layers and therefore remain stable experiment IDs.
+    layer_placement: str = "early"
     opt_steps: int = 4
     lr: float = 0.01
     # Layers (within the recurrent window) that receive fast weights; None ⇒
@@ -145,6 +147,11 @@ class FastWeightsConfig:
     associative_bootstrap_enabled: bool = True
     associative_bootstrap_gain: float = 0.25
     associative_bootstrap_regularization: float = 1e-4
+    # Keys for the supervised trajectory map must be an explicit experiment
+    # identity. The historical live-query keys bind tightly to the actual
+    # decode; incumbent-trajectory keys instead learn the layer-local map from
+    # a refuted answer state to the verified correction state.
+    supervised_trajectory_key_source: str = "live_query"
     # A direct verified write is useful only for the episode that taught it.
     # Gate the temporary delta by cosine similarity to private, captured query
     # activations so unrelated canary and user contexts remain near identity.
@@ -878,9 +885,12 @@ class CortexConfig:
             "distributed",
             "late",
             "coda",
+            "coda_late4",
+            "coda_late2",
+            "coda_terminal",
         }:
             problems.append(
-                "fast_weights.layer_placement must be early, distributed, late, or coda"
+                "fast_weights.layer_placement is not a registered placement"
             )
         if not integer_in(self.fast_weights.opt_steps, 1, ABSOLUTE_MAX_RECURRENT_STEPS):
             problems.append("fast_weights.opt_steps outside recurrent-step limits")
@@ -907,6 +917,13 @@ class CortexConfig:
         ):
             problems.append(
                 "fast_weights.associative_bootstrap_regularization must be finite and inside (0, 1]"
+            )
+        if self.fast_weights.supervised_trajectory_key_source not in {
+            "live_query",
+            "incumbent_trajectory",
+        }:
+            problems.append(
+                "fast_weights.supervised_trajectory_key_source is unsupported"
             )
         if type(self.fast_weights.query_gate_enabled) is not bool:
             problems.append("fast_weights.query_gate_enabled must be boolean")

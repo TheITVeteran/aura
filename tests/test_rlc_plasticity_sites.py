@@ -18,10 +18,16 @@ def test_registry_covers_projection_and_layer_placement_product() -> None:
         "o_proj:distributed",
         "o_proj:late",
         "o_proj:coda",
+        "o_proj:coda_late4",
+        "o_proj:coda_late2",
+        "o_proj:coda_terminal",
         "down_proj:early",
         "down_proj:distributed",
         "down_proj:late",
         "down_proj:coda",
+        "down_proj:coda_late4",
+        "down_proj:coda_late2",
+        "down_proj:coda_terminal",
     ]
     assert len(receipt["registry_sha256"]) == 64
 
@@ -30,6 +36,14 @@ def test_layer_placements_are_deterministic_and_span_the_window() -> None:
     assert select_plasticity_layers(7, 21, 4, placement="early") == (7, 8, 9, 10)
     assert select_plasticity_layers(7, 21, 4, placement="late") == (17, 18, 19, 20)
     assert select_plasticity_layers(21, 28, 4, placement="coda") == (24, 25, 26, 27)
+    assert select_plasticity_layers(21, 28, 8, placement="coda_late4") == (
+        24,
+        25,
+        26,
+        27,
+    )
+    assert select_plasticity_layers(21, 28, 8, placement="coda_late2") == (26, 27)
+    assert select_plasticity_layers(21, 28, 8, placement="coda_terminal") == (27,)
     assert select_plasticity_layers(7, 21, 4, placement="distributed") == (
         7,
         11,

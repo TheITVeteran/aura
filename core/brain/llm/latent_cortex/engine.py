@@ -326,7 +326,7 @@ class LatentCortexEngine:
         )
         self.plasticity_layer_range = (
             (self.coda_start, self.n_layers)
-            if self.config.fast_weights.layer_placement == "coda"
+            if self.config.fast_weights.layer_placement.startswith("coda")
             else (self.prelude_end, self.coda_start)
         )
         adapted_layers = self.plasticity_site.layer_indices(
@@ -6240,6 +6240,7 @@ class LatentCortexEngine:
         fw_sham_semantic_seed_vectors = None
         fw_sham_trajectory_directions = None
         fw_query_input_features = None
+        fw_incumbent_input_features = None
         fw_treatment_output_corrections = None
         fw_sham_output_corrections = None
         fw_treatment_context_tokens: list[int] = []
@@ -6519,7 +6520,7 @@ class LatentCortexEngine:
                             )
                         )
                         (
-                            _incumbent_input_features,
+                            fw_incumbent_input_features,
                             incumbent_features,
                             incumbent_context_tokens,
                         ) = (
@@ -6592,6 +6593,9 @@ class LatentCortexEngine:
                             "site_id": self.plasticity_site.site_id,
                             "layers": layers,
                             "rank": self.config.fast_weights.rank,
+                            "supervised_key_source": (
+                                self.config.fast_weights.supervised_trajectory_key_source
+                            ),
                             "target_context_sha256": token_sequence_sha256(
                                 target_context_tokens
                             ),
@@ -6606,6 +6610,12 @@ class LatentCortexEngine:
                                 for layer, digest in (
                                     fast_weights.input_feature_commitments().items()
                                 )
+                            },
+                            "incumbent_input_sha256s": {
+                                str(layer): tensor_sha256(
+                                    fw_incumbent_input_features[layer]
+                                )
+                                for layer in layers
                             },
                             "target_direction_sha256s": {
                                 str(layer): tensor_sha256(treatment_directions[layer])
@@ -6681,14 +6691,24 @@ class LatentCortexEngine:
                 ):
                     if (
                         fw_query_input_features is not None
+                        and fw_incumbent_input_features is not None
                         and fw_treatment_output_corrections is not None
                     ):
+                        supervised_keys = (
+                            fw_incumbent_input_features
+                            if self.config.fast_weights.supervised_trajectory_key_source
+                            == "incumbent_trajectory"
+                            else fw_query_input_features
+                        )
                         write_receipt = fast_weights.install_supervised_trajectory_map(
-                            fw_query_input_features,
+                            supervised_keys,
                             fw_treatment_output_corrections,
                             gain=self.config.fast_weights.associative_bootstrap_gain,
                             regularization=(
                                 self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                            key_source=(
+                                self.config.fast_weights.supervised_trajectory_key_source
                             ),
                         )
                         fast_weight_learning_state["controls"][
@@ -6781,14 +6801,24 @@ class LatentCortexEngine:
                     fw_sham_initial_snapshot = fast_weights.snapshot_delta()
                     if (
                         fw_query_input_features is not None
+                        and fw_incumbent_input_features is not None
                         and fw_sham_output_corrections is not None
                     ):
+                        supervised_keys = (
+                            fw_incumbent_input_features
+                            if self.config.fast_weights.supervised_trajectory_key_source
+                            == "incumbent_trajectory"
+                            else fw_query_input_features
+                        )
                         fast_weights.install_supervised_trajectory_map(
-                            fw_query_input_features,
+                            supervised_keys,
                             fw_sham_output_corrections,
                             gain=self.config.fast_weights.associative_bootstrap_gain,
                             regularization=(
                                 self.config.fast_weights.associative_bootstrap_regularization
+                            ),
+                            key_source=(
+                                self.config.fast_weights.supervised_trajectory_key_source
                             ),
                         )
                     else:
@@ -8616,7 +8646,15 @@ class LatentCortexEngine:
                 "evaluated": False,
                 "decision": "erased_identity_delta",
             }
-            learning_state["disposition"] = "rejected_no_accepted_step"
+            gain_search = learning_state.get("controls", {}).get(
+                "verifier_gain_search", {}
+            )
+            learning_state["disposition"] = (
+                "rejected_identity_delta"
+                if gain_search
+                and float(gain_search.get("selected_treatment_gain", 1.0)) == 0.0
+                else "rejected_no_accepted_step"
+            )
             return "erased_identity_delta"
         if pre_score is None or not math.isfinite(pre_score):
             fast_weights.canary_erase()
