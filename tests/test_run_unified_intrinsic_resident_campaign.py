@@ -433,6 +433,8 @@ def test_bootstrap_freeze_copies_one_authoritative_generation(tmp_path: Path) ->
         source,
         inputs,
         stem="checkpoint_latest",
+        expected_checkpoint_sha256=receipt["checkpoint_sha256"],
+        expected_step=73,
     )
     selected = resolve_checkpoint_generation(
         inputs / "bootstrap-output",
@@ -445,6 +447,55 @@ def test_bootstrap_freeze_copies_one_authoritative_generation(tmp_path: Path) ->
     assert frozen["parent_checkpoint_sha256"] == receipt["checkpoint_sha256"]
     assert frozen["parent_receipt_sha256"] == receipt["receipt_sha256"]
     assert frozen["parent_identity_sha256"] == identity["identity_sha256"]
+
+
+def test_bootstrap_freeze_rejects_a_moved_mutable_pointer(tmp_path: Path) -> None:
+    source = _private(tmp_path / "source-output")
+    generations = _private(source / "checkpoint_generations")
+    checkpoint_id = "checkpoint_latest-step-00000074-" + "a" * 32
+    generation = _private(generations / checkpoint_id)
+    weights = generation / "bundle.safetensors"
+    weights.write_bytes(b"unexpected-later-tissue")
+    weights.chmod(0o400)
+    identity = {"identity_sha256": "e" * 64}
+    receipt_body = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "checkpoint_generation_schema": "aura.unified_intrinsic_checkpoint.v3",
+        "checkpoint_id": checkpoint_id,
+        "checkpoint_file": weights.name,
+        "checkpoint_size_bytes": weights.stat().st_size,
+        "checkpoint_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+        "identity": identity,
+        "step": 74,
+        "stem": "checkpoint_latest",
+    }
+    receipt = {**receipt_body, "receipt_sha256": canonical_sha256(receipt_body)}
+    complete = generation / "complete.json"
+    complete.write_bytes(canonical_bytes(receipt) + b"\n")
+    complete.chmod(0o400)
+    generation.chmod(0o500)
+    pointer = {
+        "schema": "aura.unified_intrinsic_checkpoint_pointer.v2",
+        "checkpoint": f"checkpoint_generations/{checkpoint_id}",
+        "complete_sha256": hashlib.sha256(complete.read_bytes()).hexdigest(),
+        "identity_sha256": identity["identity_sha256"],
+        "step": 74,
+        "stem": "checkpoint_latest",
+    }
+    pointer_path = source / "checkpoint_latest_pointer.json"
+    pointer_path.write_bytes(canonical_bytes(pointer) + b"\n")
+    pointer_path.chmod(0o600)
+
+    with pytest.raises(RuntimeError, match="bootstrap_checkpoint_pin_mismatch"):
+        _freeze_bootstrap_checkpoint(
+            source,
+            _private(tmp_path / "inputs"),
+            stem="checkpoint_latest",
+            expected_checkpoint_sha256="d" * 64,
+            expected_step=73,
+        )
+
+    assert not (tmp_path / "inputs" / "bootstrap-output").exists()
 
 
 def test_clean_child_exit_waits_for_signed_detached_terminal_handoff(

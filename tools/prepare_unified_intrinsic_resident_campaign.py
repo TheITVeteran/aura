@@ -78,6 +78,7 @@ DEFAULT_MODEL: Final = Path(
 DEFAULT_CAPSULE_ROOT: Final = Path.home() / ".aura/training-capsules"
 DEFAULT_CAMPAIGN_ROOT: Final = Path.home() / ".aura/training-campaigns"
 _CAMPAIGN_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+_SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 
 
 class UnifiedResidentPreparationError(RuntimeError):
@@ -433,6 +434,8 @@ def _freeze_bootstrap_checkpoint(
     destination_inputs: Path,
     *,
     stem: str,
+    expected_checkpoint_sha256: str,
+    expected_step: int,
 ) -> dict[str, Any]:
     try:
         selected = resolve_checkpoint_generation(
@@ -444,6 +447,11 @@ def _freeze_bootstrap_checkpoint(
         raise UnifiedResidentPreparationError("bootstrap_checkpoint_invalid") from exc
     if selected is None:  # pragma: no cover - required=True is authoritative
         _fail("bootstrap_checkpoint_unavailable")
+    if (
+        selected.receipt.get("checkpoint_sha256") != expected_checkpoint_sha256
+        or selected.receipt.get("step") != expected_step
+    ):
+        _fail("bootstrap_checkpoint_pin_mismatch")
     output = _private_directory(destination_inputs / "bootstrap-output", must_be_new=True)
     generations = _private_directory(output / "checkpoint_generations")
     generation = _private_directory(generations / selected.generation_dir.name)
@@ -491,6 +499,8 @@ def _freeze_campaign(
     model_path: Path,
     bootstrap_output_dir: Path | None = None,
     bootstrap_stem: str = "checkpoint_latest",
+    bootstrap_checkpoint_sha256: str | None = None,
+    bootstrap_step: int | None = None,
 ) -> dict[str, Any]:
     source_root = source_root.expanduser().resolve(strict=True)
     campaign_id = _validate_campaign_id(campaign_id)
@@ -503,11 +513,6 @@ def _freeze_campaign(
     training = _profile_training(profile)
     training_args = _training_cli(training)
 
-    root = _private_directory(campaign_root / campaign_id, must_be_new=True)
-    inputs = _private_directory(root / "inputs")
-    _private_directory(root / "training-output")
-    detached_attempts = _private_directory(root / "detached-attempts")
-    del detached_attempts
     bootstrap_profiles = {
         "process_action_canary",
         "process_family_acquisition",
@@ -516,11 +521,31 @@ def _freeze_campaign(
     }
     if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
         _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
+    bootstrap_pin_present = (
+        bootstrap_checkpoint_sha256 is not None and bootstrap_step is not None
+    )
+    if (bootstrap_output_dir is not None) != bootstrap_pin_present:
+        _fail("bootstrap_checkpoint_requires_exact_identity_pin")
+    if bootstrap_pin_present and (
+        _SHA256.fullmatch(str(bootstrap_checkpoint_sha256)) is None
+        or not isinstance(bootstrap_step, int)
+        or isinstance(bootstrap_step, bool)
+        or bootstrap_step < 0
+    ):
+        _fail("bootstrap_checkpoint_identity_pin_invalid")
+
+    root = _private_directory(campaign_root / campaign_id, must_be_new=True)
+    inputs = _private_directory(root / "inputs")
+    _private_directory(root / "training-output")
+    detached_attempts = _private_directory(root / "detached-attempts")
+    del detached_attempts
     bootstrap = (
         _freeze_bootstrap_checkpoint(
             bootstrap_output_dir,
             inputs,
             stem=bootstrap_stem,
+            expected_checkpoint_sha256=str(bootstrap_checkpoint_sha256),
+            expected_step=int(bootstrap_step),
         )
         if bootstrap_output_dir is not None
         else None
@@ -694,6 +719,10 @@ def _freeze_campaign(
 
 
 def _create_capsule_and_freeze(args: argparse.Namespace) -> dict[str, Any]:
+    if (args.bootstrap_output_dir is not None) != (
+        args.bootstrap_checkpoint_sha256 is not None and args.bootstrap_step is not None
+    ):
+        _fail("bootstrap_checkpoint_requires_exact_identity_pin")
     commit = _full_commit(REPO_ROOT, args.source_commit)
     _require_published(REPO_ROOT, commit)
     capsule_root = _private_directory(args.capsule_root)
@@ -735,6 +764,10 @@ def _create_capsule_and_freeze(args: argparse.Namespace) -> dict[str, Any]:
                 str(args.bootstrap_output_dir.expanduser().resolve(strict=True)),
                 "--bootstrap-stem",
                 args.bootstrap_stem,
+                "--bootstrap-checkpoint-sha256",
+                args.bootstrap_checkpoint_sha256,
+                "--bootstrap-step",
+                str(args.bootstrap_step),
             )
         )
     result = subprocess.run(
@@ -765,6 +798,8 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     prepare.add_argument("--bootstrap-output-dir", type=Path)
     prepare.add_argument("--bootstrap-stem", default="checkpoint_latest")
+    prepare.add_argument("--bootstrap-checkpoint-sha256")
+    prepare.add_argument("--bootstrap-step", type=int)
 
     freeze = commands.add_parser("_freeze", help=argparse.SUPPRESS)
     freeze.add_argument("--source-root", type=Path, required=True)
@@ -775,6 +810,8 @@ def _parser() -> argparse.ArgumentParser:
     freeze.add_argument("--model", type=Path, required=True)
     freeze.add_argument("--bootstrap-output-dir", type=Path)
     freeze.add_argument("--bootstrap-stem", default="checkpoint_latest")
+    freeze.add_argument("--bootstrap-checkpoint-sha256")
+    freeze.add_argument("--bootstrap-step", type=int)
     return parser
 
 
@@ -793,6 +830,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model_path=args.model.expanduser().resolve(strict=True),
                 bootstrap_output_dir=args.bootstrap_output_dir,
                 bootstrap_stem=args.bootstrap_stem,
+                bootstrap_checkpoint_sha256=args.bootstrap_checkpoint_sha256,
+                bootstrap_step=args.bootstrap_step,
             )
     except Exception as exc:  # noqa: BLE001 - stable CLI failure boundary
         print(
