@@ -48,6 +48,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_answer_trajectory,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    PROCESS_RADIX,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
@@ -63,6 +64,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
     _await_resource_guard,
+    _bootstrap_numeric_observation_extension,
     _canonical_sha256,
     _configure_window_tissue,
     _ground_state_value_embeddings,
@@ -117,6 +119,7 @@ _CONTROL_COMPATIBILITY_FIELDS = (
     "state_codebook_sha256",
     "state_codebook_grounding",
     "literal_observation_contract",
+    "numeric_observation_contract",
     "opcode_observation_contract",
     "answer_emission_contract",
     "depth_basis_size",
@@ -287,6 +290,33 @@ def _controller_config(
     literal_contract: LiteralObservationContract,
     opcode_contract: OpcodeObservationContract,
 ) -> UnifiedRecurrenceConfig:
+    numeric_identity = identity.get("numeric_observation_contract")
+    numeric_max_value = literal_contract.max_value
+    if numeric_identity is not None:
+        if not isinstance(numeric_identity, dict) or set(numeric_identity) != {
+            "schema",
+            "digit_token_ids",
+            "max_value",
+            "contract_sha256",
+            "encoding",
+            "radix",
+        }:
+            raise RuntimeError("unified checkpoint numeric observation contract differs")
+        numeric_contract = LiteralObservationContract(
+            tuple(numeric_identity.get("digit_token_ids", ())),
+            max_value=numeric_identity.get("max_value"),
+            schema=numeric_identity.get("schema"),
+        )
+        if (
+            numeric_contract.contract_sha256 != numeric_identity.get("contract_sha256")
+            or numeric_contract.digit_token_ids != literal_contract.digit_token_ids
+            or numeric_contract.max_value < literal_contract.max_value
+            or numeric_identity.get("encoding")
+            != "direct_category_then_ordered_radix_pair"
+            or numeric_identity.get("radix") != PROCESS_RADIX
+        ):
+            raise RuntimeError("unified checkpoint numeric observation contract differs")
+        numeric_max_value = numeric_contract.max_value
     family_identity = identity.get("frontier_family_observation_contract")
     if not isinstance(family_identity, dict):
         raise RuntimeError("unified checkpoint frontier family contract is absent")
@@ -302,6 +332,7 @@ def _controller_config(
         minimum_iterations=1,
         initialization_seed=int(identity["init_seed"]),
         literal_digit_token_ids=literal_contract.digit_token_ids,
+        numeric_observation_max_value=numeric_max_value,
         opcode_token_patterns=opcode_contract.patterns,
         opcode_context_patterns=opcode_contract.contexts,
         frontier_family_token_patterns=family_patterns,
@@ -612,6 +643,10 @@ def _bootstrap_initial_controller(
         parent_identity=parent_identity,
         child_identity=identity,
     )
+    numeric_observation_extension = _bootstrap_numeric_observation_extension(
+        parent_identity,
+        identity,
+    )
     observed_extensions = {
         "initial_state_extension": initial_state_extension,
         "process_reader_extension": reader_extension,
@@ -619,6 +654,7 @@ def _bootstrap_initial_controller(
         "causal_action_extension": causal_action_extension,
         "family_action_extension": family_action_extension,
         "semantic_codebook_extension": codebook_extension,
+        "numeric_observation_extension": numeric_observation_extension,
     }
     for name, observed in observed_extensions.items():
         if observed != bootstrap.get(name):

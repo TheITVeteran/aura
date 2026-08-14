@@ -134,6 +134,49 @@ def test_action_workspace_attaches_as_exact_noop_then_changes_logits() -> None:
     )
 
 
+def test_action_workspace_causally_reads_complete_prior_process_memory() -> None:
+    controller = _controller()
+    controller.action_workspace_output = mx.random.normal(
+        controller.action_workspace_output.shape,
+        key=mx.random.key(901),
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(902))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(903))
+    left = mx.zeros((1, 13, 64), dtype=mx.float32)
+    right = left.at[:, -1, :].add(5.0)
+
+    left_logits = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        process_memory=left,
+    )
+    right_logits = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        process_memory=right,
+    )
+    mx.eval(left_logits, right_logits)
+
+    assert not bool(mx.array_equal(left_logits, right_logits))
+    assert controller.receipt()["action_process_memory"] == {
+        "source": "complete_prior_typed_process_tape",
+        "future_steps_visible": False,
+        "private_answer_exposed": False,
+    }
+    with pytest.raises(ValueError, match="action process memory"):
+        controller.action_logits(
+            evidence,
+            hidden,
+            state_slot_start=4,
+            step=3,
+            process_memory=mx.zeros((2, 13, 64)),
+        )
+
+
 def test_public_family_experts_attach_as_exact_noop_and_route_independently() -> None:
     patterns = tuple(
         (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))

@@ -214,6 +214,36 @@ def test_tokenizer_literal_observation_causally_changes_problem_evidence() -> No
     assert not bool(mx.array_equal(initial_12, initial_13))
 
 
+def test_numeric_observation_exposes_large_values_as_ordered_radix_pairs() -> None:
+    digit_ids = tuple(range(100, 110))
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            literal_digit_token_ids=digit_ids,
+            numeric_observation_max_value=960,
+        )
+    )
+    problem = mx.zeros((3, 4, 32), dtype=mx.float32)
+    grounded = controller.ground_literal_evidence(
+        problem,
+        mx.array(
+            [
+                [50, 109, 108, 51],
+                [50, 109, 107, 51],
+                [109, 106, 101, 51],
+            ]
+        ),
+    )
+    mx.eval(grounded)
+
+    assert not bool(mx.all(grounded[0, 2, :] == 0.0))
+    assert not bool(mx.array_equal(grounded[0, 2, :], grounded[1, 2, :]))
+    # 961 is outside the declared bounded sensor and therefore contributes no
+    # fabricated category.
+    assert bool(mx.all(grounded[2, 2, :] == 0.0))
+
+
 def test_tokenizer_opcode_observation_causally_selects_the_operation() -> None:
     controller = _grounded_controller()
     problem = mx.zeros((1, 3, 32), dtype=mx.float32)

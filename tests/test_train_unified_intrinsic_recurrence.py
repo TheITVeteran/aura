@@ -49,6 +49,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _atomic_canonical_json,
     _attach_window_adapters,
     _await_resource_guard,
+    _bootstrap_numeric_observation_extension,
     _bootstrap_bundle_from_checkpoint,
     _cached_answer_binding_loss,
     _canonical_sha256,
@@ -195,6 +196,49 @@ def test_bootstrap_codebook_extension_rejects_any_other_topology_drift() -> None
             mismatches=["state_codebook_sha256", "controller_rank"],
             parent_identity={"state_codebook_sha256": "parent"},
             child_identity={"state_codebook_sha256": "child"},
+        )
+
+
+def test_bootstrap_numeric_observation_extension_is_explicit_and_bounded() -> None:
+    literal = {
+        "schema": "aura.recurrent_literal_grounding.v1",
+        "digit_token_ids": list(range(10)),
+        "max_value": 32,
+        "contract_sha256": "parent",
+    }
+    numeric = {
+        **literal,
+        "max_value": 960,
+        "contract_sha256": "child",
+        "encoding": "direct_category_then_ordered_radix_pair",
+        "radix": 31,
+    }
+
+    receipt = _bootstrap_numeric_observation_extension(
+        {"literal_observation_contract": literal},
+        {"literal_observation_contract": literal, "numeric_observation_contract": numeric},
+    )
+
+    assert receipt == {
+        "schema": "aura.unified_intrinsic.numeric_observation_extension.v1",
+        "parent_max_value": 32,
+        "child_max_value": 960,
+        "digit_token_ids_preserved": True,
+        "encoding": "direct_category_then_ordered_radix_pair",
+        "radix": 31,
+        "tensor_inventory_changed": False,
+        "newly_observable_values": [33, 960],
+    }
+
+    with pytest.raises(RuntimeError, match="numeric observation extension"):
+        _bootstrap_numeric_observation_extension(
+            {"literal_observation_contract": literal},
+            {
+                "numeric_observation_contract": {
+                    **numeric,
+                    "digit_token_ids": list(range(1, 11)),
+                }
+            },
         )
 
 
@@ -712,6 +756,16 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
         "component": "action_workspace",
         "teacher_forcing_probability": 1.0,
         "stage_progress": 0.625,
+    }
+    assert _process_training_policy(6, 8, "action_workspace") == {
+        "component": "action_workspace",
+        "teacher_forcing_probability": 0.5,
+        "stage_progress": 0.875,
+    }
+    assert _process_training_policy(7, 8, "action_workspace") == {
+        "component": "action_workspace",
+        "teacher_forcing_probability": 0.0,
+        "stage_progress": 1.0,
     }
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")

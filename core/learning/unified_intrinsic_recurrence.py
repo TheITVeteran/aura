@@ -140,6 +140,7 @@ class UnifiedRecurrenceConfig:
     action_slots: int = len(ACTION_SLOT_NAMES)
     action_cardinality: int = ACTION_CARDINALITY
     literal_digit_token_ids: tuple[int, ...] = ()
+    numeric_observation_max_value: int = MAX_PROCESS_INTEGER
     opcode_token_patterns: tuple[tuple[int, tuple[int, ...]], ...] = ()
     opcode_context_patterns: tuple[tuple[str, tuple[int, ...]], ...] = ()
     frontier_family_token_patterns: tuple[tuple[int, tuple[int, ...]], ...] = ()
@@ -157,6 +158,7 @@ class UnifiedRecurrenceConfig:
             "state_cardinality",
             "action_slots",
             "action_cardinality",
+            "numeric_observation_max_value",
         ):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
@@ -171,6 +173,8 @@ class UnifiedRecurrenceConfig:
             raise ValueError("action slot count differs from the canonical schema")
         if self.action_cardinality != ACTION_CARDINALITY:
             raise ValueError("action cardinality differs from the canonical schema")
+        if self.numeric_observation_max_value < LITERAL_MAX_VALUE:
+            raise ValueError("numeric observation range is smaller than literal grounding")
         if self.literal_digit_token_ids and (
             len(self.literal_digit_token_ids) != 10
             or len(set(self.literal_digit_token_ids)) != 10
@@ -1417,7 +1421,14 @@ class UnifiedRecurrentController(nn.Module):
         return logits
 
     def ground_literal_evidence(self, problem_evidence: Any, token_ids: Any) -> Any:
-        """Add exact integer observations without assigning them semantic roles."""
+        """Add exact bounded integers without assigning them semantic roles.
+
+        Values inside the categorical vocabulary retain their established
+        embedding exactly. Larger values are represented by an ordered radix
+        pair using the same grounded codebook. This makes the full process
+        machine range observable without adding one unrelated learned row per
+        integer or asking the transformer to rediscover token arithmetic.
+        """
 
         if not self.config.literal_digit_token_ids:
             return problem_evidence
@@ -1428,11 +1439,25 @@ class UnifiedRecurrentController(nn.Module):
             or int(problem_evidence.shape[-1]) != self.config.hidden_size
         ):
             raise ValueError("literal grounding evidence and tokens differ")
-        contract = LiteralObservationContract(self.config.literal_digit_token_ids)
+        contract = LiteralObservationContract(
+            self.config.literal_digit_token_ids,
+            max_value=self.config.numeric_observation_max_value,
+        )
         values, masks = contract.observe(token_ids.tolist())
         value_ids = mx.array(values, dtype=mx.int32)
         observed = mx.array(masks, dtype=mx.float32)[..., None]
-        literal = self.literal_value_embeddings[value_ids]
+        direct_ids = mx.minimum(value_ids, LITERAL_MAX_VALUE)
+        direct = self.literal_value_embeddings[direct_ids]
+        low = self.literal_value_embeddings[value_ids % PROCESS_RADIX]
+        high = self.literal_value_embeddings[value_ids // PROCESS_RADIX]
+        # A one-coordinate roll gives the high digit a distinct role while
+        # retaining the frozen prelude's native numeric manifold.
+        wide = low + mx.roll(high, shift=1, axis=-1)
+        literal = mx.where(
+            (value_ids <= LITERAL_MAX_VALUE)[..., None],
+            direct,
+            wide,
+        )
         scale = mx.sigmoid(self.literal_grounding_logit)
         return problem_evidence + (
             observed * scale * literal.astype(problem_evidence.dtype)
@@ -1729,6 +1754,7 @@ class UnifiedRecurrentController(nn.Module):
         teacher_values: Sequence[int] | None = None,
         teacher_forcing_probability: float = 0.0,
         prior_action_probabilities: Any | None = None,
+        process_memory: Any | None = None,
         causal_action_lesion: bool = False,
         action_feedback_lesion: bool = False,
         family_action_lesion: bool = False,
@@ -1757,7 +1783,12 @@ class UnifiedRecurrentController(nn.Module):
             mx.einsum("bar,arc->bac", features, self.action_output)
             + self.action_bias
         )
-        workspace = self._action_workspace(problem_evidence, query, step=step)
+        workspace = self._action_workspace(
+            problem_evidence,
+            query,
+            step=step,
+            process_memory=process_memory,
+        )
         logits = logits + mx.einsum(
             "baw,awc->bac",
             workspace,
@@ -1894,8 +1925,9 @@ class UnifiedRecurrentController(nn.Module):
         query: Any,
         *,
         step: int,
+        process_memory: Any | None = None,
     ) -> Any:
-        """Compose public evidence into a bounded recurrent action program."""
+        """Compose public evidence and prior causal state into the next action."""
 
         depth = self.depth_features(step) @ self.action_workspace_depth
         workspace = (
@@ -1903,6 +1935,18 @@ class UnifiedRecurrentController(nn.Module):
             + depth[None, None, :]
         )
         evidence = problem_evidence.astype(mx.float32)
+        if process_memory is not None:
+            if (
+                len(process_memory.shape) != 3
+                or int(process_memory.shape[0]) != int(evidence.shape[0])
+                or int(process_memory.shape[-1]) != self.config.hidden_size
+                or int(process_memory.shape[1]) < 1
+            ):
+                raise ValueError("action process memory differs from the recurrent schema")
+            evidence = mx.concatenate(
+                (evidence, process_memory.astype(mx.float32)),
+                axis=1,
+            )
         for layer in range(2):
             normalized = self._workspace_norm(workspace)
             cross_query = normalized @ self.action_workspace_cross_query[layer]
@@ -2332,6 +2376,17 @@ class UnifiedRecurrentController(nn.Module):
             "action_processor": (
                 "public_evidence_bounded_autoregressive_typed_action_workspace"
             ),
+            "action_process_memory": {
+                "source": "complete_prior_typed_process_tape",
+                "future_steps_visible": False,
+                "private_answer_exposed": False,
+            },
+            "numeric_observation": {
+                "max_value": self.config.numeric_observation_max_value,
+                "encoding": "direct_category_then_ordered_radix_pair",
+                "radix": PROCESS_RADIX,
+                "semantic_role_inferred": False,
+            },
             "predicted_action_is_state_transition_input": True,
             "causal_action_decoder": {
                 "field_order": list(ACTION_SLOT_NAMES),
@@ -2632,6 +2687,11 @@ def unified_recurrent_hidden_states(
                     ),
                     teacher_forcing_probability=state_teacher_forcing_probability,
                     prior_action_probabilities=prior_action_probabilities,
+                    process_memory=(
+                        mx.concatenate(process_tape, axis=1)
+                        if process_tape
+                        else None
+                    ),
                     causal_action_lesion=causal_action_lesion,
                     action_feedback_lesion=action_feedback_lesion,
                     family_action_lesion=family_action_lesion,
@@ -3072,6 +3132,8 @@ __all__ = [
     "CAUSAL_ACTION_PARAMETER_NAMES",
     "FAMILY_ACTION_PARAMETER_NAMES",
     "FRONTIER_ACTION_EXPERT_COUNT",
+    "MAX_PROCESS_INTEGER",
+    "PROCESS_RADIX",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",

@@ -72,6 +72,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     CAUSAL_ACTION_PARAMETER_NAMES,
     FAMILY_ACTION_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
+    MAX_PROCESS_INTEGER,
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
     UnifiedRecurrenceConfig,
@@ -792,9 +793,17 @@ def _process_training_policy(
             "stage_progress": (step + 1) / total_steps,
         }
     if curriculum == "action_workspace":
+        autonomous_start = 3 * total_steps // 4
+        teacher_probability = 1.0
+        if step >= autonomous_start:
+            autonomous_steps = total_steps - autonomous_start
+            teacher_probability = max(
+                0.0,
+                1.0 - (step - autonomous_start + 1) / autonomous_steps,
+            )
         return {
             "component": "action_workspace",
-            "teacher_forcing_probability": 1.0,
+            "teacher_forcing_probability": teacher_probability,
             "stage_progress": (step + 1) / total_steps,
         }
     if curriculum != "factorized" or total_steps < 8:
@@ -2730,6 +2739,10 @@ def _bootstrap_bundle_from_checkpoint(
         parent_identity=parent_identity,
         child_identity=expected_identity,
     )
+    numeric_observation_extension = _bootstrap_numeric_observation_extension(
+        parent_identity,
+        expected_identity,
+    )
     if set(bundle_values) != expected:
         raise RuntimeError("unified recurrence bootstrap tensor inventory differs")
     bundle.update(tree_unflatten(list(bundle_values.items())))
@@ -2750,6 +2763,8 @@ def _bootstrap_bundle_from_checkpoint(
     }
     if codebook_extension is not None:
         result["semantic_codebook_extension"] = codebook_extension
+    if numeric_observation_extension is not None:
+        result["numeric_observation_extension"] = numeric_observation_extension
     if initial_state_extension is not None:
         result["initial_state_extension"] = initial_state_extension
     if reader_extension is not None:
@@ -2767,6 +2782,45 @@ def _tensor_sha256(value: Any) -> str:
     materialized = value.astype(mx.float32)
     mx.eval(materialized)
     return hashlib.sha256(bytes(memoryview(materialized))).hexdigest()
+
+
+def _bootstrap_numeric_observation_extension(
+    parent_identity: dict[str, Any],
+    child_identity: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Audit a wider public-number sensor without pretending tensors changed."""
+
+    parent = parent_identity.get(
+        "numeric_observation_contract",
+        parent_identity.get("literal_observation_contract"),
+    )
+    child = child_identity.get("numeric_observation_contract")
+    if child is None or _canonical_sha256(parent) == _canonical_sha256(child):
+        return None
+    if not isinstance(parent, dict) or not isinstance(child, dict):
+        raise RuntimeError("unified recurrence numeric observation extension differs")
+    if (
+        parent.get("digit_token_ids") != child.get("digit_token_ids")
+        or type(parent.get("max_value")) is not int
+        or type(child.get("max_value")) is not int
+        or int(child["max_value"]) <= int(parent["max_value"])
+        or child.get("encoding") != "direct_category_then_ordered_radix_pair"
+        or child.get("radix") != 31
+    ):
+        raise RuntimeError("unified recurrence numeric observation extension differs")
+    return {
+        "schema": "aura.unified_intrinsic.numeric_observation_extension.v1",
+        "parent_max_value": int(parent["max_value"]),
+        "child_max_value": int(child["max_value"]),
+        "digit_token_ids_preserved": True,
+        "encoding": child["encoding"],
+        "radix": child["radix"],
+        "tensor_inventory_changed": False,
+        "newly_observable_values": [
+            int(parent["max_value"]) + 1,
+            int(child["max_value"]),
+        ],
+    }
 
 
 def _merge_bootstrap_initial_state_extension(
@@ -3924,6 +3978,10 @@ def main() -> int:
             )
         literal_digit_ids = tokenizer_digit_token_ids(tokenizer)
         literal_contract = LiteralObservationContract(literal_digit_ids)
+        numeric_observation_contract = LiteralObservationContract(
+            literal_digit_ids,
+            max_value=MAX_PROCESS_INTEGER,
+        )
         opcode_contract = tokenizer_opcode_contract(tokenizer)
         family_contract = tokenizer_frontier_family_contract(tokenizer)
         answer_emission_contract = tokenizer_answer_emission_contract(
@@ -3971,6 +4029,7 @@ def main() -> int:
                 ],
                 "entries_per_live_step": (len(ACTION_SLOT_NAMES) + 3 * len(STATE_SLOT_NAMES)),
                 "terminal_stutter_entries_masked": True,
+                "next_action_reads_complete_prior_tape": True,
                 "private_answer_exposed": False,
             },
         }
@@ -3989,6 +4048,7 @@ def main() -> int:
                 minimum_iterations=1,
                 initialization_seed=args.init_seed,
                 literal_digit_token_ids=literal_digit_ids,
+                numeric_observation_max_value=(numeric_observation_contract.max_value),
                 opcode_token_patterns=opcode_contract.patterns,
                 opcode_context_patterns=opcode_contract.contexts,
                 frontier_family_token_patterns=family_contract.patterns,
@@ -4057,6 +4117,12 @@ def main() -> int:
             "literal_observation_contract": {
                 **literal_contract.to_dict(),
                 "contract_sha256": literal_contract.contract_sha256,
+            },
+            "numeric_observation_contract": {
+                **numeric_observation_contract.to_dict(),
+                "contract_sha256": numeric_observation_contract.contract_sha256,
+                "encoding": "direct_category_then_ordered_radix_pair",
+                "radix": 31,
             },
             "opcode_observation_contract": {
                 **opcode_contract.to_dict(),
