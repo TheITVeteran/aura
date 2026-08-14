@@ -64,6 +64,20 @@ _ALLOWED_INTERNAL_IMPORTS = {
     # the generator; they are the deterministic machine the grader uses.
     "core.brain.llm.latent_cortex.typed_action_compiler",
     "core.brain.llm.latent_cortex.typed_program_executor",
+    # Same argument, one module later. `episodic_neural_readout_contract` is
+    # a PURE evidence contract — hashlib, json, math, and nothing else; its
+    # own docstring says so and the forbidden-root check below still applies
+    # to it. "Neural" names what the readout DESCRIBES, not what this module
+    # imports.
+    #
+    # It arrived as a new import inside `fast_weight_learning`, which is
+    # already declared, so the audit failed transitively and critic identity
+    # stopped being independently provable. That revoked the task verifier
+    # on EVERY episode — `test_handler_builds_task_verifier_when_guided` and
+    # `test_powered_shared_blind_spots_causally_revoke_worker_verifier` were
+    # both red for this one omission, and the live effect was a verifier
+    # that attached on zero turns.
+    "core.brain.llm.latent_cortex.episodic_neural_readout_contract",
     "core.brain.llm.latent_cortex.verifier_gain_search",
 }
 _FORBIDDEN_IMPORT_ROOTS = {
