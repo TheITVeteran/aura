@@ -457,6 +457,17 @@ _MAX_FOREGROUND_READY_WAIT_S = 600.0
 _FOREGROUND_CONTEXT_WINDOW_DEFAULT = 16384
 _FOREGROUND_CONTEXT_WINDOW_FLOOR = 4096
 
+#: The sampling advisories Aura's own cognition produces. Anything under one
+#: of these keys must be present in ``state.response_modifiers`` — where the
+#: cognitive engine writes it — before it may move temperature or the token
+#: budget. A dict that appears only in the caller's context is a caller
+#: steering the sampler, which is what "not caller authority" excludes.
+_SAMPLING_BIAS_KEYS = (
+    "sampling_bias",
+    "imagination_sampling_bias",
+    "bicameral_sampling_bias",
+)
+
 _INFERENCE_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -1456,6 +1467,33 @@ class InferenceGate:
             return False
         self._last_heuristic_shed_at = now
         return True
+
+    @staticmethod
+    def _modulator_factor(raw: Any, *, source: str, low: float, high: float) -> float:
+        """A multiplier from a subsystem, or 1.0 if it is not usable.
+
+        Six modulators — homeostatic coupling, homeostasis, morphogenesis,
+        plasticity, temporal continuity, somatic qualia — compose their outputs
+        into the same temperature and token budget with raw arithmetic. One NaN
+        anywhere makes every later comparison False and carries to the end;
+        one absurd factor multiplies the budget past the window. They now share
+        one contract: finite, bounded, and 1.0 when the subsystem gave
+        something this code cannot use.
+        """
+        value = _finite(raw)
+        if value is None:
+            logger.debug("Ignoring non-finite modulator factor from %s: %r", source, raw)
+            return 1.0
+        return max(low, min(high, value))
+
+    @staticmethod
+    def _modulator_delta(raw: Any, *, source: str, limit: float) -> float:
+        """An additive nudge from a subsystem, or 0.0 if it is not usable."""
+        value = _finite(raw)
+        if value is None:
+            logger.debug("Ignoring non-finite modulator delta from %s: %r", source, raw)
+            return 0.0
+        return max(-limit, min(limit, value))
 
     @classmethod
     def _requested_timeout_s(cls, timeout: Any, default: float) -> float:
@@ -5391,26 +5429,39 @@ class InferenceGate:
     ) -> tuple[float | None, int, dict[str, float]]:
         """Apply bounded cognitive sampling bias from runtime state.
 
-        Biases are advisory state outputs, not caller authority. They are
-        intentionally narrow so imagination/active-inference can shape normal
-        user-facing speech without destabilizing proof, health, or benchmark
-        lanes.
+        Biases are advisory state outputs, not caller authority — and that
+        sentence used to be a comment sitting directly above three reads
+        straight out of the caller's ``context`` dict, with no way to tell one
+        of Aura's own frames from a value an API client typed. Every accepted
+        bias now names where it came from, and the accepted sources are the
+        cognitive engine's own frames.
+
+        ``state.response_modifiers`` is Aura's state; the cognitive engine
+        writes it. ``context`` is whatever the caller passed, so a bias found
+        there is only honoured when it also appears in state — that is,
+        when the engine put it in both.
         """
 
-        biases: list[Any] = [
-            context.get("sampling_bias"),
-            context.get("imagination_sampling_bias"),
-            context.get("bicameral_sampling_bias"),
-        ]
         modifiers = getattr(state, "response_modifiers", None)
-        if isinstance(modifiers, dict):
-            biases.extend(
-                [
-                    modifiers.get("sampling_bias"),
-                    modifiers.get("imagination_sampling_bias"),
-                    modifiers.get("bicameral_sampling_bias"),
-                ]
+        state_modifiers = modifiers if isinstance(modifiers, dict) else {}
+        biases: list[Any] = []
+        bias_sources: list[str] = []
+        for key in _SAMPLING_BIAS_KEYS:
+            own = state_modifiers.get(key)
+            if isinstance(own, dict):
+                biases.append(own)
+                bias_sources.append(f"state:{key}")
+                continue
+            supplied = context.get(key)
+            if not isinstance(supplied, dict):
+                continue
+            # Present in context and NOT in state: nothing in the runtime
+            # produced it this turn. Advisory means advisory from her own
+            # cognition, so it is recorded and dropped rather than applied.
+            logger.debug(
+                "Ignoring caller-supplied %s: no matching frame in runtime state.", key
             )
+            context.setdefault("rejected_sampling_bias", []).append(key)
 
         temperature = base_temperature
         token_factor = 1.0
@@ -5459,6 +5510,8 @@ class InferenceGate:
             {
                 "temperature_delta": round(applied_temperature_delta, 4),
                 "max_tokens_factor": round(applied_token_factor, 4),
+                # Provenance: which frames actually moved sampling this turn.
+                "sources": bias_sources,
             },
         )
 
@@ -6635,24 +6688,34 @@ class InferenceGate:
                     f"- Unity score: {float(getattr(unity_state, 'unity_score', 0.0) or 0.0):.3f}",
                     f"- Fragmentation: {float(getattr(unity_state, 'fragmentation_score', 0.0) or 0.0):.3f}",
                 ]
+                if unity_report is not None:
+                    # The verdict used to be read only when top_causes was
+                    # non-empty, so an unsafe report that listed no causes left
+                    # the default True standing and gated nothing.
+                    safe_to_self_report = bool(
+                        getattr(unity_report, "safe_to_self_report", True)
+                    )
+                    lines.append(f"- Safe to self-report: {safe_to_self_report}")
                 if unity_report and getattr(unity_report, "top_causes", None):
                     rendered = ", ".join(
                         f"{str(name).replace('_', ' ')}={float(weight):.2f}"
                         for name, weight, _text in list(unity_report.top_causes)[:3]
                     )
                     lines.append(f"- Top causes: {rendered}")
-                    safe_to_self_report = bool(
-                        getattr(unity_report, "safe_to_self_report", True)
-                    )
-                    lines.append(f"- Safe to self-report: {safe_to_self_report}")
                 if unity_repair and getattr(unity_repair, "steps", None):
                     lines.append(f"- Repair bias: {str(unity_repair.steps[0])[:180]}")
                 segments.add("unity", "\n".join(lines), priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             segments.omit("unity", exc)
+            # The unity check was ATTEMPTED and failed. That is not the same as
+            # a runtime with no unity service — the assessment that decides
+            # whether she may describe her own state broke, and leaving the
+            # default True is the absence of a check counted as a pass.
+            safe_to_self_report = False
             _record_inference_degradation(
                 exc,
-                action="omitted unavailable living-mind context signal and continued prompt assembly",
+                action="suppressed the grounded self-report because unity could not be assessed",
+                severity="warning",
             )
             logger.debug("Unity injection unavailable: %s", exc)
 
@@ -6660,8 +6723,9 @@ class InferenceGate:
             if not safe_to_self_report:
                 logger.info(
                     "🧩 Grounded self-report suppressed: unity assessment marked "
-                    "self-report unsafe this turn."
+                    "self-report unsafe this turn, or could not be made."
                 )
+                segments.omit("self_report", "unity_verdict_unsafe_or_unavailable")
             else:
                 self_report = ServiceContainer.get("self_report_engine", default=None)
                 if self_report and hasattr(self_report, "generate_state_report"):
@@ -9598,12 +9662,35 @@ class InferenceGate:
             try:
                 from core.container import ServiceContainer
                 phi_val = 1.0  # default
+                phi_is_measured = False
                 phi_core = ServiceContainer.get("phi_core", default=None)
                 if phi_core is not None:
                     if hasattr(phi_core, "get_live_phi"):
-                        phi_val = max(0.0, float(phi_core.get_live_phi(include_surrogate=True)))
+                        # include_surrogate=True means this number may be a
+                        # PROXY, not an exact-MIP integrated-information
+                        # measurement. It still scales the BACKGROUND token
+                        # budget — which is a defensible use of a rough
+                        # signal — but it must not be recorded as Φ, and the
+                        # foreground lane is already excluded above.
+                        phi_val = max(
+                            0.0,
+                            _finite(
+                                phi_core.get_live_phi(include_surrogate=True), 1.0
+                            )
+                            or 1.0,
+                        )
+                        phi_is_measured = False
                     elif hasattr(phi_core, "_last_result") and phi_core._last_result:
-                        phi_val = float(phi_core._last_result.phi_s)
+                        phi_val = max(
+                            0.0, _finite(phi_core._last_result.phi_s, 1.0) or 1.0
+                        )
+                        phi_is_measured = True
+                context["background_budget_signal"] = {
+                    "value": round(float(phi_val), 4),
+                    # The name of the thing, not the name of the ideal.
+                    "kind": "phi_measured" if phi_is_measured else "phi_surrogate",
+                    "scales": "background_token_budget",
+                }
                 
                 # Scale token budget for background requests only:
                 # When Φ is high, allow full budget. When Φ is low, scale down
@@ -9768,9 +9855,21 @@ class InferenceGate:
                 _homeo_coupling = ServiceContainer.get("homeostatic_coupling", default=None)
                 if _homeo_coupling:
                     _mods = _homeo_coupling.get_modifiers()
+                    _temp_factor = self._modulator_factor(
+                        _mods.temperature_mod,
+                        source="homeostatic_coupling.temperature_mod",
+                        low=0.5,
+                        high=1.5,
+                    )
+                    _depth_factor = self._modulator_factor(
+                        _mods.depth_mod,
+                        source="homeostatic_coupling.depth_mod",
+                        low=0.5,
+                        high=2.0,
+                    )
                     if somatic_temperature is not None:
-                        somatic_temperature = round(somatic_temperature * _mods.temperature_mod, 3)
-                    max_tokens = max(384, int(max_tokens * _mods.depth_mod))
+                        somatic_temperature = round(somatic_temperature * _temp_factor, 3)
+                    max_tokens = max(384, int(max_tokens * _depth_factor))
                     logger.debug(
                         "🫀 HomeostaticCoupling: temp_mod=%.2f depth_mod=%.2f → temp=%.3f tokens=%d",
                         _mods.temperature_mod,
@@ -9797,10 +9896,27 @@ class InferenceGate:
                     _h_mods = _homeostasis.get_inference_modifiers()
                     if somatic_temperature is not None:
                         somatic_temperature = round(
-                            somatic_temperature + _h_mods["temperature_mod"], 3
+                            somatic_temperature
+                            + self._modulator_delta(
+                                _h_mods["temperature_mod"],
+                                source="homeostasis.temperature_mod",
+                                limit=0.5,
+                            ),
+                            3,
                         )
                         somatic_temperature = max(0.1, min(1.5, somatic_temperature))
-                    max_tokens = max(384, int(max_tokens * _h_mods["token_multiplier"]))
+                    max_tokens = max(
+                        384,
+                        int(
+                            max_tokens
+                            * self._modulator_factor(
+                                _h_mods["token_multiplier"],
+                                source="homeostasis.token_multiplier",
+                                low=0.5,
+                                high=2.0,
+                            )
+                        ),
+                    )
                     logger.debug(
                         "🫀 Homeostasis: temp_mod=%+.3f token_mult=%.2f caution=%.2f",
                         _h_mods["temperature_mod"],
@@ -9816,18 +9932,39 @@ class InferenceGate:
                 )
                 logger.debug("Homeostasis inference modifiers unavailable: %s", _he_e)
 
-            # ── Morphogenetic Substrate (True Embodied Cognition) ────────────
-            # Curing Mind-Body Dualism: The physical tissue state directly alters
-            # the structural generation parameters (temperature, top_p, etc)
+            # ── Morphogenetic substrate → sampling parameters ────────────────
+            # What this does: reads the morphogenetic field's danger, curiosity
+            # and resource-pressure scalars and moves temperature, top_p and
+            # the repetition penalty. That is a real causal path from substrate
+            # state to output distribution, and it is worth having.
+            #
+            # What it is NOT: "curing mind-body dualism" or "true embodied
+            # cognition", which is what this comment used to claim. Nothing
+            # here establishes embodiment; it reads three numbers out of a
+            # service and scales three sampler knobs. The claim outran the
+            # code, and a claim about Aura with no test behind it is the thing
+            # this pass exists to remove (core/organism/model_validation.py).
             try:
                 from core.container import ServiceContainer
 
                 _rt = ServiceContainer.get("morphogenetic_runtime", default=None)
                 if _rt is not None:
                     _f = _rt.field.sample("global")
-                    _danger = _f.get("danger", 0.0)
-                    _curiosity = _f.get("curiosity", 0.0)
-                    _resource_pressure = _f.get("resource_pressure", 0.0)
+                    _danger = self._modulator_factor(
+                        _f.get("danger", 0.0), source="morphogenesis.danger", low=0.0, high=1.0
+                    )
+                    _curiosity = self._modulator_factor(
+                        _f.get("curiosity", 0.0),
+                        source="morphogenesis.curiosity",
+                        low=0.0,
+                        high=1.0,
+                    )
+                    _resource_pressure = self._modulator_factor(
+                        _f.get("resource_pressure", 0.0),
+                        source="morphogenesis.resource_pressure",
+                        low=0.0,
+                        high=1.0,
+                    )
 
                     if _danger > 0.3:
                         somatic_temperature = (somatic_temperature or 0.72) * (
@@ -9981,7 +10118,11 @@ class InferenceGate:
                     _tc.on_inference_start()
                     _tc_mod = _tc.compute_modulation()
                     if _tc_mod:
-                        _tc_temp_d = _tc_mod.get("temperature_delta", 0.0)
+                        _tc_temp_d = self._modulator_delta(
+                            _tc_mod.get("temperature_delta", 0.0),
+                            source="temporal_continuity.temperature_delta",
+                            limit=0.5,
+                        )
                         _tc_topp_d = _tc_mod.get("top_p_delta", 0.0)
                         _tc_rep_d = _tc_mod.get("repetition_penalty_delta", 0.0)
                         _tc_token_mult = _tc_mod.get("token_budget_multiplier", 1.0)
@@ -10006,19 +10147,39 @@ class InferenceGate:
                 )
                 logger.debug("TemporalContinuity coupling unavailable: %s", _tc_e)
 
-            # ── Somatic Qualia: Raw felt perturbation of sampling ──
-            # Not text. Not descriptions. Direct numerical deformation of the
-            # generation distribution based on substrate energy patterns,
-            # synchrony, and valence gradient.
+            # ── Somatic qualia service → sampler perturbations ──
+            # Reads temperature/top_p/repetition/frequency offsets from the
+            # somatic_qualia service and applies them, bounded, to the sampler.
+            # The perturbation is real and measurable at the output.
+            #
+            # "Raw felt perturbation" was the previous label, and the code does
+            # not support it: felt-ness is not established by a service returning
+            # four floats. The mechanism stands on its own without the claim.
             try:
                 _sq = ServiceContainer.get("somatic_qualia", default=None)
                 if _sq is not None:
                     _sq_pert = _sq.compute_perturbation()
                     if _sq_pert:
-                        _sq_temp = _sq_pert.get("temperature_perturbation", 0.0)
-                        _sq_rep = _sq_pert.get("repetition_penalty_perturbation", 0.0)
-                        _sq_topp = _sq_pert.get("top_p_perturbation", 0.0)
-                        _sq_freq = _sq_pert.get("frequency_penalty_perturbation", 0.0)
+                        _sq_temp = self._modulator_delta(
+                            _sq_pert.get("temperature_perturbation", 0.0),
+                            source="somatic_qualia.temperature",
+                            limit=0.5,
+                        )
+                        _sq_rep = self._modulator_delta(
+                            _sq_pert.get("repetition_penalty_perturbation", 0.0),
+                            source="somatic_qualia.repetition_penalty",
+                            limit=0.5,
+                        )
+                        _sq_topp = self._modulator_delta(
+                            _sq_pert.get("top_p_perturbation", 0.0),
+                            source="somatic_qualia.top_p",
+                            limit=0.5,
+                        )
+                        _sq_freq = self._modulator_delta(
+                            _sq_pert.get("frequency_penalty_perturbation", 0.0),
+                            source="somatic_qualia.frequency_penalty",
+                            limit=0.5,
+                        )
                         if somatic_temperature is not None:
                             somatic_temperature = max(0.1, min(1.5, somatic_temperature + _sq_temp))
                         if "repetition_penalty" in morpho_kwargs:

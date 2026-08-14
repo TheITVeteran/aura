@@ -297,16 +297,18 @@ def test_inference_gate_applies_bounded_runtime_imagination_sampling_bias():
 
 
 def test_inference_gate_rejects_unbounded_runtime_sampling_bias_values():
+    """Bounded even when the frame comes from her own cognition."""
+    state = AuraState.default()
+    state.response_modifiers["imagination_sampling_bias"] = {
+        "temperature_delta": 9.0,
+        "max_tokens_factor": 99.0,
+    }
+
     temperature, tokens, applied = InferenceGate._apply_runtime_sampling_biases(
         base_temperature=0.70,
         max_tokens=1000,
-        context={
-            "imagination_sampling_bias": {
-                "temperature_delta": 9.0,
-                "max_tokens_factor": 99.0,
-            }
-        },
-        state=None,
+        context={},
+        state=state,
         allow_token_scaling=True,
     )
 
@@ -314,6 +316,45 @@ def test_inference_gate_rejects_unbounded_runtime_sampling_bias_values():
     assert tokens == 1000
     assert applied["temperature_delta"] == pytest.approx(0.18)
     assert applied["max_tokens_factor"] == pytest.approx(1.0)
+
+
+def test_a_caller_supplied_sampling_bias_does_not_steer_the_sampler():
+    """"Biases are advisory state outputs, not caller authority" sat directly
+    above three reads out of the caller's own context dict."""
+    context = {
+        "imagination_sampling_bias": {
+            "temperature_delta": 0.18,
+            "max_tokens_factor": 1.2,
+        }
+    }
+
+    temperature, tokens, applied = InferenceGate._apply_runtime_sampling_biases(
+        base_temperature=0.70,
+        max_tokens=1000,
+        context=context,
+        state=AuraState.default(),
+        allow_token_scaling=True,
+    )
+
+    assert temperature == pytest.approx(0.70)
+    assert tokens == 1000
+    assert applied["sources"] == []
+    assert context["rejected_sampling_bias"] == ["imagination_sampling_bias"]
+
+
+def test_an_applied_bias_says_which_frame_produced_it():
+    state = AuraState.default()
+    state.response_modifiers["sampling_bias"] = {"temperature_delta": 0.05}
+
+    _temperature, _tokens, applied = InferenceGate._apply_runtime_sampling_biases(
+        base_temperature=0.70,
+        max_tokens=1000,
+        context={},
+        state=state,
+        allow_token_scaling=True,
+    )
+
+    assert applied["sources"] == ["state:sampling_bias"]
 
 
 def test_imagination_prompt_block_exports_canvas_without_claiming_perception():
