@@ -82,6 +82,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     bootstrap_profiles = {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
         "recovery",
@@ -333,6 +334,51 @@ def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
     stale = {**training, "train_depths": "1,3,4,5,6,8,10"}
     with pytest.raises(RuntimeError, match="compiled_task_depth_not_train_admitted"):
         _validate_task_depth_admission(stale, tasks)
+
+
+def test_process_completion_acquisition_finishes_the_bootstrapped_process() -> None:
+    training = _profile_training("process_completion_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["per_cell"] == 8
+    assert training["holdout_per_cell"] == 3
+    assert training["process_family_batch_size"] == 7
+    assert training["process_family_batch_mode"] == "balanced_families"
+    assert training["process_curriculum"] == "factorized"
+    assert training["state_warmup_steps"] == training["max_steps"] == 256
+    assert training["answer_bridge_steps"] == 0
+    assert training["state_learning_rate"] == pytest.approx(0.0002)
+    assert training["eval_every"] == 32
+    assert training["checkpoint_every"] == 16
+    assert training["state_teacher_forcing_probability"] == 1.0
+    assert training["state_teacher_forcing_final_probability"] == 0.0
+    assert arguments[arguments.index("--process-curriculum") + 1] == "factorized"
+    assert arguments[arguments.index("--process-family-batch-mode") + 1] == (
+        "balanced_families"
+    )
+
+
+def test_process_completion_signed_config_is_controller_admitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _raw = _config(tmp_path, profile="process_completion_acquisition")
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt={
+                "step": 73,
+                "checkpoint_sha256": "c" * 64,
+                "receipt_sha256": "d" * 64,
+                "identity": {"identity_sha256": "e" * 64},
+            }
+        ),
+    )
+
+    loaded = controller._load_config(path)
+
+    assert loaded["profile"] == "process_completion_acquisition"
 
 
 def test_process_family_acquisition_signed_config_is_controller_admitted(

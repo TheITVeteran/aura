@@ -67,6 +67,7 @@ PROFILES: Final = frozenset(
         "process_action_canary",
         "process_answer_bridge_canary",
         "process_canary",
+        "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
         "recovery",
@@ -279,6 +280,52 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "memory_limit_gb": 24.0,
             "wired_limit_gb": 28.0,
             "max_minutes": 120.0,
+        }
+    if profile == "process_completion_acquisition":
+        families = (
+            "novel_algorithms,mathematics,coding,scientific_inference,"
+            "long_horizon_planning,calibration,misleading_premise"
+        )
+        # The action-workspace acquisition profile deliberately updates only
+        # the prompt-to-operation path. Its checkpoint is therefore a parent,
+        # not an answer-bridge admission. This continuation gives the retained
+        # action tissue an ordered initializer/action/transition/joint
+        # curriculum and removes teacher forcing before terminal admission.
+        process_steps = 256
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": families,
+            "task_depths": "3,4,5,6,9,10",
+            "train_depths": "1,3,4,5,6,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 8,
+            "holdout_per_cell": 3,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "factorized",
+            "process_family_batch_size": 7,
+            "process_family_batch_mode": "balanced_families",
+            "process_transformer_gradient_scale": 0.1,
+            "process_query_gradient_scale": 0.01,
+            "student_rollin_probability": 0.0,
+            "student_rollin_final_probability": 0.5,
+            "state_teacher_forcing_probability": 1.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 32,
+            "checkpoint_every": 16,
+            "state_learning_rate": 0.0002,
+            "seed": 2026081401,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 180.0,
         }
     if profile in {
         "process_action_canary",
@@ -579,6 +626,7 @@ def _freeze_campaign(
     bootstrap_profiles = {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
         "recovery",
@@ -720,6 +768,7 @@ def _freeze_campaign(
                     "process_action_canary",
                     "process_answer_bridge_canary",
                     "process_canary",
+                    "process_completion_acquisition",
                     "process_family_acquisition",
                     "process_neural_acquisition",
                 }
