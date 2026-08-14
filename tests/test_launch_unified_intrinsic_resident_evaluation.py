@@ -164,6 +164,7 @@ def _terminal_fixture(
             "answer_bridge_supervision": {
                 "schema": "aura.unified_intrinsic.answer_bridge_supervision.v2",
                 "answer_digit_pointer_enabled": False,
+                "generated_history_policy": "full_autonomous_prefix",
                 "process_tape": {
                     "schema": "aura.unified_intrinsic.process_tape.v1",
                     "contents": ["typed_action", "committed_state"],
@@ -420,6 +421,38 @@ def test_prepare_rejects_admission_with_a_different_pointer_policy(
     admission["admission_sha256"] = launcher.canonical_sha256(admission_body)
     receipt_body = {
         key: value for key, value in receipt.items() if key != "receipt_sha256"
+    }
+    receipt["receipt_sha256"] = launcher.canonical_sha256(receipt_body)
+    (output / "training_receipt.json").write_bytes(
+        launcher.canonical_bytes(receipt) + b"\n"
+    )
+
+    with pytest.raises(
+        launcher.ResidentEvaluationLaunchError,
+        match="requires an admitted answer-bridge checkpoint",
+    ):
+        launcher.prepare(arguments)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("generated_history_policy", "grammar_preserving_digit_substitution"),
+        ("process_tape", {}),
+    ),
+)
+def test_prepare_rejects_a_different_answer_bridge_training_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    arguments, config, _checkpoint = _terminal_fixture(tmp_path, monkeypatch)
+    output = Path(str(config["paths"]["training_output"]))
+    receipt = launcher._read_document(output / "training_receipt.json")
+    receipt["identity"]["answer_bridge_supervision"][field] = value
+    receipt_body = {
+        key: item for key, item in receipt.items() if key != "receipt_sha256"
     }
     receipt["receipt_sha256"] = launcher.canonical_sha256(receipt_body)
     (output / "training_receipt.json").write_bytes(

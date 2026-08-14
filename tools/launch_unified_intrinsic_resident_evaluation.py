@@ -207,6 +207,11 @@ def _selected_checkpoint(
             == "aura.unified_intrinsic.answer_bridge_supervision.v2"
             else None
         )
+        expected_history_policy = (
+            supervision_identity.get("generated_history_policy")
+            if isinstance(supervision_identity, dict)
+            else None
+        )
         process_tape_identity = (
             supervision_identity.get("process_tape")
             if isinstance(supervision_identity, dict)
@@ -233,6 +238,12 @@ def _selected_checkpoint(
             or admission.get("answer_digit_pointer_enabled")
             is not expected_pointer_policy
             or admission.get("process_tape_enabled") is not True
+            or expected_history_policy
+            != (
+                "grammar_preserving_digit_substitution"
+                if expected_pointer_policy
+                else "full_autonomous_prefix"
+            )
             or not isinstance(process_tape_identity, dict)
             or process_tape_identity
             != {

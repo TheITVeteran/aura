@@ -2978,6 +2978,11 @@ def main() -> int:
             ),
             "unsupported_pointer_targets_are_fabricated": False,
             "answer_digit_pointer_enabled": args.task_source != "frontier_process",
+            "generated_history_policy": (
+                "full_autonomous_prefix"
+                if args.task_source == "frontier_process"
+                else "grammar_preserving_digit_substitution"
+            ),
             "process_tape": {
                 "schema": "aura.unified_intrinsic.process_tape.v1",
                 "contents": ["typed_action", "committed_state"],
@@ -3285,8 +3290,12 @@ def main() -> int:
                                 generated,
                                 probability=rollin_probability,
                                 seed=args.seed * 1_000_003 + step,
-                                interchangeable_token_ids=frozenset(
-                                    answer_emission_contract.digit_token_ids
+                                interchangeable_token_ids=(
+                                    None
+                                    if args.task_source == "frontier_process"
+                                    else frozenset(
+                                        answer_emission_contract.digit_token_ids
+                                    )
                                 ),
                             )
                             _record_student_rollin(
@@ -3382,8 +3391,12 @@ def main() -> int:
                                 generated,
                                 probability=rollin_probability,
                                 seed=args.seed * 1_000_003 + step,
-                                interchangeable_token_ids=frozenset(
-                                    answer_emission_contract.digit_token_ids
+                                interchangeable_token_ids=(
+                                    None
+                                    if args.task_source == "frontier_process"
+                                    else frozenset(
+                                        answer_emission_contract.digit_token_ids
+                                    )
                                 ),
                             )
                             _record_student_rollin(

@@ -263,7 +263,7 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
         )
     plan = RecurrentDepthPlan(2, 6, iterations=3)
 
-    _final, _trajectory, intact = unified_recurrent_hidden_states(
+    intact_final, _trajectory, intact = unified_recurrent_hidden_states(
         model,
         TOKENS,
         plan,
@@ -272,7 +272,7 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
         initial_state_teacher_values=(0, 0, 0, 0, 0),
         state_teacher_forcing_probability=1.0,
     )
-    _final, _trajectory, lesioned = unified_recurrent_hidden_states(
+    lesioned_final, _trajectory, lesioned = unified_recurrent_hidden_states(
         model,
         TOKENS,
         plan,
@@ -288,6 +288,7 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
     assert intact.process_tape_active_entries == intact.process_tape_entries
     assert lesioned.process_tape_entries == 0
     assert lesioned.process_tape_active_entries == 0
+    assert not bool(mx.array_equal(intact_final, lesioned_final))
 
 
 def test_answer_digit_place_reads_the_selected_terminal_register() -> None:
