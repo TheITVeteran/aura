@@ -156,6 +156,36 @@ class FrontierFamilyObservationContract:
             recognized.append(bool(matches))
         return tuple(values), tuple(recognized)
 
+    def public_initial_states(
+        self,
+        token_rows: Sequence[Sequence[int]],
+        literal_contract: Any,
+    ) -> tuple[tuple[tuple[int, ...], ...], tuple[bool, ...]]:
+        """Compile family-defined initial state from public evidence only.
+
+        Frontier process families begin with cleared registers. Traversal also
+        exposes the number of public nodes as its remaining-work counter. No
+        private transition, answer, or holdout label enters this compiler.
+        """
+
+        _literal_values, literal_masks = literal_contract.observe(token_rows)
+        opcodes, recognized = self.observe(token_rows)
+        states: list[tuple[int, ...]] = []
+        for opcode, known, masks in zip(
+            opcodes, recognized, literal_masks, strict=True
+        ):
+            remaining = sum(bool(mask) for mask in masks)
+            states.append(
+                (
+                    0,
+                    0,
+                    remaining if known and opcode == OP_FRONTIER_TRAVERSE else 0,
+                    0,
+                    0,
+                )
+            )
+        return tuple(states), recognized
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema,

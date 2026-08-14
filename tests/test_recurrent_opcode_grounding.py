@@ -83,6 +83,21 @@ def test_frontier_family_contract_rejects_conflicting_public_markers() -> None:
         contract.observe(((100, 200, 101, 201),))
 
 
+def test_frontier_family_contract_compiles_public_initial_state() -> None:
+    contract = FrontierFamilyObservationContract(FRONTIER_PATTERNS)
+    literals = LiteralObservationContract(tuple(range(10)), max_value=99)
+    states, recognized = contract.public_initial_states(
+        (
+            (100, 200, 4, 2, 99, 1, 7, 99, 9),
+            (104, 204, 4, 2),
+            (4, 2),
+        ),
+        literals,
+    )
+    assert states == ((0, 0, 3, 0, 0), (0, 0, 0, 0, 0), (0, 0, 0, 0, 0))
+    assert recognized == (True, True, False)
+
+
 def test_opcode_contract_marks_every_exact_occurrence_without_assigning_relevance() -> None:
     contract = OpcodeObservationContract(
         OPCODE_PATTERNS,

@@ -285,6 +285,7 @@ def _load_config(path: Path) -> dict[str, Any]:
             "full",
             "process_action_canary",
             "process_answer_bridge_canary",
+            "process_analytic_acquisition",
             "process_canary",
             "process_completion_acquisition",
             "process_family_acquisition",
@@ -313,6 +314,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     bootstrap_profiles = {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_analytic_acquisition",
         "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
@@ -991,6 +993,7 @@ def _trainer_command(
     if config["profile"] in {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_analytic_acquisition",
         "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",

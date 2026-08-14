@@ -50,14 +50,15 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _atomic_canonical_json,
     _attach_window_adapters,
     _await_resource_guard,
-    _bootstrap_numeric_observation_extension,
     _bootstrap_bundle_from_checkpoint,
+    _bootstrap_numeric_observation_extension,
     _cached_answer_binding_loss,
     _canonical_sha256,
     _clip_gradient_groups,
     _clip_gradient_norm,
     _configure_window_tissue,
     _deterministic_student_mix,
+    _dual_ridge_residual_readout,
     _evaluate,
     _evaluate_answer_bridge_admission,
     _evaluate_answer_bridge_diagnostic,
@@ -71,8 +72,8 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_latest_checkpoint,
     _masked_process_decisions,
     _mean_gradient_trees,
-    _merge_bootstrap_action_workspace_extension,
     _merge_bootstrap_action_literal_binding_extension,
+    _merge_bootstrap_action_workspace_extension,
     _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
     _merge_bootstrap_family_action_extension,
@@ -439,6 +440,20 @@ def test_bootstrap_family_action_extension_is_exact_and_rejects_active_output() 
     }
     with pytest.raises(RuntimeError, match="experts are not a no-op"):
         _merge_bootstrap_family_action_extension(parent, active)
+
+
+def test_bootstrap_family_action_extension_can_add_only_new_bias() -> None:
+    output_name = "controller.action_family_output"
+    bias_name = "controller.action_family_bias"
+    output = mx.zeros((7, 8, 4, 33), dtype=mx.float32)
+    bias = mx.zeros((7, 8, 33), dtype=mx.float32)
+    migrated, receipt = _merge_bootstrap_family_action_extension(
+        {output_name: output},
+        {output_name: output, bias_name: bias},
+    )
+    assert set(migrated) == {output_name, bias_name}
+    assert receipt is not None
+    assert receipt["new_tensor_names"] == [bias_name]
 
 
 def test_bootstrap_action_literal_binding_is_exact_and_rejects_active_output() -> None:
@@ -915,8 +930,34 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
         "teacher_forcing_probability": 0.0,
         "stage_progress": 1.0,
     }
+    assert _process_training_policy(3, 8, "transition_only") == {
+        "component": "transition",
+        "teacher_forcing_probability": 1.0,
+        "stage_progress": 0.5,
+    }
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")
+
+
+def test_dual_ridge_residual_readout_writes_exact_training_decision() -> None:
+    import numpy as np
+
+    features = np.asarray(
+        [[-2.0, 0.0], [-1.0, 1.0], [1.0, -1.0], [2.0, 0.0]],
+        dtype=np.float32,
+    )
+    base = np.zeros((4, 3), dtype=np.float32)
+    labels = np.asarray([0, 0, 2, 2], dtype=np.int64)
+    weight, bias, report = _dual_ridge_residual_readout(
+        features,
+        base,
+        labels,
+        regularization=1e-4,
+        margin=8.0,
+    )
+    fitted = base + features @ weight + bias
+    assert np.array_equal(np.argmax(fitted, axis=1), labels)
+    assert report["after_accuracy"] == 1.0
 
 
 def test_process_component_gradients_prevent_cross_role_rewrites() -> None:

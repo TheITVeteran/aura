@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import tools.run_unified_intrinsic_resident_campaign as controller
+from core.learning.frontier_process_supervision import frontier_process_task_battery
 from tools import run_detached_step as detached
 from tools.prepare_unified_intrinsic_resident_campaign import (
     _freeze_bootstrap_checkpoint,
@@ -17,7 +18,6 @@ from tools.prepare_unified_intrinsic_resident_campaign import (
     _training_cli,
     _validate_task_depth_admission,
 )
-from core.learning.frontier_process_supervision import frontier_process_task_battery
 from tools.unified_intrinsic_checkpoint import resolve_checkpoint_generation
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
@@ -82,6 +82,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     bootstrap_profiles = {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_analytic_acquisition",
         "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
@@ -355,6 +356,21 @@ def test_process_completion_acquisition_finishes_the_bootstrapped_process() -> N
     assert arguments[arguments.index("--process-curriculum") + 1] == "factorized"
     assert arguments[arguments.index("--process-family-batch-mode") + 1] == (
         "balanced_families"
+    )
+
+
+def test_process_analytic_acquisition_writes_training_only_readout() -> None:
+    training = _profile_training("process_analytic_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["max_steps"] == training["state_warmup_steps"] == 1
+    assert training["process_curriculum"] == "transition_only"
+    assert training["analytic_action_readout_fit"] is True
+    assert training["process_transformer_gradient_scale"] == 0.0
+    assert training["process_query_gradient_scale"] == 0.0
+    assert "--analytic-action-readout-fit" in arguments
+    assert arguments[arguments.index("--process-curriculum") + 1] == (
+        "transition_only"
     )
 
 

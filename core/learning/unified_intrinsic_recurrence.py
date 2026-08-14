@@ -110,7 +110,10 @@ CAUSAL_ACTION_PARAMETER_NAMES: Final = (
     "action_causal_prior_projection",
     "action_causal_output",
 )
-FAMILY_ACTION_PARAMETER_NAMES: Final = ("action_family_output",)
+FAMILY_ACTION_PARAMETER_NAMES: Final = (
+    "action_family_output",
+    "action_family_bias",
+)
 ACTION_LITERAL_BINDING_PARAMETER_NAMES: Final = (
     "action_literal_binding_query",
     "action_literal_binding_key",
@@ -668,6 +671,14 @@ class UnifiedRecurrentController(nn.Module):
                 FRONTIER_ACTION_EXPERT_COUNT,
                 config.action_slots,
                 workspace_width,
+                config.action_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        self.action_family_bias = mx.zeros(
+            (
+                FRONTIER_ACTION_EXPERT_COUNT,
+                config.action_slots,
                 config.action_cardinality,
             ),
             dtype=mx.float32,
@@ -1474,6 +1485,28 @@ class UnifiedRecurrentController(nn.Module):
             )
             known = mx.array(recognized, dtype=mx.bool_)
             logits = mx.where(known[:, None, None], exact, logits)
+        if (
+            token_ids is not None
+            and self.config.literal_digit_token_ids
+            and self.config.frontier_family_token_patterns
+        ):
+            family_contract = FrontierFamilyObservationContract(
+                self.config.frontier_family_token_patterns
+            )
+            literal_contract = LiteralObservationContract(
+                self.config.literal_digit_token_ids,
+                max_value=self.config.numeric_observation_max_value,
+            )
+            public_values, recognized = family_contract.public_initial_states(
+                token_ids.tolist(), literal_contract
+            )
+            exact = self._exact_categorical_logits(
+                public_values,
+                slots=self.config.state_slots,
+                cardinality=self.config.state_cardinality,
+            )
+            known = mx.array(recognized, dtype=mx.bool_)
+            logits = mx.where(known[:, None, None], exact, logits)
         return logits
 
     def ground_literal_evidence(self, problem_evidence: Any, token_ids: Any) -> Any:
@@ -2016,6 +2049,7 @@ class UnifiedRecurrentController(nn.Module):
         action_feedback_lesion: bool = False,
         family_action_lesion: bool = False,
         action_literal_binding_lesion: bool = False,
+        action_workspace_trajectory: list[Any] | None = None,
     ) -> Any:
         """Decode the next typed operation from public evidence and current state."""
 
@@ -2047,6 +2081,8 @@ class UnifiedRecurrentController(nn.Module):
             step=step,
             process_memory=process_memory,
         )
+        if action_workspace_trajectory is not None:
+            action_workspace_trajectory.append(workspace)
         logits = logits + mx.einsum(
             "baw,awc->bac",
             workspace,
@@ -2498,7 +2534,7 @@ class UnifiedRecurrentController(nn.Module):
             "baw,eawc->beac",
             workspace.astype(mx.float32),
             self.action_family_output,
-        )
+        ) + self.action_family_bias[None, :, :, :]
         return base_logits + mx.einsum("be,beac->bac", routes, expert_logits)
 
     @staticmethod
@@ -2875,6 +2911,7 @@ def unified_recurrent_hidden_states(
     state_slot_start: int | None = None,
     state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
+    action_workspace_trajectory: list[Any] | None = None,
     initial_state_logit_trajectory: list[Any] | None = None,
     decode_state_trajectory: list[Any] | None = None,
     recurrent_input_trajectory: list[Any] | None = None,
@@ -3108,6 +3145,7 @@ def unified_recurrent_hidden_states(
                     action_feedback_lesion=action_feedback_lesion,
                     family_action_lesion=family_action_lesion,
                     action_literal_binding_lesion=action_literal_binding_lesion,
+                    action_workspace_trajectory=action_workspace_trajectory,
                 )
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits

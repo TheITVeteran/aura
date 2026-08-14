@@ -134,6 +134,22 @@ def test_action_workspace_attaches_as_exact_noop_then_changes_logits() -> None:
     )
 
 
+def test_action_workspace_can_be_captured_for_training_only_readout_fit() -> None:
+    controller = _controller()
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(197))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(198))
+    trajectory: list = []
+    controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        action_workspace_trajectory=trajectory,
+    )
+    assert len(trajectory) == 1
+    assert trajectory[0].shape[:2] == (1, controller.config.action_slots)
+
+
 def test_action_workspace_causally_reads_complete_prior_process_memory() -> None:
     controller = _controller()
     controller.action_workspace_output = mx.random.normal(
@@ -465,8 +481,11 @@ def test_public_family_expert_gradient_isolated_to_selected_route() -> None:
     loss, gradients = nn.value_and_grad(controller, objective)(controller)
     mx.eval(loss, gradients)
     expert_gradients = gradients["action_family_output"]
+    bias_gradients = gradients["action_family_bias"]
     assert float(mx.max(mx.abs(expert_gradients[0]))) > 0.0
     assert float(mx.max(mx.abs(expert_gradients[1:]))) == 0.0
+    assert float(mx.max(mx.abs(bias_gradients[0]))) > 0.0
+    assert float(mx.max(mx.abs(bias_gradients[1:]))) == 0.0
 
 
 def test_causal_action_decoder_is_exact_noop_until_its_output_is_trained() -> None:

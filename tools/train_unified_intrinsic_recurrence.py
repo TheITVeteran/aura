@@ -863,6 +863,12 @@ def _process_training_policy(
             "teacher_forcing_probability": teacher_probability,
             "stage_progress": (step + 1) / total_steps,
         }
+    if curriculum == "transition_only":
+        return {
+            "component": "transition",
+            "teacher_forcing_probability": 1.0,
+            "stage_progress": (step + 1) / total_steps,
+        }
     if curriculum != "factorized" or total_steps < 8:
         raise ValueError("process curriculum is invalid or too short")
     initializer_stop = max(1, total_steps // 8)
@@ -1588,6 +1594,230 @@ def _process_family_training_batch(
     family_update = update_index // len(families)
     start = (family_update * batch_size) % len(items)
     return tuple(items[(start + offset) % len(items)] for offset in range(batch_size))
+
+
+def _dual_ridge_residual_readout(
+    features: Any,
+    base_logits: Any,
+    labels: Any,
+    *,
+    regularization: float,
+    margin: float,
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Fit an affine residual classifier without opening validation labels."""
+
+    import numpy as np
+
+    x = np.asarray(features, dtype=np.float64)
+    base = np.asarray(base_logits, dtype=np.float64)
+    target = np.asarray(labels, dtype=np.int64)
+    if (
+        x.ndim != 2
+        or base.ndim != 2
+        or target.ndim != 1
+        or len(x) < 1
+        or len(x) != len(base)
+        or len(x) != len(target)
+        or base.shape[1] < 2
+        or np.any(target < 0)
+        or np.any(target >= base.shape[1])
+        or not np.all(np.isfinite(x))
+        or not np.all(np.isfinite(base))
+    ):
+        raise ValueError("analytic action readout observations are invalid")
+    mean = x.mean(axis=0)
+    scale = x.std(axis=0)
+    scale = np.where(scale > 1e-8, scale, 1.0)
+    normalized = (x - mean) / scale
+    design = np.concatenate(
+        (normalized, np.ones((len(x), 1), dtype=np.float64)),
+        axis=1,
+    )
+    desired = np.full((len(x), base.shape[1]), -float(margin), dtype=np.float64)
+    desired[np.arange(len(x)), target] = float(margin)
+    residual = desired - base
+    width = float(design.shape[1])
+    gram = (design @ design.T) / width
+    ridge = float(regularization) * max(float(np.trace(gram)) / len(x), 1e-9)
+    dual = np.linalg.solve(gram + ridge * np.eye(len(x)), residual)
+    coefficients = (design.T @ dual) / width
+    normalized_weight = coefficients[:-1]
+    raw_weight = normalized_weight / scale[:, None]
+    raw_bias = coefficients[-1] - (mean / scale) @ normalized_weight
+    fitted = base + x @ raw_weight + raw_bias
+    report = {
+        "observations": len(x),
+        "before_accuracy": float(np.mean(np.argmax(base, axis=1) == target)),
+        "after_accuracy": float(np.mean(np.argmax(fitted, axis=1) == target)),
+        "ridge": ridge,
+    }
+    return raw_weight.astype(np.float32), raw_bias.astype(np.float32), report
+
+
+def _fit_family_action_readout(
+    bundle: UnifiedTrainingBundle,
+    tokenizer: Any,
+    tasks: list[Any],
+    spec: UnifiedIntrinsicTrainingSpec,
+    bridge: str,
+    family_contract: Any,
+    *,
+    regularization: float,
+    margin: float,
+) -> dict[str, Any]:
+    """Write the exact training-only workspace-to-instruction residual map."""
+
+    import numpy as np
+
+    if (
+        not tasks
+        or isinstance(regularization, bool)
+        or not isinstance(regularization, (int, float))
+        or not math.isfinite(float(regularization))
+        or float(regularization) <= 0.0
+        or isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(float(margin))
+        or float(margin) <= 0.0
+    ):
+        raise ValueError("analytic family action readout configuration is invalid")
+    controller = bundle.controller
+    expert_count = int(controller.action_family_output.shape[0])
+    slot_count = int(controller.action_family_output.shape[1])
+    workspace_width = int(controller.action_family_output.shape[2])
+    cardinality = int(controller.action_family_output.shape[3])
+    observations: dict[tuple[int, int], list[tuple[Any, Any, int]]] = {}
+    instruction_rows: list[tuple[int, list[tuple[int, Any, Any, int]]]] = []
+    task_commitments: list[dict[str, Any]] = []
+    depth = max(spec.train_depths)
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    with recurrence_adapter_scope(start=None, stop=None):
+        for task in sorted(tasks, key=lambda item: (str(item.family), str(item.task_id))):
+            prompt, _answer = encode_example(tokenizer, task, bridge)
+            opcodes, recognized = family_contract.observe(prompt.tolist())
+            if len(opcodes) != 1 or not recognized[0]:
+                raise RuntimeError("analytic action readout task family is unavailable")
+            expert = int(opcodes[0]) - OP_FRONTIER_TRAVERSE
+            if not 0 <= expert < expert_count:
+                raise RuntimeError("analytic action readout expert route differs")
+            state_targets = state_targets_from_trace(task.transition_trace, depth)
+            action_targets = action_targets_from_program(task.transition_program, depth)
+            workspaces: list[Any] = []
+            base_logits: list[Any] = []
+            unified_recurrent_hidden_states(
+                bundle.model,
+                prompt,
+                spec.plan_at(depth),
+                controller,
+                state_slot_start=int(prompt.shape[-1]),
+                action_logit_trajectory=base_logits,
+                action_workspace_trajectory=workspaces,
+                state_teacher_values=state_targets.values,
+                action_teacher_values=action_targets.values,
+                initial_state_teacher_values=state_targets.initial_values,
+                state_teacher_forcing_probability=1.0,
+                family_action_lesion=True,
+                process_only=True,
+            )
+            if len(workspaces) != depth or len(base_logits) != depth:
+                raise RuntimeError("analytic action readout capture differs from the process")
+            mx.eval(*workspaces, *base_logits)
+            task_rows: list[tuple[int, Any, Any, int]] = []
+            for step, (workspace, logits, values, masks) in enumerate(
+                zip(
+                    workspaces,
+                    base_logits,
+                    action_targets.values,
+                    action_targets.masks,
+                    strict=True,
+                )
+            ):
+                for slot, (target, active) in enumerate(zip(values, masks, strict=True)):
+                    if not active:
+                        continue
+                    feature = np.asarray(workspace[0, slot], dtype=np.float64)
+                    base = np.asarray(logits[0, slot], dtype=np.float64)
+                    observations.setdefault((expert, slot), []).append(
+                        (feature, base, int(target))
+                    )
+                    task_rows.append(
+                        (step * slot_count + slot, feature, base, int(target))
+                    )
+            instruction_rows.append((expert, task_rows))
+            task_commitments.append(
+                {
+                    "task_id": str(task.task_id),
+                    "family": str(task.family),
+                    "program_sha256": action_targets.program_sha256,
+                    "target_sha256": action_targets.target_sha256,
+                }
+            )
+            mx.clear_cache()
+
+    fitted_weights = np.zeros(
+        (expert_count, slot_count, workspace_width, cardinality),
+        dtype=np.float32,
+    )
+    fitted_bias = np.zeros(
+        (expert_count, slot_count, cardinality),
+        dtype=np.float32,
+    )
+    cell_receipts: dict[str, Any] = {}
+    for (expert, slot), rows in sorted(observations.items()):
+        features = np.stack([row[0] for row in rows])
+        bases = np.stack([row[1] for row in rows])
+        labels = np.asarray([row[2] for row in rows], dtype=np.int64)
+        raw_weight, raw_bias, cell_report = _dual_ridge_residual_readout(
+            features,
+            bases,
+            labels,
+            regularization=float(regularization),
+            margin=float(margin),
+        )
+        fitted_weights[expert, slot] = raw_weight
+        fitted_bias[expert, slot] = raw_bias
+        cell_receipts[f"expert-{expert}:slot-{slot}"] = cell_report
+
+    before_correct = 0
+    after_correct = 0
+    total = 0
+    for expert, rows in instruction_rows:
+        for coordinate, feature, base, target in rows:
+            slot = coordinate % slot_count
+            before_correct += int(np.argmax(base) == target)
+            corrected = (
+                base
+                + feature @ fitted_weights[expert, slot]
+                + fitted_bias[expert, slot]
+            )
+            after_correct += int(np.argmax(corrected) == target)
+            total += 1
+    before_sha256 = controller.parameter_sha256()
+    controller.action_family_output = mx.array(fitted_weights, dtype=mx.float32)
+    controller.action_family_bias = mx.array(fitted_bias, dtype=mx.float32)
+    mx.eval(controller.action_family_output, controller.action_family_bias)
+    after_sha256 = controller.parameter_sha256()
+    body = {
+        "schema": "aura.unified_intrinsic.analytic_action_readout_fit.v1",
+        "method": "training_only_dual_ridge_residual_synaptic_write",
+        "regularization": float(regularization),
+        "target_logit_margin": float(margin),
+        "training_tasks": len(task_commitments),
+        "holdout_tasks_accessed": 0,
+        "observations": total,
+        "before_accuracy": before_correct / total,
+        "after_accuracy": after_correct / total,
+        "controller_sha256_before": before_sha256,
+        "controller_sha256_after": after_sha256,
+        "task_commitments": task_commitments,
+        "cells": cell_receipts,
+        "private_targets_serialized_into_runtime_input": False,
+    }
+    return {**body, "receipt_sha256": _canonical_sha256(body)}
 
 
 def _mean_gradient_trees(samples: list[Any]) -> Any:
@@ -3148,14 +3378,15 @@ def _merge_bootstrap_family_action_extension(
     missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
-    if missing != expected:
+    bias_name = "controller.action_family_bias"
+    if missing not in (expected, {bias_name}):
         raise RuntimeError(
             "unified recurrence bootstrap family-action inventory differs: "
             + ",".join(sorted(missing))
         )
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
-    for name in sorted(expected):
+    for name in sorted(missing):
         if name not in child_values:
             raise RuntimeError("unified recurrence bootstrap family-action source differs")
         value = child_values[name]
@@ -3173,7 +3404,7 @@ def _merge_bootstrap_family_action_extension(
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
         "private_transition_program_visible": False,
-        "new_tensor_names": sorted(expected),
+        "new_tensor_names": sorted(missing),
         "tensors": tensor_receipts,
     }
 
@@ -3632,7 +3863,7 @@ def main() -> int:
     parser.add_argument("--state-warmup-steps", type=int, default=0)
     parser.add_argument(
         "--process-curriculum",
-        choices=("joint", "factorized", "action_workspace"),
+        choices=("joint", "factorized", "action_workspace", "transition_only"),
         default="joint",
         help="typed-process acquisition policy during the state-transition phase",
     )
@@ -3671,6 +3902,24 @@ def main() -> int:
             "relative Adam learning-rate scale applied only to scoped query "
             "projection adapters during typed-process optimization"
         ),
+    )
+    parser.add_argument(
+        "--analytic-action-readout-fit",
+        action="store_true",
+        help=(
+            "fit the public-family workspace readout once from training-only "
+            "verified instructions before optimizer steps"
+        ),
+    )
+    parser.add_argument(
+        "--analytic-action-readout-ridge",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--analytic-action-readout-margin",
+        type=float,
+        default=8.0,
     )
     parser.add_argument(
         "--answer-bridge-steps",
@@ -3830,9 +4079,18 @@ def main() -> int:
         raise ValueError(
             "action-workspace curriculum requires bootstrapped frontier process acquisition"
         )
+    if args.process_curriculum == "transition_only" and (
+        args.task_source != "frontier_process"
+        or args.state_warmup_steps != args.max_steps
+        or args.bootstrap_output_dir is None
+    ):
+        raise ValueError(
+            "transition-only curriculum requires bootstrapped frontier process acquisition"
+        )
     if args.process_family_batch_size < 1 or (
         args.process_family_batch_size > 1
-        and args.process_curriculum not in {"action_workspace", "factorized"}
+        and args.process_curriculum
+        not in {"action_workspace", "factorized", "transition_only"}
     ):
         raise ValueError(
             "process family batching requires a supported process-acquisition curriculum"
@@ -3849,6 +4107,21 @@ def main() -> int:
         raise ValueError("process transformer gradient scale must be inside [0, 1]")
     if not 0.0 <= args.process_query_gradient_scale <= 1.0:
         raise ValueError("process query gradient scale must be inside [0, 1]")
+    if args.analytic_action_readout_fit and (
+        args.task_source != "frontier_process"
+        or args.bootstrap_output_dir is None
+        or args.process_curriculum != "transition_only"
+    ):
+        raise ValueError(
+            "analytic action readout fitting requires bootstrapped transition-only acquisition"
+        )
+    if (
+        not math.isfinite(args.analytic_action_readout_ridge)
+        or args.analytic_action_readout_ridge <= 0.0
+        or not math.isfinite(args.analytic_action_readout_margin)
+        or args.analytic_action_readout_margin <= 0.0
+    ):
+        raise ValueError("analytic action readout fit bounds must be positive and finite")
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)
         if args.answer_bridge_autonomous_tail_steps is None
@@ -4337,6 +4610,13 @@ def main() -> int:
             "process_family_batch_mode": args.process_family_batch_mode,
             "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
             "process_query_gradient_scale": args.process_query_gradient_scale,
+            "analytic_action_readout": {
+                "enabled": args.analytic_action_readout_fit,
+                "method": "training_only_dual_ridge_residual_synaptic_write",
+                "regularization": args.analytic_action_readout_ridge,
+                "target_logit_margin": args.analytic_action_readout_margin,
+                "holdout_fit_authority": False,
+            },
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
@@ -4512,6 +4792,7 @@ def main() -> int:
             ),
         )
         resource_guard_receipt: dict[str, Any] | None = None
+        analytic_action_readout_receipt: dict[str, Any] | None = None
         if resource_guard_enabled:
             resource_guard_receipt = _await_resource_guard(
                 args.resource_stage_path.expanduser(),
@@ -4520,6 +4801,41 @@ def main() -> int:
                 steady_lethal_mb=float(args.resource_steady_lethal_mb),
                 timeout_s=float(args.resource_guard_timeout_s),
             )
+        analytic_receipt_path = out_dir / "analytic_action_readout_fit.json"
+        if args.analytic_action_readout_fit:
+            if step == 0:
+                analytic_action_readout_receipt = _fit_family_action_readout(
+                    bundle,
+                    tokenizer,
+                    train_tasks,
+                    state_spec,
+                    bridge,
+                    family_contract,
+                    regularization=args.analytic_action_readout_ridge,
+                    margin=args.analytic_action_readout_margin,
+                )
+                _atomic_canonical_json(
+                    analytic_receipt_path,
+                    analytic_action_readout_receipt,
+                )
+            else:
+                try:
+                    analytic_action_readout_receipt = json.loads(
+                        analytic_receipt_path.read_text(encoding="ascii")
+                    )
+                except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+                    raise RuntimeError(
+                        "analytic action readout resume receipt is unavailable"
+                    ) from exc
+                receipt_body = {
+                    key: value
+                    for key, value in analytic_action_readout_receipt.items()
+                    if key != "receipt_sha256"
+                }
+                if analytic_action_readout_receipt.get(
+                    "receipt_sha256"
+                ) != _canonical_sha256(receipt_body):
+                    raise RuntimeError("analytic action readout resume receipt differs")
         if phase_schedule["mode"] == "bootstrap_answer_bridge_only":
             bridge_preflight_diagnostic = _evaluate_answer_bridge_diagnostic(
                 bundle,
@@ -5228,6 +5544,7 @@ def main() -> int:
             "answer_bridge_diagnostic": answer_bridge_diagnostic,
             "answer_bridge_admission": answer_bridge_admission,
             "process_admission": process_admission,
+            "analytic_action_readout_fit": analytic_action_readout_receipt,
             "phase_schedule": phase_schedule,
             "verdict": _training_verdict(
                 complete=step >= args.max_steps,

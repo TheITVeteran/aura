@@ -66,6 +66,7 @@ PROFILES: Final = frozenset(
         "full",
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_analytic_acquisition",
         "process_canary",
         "process_completion_acquisition",
         "process_family_acquisition",
@@ -229,6 +230,9 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "process_family_batch_mode": "same_family",
         "process_transformer_gradient_scale": 0.0,
         "process_query_gradient_scale": 0.0,
+        "analytic_action_readout_fit": False,
+        "analytic_action_readout_ridge": 0.001,
+        "analytic_action_readout_margin": 8.0,
         "max_gradient_norm": 0.5,
         "checkpoint_every": 1,
         "checkpoint_group": 4,
@@ -326,6 +330,47 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "memory_limit_gb": 24.0,
             "wired_limit_gb": 28.0,
             "max_minutes": 180.0,
+        }
+    if profile == "process_analytic_acquisition":
+        families = (
+            "novel_algorithms,mathematics,coding,scientific_inference,"
+            "long_horizon_planning,calibration,misleading_premise"
+        )
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": families,
+            "task_depths": "3,4,5,6,9,10",
+            "train_depths": "1,3,4,5,6,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 8,
+            "holdout_per_cell": 3,
+            "max_steps": 1,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": 1,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 7,
+            "process_family_batch_mode": "balanced_families",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "analytic_action_readout_fit": True,
+            "analytic_action_readout_ridge": 0.001,
+            "analytic_action_readout_margin": 8.0,
+            "state_teacher_forcing_probability": 1.0,
+            "state_teacher_forcing_final_probability": 1.0,
+            "eval_every": 1,
+            "checkpoint_every": 1,
+            "state_learning_rate": 0.00005,
+            "seed": 2026081401,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 120.0,
         }
     if profile in {
         "process_action_canary",
@@ -498,6 +543,8 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "process_family_batch_mode": "--process-family-batch-mode",
         "process_transformer_gradient_scale": ("--process-transformer-gradient-scale"),
         "process_query_gradient_scale": "--process-query-gradient-scale",
+        "analytic_action_readout_ridge": "--analytic-action-readout-ridge",
+        "analytic_action_readout_margin": "--analytic-action-readout-margin",
         "max_gradient_norm": "--max-gradient-norm",
         "max_steps": "--max-steps",
         "semantic_warmup_steps": "--semantic-warmup-steps",
@@ -516,11 +563,17 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "cache_limit_gb": "--cache-limit-gb",
         "wired_limit_gb": "--wired-limit-gb",
     }
-    if set(training) != set(flag_names):
+    boolean_flags = {
+        "analytic_action_readout_fit": "--analytic-action-readout-fit",
+    }
+    if set(training) != set(flag_names) | set(boolean_flags):
         _fail("training_profile_contract_drift")
     arguments: list[str] = []
     for name, flag in flag_names.items():
         arguments.extend((flag, str(training[name])))
+    for name, flag in boolean_flags.items():
+        if training[name]:
+            arguments.append(flag)
     return arguments
 
 
@@ -626,6 +679,7 @@ def _freeze_campaign(
     bootstrap_profiles = {
         "process_action_canary",
         "process_answer_bridge_canary",
+        "process_analytic_acquisition",
         "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
@@ -767,6 +821,7 @@ def _freeze_campaign(
                     "canary",
                     "process_action_canary",
                     "process_answer_bridge_canary",
+                    "process_analytic_acquisition",
                     "process_canary",
                     "process_completion_acquisition",
                     "process_family_acquisition",
