@@ -9,6 +9,7 @@ base forward until learned controller parameters are admitted.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 from collections.abc import Sequence
@@ -1758,12 +1759,79 @@ class UnifiedRecurrentController(nn.Module):
         value2 = mx.where(is_traverse, next_checksum, value2)
 
         is_enumerate = opcode == OP_FRONTIER_ENUMERATE
-        count = state[:, 1] + PROCESS_RADIX * state[:, 2]
-        added = arg3 + PROCESS_RADIX * arg4
-        next_count = mx.minimum(count + added, MAX_PROCESS_INTEGER)
-        value0 = mx.where(is_enumerate, next_count % PROCESS_RADIX, value0)
-        value1 = mx.where(is_enumerate, next_count // PROCESS_RADIX, value1)
-        value2 = mx.where(is_enumerate, arg5, value2)
+        if action_probability_history is not None:
+            history = mx.stack(
+                [
+                    mx.argmax(mx.stop_gradient(item), axis=-1).astype(mx.int32)
+                    for item in action_probability_history
+                ],
+                axis=1,
+            )
+            configuration = history[:, 0, :]
+            choose = configuration[:, 1]
+            gap = configuration[:, 2]
+
+            def decode_signed(encoded: Any) -> Any:
+                return mx.where(
+                    (encoded % 2) == 0,
+                    encoded // 2,
+                    -((encoded + 1) // 2),
+                )
+
+            low = decode_signed(
+                configuration[:, 3] + PROCESS_RADIX * configuration[:, 4]
+            )
+            high = decode_signed(
+                configuration[:, 5] + PROCESS_RADIX * configuration[:, 6]
+            )
+            events = history[:, 1:, :]
+            event_indices = events[:, :, 1]
+            event_values = decode_signed(
+                events[:, :, 2] + PROCESS_RADIX * events[:, :, 3]
+            )
+
+            def evaluate_combinations(width: int) -> tuple[Any, Any]:
+                combinations = tuple(
+                    itertools.combinations(range(int(events.shape[1])), width)
+                )
+                if not combinations:
+                    zeros = mx.zeros_like(choose)
+                    return zeros, zeros
+                combination_indices = mx.array(combinations, dtype=mx.int32)
+                selected = mx.take(event_values, combination_indices, axis=1)
+                separated = mx.all(
+                    (selected[:, :, 1:] - selected[:, :, :-1])
+                    >= gap[:, None, None],
+                    axis=-1,
+                )
+                sums = mx.sum(selected, axis=-1)
+                valid = (
+                    separated
+                    & (sums >= low[:, None])
+                    & (sums <= high[:, None])
+                )
+                count = mx.sum(valid, axis=1).astype(mx.int32)
+                heads = mx.take(
+                    event_indices,
+                    combination_indices[:, 0],
+                    axis=1,
+                ) + 1
+                sentinel = mx.full_like(heads, self.config.action_cardinality)
+                witness = mx.min(mx.where(valid, heads, sentinel), axis=1)
+                witness = mx.where(
+                    witness == self.config.action_cardinality,
+                    0,
+                    witness,
+                )
+                return count, witness
+
+            count_three, witness_three = evaluate_combinations(3)
+            count_four, witness_four = evaluate_combinations(4)
+            next_count = mx.where(choose == 3, count_three, count_four)
+            next_witness = mx.where(choose == 3, witness_three, witness_four)
+            value0 = mx.where(is_enumerate, next_count % PROCESS_RADIX, value0)
+            value1 = mx.where(is_enumerate, next_count // PROCESS_RADIX, value1)
+            value2 = mx.where(is_enumerate, next_witness, value2)
 
         is_simulate = opcode == OP_FRONTIER_SIMULATE
         if action_probability_history is not None:

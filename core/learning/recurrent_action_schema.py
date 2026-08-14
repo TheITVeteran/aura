@@ -120,15 +120,18 @@ def _canonical_instruction(
         # nominal "action" an answer-bearing label rather than an instruction.
         arguments[:3] = action[:3]
     elif family == "frontier_mathematics" and field_names == (
-        "input_index",
-        "value_lo",
-        "value_hi",
-        "valid_added_lo",
-        "valid_added_hi",
-        "next_witness_head",
+        "arg0",
+        "arg1",
+        "arg2",
+        "arg3",
+        "arg4",
+        "arg5",
     ):
         opcode = OP_FRONTIER_ENUMERATE
-        arguments[:] = action
+        if step == 0:
+            arguments[:] = action
+        else:
+            arguments[:3] = action[:3]
     elif family == "frontier_coding" and field_names == (
         "case_index",
         "name_index",

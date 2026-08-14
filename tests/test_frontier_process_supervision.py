@@ -136,6 +136,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     calibration = compile_frontier_process_supervision(
         generate_task("calibration", seed=51_906, difficulty=2)
     ).program
+    mathematics = compile_frontier_process_supervision(
+        generate_task("mathematics", seed=51_907, difficulty=2)
+    ).program
 
     novel_targets = action_targets_from_program(novel, novel.state_trace.depth)
     audit_targets = action_targets_from_program(audit, audit.state_trace.depth)
@@ -146,6 +149,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     coding_targets = action_targets_from_program(coding, coding.state_trace.depth)
     calibration_targets = action_targets_from_program(
         calibration, calibration.state_trace.depth
+    )
+    mathematics_targets = action_targets_from_program(
+        mathematics, mathematics.state_trace.depth
     )
 
     # Traversal carries selection plus value operands, never the teacher's
@@ -170,6 +176,11 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     assert all(
         row[1:7] == (ACTION_NULL,) * 6
         for row in calibration_targets.values[1:]
+    )
+    assert all(value != ACTION_NULL for value in mathematics_targets.values[0])
+    assert all(
+        row[4:7] == (ACTION_NULL,) * 3
+        for row in mathematics_targets.values[1:]
     )
 
 

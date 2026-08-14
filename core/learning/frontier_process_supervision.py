@@ -188,10 +188,14 @@ def _mathematics(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
     if not isinstance(values, list) or any(type(value) is not int for value in values):
         raise ValueError("frontier mathematics values are invalid")
     witness_tuple = tuple(witness)
-    witness_head = values.index(witness[0]) + 1 if witness else 0
     states = [(0, 0, 0, 0, 0)]
-    actions: list[tuple[int, ...]] = []
-    previous = 0
+    low_lo, low_hi = _signed_digits(low)
+    high_lo, high_hi = _signed_digits(high)
+    actions: list[tuple[int, ...]] = [
+        (choose, gap, low_lo, low_hi, high_lo, high_hi)
+    ]
+    states.append((1, 0, 0, 0, 0))
+    final_valid: list[tuple[int, ...]] = []
     for index, value in enumerate(values):
         prefix = values[: index + 1]
         valid = [
@@ -201,42 +205,33 @@ def _mathematics(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
             and low <= sum(combo) <= high
         ]
         current = len(valid)
-        added_lo, added_hi = _digits(current - previous)
         value_lo, value_hi = _signed_digits(value)
-        actions.append(
-            (
-                index,
-                value_lo,
-                value_hi,
-                added_lo,
-                added_hi,
-                witness_head if valid else 0,
-            )
-        )
+        actions.append((index, value_lo, value_hi, 0, 0, 0))
         count_lo, count_hi = _digits(current)
+        current_witness_head = values.index(min(valid)[0]) + 1 if valid else 0
         states.append(
             (
-                index + 1,
+                index + 2,
                 count_lo,
                 count_hi,
-                witness_head if valid else 0,
+                current_witness_head,
                 int(index + 1 == len(values)),
             )
         )
-        previous = current
-    if previous != count or (witness_tuple and witness_tuple not in valid):
+        final_valid = valid
+    if len(final_valid) != count or (witness_tuple and witness_tuple not in final_valid):
         raise ValueError("frontier mathematics process differs from verified answer")
     return _program(
         family="frontier_mathematics",
         field_names=("pc", "count_lo", "count_hi", "witness_head", "done"),
         states=states,
         action_field_names=(
-            "input_index",
-            "value_lo",
-            "value_hi",
-            "valid_added_lo",
-            "valid_added_hi",
-            "next_witness_head",
+            "arg0",
+            "arg1",
+            "arg2",
+            "arg3",
+            "arg4",
+            "arg5",
         ),
         actions=actions,
     )
