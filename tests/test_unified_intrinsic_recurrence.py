@@ -145,8 +145,15 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["transformer_answer_passes_per_state"] == 1
     assert (
         receipt["state_to_answer_bridge"]
-        == "masked_action_state_process_tape_attention_over_frozen_readout"
+        == "ordered_typed_masked_action_state_process_tape_attention_"
+        "over_frozen_readout"
     )
+    assert receipt["process_tape"] == {
+        "schema": "aura.unified_intrinsic.process_tape.v2",
+        "ordering": "bounded_sinusoidal_step_and_entry_kind",
+        "contents": ["typed_action", "committed_state"],
+        "terminal_stutter_entries_masked": True,
+    }
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
 
 
@@ -289,6 +296,73 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
     assert lesioned.process_tape_entries == 0
     assert lesioned.process_tape_active_entries == 0
     assert not bool(mx.array_equal(intact_final, lesioned_final))
+
+
+def test_process_tape_identity_preserves_step_and_entry_kind() -> None:
+    controller = _controller()
+    value = mx.ones((1, 3, controller.config.hidden_size), dtype=mx.float32)
+
+    action_zero = controller.encode_process_tape_entry(value, step=0, kind="action")
+    state_zero = controller.encode_process_tape_entry(value, step=0, kind="state")
+    action_one = controller.encode_process_tape_entry(value, step=1, kind="action")
+
+    assert not bool(mx.array_equal(action_zero, state_zero))
+    assert not bool(mx.array_equal(action_zero, action_one))
+    assert not bool(mx.array_equal(state_zero, action_one))
+
+
+def test_process_tape_attention_distinguishes_noncommutative_order() -> None:
+    controller = _controller()
+    candidate = mx.arange(12 * controller.config.hidden_size).reshape(
+        (1, 12, controller.config.hidden_size)
+    ).astype(mx.float32)
+    committed = candidate
+    first = mx.ones((1, 5, controller.config.hidden_size), dtype=mx.float32)
+    second = mx.full((1, 5, controller.config.hidden_size), 2.0)
+    forward = mx.concatenate(
+        [
+            controller.encode_process_tape_entry(first, step=0, kind="state"),
+            controller.encode_process_tape_entry(second, step=1, kind="state"),
+        ],
+        axis=1,
+    )
+    reversed_order = mx.concatenate(
+        [
+            controller.encode_process_tape_entry(second, step=0, kind="state"),
+            controller.encode_process_tape_entry(first, step=1, kind="state"),
+        ],
+        axis=1,
+    )
+    mask = mx.ones((1, 10), dtype=mx.bool_)
+
+    forward_answer = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        process_memory=forward,
+        process_memory_mask=mask,
+    )
+    reversed_answer = controller.attend_answer_to_state(
+        candidate,
+        committed,
+        state_slot_start=4,
+        process_memory=reversed_order,
+        process_memory_mask=mask,
+    )
+
+    assert not bool(mx.array_equal(forward_answer[:, 8:, :], reversed_answer[:, 8:, :]))
+
+
+def test_process_tape_identity_rejects_invalid_entries() -> None:
+    controller = _controller()
+    value = mx.ones((1, 3, controller.config.hidden_size), dtype=mx.float32)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        controller.encode_process_tape_entry(value, step=-1, kind="action")
+    with pytest.raises(ValueError, match="action or state"):
+        controller.encode_process_tape_entry(value, step=0, kind="unknown")
+    with pytest.raises(ValueError, match="residual layout"):
+        controller.encode_process_tape_entry(value[..., :-1], step=0, kind="state")
 
 
 def test_answer_digit_place_reads_the_selected_terminal_register() -> None:

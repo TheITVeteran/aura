@@ -63,6 +63,7 @@ from core.learning.recurrent_state_schema import (
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
+PROCESS_TAPE_SCHEMA: Final = "aura.unified_intrinsic.process_tape.v2"
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -604,6 +605,36 @@ class UnifiedRecurrentController(nn.Module):
             self.state_slot_embeddings.astype(dtype)[None, :, :],
             (batch_size, self.config.state_slots, self.config.hidden_size),
         )
+
+    def encode_process_tape_entry(
+        self,
+        value: Any,
+        *,
+        step: int,
+        kind: str,
+    ) -> Any:
+        """Attach deterministic temporal and type identity to one tape entry."""
+
+        if type(step) is not int or step < 0:
+            raise ValueError("process tape step must be a non-negative integer")
+        if kind not in {"action", "state"}:
+            raise ValueError("process tape kind must be action or state")
+        if len(value.shape) != 3 or int(value.shape[-1]) != self.config.hidden_size:
+            raise ValueError("process tape entry differs from the residual layout")
+        # Content-only attention treats execution history as a set. Encode the
+        # ordinal and event type so non-commutative traces remain distinguishable.
+        ordinal = float(2 * step + (0 if kind == "action" else 1) + 1)
+        dimensions = mx.arange(self.config.hidden_size, dtype=mx.float32)
+        pairs = mx.floor(dimensions / 2.0)
+        frequencies = mx.exp(
+            -math.log(10_000.0)
+            * (2.0 * pairs / float(self.config.hidden_size))
+        )
+        angles = ordinal * frequencies
+        even = (mx.arange(self.config.hidden_size) % 2) == 0
+        identity = mx.where(even, mx.sin(angles), mx.cos(angles))
+        scale = 0.25 * mx.stop_gradient(_rms(value.astype(mx.float32)))
+        return value + (scale * identity[None, None, :]).astype(value.dtype)
 
     def attend_answer_to_state(
         self,
@@ -1682,8 +1713,15 @@ class UnifiedRecurrentController(nn.Module):
             ),
             "transformer_answer_passes_per_state": 1,
             "state_to_answer_bridge": (
-                "masked_action_state_process_tape_attention_over_frozen_readout"
+                "ordered_typed_masked_action_state_process_tape_attention_"
+                "over_frozen_readout"
             ),
+            "process_tape": {
+                "schema": PROCESS_TAPE_SCHEMA,
+                "ordering": "bounded_sinusoidal_step_and_entry_kind",
+                "contents": ["typed_action", "committed_state"],
+                "terminal_stutter_entries_masked": True,
+            },
             "parameter_sha256": self.parameter_sha256(),
         }
         return {**body, "receipt_sha256": _canonical_sha256(body)}
@@ -1956,8 +1994,16 @@ def unified_recurrent_hidden_states(
                 if not process_tape_lesion:
                     process_tape.extend(
                         (
-                            action_state,
-                            hidden[:, state_slot_start:state_stop, :],
+                            controller.encode_process_tape_entry(
+                                action_state,
+                                step=iteration,
+                                kind="action",
+                            ),
+                            controller.encode_process_tape_entry(
+                                hidden[:, state_slot_start:state_stop, :],
+                                step=iteration,
+                                kind="state",
+                            ),
                         )
                     )
                     process_tape_masks.extend(
