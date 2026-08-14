@@ -245,15 +245,17 @@ def test_process_canary_trains_scoped_tissue_on_autonomous_frontier_process() ->
     assert training["task_source"] == "frontier_process"
     assert training["per_cell"] == 2
     assert training["holdout_per_cell"] == 1
-    assert training["state_warmup_steps"] == 28
+    assert training["state_warmup_steps"] == 280
     assert training["answer_bridge_steps"] == 0
-    assert training["max_steps"] == 42
+    assert training["max_steps"] == 280
+    assert training["process_curriculum"] == "factorized"
     assert training["state_teacher_forcing_probability"] == 1.0
     assert training["state_teacher_forcing_final_probability"] == 0.0
     assert training["memory_limit_gb"] == 24.0
     assert training["wired_limit_gb"] == 28.0
     assert arguments[arguments.index("--task-source") + 1] == "frontier_process"
     assert arguments[arguments.index("--window-tissue-mode") + 1] == "scoped_lora"
+    assert arguments[arguments.index("--process-curriculum") + 1] == "factorized"
 
 
 def test_recovery_profile_warm_starts_fresh_data_without_parent_optimizer() -> None:

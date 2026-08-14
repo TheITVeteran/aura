@@ -711,6 +711,65 @@ def _optimization_phase(
     return "recurrence"
 
 
+def _process_training_policy(
+    step: int,
+    total_steps: int,
+    curriculum: str,
+) -> dict[str, Any]:
+    """Assign exclusive process objectives before autonomous integration.
+
+    A blended loss let the easy public-prefix initializer absorb useful
+    gradient while typed actions and value transitions remained at chance.
+    The factorized curriculum gives each causal mechanism an exclusive
+    acquisition interval, then removes the teacher across a final joint tail.
+    """
+
+    if (
+        type(step) is not int
+        or type(total_steps) is not int
+        or total_steps < 1
+        or not 0 <= step < total_steps
+    ):
+        raise ValueError("process curriculum coordinates are invalid")
+    if curriculum == "joint":
+        return {
+            "component": "joint",
+            "teacher_forcing_probability": 1.0,
+            "stage_progress": (step + 1) / total_steps,
+        }
+    if curriculum != "factorized" or total_steps < 8:
+        raise ValueError("process curriculum is invalid or too short")
+    initializer_stop = max(1, total_steps // 8)
+    action_stop = max(initializer_stop + 1, total_steps // 2)
+    transition_stop = max(action_stop + 1, 7 * total_steps // 8)
+    transition_stop = min(transition_stop, total_steps - 1)
+    if step < initializer_stop:
+        component = "initializer"
+        stage_start, stage_stop = 0, initializer_stop
+    elif step < action_stop:
+        component = "action"
+        stage_start, stage_stop = initializer_stop, action_stop
+    elif step < transition_stop:
+        component = "transition"
+        stage_start, stage_stop = action_stop, transition_stop
+    else:
+        component = "joint"
+        stage_start, stage_stop = transition_stop, total_steps
+    stage_steps = stage_stop - stage_start
+    stage_index = step - stage_start
+    stage_progress = (stage_index + 1) / stage_steps
+    teacher_probability = 1.0
+    if component == "joint":
+        teacher_probability = (
+            0.0 if stage_steps == 1 else 1.0 - stage_index / (stage_steps - 1)
+        )
+    return {
+        "component": component,
+        "teacher_forcing_probability": teacher_probability,
+        "stage_progress": stage_progress,
+    }
+
+
 def _phase_schedule(
     *,
     semantic_warmup_steps: int,
@@ -718,6 +777,7 @@ def _phase_schedule(
     answer_bridge_steps: int,
     max_steps: int,
     bootstrap_output_dir: Path | None,
+    process_only: bool = False,
 ) -> dict[str, Any]:
     """Validate and bind a full campaign or a bootstrap-only bridge adaptation."""
 
@@ -734,17 +794,35 @@ def _phase_schedule(
     if recurrence_steps < 0:
         raise ValueError("optimization phases exceed maximum steps")
     bridge_only = recurrence_steps == 0
-    if bridge_only and (answer_bridge_steps < 1 or bootstrap_output_dir is None):
-        raise ValueError("zero-recurrence training requires a bootstrapped answer-bridge campaign")
+    if bridge_only:
+        process_contract = (
+            process_only
+            and state_warmup_steps == max_steps
+            and semantic_warmup_steps == 0
+            and answer_bridge_steps == 0
+            and bootstrap_output_dir is None
+        )
+        bridge_contract = answer_bridge_steps > 0 and bootstrap_output_dir is not None
+        if not process_contract and not bridge_contract:
+            raise ValueError(
+                "zero-recurrence training requires either process-only acquisition "
+                "or a bootstrapped answer-bridge campaign"
+            )
     return {
         "schema": "aura.unified_intrinsic.phase_schedule.v1",
-        "mode": "bootstrap_answer_bridge_only" if bridge_only else "recurrent_training",
+        "mode": (
+            "process_acquisition_only"
+            if bridge_only and process_only
+            else "bootstrap_answer_bridge_only"
+            if bridge_only
+            else "recurrent_training"
+        ),
         "semantic_anchor_steps": semantic_warmup_steps,
         "state_transition_steps": state_warmup_steps,
         "answer_bridge_steps": answer_bridge_steps,
         "recurrence_steps": recurrence_steps,
         "max_steps": max_steps,
-        "bootstrap_required": bridge_only,
+        "bootstrap_required": bridge_only and not process_only,
     }
 
 
@@ -1966,6 +2044,8 @@ def _initial_rollin_totals() -> dict[str, Any]:
         "max_preclip_gradient_norms": {},
         "last_probability": None,
         "last_state_teacher_forcing_probability": None,
+        "last_process_component": None,
+        "last_process_stage_progress": None,
         "answer_bridge_inner_updates": 0,
         "answer_bridge_autonomous_tail_examples": 0,
         "answer_bridge_autonomous_process_exact": 0,
@@ -2026,6 +2106,21 @@ def _restore_rollin_totals(training_state: dict[str, Any]) -> dict[str, Any]:
             or not 0.0 <= float(value) <= 1.0
         ):
             raise RuntimeError("unified recurrence roll-in probability differs")
+    component = candidate["last_process_component"]
+    if component is not None and component not in {
+        "initializer",
+        "action",
+        "transition",
+        "joint",
+    }:
+        raise RuntimeError("unified recurrence process component differs")
+    progress = candidate["last_process_stage_progress"]
+    if progress is not None and (
+        isinstance(progress, bool)
+        or not isinstance(progress, (int, float))
+        or not 0.0 < float(progress) <= 1.0
+    ):
+        raise RuntimeError("unified recurrence process stage progress differs")
     return {
         **candidate,
         "max_preclip_gradient_norms": dict(group_norms),
@@ -2846,6 +2941,12 @@ def main() -> int:
     parser.add_argument("--semantic-warmup-steps", type=int, default=0)
     parser.add_argument("--state-warmup-steps", type=int, default=0)
     parser.add_argument(
+        "--process-curriculum",
+        choices=("joint", "factorized"),
+        default="joint",
+        help="typed-process acquisition policy during the state-transition phase",
+    )
+    parser.add_argument(
         "--answer-bridge-steps",
         type=int,
         default=0,
@@ -2983,7 +3084,20 @@ def main() -> int:
         answer_bridge_steps=args.answer_bridge_steps,
         max_steps=args.max_steps,
         bootstrap_output_dir=args.bootstrap_output_dir,
+        process_only=(
+            args.task_source == "frontier_process"
+            and args.semantic_warmup_steps == 0
+            and args.state_warmup_steps == args.max_steps
+            and args.answer_bridge_steps == 0
+        ),
     )
+    if args.process_curriculum == "factorized" and (
+        args.task_source != "frontier_process"
+        or args.state_warmup_steps < 8
+    ):
+        raise ValueError(
+            "factorized process curriculum requires frontier process acquisition"
+        )
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)
         if args.answer_bridge_autonomous_tail_steps is None
@@ -3458,6 +3572,7 @@ def main() -> int:
             "init_seed": args.init_seed,
             "semantic_warmup_steps": args.semantic_warmup_steps,
             "state_warmup_steps": args.state_warmup_steps,
+            "process_curriculum": args.process_curriculum,
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
@@ -3853,7 +3968,20 @@ def main() -> int:
                         if phase == "state_transition":
                             effective = answer
                             objective_spec = state_spec
-                            state_teacher_probability = 1.0
+                            process_policy = _process_training_policy(
+                                step - args.semantic_warmup_steps,
+                                args.state_warmup_steps,
+                                args.process_curriculum,
+                            )
+                            state_teacher_probability = process_policy[
+                                "teacher_forcing_probability"
+                            ]
+                            rollin_totals["last_process_component"] = process_policy[
+                                "component"
+                            ]
+                            rollin_totals["last_process_stage_progress"] = process_policy[
+                                "stage_progress"
+                            ]
                         else:
                             recurrent_start = (
                                 args.semantic_warmup_steps
@@ -3945,6 +4073,8 @@ def main() -> int:
                                 objective_prompt: Any,
                                 transition_trace: Any = task.transition_trace,
                                 transition_program: Any = task.transition_program,
+                                component: str = process_policy["component"],
+                                teacher_probability: float = state_teacher_probability,
                             ) -> Any:
                                 return unified_process_training_loss(
                                     candidate.model,
@@ -3953,8 +4083,9 @@ def main() -> int:
                                     state_spec.plan_at(max(state_spec.train_depths)),
                                     transition_trace=transition_trace,
                                     transition_program=transition_program,
-                                    state_teacher_forcing_probability=1.0,
+                                    state_teacher_forcing_probability=teacher_probability,
                                     state_weight=state_spec.state_weight,
+                                    component=component,
                                 )[0]
 
                             loss, gradients = nn.value_and_grad(

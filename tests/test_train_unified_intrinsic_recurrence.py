@@ -71,6 +71,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _optimization_phase,
     _phase_gradients,
     _phase_schedule,
+    _process_training_policy,
     _recurrent_training_task,
     _residual_hidden_size,
     _resolve_recurrent_window,
@@ -471,6 +472,65 @@ def test_phase_schedule_allows_only_bootstrapped_bridge_only_adaptation(tmp_path
             max_steps=84,
             bootstrap_output_dir=bootstrap,
         )
+
+
+def test_phase_schedule_allows_explicit_process_only_acquisition() -> None:
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=280,
+        answer_bridge_steps=0,
+        max_steps=280,
+        bootstrap_output_dir=None,
+        process_only=True,
+    )
+
+    assert schedule == {
+        "schema": "aura.unified_intrinsic.phase_schedule.v1",
+        "mode": "process_acquisition_only",
+        "semantic_anchor_steps": 0,
+        "state_transition_steps": 280,
+        "answer_bridge_steps": 0,
+        "recurrence_steps": 0,
+        "max_steps": 280,
+        "bootstrap_required": False,
+    }
+    with pytest.raises(ValueError, match="process-only acquisition"):
+        _phase_schedule(
+            semantic_warmup_steps=1,
+            state_warmup_steps=279,
+            answer_bridge_steps=0,
+            max_steps=280,
+            bootstrap_output_dir=None,
+            process_only=True,
+        )
+
+
+def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> None:
+    expected = {
+        0: ("initializer", 1.0),
+        34: ("initializer", 1.0),
+        35: ("action", 1.0),
+        139: ("action", 1.0),
+        140: ("transition", 1.0),
+        244: ("transition", 1.0),
+        245: ("joint", 1.0),
+        279: ("joint", 0.0),
+    }
+    for step, (component, teacher_probability) in expected.items():
+        policy = _process_training_policy(step, 280, "factorized")
+        assert policy["component"] == component
+        assert policy["teacher_forcing_probability"] == pytest.approx(
+            teacher_probability
+        )
+        assert 0.0 < policy["stage_progress"] <= 1.0
+
+    assert _process_training_policy(4, 8, "joint") == {
+        "component": "joint",
+        "teacher_forcing_probability": 1.0,
+        "stage_progress": 0.625,
+    }
+    with pytest.raises(ValueError, match="too short"):
+        _process_training_policy(0, 7, "factorized")
 
 
 def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:

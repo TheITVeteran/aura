@@ -876,6 +876,7 @@ def unified_process_training_loss(
     transition_program: Any,
     state_teacher_forcing_probability: float,
     state_weight: float = 1.0,
+    component: str = "joint",
 ) -> tuple[Any, dict[str, Any]]:
     """Train the autonomous typed process without constructing answer graphs.
 
@@ -888,6 +889,8 @@ def unified_process_training_loss(
 
     if transition_trace is None or transition_program is None:
         raise ValueError("process training requires exact state and action supervision")
+    if component not in {"initializer", "action", "transition", "joint"}:
+        raise ValueError("process training component is invalid")
     if (
         isinstance(state_weight, bool)
         or not isinstance(state_weight, (int, float))
@@ -935,14 +938,27 @@ def unified_process_training_loss(
         action_logits,
         action_targets,
     )
-    process_loss = (state_loss + initial_loss + action_loss) / 3.0
+    component_losses = {
+        "initializer": initial_loss,
+        "action": action_loss,
+        "transition": state_loss,
+        "joint": (state_loss + initial_loss + action_loss) / 3.0,
+    }
+    process_loss = component_losses[component]
     return float(state_weight) * process_loss, {
         "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
         "objective": "prompt_only_typed_process",
+        "component": component,
         "depth": plan.iterations,
         "state_accuracy": state_accuracy,
         "initial_state_accuracy": initial_accuracy,
         "action_accuracy": action_accuracy,
+        "component_losses": {
+            "initializer": float(initial_loss.item()),
+            "action": float(action_loss.item()),
+            "transition": float(state_loss.item()),
+            "joint": float(component_losses["joint"].item()),
+        },
         "state_step_accuracy": list(state_step_accuracy),
         "action_step_accuracy": list(action_step_accuracy),
         "teacher_forcing_probability": state_teacher_forcing_probability,

@@ -386,6 +386,51 @@ def test_process_objective_uses_public_prompt_without_answer_or_coda_graph(
     assert layer_calls == [2, 2, 2, 2]
 
 
+def test_process_objective_can_train_each_causal_component_exclusively() -> None:
+    model = _model()
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+
+    for component in ("initializer", "action", "transition", "joint"):
+        loss, receipt = unified_process_training_loss(
+            model,
+            TOKENS,
+            controller,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            state_teacher_forcing_probability=1.0,
+            component=component,
+        )
+        mx.eval(loss)
+        assert receipt["component"] == component
+        assert float(loss.item()) == pytest.approx(
+            receipt["component_losses"][component]
+        )
+
+    with pytest.raises(ValueError, match="component is invalid"):
+        unified_process_training_loss(
+            model,
+            TOKENS,
+            controller,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            state_teacher_forcing_probability=1.0,
+            component="answer",
+        )
+
+
 def test_process_objective_reaches_scoped_transformer_tissue() -> None:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
