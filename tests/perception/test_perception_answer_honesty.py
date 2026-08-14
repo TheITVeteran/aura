@@ -214,3 +214,57 @@ def test_the_done_branch_uses_the_effect_summary() -> None:
     source = inspect.getsource(chat._execute_desktop_objective_from_chat)
     assert '_desktop_effect_summary(result)' in source
     assert 'f"Done — {effect_line}"' in source
+
+
+def test_a_question_is_never_answered_with_an_effect_receipt() -> None:
+    """LIVE, 2026-08-10, with a bioRxiv preprint open in Chrome:
+
+        "Look at what's on my screen right now and tell me what the paper is
+         about. What is the actual mechanism they use?"
+        → "Done — the desktop steps completed and their effects verified."
+
+    The lane took a reading, verified the reading had happened, and reported
+    the verification. "Did you do it" and "what is it" are different questions,
+    and a receipt only ever answers the first.
+    """
+    import inspect
+
+    from interface.routes import chat
+
+    source = inspect.getsource(chat._execute_desktop_objective_from_chat)
+    marker = "effect_line = _desktop_effect_summary(result)"
+    assert marker in source
+    window = source[source.find(marker) : source.find(marker) + 1400]
+
+    assert "_asks_for_information(user_message)" in window
+    assert 'response = ""' in window
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Look at what's on my screen and tell me what the paper is about",
+        "what is on my clipboard?",
+        "what's your opinion on this paper?",
+        "explain the mechanism to me",
+    ],
+)
+def test_information_requests_are_recognised(message: str) -> None:
+    from interface.routes.chat import _asks_for_information
+
+    assert _asks_for_information(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Put the text ORION-7 on my clipboard",
+        "Make me a file on my Desktop called x.txt",
+        "open Notes and write a note",
+    ],
+)
+def test_effect_requests_still_get_their_receipt(message: str) -> None:
+    """The direction that matters: "it is done" IS the answer to a do-request."""
+    from interface.routes.chat import _asks_for_information
+
+    assert _asks_for_information(message) is False

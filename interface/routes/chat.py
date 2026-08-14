@@ -21147,11 +21147,27 @@ async def _execute_desktop_objective_from_chat(
                     # engineering log in the sentence. What makes "it is done"
                     # checkable is WHAT was done: the file that now exists.
                     effect_line = _desktop_effect_summary(result)
-                    response = (
-                        f"Done — {effect_line}"
-                        if effect_line
-                        else "Done — the desktop steps completed and their effects verified."
-                    )
+                    # An ANSWER is not an effect receipt.
+                    #
+                    # LIVE, 2026-08-10: "Look at what's on my screen right now
+                    # and tell me what the paper is about. What is the actual
+                    # mechanism they use?" — a question about a bioRxiv preprint
+                    # — was answered "Done — the desktop steps completed and
+                    # their effects verified."
+                    #
+                    # The lane took a reading, verified that the reading
+                    # happened, and reported the verification. "Did you do it"
+                    # and "what is it" are different questions, and a receipt
+                    # only answers the first. Deferring here sends the turn to
+                    # cognition, which has the reading and can answer from it.
+                    if _asks_for_information(user_message):
+                        response = ""
+                    else:
+                        response = (
+                            f"Done — {effect_line}"
+                            if effect_line
+                            else "Done — the desktop steps completed and their effects verified."
+                        )
                 else:
                     response = ""
             else:
@@ -21598,6 +21614,38 @@ def _desktop_task_research_response(
 #: A written deliverable longer than this is summarised by its opening rather
 #: than pasted whole into a chat reply.
 _DESKTOP_DELIVERABLE_MAX_CHARS = 1200
+
+
+#: A request for INFORMATION rather than for an effect. "Tell me what the paper
+#: is about" wants the paper; "put it on my clipboard" wants the clipboard
+#: changed. A receipt answers the second and never the first.
+_ASKS_FOR_INFORMATION_RE = re.compile(
+    r"\b(?:what|who|when|where|why|which|how)\b"
+    r"|\b(?:tell|show|explain|describe|summari[sz]e|read)\s+(?:me|it|this|that|the)\b"
+    r"|\bwhat(?:'s| is)\s+(?:it|this|that|on)\b"
+    r"|\byour\s+(?:opinion|take|thoughts?|view)\b"
+    r"|\bdo\s+you\s+(?:think|agree|reckon)\b",
+    re.IGNORECASE,
+)
+
+#: An imperative that changes the world. When a turn asks for information AND
+#: names an effect, the effect receipt is still not the answer to the question,
+#: but the turn is not purely informational either — the deliverable branch
+#: above already covers that case by quoting what was produced.
+_ASKS_FOR_INFORMATION_EXCLUSION_RE = re.compile(
+    r"\b(?:put|copy|paste|save|write|create|make|move|rename|delete|open|quit|"
+    r"close|set|install)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_for_information(user_message: object) -> bool:
+    """True when the person asked a question the reply has to answer."""
+
+    text = str(user_message or "").strip()
+    if not text or not _ASKS_FOR_INFORMATION_RE.search(text):
+        return False
+    return not _ASKS_FOR_INFORMATION_EXCLUSION_RE.search(text)
 
 
 def _desktop_effect_summary(result: Any) -> str:
