@@ -1,0 +1,33 @@
+{
+  "schema": "aura.cp400_cp232_semantic_extension.v1",
+  "checkpoint": "CP400",
+  "model": "Qwen2.5-1.5B-Instruct-4bit",
+  "parent_checkpoint_sha256": "8238caa44241d57b789c9bdb57458a74b6a6681c77661557c7146c7bda92350e",
+  "parent_controller_sha256": "214f1c68fb1def13e763d810e54b51937cfb719b19cde5e4fe91f8fccc26b9b6",
+  "parent_state_codebook_sha256": "a2226f8e59743175a87feb4cdfc4ce7add123fc1760998920e469a1a7275b04c",
+  "child_state_codebook_sha256": "66f1a570fec19b7538746a5e42e3c97e615edce0f6f5b7e2cd544c032b154549",
+  "migration": {
+    "tensor": "controller.action_value_embeddings",
+    "slot": "opcode",
+    "slot_index": 0,
+    "value_start_inclusive": 9,
+    "value_stop_exclusive": 16,
+    "parent_tensor_sha256": "8993536c7e88735eeab75b8582bf6b91b1d41b0adfda0ee7407dbcec1420f687",
+    "replacement_sha256": "ee2d3d1e1e2a18e8699a5a3a32f0e71bef081be12ae14cb1889ac4362171cc29",
+    "migrated_tensor_sha256": "3173f1fd5e26782f4e0971deeec447a6f23768f8ab7f229892862286fd095487",
+    "all_other_parent_tensors_preserved": true,
+    "all_other_action_coordinates_preserved": true,
+    "verified_tensor_count": 51
+  },
+  "preflight_failures": [
+    "train_depths_missing_T1_anchor",
+    "state_codebook_sha256_requires_explicit_migration",
+    "exclusive_lane_occupied_by_relaunched_desktop_runtime"
+  ],
+  "claims": {
+    "real_checkpoint_migration_verified": true,
+    "broad_behavioral_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "wow_signal": false
+  }
+}

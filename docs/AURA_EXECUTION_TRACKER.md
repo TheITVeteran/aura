@@ -49110,3 +49110,32 @@ It does not prove broad adaptation, task-disjoint gain, resident-32B
 improvement, fusion, frontier performance or `WOW Signal`. Next is the bounded
 1.5B adaptation using train depths `1,3,4,5,6,8,10`, held-out depths `12,16`,
 then the already-frozen four-arm behavioral canary.
+
+## Checkpoint 2026-08-13-400: Preserve Learned Parent Codebooks During Extension
+
+The first CP399 real-checkpoint preflight correctly rejected its retained-value
+equality assumption. CP232's state, action and literal codebooks are learned
+tissue, and current MLX-grounded values differ outside the seven new opcode
+rows. Requiring equality against a fresh current initialization would discard
+the exact parent that CP396 recovered. This is a scientific correction to
+CP399's proposed migration rule, not a relaxed topology check.
+
+The migration now begins with all 51 exact CP232 parent tensors and overwrites
+only `controller.action_value_embeddings[opcode, 9:16]` from a freshly
+recomputed child grounding whose complete commitment is bound into campaign
+identity. No other child initialization value is admitted. The real 1.5B
+artifact verifies every other parent tensor, all other action slots and opcode
+coordinates 0 through 8 and 16 through 32 remain exact. The parent action
+tensor, replacement slice and resulting hybrid tensor are separately hashed.
+Independent evaluation recomputes the same child grounding, repeats the same
+coordinate-limited merge, requires the complete migration receipt to match and
+then verifies the reconstructed step-zero controller hash.
+
+Real migration evidence is frozen in
+`artifacts/closeout/latent_cortex/cp400_cp232_semantic_extension.json`.
+Trainer/evaluator/recurrent focused contracts pass `84/84` before the aggregate
+RLC rerun. This checkpoint proves an explicit, reproducible extension from
+proven narrow tissue to the new broad opcode vocabulary while preserving the
+parent everywhere else. It does not prove broad behavioral gain, resident-32B
+improvement, fusion, frontier performance or `WOW Signal`. The next action
+remains the bounded 1.5B adaptation and frozen four-arm canary.

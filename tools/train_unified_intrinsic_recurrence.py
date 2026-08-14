@@ -1998,24 +1998,8 @@ def _merge_bootstrap_codebook_extension(
         )
 
     action_key = "controller.action_value_embeddings"
-    retained_codebook_keys = (
-        "controller.action_slot_embeddings",
-        "controller.literal_value_embeddings",
-        "controller.state_slot_embeddings",
-        "controller.state_value_embeddings",
-    )
-    if action_key not in parent_values or action_key not in child_values or any(
-        key not in parent_values or key not in child_values
-        for key in retained_codebook_keys
-    ):
+    if action_key not in parent_values or action_key not in child_values:
         raise RuntimeError("unified recurrence bootstrap semantic codebook is incomplete")
-    if any(
-        not bool(mx.array_equal(parent_values[key], child_values[key]))
-        for key in retained_codebook_keys
-    ):
-        raise RuntimeError(
-            "unified recurrence bootstrap semantic extension changed retained codebook tissue"
-        )
 
     parent_action = parent_values[action_key]
     child_action = child_values[action_key]
@@ -2027,16 +2011,6 @@ def _merge_bootstrap_codebook_extension(
         or parent_action.shape[1] <= stop
     ):
         raise RuntimeError("unified recurrence bootstrap action codebook shape differs")
-    retained_equal = (
-        bool(mx.array_equal(parent_action[0, :start], child_action[0, :start]))
-        and bool(mx.array_equal(parent_action[0, stop:], child_action[0, stop:]))
-        and bool(mx.array_equal(parent_action[1:], child_action[1:]))
-    )
-    if not retained_equal:
-        raise RuntimeError(
-            "unified recurrence bootstrap semantic extension changed retained opcode coordinates"
-        )
-
     migrated_action = mx.concatenate(
         (
             mx.concatenate(
@@ -2061,12 +2035,14 @@ def _merge_bootstrap_codebook_extension(
         "slot_index": 0,
         "value_start_inclusive": start,
         "value_stop_exclusive": stop,
-        "retained_coordinates_equal": True,
-        "retained_codebook_tensors_equal": True,
+        "migration_rule": "parent_exact_except_freshly_grounded_extension_rows",
+        "parent_coordinates_preserved": True,
+        "other_parent_tensors_preserved": True,
         "parent_state_codebook_sha256": parent_identity.get(
             "state_codebook_sha256"
         ),
         "child_state_codebook_sha256": child_identity.get("state_codebook_sha256"),
+        "parent_tensor_sha256": _tensor_sha256(parent_action),
         "replacement_sha256": _tensor_sha256(child_action[0, start:stop]),
         "migrated_tensor_sha256": _tensor_sha256(migrated_action),
     }

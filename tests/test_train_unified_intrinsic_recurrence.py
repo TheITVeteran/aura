@@ -141,20 +141,27 @@ def test_bootstrap_codebook_extension_replaces_only_new_opcode_rows() -> None:
     )
 
 
-def test_bootstrap_codebook_extension_rejects_retained_coordinate_drift() -> None:
+def test_bootstrap_codebook_extension_ignores_non_extension_child_drift() -> None:
     parent, child = _codebook_extension_values()
     changed = child["controller.action_value_embeddings"] + 0
     changed[0, 8] = 1
     child["controller.action_value_embeddings"] = changed
 
-    with pytest.raises(RuntimeError, match="retained opcode coordinates"):
-        _merge_bootstrap_codebook_extension(
-            parent,
-            child,
-            mismatches=["state_codebook_sha256"],
-            parent_identity={"state_codebook_sha256": "parent"},
-            child_identity={"state_codebook_sha256": "child"},
+    migrated, receipt = _merge_bootstrap_codebook_extension(
+        parent,
+        child,
+        mismatches=["state_codebook_sha256"],
+        parent_identity={"state_codebook_sha256": "parent"},
+        child_identity={"state_codebook_sha256": "child"},
+    )
+
+    assert receipt is not None
+    assert bool(
+        mx.array_equal(
+            migrated["controller.action_value_embeddings"][0, 8],
+            parent["controller.action_value_embeddings"][0, 8],
         )
+    )
 
 
 def test_bootstrap_codebook_extension_rejects_any_other_topology_drift() -> None:
