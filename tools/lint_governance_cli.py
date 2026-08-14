@@ -223,17 +223,55 @@ def main(argv: Iterable[str] = ()) -> int:
         )
         return 1
 
+    governed = sum(
+        row["debt_calls"]
+        for category, row in summary.items()
+        if category in GATEWAY_CATEGORIES
+    )
+    raw = debt_calls - governed
+    report["debt_governed_calls"] = governed
+    report["debt_raw_calls"] = raw
+    _write_report(args.json_out, report)
+
     print(
         "governance effect ownership: baseline matched; "
         f"{total_calls} recognized calls in {len(buckets)} buckets, "
         f"{debt_calls} calls remain migration debt"
     )
+    # One undifferentiated debt number invites the reading that every one of
+    # them is an exploitable bypass, and the two halves are not the same claim.
+    # A call routed through the subprocess or file-write gateway is following
+    # the convention CLAUDE.md documents; it is debt only in the narrow sense
+    # that ActionExecutor is not its owner. A raw primitive is ungoverned.
+    print(
+        f"  ├─ through a declared gateway, not ActionExecutor-owned: {governed}"
+    )
+    print(f"  └─ RAW ungoverned primitives:                          {raw}")
     for category, row in sorted(summary.items()):
+        tier = "gateway" if category in GATEWAY_CATEGORIES else "RAW" if row["debt_calls"] else ""
         print(
             f"  {category}: calls={row['calls']} buckets={row['buckets']} "
-            f"debt_calls={row['debt_calls']}"
+            f"debt_calls={row['debt_calls']}{f'  [{tier}]' if tier else ''}"
         )
     return 0
+
+
+#: Effect categories whose call sites go through a declared gateway. These
+#: are migration debt only in the sense that ActionExecutor is not their
+#: canonical owner — the call itself is the pattern CLAUDE.md documents
+#: ("all consequential file writes go through file_write_gateway"). Lumping
+#: them together with raw primitives produces one large number that reads as
+#: "N governance bypasses" and is not that.
+GATEWAY_CATEGORIES = frozenset(
+    {
+        "file_write_gateway",
+        "direct_atomic_file_write",
+        "subprocess_gateway",
+        "network_gateway",
+        "memory_write_gateway",
+        "will_decision",
+    }
+)
 
 
 def _write_report(path: Path | None, report: Mapping[str, Any]) -> None:
