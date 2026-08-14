@@ -22,6 +22,7 @@ import re
 import threading as _threading
 import time
 import weakref
+import uuid
 from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -366,12 +367,22 @@ def _record_inference_degradation(
     *,
     action: str,
     severity: str = "warning",
+    extra: dict[str, Any] | None = None,
 ) -> None:
+    """Record an inference-gate degradation.
+
+    `extra` was missing, so this wrapper silently discarded the structured
+    context every caller in the codebase attaches — the correlation id and
+    stage name that make a partial post-inference update joinable are
+    exactly that kind of context, and passing them would have raised
+    TypeError at the moment a stage actually failed.
+    """
     record_degradation(
         "inference_gate",
         error,
         severity=severity,
         action=action,
+        extra=extra,
     )
 
 
@@ -578,6 +589,19 @@ async def _thread_lock_context(
 #: longer be true.
 #:
 #: Stamping identity and measurement time makes both answerable.
+#: The nine downstream systems `_post_inference_update` advances, in order.
+#: Named once so the commit receipt can say which of them did not run.
+_POST_INFERENCE_STAGES = (
+    "crsm_self_state",
+    "hot_reflexive_feedback",
+    "hedonic_and_lora",
+    "credit_assignment",
+    "homeostasis",
+    "world_model",
+    "synaptic_plasticity",
+    "temporal_continuity",
+)
+
 ADMISSION_SNAPSHOT_SCHEMA = "aura.memory_admission_snapshot.v1"
 
 #: How long a memory measurement may authorize a heavy lane. Memory pressure
@@ -10619,6 +10643,23 @@ class InferenceGate:
         if not response_text or not response_text.strip():
             return
         self._last_successful_generation_at = time.time()
+
+        # Nine downstream systems are updated below, each in its own
+        # fail-open block. A mid-sequence failure therefore leaves a PARTIAL
+        # update — some subsystems advanced by this response, others not —
+        # and every one of those blocks used to record the identical action
+        # string, so the degradation trail could not even say which hook was
+        # skipped, let alone that they belonged to one turn.
+        #
+        # This does NOT add rollback, and claiming it would be the overclaim
+        # this pass exists to remove: CRSM, the world model and synaptic
+        # plasticity are not transactional stores, and there is nothing to
+        # roll back TO. What it adds is legibility — one id shared by every
+        # record from this response, a stage name on each, and a receipt
+        # naming exactly which stages applied and which did not, so a partial
+        # update is a fact somebody can find rather than an invisible one.
+        _update_id = f"pi_{uuid.uuid4().hex[:12]}"
+        _skipped_stages: list[str] = []
         try:
             from core.consciousness.crsm import get_crsm
 
@@ -10626,8 +10667,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage crsm_self_state after response delivery",
+                extra={"stage": "crsm_self_state", "update_id": _update_id},
             )
+            _skipped_stages.append("crsm_self_state")
             logger.debug("Suppressed Exception: %s", _exc)
         try:
             from core.consciousness.hot_engine import get_hot_engine
@@ -10637,8 +10680,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage hot_reflexive_feedback after response delivery",
+                extra={"stage": "hot_reflexive_feedback", "update_id": _update_id},
             )
+            _skipped_stages.append("hot_reflexive_feedback")
             logger.debug("Suppressed Exception: %s", _exc)
         try:
             from core.consciousness.hedonic_gradient import get_hedonic_gradient
@@ -10666,14 +10711,23 @@ class InferenceGate:
             except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 _record_inference_degradation(
                     _exc,
-                    action="skipped unavailable post-inference update hook after response delivery",
+                    action="skipped post-inference stage hedonic_and_lora after response delivery",
+                    extra={"stage": "hedonic_and_lora", "update_id": _update_id},
                 )
+                _skipped_stages.append("hedonic_and_lora")
                 logger.debug("Suppressed Exception: %s", _exc)
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+            # The OUTER handler of the nested hedonic/LoRA block. It kept the
+            # generic action string after the inner one was named, so a
+            # failure to reach the hedonic gradient AT ALL — the more severe
+            # case, since the LoRA capture never even ran — was the one
+            # record that still could not say which stage it belonged to.
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage hedonic_and_lora after response delivery",
+                extra={"stage": "hedonic_and_lora", "update_id": _update_id},
             )
+            _skipped_stages.append("hedonic_and_lora")
             logger.debug("Suppressed Exception: %s", _exc)
 
         # ══════════════════════════════════════════════════════════════════
@@ -10702,8 +10756,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage credit_assignment after response delivery",
+                extra={"stage": "credit_assignment", "update_id": _update_id},
             )
+            _skipped_stages.append("credit_assignment")
             logger.debug("Suppressed Exception in credit feedback: %s", _exc)
 
         # ── Homeostasis: Response success signal ──────────────────────────
@@ -10714,8 +10770,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage homeostasis after response delivery",
+                extra={"stage": "homeostasis", "update_id": _update_id},
             )
+            _skipped_stages.append("homeostasis")
             logger.debug("Suppressed Exception in homeostasis feedback: %s", _exc)
 
         # ── World Model: Extract beliefs from response ────────────────────
@@ -10757,8 +10815,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
+                action="skipped post-inference stage world_model after response delivery",
+                extra={"stage": "world_model", "update_id": _update_id},
             )
+            _skipped_stages.append("world_model")
             logger.debug("Suppressed Exception in world model feedback: %s", _exc)
 
         # ── Synaptic Plasticity: Post-inference weight update ─────────────
@@ -10802,8 +10862,10 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped synaptic plasticity post-inference learning",
+                action="skipped post-inference stage synaptic_plasticity after response delivery",
+                extra={"stage": "synaptic_plasticity", "update_id": _update_id},
             )
+            _skipped_stages.append("synaptic_plasticity")
             logger.debug("Suppressed Exception in plasticity feedback: %s", _exc)
 
         # ── Temporal Continuity: Reset silence accumulator ────────────────
@@ -10816,9 +10878,50 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="skipped temporal continuity post-inference reset",
+                action="skipped post-inference stage temporal_continuity after response delivery",
+                extra={"stage": "temporal_continuity", "update_id": _update_id},
             )
+            _skipped_stages.append("temporal_continuity")
             logger.debug("Suppressed Exception in temporal continuity reset: %s", _exc)
+
+        # The commit receipt. Every stage above is fail-open by design — a
+        # response has already reached the person and no downstream update is
+        # worth taking that back — but "some of the nine advanced and some
+        # did not" was previously spread across up to nine unrelated
+        # degradation records with no way to join them.
+        #
+        # Kept on the gate and reported once when the sequence was partial,
+        # so a run of half-updates shows up as a rate rather than as nine
+        # anecdotes nobody connects.
+        self._last_post_inference_receipt = {
+            "update_id": _update_id,
+            "at": time.time(),
+            "stages": list(_POST_INFERENCE_STAGES),
+            "skipped": list(_skipped_stages),
+            "complete": not _skipped_stages,
+        }
+        if _skipped_stages:
+            _record_inference_degradation(
+                RuntimeError(
+                    "post-inference update was partial: "
+                    + ", ".join(sorted(_skipped_stages))
+                ),
+                action=(
+                    "left downstream systems in a partial post-inference state; "
+                    "no rollback exists for these subsystems"
+                ),
+                severity="warning",
+                extra=dict(self._last_post_inference_receipt),
+            )
+
+    def post_inference_receipt(self) -> dict[str, Any]:
+        """The last post-inference update receipt, for the health report.
+
+        Empty until a response has been delivered. `complete` is the field
+        that matters: False means this turn advanced some downstream systems
+        and not others.
+        """
+        return dict(getattr(self, "_last_post_inference_receipt", {}) or {})
 
     async def think(self, prompt: str, system_prompt: str = "", **kwargs) -> str | None:
         """Unified thinking interface for cognitive components.
