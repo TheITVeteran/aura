@@ -127,14 +127,12 @@ def test_final_only_evaluation_preserves_terminal_answer_loss() -> None:
     model = _model()
     controller = _controller()
     plan = _spec().plan_at(5)
-    recurrent, all_hidden, all_losses, _state_logits = (
-        unified_answer_and_recurrent_trajectory(
-            model,
-            TOKENS,
-            ANSWERS,
-            plan,
-            controller,
-        )
+    recurrent, all_hidden, all_losses, _state_logits = unified_answer_and_recurrent_trajectory(
+        model,
+        TOKENS,
+        ANSWERS,
+        plan,
+        controller,
     )
     final_recurrent, final_hidden, final_losses, _final_state_logits = (
         unified_answer_and_recurrent_trajectory(
@@ -205,9 +203,7 @@ def test_student_rollin_changes_history_without_changing_labels() -> None:
     )
     mx.eval(teacher_states, teacher_losses, student_states, student_losses)
     assert not bool(mx.array_equal(teacher_states[-1], student_states[-1]))
-    assert float(teacher_losses[-1].item()) != pytest.approx(
-        float(student_losses[-1].item())
-    )
+    assert float(teacher_losses[-1].item()) != pytest.approx(float(student_losses[-1].item()))
     _loss, receipt = unified_intrinsic_training_loss(
         model,
         TOKENS,
@@ -422,9 +418,7 @@ def test_process_objective_can_train_each_causal_component_exclusively() -> None
         )
         mx.eval(loss)
         assert receipt["component"] == component
-        assert float(loss.item()) == pytest.approx(
-            receipt["component_losses"][component]
-        )
+        assert float(loss.item()) == pytest.approx(receipt["component_losses"][component])
 
     with pytest.raises(ValueError, match="component is invalid"):
         unified_process_training_loss(
@@ -484,8 +478,7 @@ def test_process_objective_reaches_scoped_transformer_tissue() -> None:
     adapter_gradients = [
         value
         for name, value in flat.items()
-        if name.endswith((".lora_a", ".lora_b"))
-        and "continuous_depth_" not in name
+        if name.endswith((".lora_a", ".lora_b")) and "continuous_depth_" not in name
     ]
     mx.eval(loss, gradients)
     assert adapter_gradients
@@ -553,6 +546,39 @@ def test_action_accuracy_excludes_post_completion_null_padding() -> None:
     assert step_accuracy == pytest.approx((0.0, 1.0, 1.0, 1.0))
     action_breakdown = structured_action_accuracy_breakdown(logits, targets)
     assert action_breakdown["instruction_exact_accuracy"] == pytest.approx(0.0)
+
+
+def test_action_loss_places_extra_pressure_on_the_weakest_active_field() -> None:
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=1,
+        field_names=("pc", "value", "done"),
+        states=((0, 1, 0), (1, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((2, 1, 1),),
+    )
+    targets = action_targets_from_program(program, 1)
+    width = len(targets.values[0])
+    decision = mx.full((1, width, 33), -8.0)
+    for slot, value in enumerate(targets.values[0]):
+        decision[0, slot, value] = 8.0
+    weakest = next(index for index, active in enumerate(targets.masks[0]) if active)
+    target = targets.values[0][weakest]
+    decision[0, weakest, target] = -8.0
+    decision[0, weakest, (target + 1) % 33] = 8.0
+
+    loss, _accuracy, _steps = structured_action_loss([decision], targets)
+    labels = mx.array(targets.values[0], dtype=mx.int32)
+    per_slot = nn.losses.cross_entropy(decision[0], labels, reduction="none")
+    mask = mx.array(targets.masks[0], dtype=mx.float32)
+    flat_active_mean = mx.sum(per_slot * mask) / mx.sum(mask)
+    inactive = 1.0 - mask
+    flat_null_mean = mx.sum(per_slot * inactive) / mx.maximum(mx.sum(inactive), 1.0)
+
+    assert float(loss.item()) > float((flat_active_mean + 0.1 * flat_null_mean).item())
 
 
 def test_training_receipt_keeps_heldout_depths_unopened() -> None:

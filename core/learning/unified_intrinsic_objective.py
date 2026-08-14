@@ -117,14 +117,12 @@ def readout_fingerprint(model: Any, coda_start: int) -> str:
             for name, value in tree_flatten(layers[layer_index].parameters())
         )
     inventory.extend(
-        (f"model.norm.{name}", value)
-        for name, value in tree_flatten(inner.norm.parameters())
+        (f"model.norm.{name}", value) for name, value in tree_flatten(inner.norm.parameters())
     )
     head = getattr(model, "lm_head", None)
     if head is not None:
         inventory.extend(
-            (f"lm_head.{name}", value)
-            for name, value in tree_flatten(head.parameters())
+            (f"lm_head.{name}", value) for name, value in tree_flatten(head.parameters())
         )
     else:
         inventory.extend(
@@ -208,9 +206,7 @@ def unified_answer_and_recurrent_trajectory(
         raise ValueError("answer tokens must not be empty")
     if type(answer_digit_pointer_enabled) is not bool:
         raise TypeError("answer digit pointer flag must be boolean")
-    decoder_inputs = (
-        answer_tokens if decoder_input_tokens is None else decoder_input_tokens
-    )
+    decoder_inputs = answer_tokens if decoder_input_tokens is None else decoder_input_tokens
     if decoder_inputs.shape != answer_tokens.shape:
         raise ValueError("decoder inputs must be answer-aligned")
     full = mx.concatenate([tokens, decoder_inputs], axis=1)
@@ -227,15 +223,9 @@ def unified_answer_and_recurrent_trajectory(
         effective_memory_layout = None
     state_logits: list[Any] = []
     state_probabilities: list[Any] = []
-    role_logits = (
-        answer_role_logit_trajectory
-        if answer_role_logit_trajectory is not None
-        else []
-    )
+    role_logits = answer_role_logit_trajectory if answer_role_logit_trajectory is not None else []
     place_logits = (
-        answer_place_logit_trajectory
-        if answer_place_logit_trajectory is not None
-        else []
+        answer_place_logit_trajectory if answer_place_logit_trajectory is not None else []
     )
     decode_states: list[Any] = []
     _final, recurrent_states, _telemetry = unified_recurrent_hidden_states(
@@ -252,15 +242,9 @@ def unified_answer_and_recurrent_trajectory(
             initial_state_logit_trajectory if use_state_slots else None
         ),
         decode_state_trajectory=decode_states if use_state_slots else None,
-        state_probability_trajectory=(
-            state_probabilities if use_state_slots else None
-        ),
-        answer_role_logit_trajectory=(
-            role_logits if use_state_slots else None
-        ),
-        answer_place_logit_trajectory=(
-            place_logits if use_state_slots else None
-        ),
+        state_probability_trajectory=(state_probabilities if use_state_slots else None),
+        answer_role_logit_trajectory=(role_logits if use_state_slots else None),
+        answer_place_logit_trajectory=(place_logits if use_state_slots else None),
         answer_binding_feature_trajectory=(
             answer_binding_feature_trajectory if use_state_slots else None
         ),
@@ -274,10 +258,7 @@ def unified_answer_and_recurrent_trajectory(
     losses: list[Any] = []
     output_states = decode_states if use_state_slots else recurrent_states
     if use_state_slots and not (
-        len(output_states)
-        == len(state_probabilities)
-        == len(role_logits)
-        == len(place_logits)
+        len(output_states) == len(state_probabilities) == len(role_logits) == len(place_logits)
     ):
         raise RuntimeError("answer pointer trajectory differs from recurrent states")
     if not isinstance(final_answer_only, bool):
@@ -299,14 +280,10 @@ def unified_answer_and_recurrent_trajectory(
                 answer_tokens,
                 answer_start,
                 controller=(
-                    controller
-                    if use_state_slots and answer_digit_pointer_enabled
-                    else None
+                    controller if use_state_slots and answer_digit_pointer_enabled else None
                 ),
                 role_logits=(
-                    role_logits[index]
-                    if use_state_slots and answer_digit_pointer_enabled
-                    else None
+                    role_logits[index] if use_state_slots and answer_digit_pointer_enabled else None
                 ),
                 place_logits=(
                     place_logits[index]
@@ -434,9 +411,7 @@ def structured_state_loss(
             if decision is not None
             else controller.state_logits(
                 state,
-                public_token_count=(
-                    public_token_count if state_slot_start is None else None
-                ),
+                public_token_count=(public_token_count if state_slot_start is None else None),
                 state_slot_start=state_slot_start,
             )
         )
@@ -450,9 +425,7 @@ def structured_state_loss(
             labels,
             reduction="none",
         )
-        losses.append(
-            mx.sum(per_slot * weights) / mx.maximum(mx.sum(weights), 1.0)
-        )
+        losses.append(mx.sum(per_slot * weights) / mx.maximum(mx.sum(weights), 1.0))
         predictions = mx.argmax(logits[0], axis=-1)
         correct = (predictions == labels).astype(mx.float32)
         accuracies.append(float((mx.sum(correct * mask) / mx.sum(mask)).item()))
@@ -509,15 +482,11 @@ def structured_state_accuracy_breakdown(
         control_correct += float(mx.sum(correct * control_mask).item())
         control_total += float(mx.sum(control_mask).item())
         if float(mx.sum(value_mask).item()) > 0.0:
-            value_exact += float(
-                (mx.sum(correct * value_mask) == mx.sum(value_mask)).item()
-            )
+            value_exact += float((mx.sum(correct * value_mask) == mx.sum(value_mask)).item())
             value_exact_count += 1
     return {
         "value_accuracy": value_correct / value_total if value_total else None,
-        "value_exact_accuracy": (
-            value_exact / value_exact_count if value_exact_count else None
-        ),
+        "value_exact_accuracy": (value_exact / value_exact_count if value_exact_count else None),
         "control_accuracy": control_correct / control_total if control_total else None,
     }
 
@@ -568,13 +537,23 @@ def structured_action_loss(
         active_count = mx.sum(mask)
         inactive = 1.0 - mask
         inactive_count = mx.sum(inactive)
-        active_loss = mx.sum(per_slot * mask) / mx.maximum(active_count, 1.0)
+        active_mean = mx.sum(per_slot * mask) / mx.maximum(active_count, 1.0)
+        # One weak field invalidates an executable instruction even when every
+        # other field is already certain. Mean CE alone can keep spending
+        # gradient on those easy fields. This smooth worst-field term equals
+        # the mean when all active fields are equally difficult, then focuses
+        # additional pressure on the field currently limiting exactness.
+        active_terms = mx.where(
+            mask > 0.0,
+            per_slot,
+            mx.full_like(per_slot, -1e9),
+        )
+        weakest_link = mx.logsumexp(active_terms) - mx.log(mx.maximum(active_count, 1.0))
+        active_loss = 0.5 * (active_mean + weakest_link)
         null_loss = mx.sum(per_slot * inactive) / mx.maximum(inactive_count, 1.0)
         # Active operation fields carry the computation. Null slots remain
         # trained for post-completion stability but cannot dominate the parser.
-        losses.append(
-            mx.where(active_count > 0.0, active_loss + 0.1 * null_loss, null_loss)
-        )
+        losses.append(mx.where(active_count > 0.0, active_loss + 0.1 * null_loss, null_loss))
         predictions = mx.argmax(decision[0], axis=-1)
         correct = (predictions == labels).astype(mx.float32)
         active = float(mx.sum(mask).item())
@@ -583,9 +562,7 @@ def structured_action_loss(
             active_correct_total += active_correct
             active_field_total += active
         accuracies.append(
-            active_correct / active
-            if active > 0.0
-            else float(mx.all(predictions == labels).item())
+            active_correct / active if active > 0.0 else float(mx.all(predictions == labels).item())
         )
     active_accuracy = (
         active_correct_total / active_field_total
@@ -678,9 +655,7 @@ def unified_intrinsic_training_loss(
         raise ValueError("readout commitment is invalid")
     if objective_depth is not None and objective_depth not in spec.train_depths:
         raise ValueError("objective depth is outside the trained recurrence ladder")
-    selected_depths = (
-        spec.train_depths if objective_depth is None else (objective_depth,)
-    )
+    selected_depths = spec.train_depths if objective_depth is None else (objective_depth,)
     final_losses: list[Any] = []
     progression_terms: list[Any] = []
     halt_terms: list[Any] = []
@@ -703,41 +678,31 @@ def unified_intrinsic_training_loss(
             raise ValueError("action supervision requires state supervision")
         initial_state_logits: list[Any] = []
         action_logits: list[Any] = []
-        recurrent_states, states, losses, state_logits = (
-            unified_answer_and_recurrent_trajectory(
-                model,
-                tokens,
-                answer_tokens,
-                spec.plan_at(depth),
-                controller,
-                memory_layout=memory_layout,
-                decoder_input_tokens=decoder_input_tokens,
-                use_state_slots=transition_trace is not None,
-                state_teacher_values=(
-                    depth_targets.values if depth_targets is not None else None
-                ),
-                action_teacher_values=(
-                    action_targets.values if action_targets is not None else None
-                ),
-                initial_state_teacher_values=(
-                    depth_targets.initial_values if depth_targets is not None else None
-                ),
-                state_teacher_forcing_probability=(
-                    state_teacher_forcing_probability
-                    if depth_targets is not None
-                    else 0.0
-                ),
-                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
-                initial_state_logit_trajectory=initial_state_logits,
-                action_logit_trajectory=action_logits,
-            )
+        recurrent_states, states, losses, state_logits = unified_answer_and_recurrent_trajectory(
+            model,
+            tokens,
+            answer_tokens,
+            spec.plan_at(depth),
+            controller,
+            memory_layout=memory_layout,
+            decoder_input_tokens=decoder_input_tokens,
+            use_state_slots=transition_trace is not None,
+            state_teacher_values=(depth_targets.values if depth_targets is not None else None),
+            action_teacher_values=(action_targets.values if action_targets is not None else None),
+            initial_state_teacher_values=(
+                depth_targets.initial_values if depth_targets is not None else None
+            ),
+            state_teacher_forcing_probability=(
+                state_teacher_forcing_probability if depth_targets is not None else 0.0
+            ),
+            answer_digit_pointer_enabled=answer_digit_pointer_enabled,
+            initial_state_logit_trajectory=initial_state_logits,
+            action_logit_trajectory=action_logits,
         )
         final_losses.append(losses[-1])
         progression = _progression_loss(losses, spec.progression_margin)
         targets = (
-            depth_targets
-            if depth_targets is not None and depth == max(spec.train_depths)
-            else None
+            depth_targets if depth_targets is not None and depth == max(spec.train_depths) else None
         )
         if targets is None:
             state_loss = mx.zeros(())
@@ -775,17 +740,15 @@ def unified_intrinsic_training_loss(
                 action_step_accuracy = ()
                 state_loss = 0.5 * (state_loss + initial_state_loss)
             else:
-                action_loss, action_accuracy, action_step_accuracy = (
-                    structured_action_loss(action_logits, action_targets)
+                action_loss, action_accuracy, action_step_accuracy = structured_action_loss(
+                    action_logits, action_targets
                 )
                 state_loss = (state_loss + initial_state_loss + action_loss) / 3.0
             stuttering = _stutter_loss(recurrent_states, targets)
             halting = _supervised_halt_loss(controller, recurrent_states, targets)
             state_commitments[f"T{depth}"] = targets.commitment()
             if action_targets is not None:
-                state_commitments[f"T{depth}"]["action"] = (
-                    action_targets.commitment()
-                )
+                state_commitments[f"T{depth}"]["action"] = action_targets.commitment()
         progression_terms.append(progression)
         if transition_trace is None or targets is not None:
             halt_terms.append(halting)
@@ -808,24 +771,14 @@ def unified_intrinsic_training_loss(
             "stutter_loss": float(stuttering.item()),
         }
     depth_count = len(spec.train_depths)
-    anchor = (
-        final_losses[selected_depths.index(1)]
-        if 1 in selected_depths
-        else mx.zeros(())
-    )
+    anchor = final_losses[selected_depths.index(1)] if 1 in selected_depths else mx.zeros(())
     # A one-depth invocation is a summand, not a reweighted smaller objective.
     final_mean = mx.sum(mx.stack(final_losses)) / depth_count
     progression_mean = mx.sum(mx.stack(progression_terms)) / depth_count
     halt_denominator = depth_count if transition_trace is None else 1
-    halt_mean = (
-        mx.sum(mx.stack(halt_terms)) / halt_denominator
-        if halt_terms
-        else mx.zeros(())
-    )
+    halt_mean = mx.sum(mx.stack(halt_terms)) / halt_denominator if halt_terms else mx.zeros(())
     state_mean = mx.sum(mx.stack(state_terms)) if state_terms else mx.zeros(())
-    stutter_mean = (
-        mx.sum(mx.stack(stutter_terms)) if stutter_terms else mx.zeros(())
-    )
+    stutter_mean = mx.sum(mx.stack(stutter_terms)) if stutter_terms else mx.zeros(())
     total = (
         spec.answer_weight * final_mean
         + spec.anchor_weight * anchor
@@ -856,9 +809,7 @@ def unified_intrinsic_training_loss(
         "readout_sha256": readout_sha256,
         "readout_frozen_by_training_contract": True,
         "decoder_history": (
-            "teacher_forced"
-            if decoder_input_tokens is None
-            else "student_rollin_answer_aligned"
+            "teacher_forced" if decoder_input_tokens is None else "student_rollin_answer_aligned"
         ),
         "labels_from_generated_tokens": False,
         "heldout_depths_unopened": list(spec.heldout_depths),

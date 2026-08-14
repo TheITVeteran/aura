@@ -80,6 +80,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     bootstrap_profiles = {
         "process_action_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
         "recovery",
     }
     if profile in bootstrap_profiles:
@@ -280,6 +281,20 @@ def test_process_family_acquisition_cooptimizes_eight_distinct_examples() -> Non
     assert training["state_warmup_steps"] == training["max_steps"] == 224
     assert training["eval_every"] == training["checkpoint_every"] == 28
     assert arguments[arguments.index("--process-family-batch-size") + 1] == "2"
+
+
+def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
+    training = _profile_training("process_neural_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["per_cell"] == 8
+    assert training["holdout_per_cell"] == 3
+    assert training["process_family_batch_size"] == 7
+    assert training["process_family_batch_mode"] == "balanced_families"
+    assert training["process_transformer_gradient_scale"] == pytest.approx(0.1)
+    assert training["state_warmup_steps"] == training["max_steps"] == 64
+    assert training["eval_every"] == training["checkpoint_every"] == 8
+    assert arguments[arguments.index("--process-family-batch-mode") + 1] == ("balanced_families")
 
 
 def test_process_family_acquisition_signed_config_is_controller_admitted(

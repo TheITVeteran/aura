@@ -286,6 +286,7 @@ def _load_config(path: Path) -> dict[str, Any]:
             "process_action_canary",
             "process_canary",
             "process_family_acquisition",
+            "process_neural_acquisition",
             "recovery",
         }
         or not isinstance(config.get("campaign_id"), str)
@@ -310,6 +311,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     bootstrap_profiles = {
         "process_action_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
         "recovery",
     }
     expected_path_keys = (
@@ -985,6 +987,7 @@ def _trainer_command(
     if config["profile"] in {
         "process_action_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
         "recovery",
     }:
         bootstrap = config["bootstrap"]

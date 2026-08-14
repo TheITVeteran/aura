@@ -730,16 +730,19 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
     expected = {
         "initializer": {"model.layer.lora_a", "controller.initial_state_output"},
         "action": {
+            "model.layer.lora_a",
             "controller.action_output",
             "controller.action_workspace_output",
             "controller.action_causal_output",
         },
         "action_workspace": {
+            "model.layer.lora_a",
             "controller.action_workspace_output",
             "controller.action_causal_output",
         },
-        "transition": {"controller.state_transition_output"},
+        "transition": {"model.layer.lora_a", "controller.state_transition_output"},
         "joint": {
+            "model.layer.lora_a",
             "controller.initial_state_output",
             "controller.action_output",
             "controller.action_workspace_output",
@@ -750,6 +753,18 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
     for component, live_names in expected.items():
         masked = dict(tree_flatten(_process_component_gradients(gradients, component)))
         assert {name for name, value in masked.items() if bool(mx.any(value != 0))} == live_names
+
+    scaled = dict(
+        tree_flatten(
+            _process_component_gradients(
+                gradients,
+                "action_workspace",
+                transformer_scale=0.1,
+            )
+        )
+    )
+    assert bool(mx.all(scaled["model.layer.lora_a"] == 0.1))
+    assert bool(mx.all(scaled["controller.action_workspace_output"] == 1.0))
 
 
 def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:
@@ -1238,6 +1253,30 @@ def test_process_family_training_batch_cooptimizes_siblings_before_repetition() 
         ["frontier_mathematics-2", "frontier_mathematics-3"],
     ]
     assert all(len({task.family for task in batch}) == 1 for batch in batches)
+
+
+def test_process_family_training_batch_balances_shared_tissue() -> None:
+    tasks = [
+        type("Task", (), {"family": family, "task_id": f"{family}-{index}"})()
+        for family in ("coding", "science", "planning")
+        for index in range(2)
+    ]
+
+    batches = [
+        _process_family_training_batch(
+            tasks,
+            update,
+            3,
+            mode="balanced_families",
+        )
+        for update in range(2)
+    ]
+
+    assert [[task.task_id for task in batch] for batch in batches] == [
+        ["coding-0", "planning-0", "science-0"],
+        ["coding-1", "planning-1", "science-1"],
+    ]
+    assert all(len({task.family for task in batch}) == 3 for batch in batches)
 
 
 def test_mean_gradient_trees_is_equal_weight_and_topology_bound() -> None:

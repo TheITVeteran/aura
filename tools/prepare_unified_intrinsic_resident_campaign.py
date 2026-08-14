@@ -67,6 +67,7 @@ PROFILES: Final = frozenset(
         "process_action_canary",
         "process_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
         "recovery",
     }
 )
@@ -222,6 +223,8 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "state_teacher_forcing_final_probability": 0.0,
         "process_curriculum": "joint",
         "process_family_batch_size": 1,
+        "process_family_batch_mode": "same_family",
+        "process_transformer_gradient_scale": 0.0,
         "max_gradient_norm": 0.5,
         "checkpoint_every": 1,
         "checkpoint_group": 4,
@@ -238,18 +241,26 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "process_action_canary",
         "process_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
     }:
         families = (
             "novel_algorithms,mathematics,coding,scientific_inference,"
             "long_horizon_planning,calibration,misleading_premise"
         )
-        acquisition = profile == "process_family_acquisition"
+        acquisition = profile in {
+            "process_family_acquisition",
+            "process_neural_acquisition",
+        }
+        neural_acquisition = profile == "process_neural_acquisition"
         per_cell = 8 if acquisition else 2
-        family_batch_size = 2 if acquisition else 1
+        family_batch_size = 7 if neural_acquisition else 2 if acquisition else 1
+        family_batch_mode = "balanced_families" if neural_acquisition else "same_family"
         training_examples = 7 * per_cell
         action_only = profile != "process_canary"
         process_steps = (
-            7 * (per_cell // family_batch_size) * 8
+            per_cell * 8
+            if neural_acquisition
+            else 7 * (per_cell // family_batch_size) * 8
             if acquisition
             else training_examples * (8 if action_only else 20)
         )
@@ -268,14 +279,24 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "state_warmup_steps": process_steps,
             "process_curriculum": ("action_workspace" if action_only else "factorized"),
             "process_family_batch_size": family_batch_size,
+            "process_family_batch_mode": family_batch_mode,
+            "process_transformer_gradient_scale": 0.1 if neural_acquisition else 0.0,
             "answer_bridge_steps": 0,
             "answer_bridge_inner_steps": 1,
             "student_rollin_probability": 0.0,
             "student_rollin_final_probability": 0.5,
             "state_teacher_forcing_probability": 1.0,
             "state_teacher_forcing_final_probability": 0.0,
-            "eval_every": 28 if acquisition else training_examples * (2 if action_only else 5),
-            "checkpoint_every": 28 if acquisition else training_examples,
+            "eval_every": (
+                8
+                if neural_acquisition
+                else 28
+                if acquisition
+                else training_examples * (2 if action_only else 5)
+            ),
+            "checkpoint_every": (
+                8 if neural_acquisition else 28 if acquisition else training_examples
+            ),
             "state_learning_rate": 0.0005 if action_only else 0.00005,
             "seed": 2026081401,
             "init_seed": 2026081402,
@@ -374,6 +395,8 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "state_teacher_forcing_final_probability": ("--state-teacher-forcing-final-probability"),
         "process_curriculum": "--process-curriculum",
         "process_family_batch_size": "--process-family-batch-size",
+        "process_family_batch_mode": "--process-family-batch-mode",
+        "process_transformer_gradient_scale": ("--process-transformer-gradient-scale"),
         "max_gradient_norm": "--max-gradient-norm",
         "max_steps": "--max-steps",
         "semantic_warmup_steps": "--semantic-warmup-steps",
@@ -483,6 +506,7 @@ def _freeze_campaign(
     bootstrap_profiles = {
         "process_action_canary",
         "process_family_acquisition",
+        "process_neural_acquisition",
         "recovery",
     }
     if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
@@ -601,6 +625,7 @@ def _freeze_campaign(
                     "process_action_canary",
                     "process_canary",
                     "process_family_acquisition",
+                    "process_neural_acquisition",
                 }
                 else 14.0 * 3600.0
                 if profile == "recovery"

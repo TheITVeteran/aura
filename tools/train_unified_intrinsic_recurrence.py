@@ -976,19 +976,40 @@ def _gradient_ownership_group(name: str) -> str:
     return "recurrent_controller"
 
 
-def _process_component_gradients(gradients: Any, component: str) -> Any:
+def _process_component_gradients(
+    gradients: Any,
+    component: str,
+    *,
+    transformer_scale: float = 1.0,
+) -> Any:
     """Prevent one typed-process role from rewriting another role's tissue."""
+
+    if (
+        isinstance(transformer_scale, bool)
+        or not isinstance(transformer_scale, (int, float))
+        or not 0.0 <= float(transformer_scale) <= 1.0
+    ):
+        raise ValueError("process transformer gradient scale must be inside [0, 1]")
 
     allowed = {
         "initializer": {"scoped_transformer_bridge", "typed_state_initializer"},
-        "action": {"typed_action_transition", "typed_action_workspace"},
-        "action_workspace": {"typed_action_workspace"},
+        "action": {
+            "scoped_transformer_bridge",
+            "typed_action_transition",
+            "typed_action_workspace",
+        },
+        "action_workspace": {
+            "scoped_transformer_bridge",
+            "typed_action_workspace",
+        },
         "transition": {
+            "scoped_transformer_bridge",
             "typed_action_codebook",
             "typed_state_codebook",
             "typed_state_transition",
         },
         "joint": {
+            "scoped_transformer_bridge",
             "typed_action_codebook",
             "typed_action_transition",
             "typed_action_workspace",
@@ -1003,7 +1024,11 @@ def _process_component_gradients(gradients: Any, component: str) -> Any:
         [
             (
                 name,
-                value
+                (
+                    value * float(transformer_scale)
+                    if _gradient_ownership_group(name) == "scoped_transformer_bridge"
+                    else value
+                )
                 if _gradient_ownership_group(name) in allowed[component]
                 else mx.zeros_like(value),
             )
@@ -1065,6 +1090,7 @@ def _apply_training_gradients(
     totals: dict[str, Any],
     loss: Any,
     process_component: str | None = None,
+    process_transformer_gradient_scale: float = 1.0,
 ) -> None:
     """Apply one ownership-masked update and retain pre-clip diagnostics."""
 
@@ -1072,7 +1098,11 @@ def _apply_training_gradients(
     if process_component is not None:
         if phase != "state_transition":
             raise ValueError("process component requires state-transition phase")
-        gradients = _process_component_gradients(gradients, process_component)
+        gradients = _process_component_gradients(
+            gradients,
+            process_component,
+            transformer_scale=process_transformer_gradient_scale,
+        )
     gradients, gradient_norm, gradient_group_norms = _clip_gradient_groups(
         gradients,
         max_norm,
@@ -1414,13 +1444,16 @@ def _process_family_training_batch(
     tasks: list[Any],
     update_index: int,
     batch_size: int,
+    *,
+    mode: str = "same_family",
 ) -> tuple[Any, ...]:
-    """Return a deterministic same-family cohort for one optimizer update.
+    """Return a deterministic process cohort for one optimizer update.
 
     A family-specific head must fit several distinct programs at once. Applying
     one update per example allowed the last of two prototypes to overwrite its
-    sibling. Cohort gradients make agreement across instances the optimization
-    unit while retaining exact per-example execution traces.
+    sibling. The shared transformer tissue has the complementary requirement:
+    each update must represent every family so its parser cannot chase the
+    latest domain. Both modes retain exact per-example execution traces.
     """
 
     if (
@@ -1429,16 +1462,25 @@ def _process_family_training_batch(
         or type(batch_size) is not int
         or batch_size < 1
         or not tasks
+        or mode not in {"same_family", "balanced_families"}
     ):
         raise ValueError("process family batch schedule is invalid")
     by_family: dict[str, list[Any]] = {}
     for task in tasks:
         by_family.setdefault(str(task.family), []).append(task)
     families = sorted(by_family)
+    for items in by_family.values():
+        items.sort(key=lambda item: str(item.task_id))
+    if mode == "balanced_families":
+        if batch_size != len(families):
+            raise ValueError("balanced process batch must contain exactly one example per family")
+        return tuple(
+            by_family[family][update_index % len(by_family[family])] for family in families
+        )
     if any(len(items) < batch_size for items in by_family.values()):
         raise ValueError("process family batch exceeds an available family")
     family = families[update_index % len(families)]
-    items = sorted(by_family[family], key=lambda item: str(item.task_id))
+    items = by_family[family]
     family_update = update_index // len(families)
     start = (family_update * batch_size) % len(items)
     return tuple(items[(start + offset) % len(items)] for offset in range(batch_size))
@@ -3280,6 +3322,24 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--process-family-batch-mode",
+        choices=("same_family", "balanced_families"),
+        default="same_family",
+        help=(
+            "average a same-family cohort for an isolated expert or one example "
+            "per family for shared recurrent-window tissue"
+        ),
+    )
+    parser.add_argument(
+        "--process-transformer-gradient-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "relative process-gradient scale applied only to scoped transformer "
+            "adapters before ownership-group clipping"
+        ),
+    )
+    parser.add_argument(
         "--answer-bridge-steps",
         type=int,
         default=0,
@@ -3443,6 +3503,16 @@ def main() -> int:
         raise ValueError(
             "process family batching requires a positive action-workspace acquisition batch"
         )
+    if (
+        args.process_family_batch_mode == "balanced_families"
+        and args.process_family_batch_size
+        != len([value for value in args.families.split(",") if value.strip()])
+    ):
+        raise ValueError(
+            "balanced process batching requires exactly one example per selected family"
+        )
+    if not 0.0 <= args.process_transformer_gradient_scale <= 1.0:
+        raise ValueError("process transformer gradient scale must be inside [0, 1]")
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)
         if args.answer_bridge_autonomous_tail_steps is None
@@ -3921,6 +3991,8 @@ def main() -> int:
             "state_warmup_steps": args.state_warmup_steps,
             "process_curriculum": args.process_curriculum,
             "process_family_batch_size": args.process_family_batch_size,
+            "process_family_batch_mode": args.process_family_batch_mode,
+            "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
@@ -4125,6 +4197,7 @@ def main() -> int:
                         train_tasks,
                         step,
                         args.process_family_batch_size,
+                        mode=args.process_family_batch_mode,
                     )
                     task = process_family_batch[0]
                 prompt, answer = encode_example(tokenizer, task, bridge)
@@ -4506,6 +4579,9 @@ def main() -> int:
                             loss=loss,
                             process_component=(
                                 process_policy["component"] if process_policy is not None else None
+                            ),
+                            process_transformer_gradient_scale=(
+                                args.process_transformer_gradient_scale
                             ),
                         )
                 step += 1
