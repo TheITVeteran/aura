@@ -39,6 +39,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedTrainingBundle,
     _answer_binding_loss,
     _answer_bridge_task,
+    _answer_bridge_teacher_policy,
     _answer_role_place_targets,
     _atomic_canonical_json,
     _attach_window_adapters,
@@ -52,6 +53,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _deterministic_student_mix,
     _evaluate,
     _evaluate_answer_bridge_admission,
+    _evaluate_answer_bridge_diagnostic,
     _freeze_dataset,
     _generate_student_rollin,
     _ground_state_value_embeddings,
@@ -59,6 +61,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _invocation_stop_step,
     _load_frozen_dataset,
     _load_latest_checkpoint,
+    _masked_process_decisions,
     _merge_bootstrap_codebook_extension,
     _merge_bootstrap_process_reader_extension,
     _model_identity,
@@ -347,11 +350,7 @@ def test_streamed_recurrent_gradients_equal_monolithic_objective() -> None:
     envelope = type(
         "Envelope",
         (),
-        {
-            "reclaim": lambda _self, *_args, **kwargs: reclaims.append(
-                kwargs.get("force") is True
-            )
-        },
+        {"reclaim": lambda _self, *_args, **kwargs: reclaims.append(kwargs.get("force") is True)},
     )()
     observed_loss, observed_gradients = _streamed_recurrent_objective_gradients(
         bundle,
@@ -367,9 +366,7 @@ def test_streamed_recurrent_gradients_equal_monolithic_objective() -> None:
     )
     mx.eval(observed_loss, observed_gradients)
 
-    assert float(observed_loss.item()) == pytest.approx(
-        float(expected_loss.item()), abs=1e-5
-    )
+    assert float(observed_loss.item()) == pytest.approx(float(expected_loss.item()), abs=1e-5)
     expected = dict(tree_flatten(expected_gradients))
     observed = dict(tree_flatten(observed_gradients))
     assert observed.keys() == expected.keys()
@@ -388,14 +385,8 @@ def test_invocation_boundary_is_operational_and_resumable() -> None:
         _training_halt_reason(step=3, max_steps=73, invocation_stop_step=3)
         == "invocation_step_limit"
     )
-    assert (
-        _training_halt_reason(step=3, max_steps=73, invocation_stop_step=73)
-        == "wall_clock"
-    )
-    assert (
-        _training_halt_reason(step=73, max_steps=73, invocation_stop_step=73)
-        == "max_steps"
-    )
+    assert _training_halt_reason(step=3, max_steps=73, invocation_stop_step=73) == "wall_clock"
+    assert _training_halt_reason(step=73, max_steps=73, invocation_stop_step=73) == "max_steps"
     with pytest.raises(ValueError, match="must be positive"):
         _invocation_stop_step(0, 73, 0)
 
@@ -475,9 +466,7 @@ def test_rollin_telemetry_round_trips_and_rejects_invalid_state() -> None:
     restored = _restore_rollin_totals({"rollin_totals": totals})
     assert restored == totals
     assert restored is not totals
-    assert restored["max_preclip_gradient_norms"] is not totals[
-        "max_preclip_gradient_norms"
-    ]
+    assert restored["max_preclip_gradient_norms"] is not totals["max_preclip_gradient_norms"]
     totals["last_probability"] = float("nan")
     with pytest.raises(RuntimeError, match="probability differs"):
         _restore_rollin_totals({"rollin_totals": totals})
@@ -602,10 +591,7 @@ def test_batched_state_codebook_matches_single_label_grounding() -> None:
         def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
             del add_special_tokens
             width = 1 + len(text) % 3
-            return [
-                1 + (sum(text.encode("ascii")) + index) % 62
-                for index in range(width)
-            ]
+            return [1 + (sum(text.encode("ascii")) + index) % 62 for index in range(width)]
 
     def controller() -> UnifiedRecurrentController:
         return UnifiedRecurrentController(
@@ -741,16 +727,16 @@ def test_answer_bridge_schedule_covers_each_family_before_repeating() -> None:
         for family in ("modular", "khop", "register_trace")
         for depth in (1, 2, 4)
     ]
-    assert [
-        _answer_bridge_task(tasks, index).family for index in range(3)
-    ] == ["khop", "modular", "register_trace"]
+    assert [_answer_bridge_task(tasks, index).family for index in range(3)] == [
+        "khop",
+        "modular",
+        "register_trace",
+    ]
     assert {
         (_answer_bridge_task(tasks, index).family, _answer_bridge_task(tasks, index).depth)
         for index in range(9)
     } == {
-        (family, depth)
-        for family in ("khop", "modular", "register_trace")
-        for depth in (1, 2, 4)
+        (family, depth) for family in ("khop", "modular", "register_trace") for depth in (1, 2, 4)
     }
 
 
@@ -810,10 +796,7 @@ def test_recurrent_schedule_uses_max_depth_in_memory_cost_order(
         ),
     )
 
-    scheduled = [
-        _recurrent_training_task(tasks, object(), "", index).task_id
-        for index in range(4)
-    ]
+    scheduled = [_recurrent_training_task(tasks, object(), "", index).task_id for index in range(4)]
 
     assert scheduled == ["small", "medium", "large", "small"]
 
@@ -857,9 +840,7 @@ def test_cached_answer_binding_loss_trains_without_model_execution() -> None:
     bundle, _wiring = _bundle()
     controller = bundle.controller
     answer = mx.random.normal((1, 5, controller.config.hidden_size))
-    state = mx.random.normal(
-        (1, controller.config.state_slots, controller.config.hidden_size)
-    )
+    state = mx.random.normal((1, controller.config.state_slots, controller.config.hidden_size))
     probabilities = controller.exact_probabilities(
         tuple((3, 12, 7, 1, 0)[: controller.config.state_slots]),
         slots=controller.config.state_slots,
@@ -928,6 +909,13 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
         "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
         exact_rollin,
     )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        lambda _task, _depth, _capture: {
+            "process_exact": True,
+            "evidence_sha256": "a" * 64,
+        },
+    )
     tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
     contract = RecurrentAnswerEmissionContract(
         digit_token_ids=tuple(range(10, 20)),
@@ -955,18 +943,16 @@ def test_answer_bridge_admission_requires_exact_autonomous_emission_per_cell(
 
     assert report["admitted"] is True
     assert report["exact_accuracy"] == 1.0
-    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v5"
+    assert report["schema"] == "aura.unified_intrinsic.answer_bridge_admission.v6"
     assert report["process_tape_enabled"] is True
     assert report["answer_digit_pointer_enabled"] is False
     assert pointer_policies == [False] * 9
     assert report["cells"] == 9
     assert report["tasks"] == 9
-    assert {
-        (row["family"], row["task_depth"]) for row in report["rows"]
-    } == {
-        (family, depth)
-        for family in ("khop", "modular", "register_trace")
-        for depth in (1, 2, 4)
+    assert report["answer_exact"] == 9
+    assert report["process_exact"] == 9
+    assert {(row["family"], row["task_depth"]) for row in report["rows"]} == {
+        (family, depth) for family in ("khop", "modular", "register_trace") for depth in (1, 2, 4)
     }
 
     calls = 0
@@ -1052,6 +1038,13 @@ def test_answer_bridge_admission_evaluates_every_unseen_task(
         "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
         corrupt_last_holdout,
     )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        lambda _task, _depth, _capture: {
+            "process_exact": True,
+            "evidence_sha256": "b" * 64,
+        },
+    )
     tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
     contract = RecurrentAnswerEmissionContract(
         digit_token_ids=tuple(range(10, 20)),
@@ -1085,6 +1078,165 @@ def test_answer_bridge_admission_evaluates_every_unseen_task(
     assert report["tasks"] == 3
     assert report["exact"] == 2
     assert report["admitted"] is False
+
+
+def test_answer_bridge_admission_rejects_correct_text_from_wrong_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1,), (4, 8))
+    task = type(
+        "Task",
+        (),
+        {"family": "khop", "task_id": "khop-process-failure", "depth": 1},
+    )()
+    answer = mx.array([[10, 63]], dtype=mx.int32)
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]]), answer),
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
+        lambda _bundle, _prompt, expected, _plan, **_kwargs: expected,
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        lambda _task, _depth, _capture: {
+            "process_exact": False,
+            "evidence_sha256": "c" * 64,
+        },
+    )
+    tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=63,
+        family_markers=(
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_trace", (3,)),
+        ),
+        syntax=(
+            ("close", (4,)),
+            ("khop", (5,)),
+            ("modular", (6,)),
+            ("register_head", (7,)),
+            ("register_mid_r1", (8,)),
+            ("register_mid_r2", (9,)),
+        ),
+    )
+
+    report = _evaluate_answer_bridge_admission(bundle, tokenizer, [task], spec, "", contract)
+
+    assert report["answer_exact"] == 1
+    assert report["process_exact"] == 0
+    assert report["exact"] == 0
+    assert report["admitted"] is False
+
+
+def test_process_evidence_ignores_unrequired_post_completion_action_rows() -> None:
+    logits = (
+        mx.array([[[0.0, 5.0], [4.0, 0.0]]]),
+        mx.array([[[8.0, 0.0], [0.0, 8.0]]]),
+    )
+
+    evidence = _masked_process_decisions(
+        logits,
+        ((1, 0), (1, 0)),
+        ((True, True), (False, False)),
+    )
+
+    assert evidence["correct"] == 2
+    assert evidence["required"] == 2
+    assert evidence["required_steps"] == 1
+    assert evidence["exact_steps"] == 1
+    assert evidence["exact"] is True
+
+
+def test_answer_bridge_diagnostic_classifies_process_and_reader_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1,), (4, 8))
+    task = type(
+        "Task",
+        (),
+        {
+            "family": "khop",
+            "task_id": "khop-diagnostic",
+            "depth": 1,
+            "transition_trace": object(),
+            "transition_program": object(),
+        },
+    )()
+    answer = mx.array([[10, 63]], dtype=mx.int32)
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]]), answer),
+    )
+    target = type(
+        "Targets",
+        (),
+        {
+            "initial_values": (0,),
+            "values": ((0,),),
+        },
+    )()
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.state_targets_from_trace",
+        lambda *_args: target,
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.action_targets_from_program",
+        lambda *_args: type("Actions", (), {"values": ((0,),)})(),
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        lambda *_args: {"process_exact": False, "evidence_sha256": "d" * 64},
+    )
+    calls = 0
+
+    def diagnostic_rollin(
+        _bundle: object,
+        _prompt: object,
+        expected: object,
+        _plan: object,
+        **kwargs: object,
+    ) -> object:
+        nonlocal calls
+        calls += 1
+        if kwargs.get("state_teacher_forcing_probability") == 1.0:
+            return expected
+        return mx.array([[11, 63]], dtype=expected.dtype)
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._generate_student_rollin",
+        diagnostic_rollin,
+    )
+    tokenizer = type("Tokenizer", (), {"eos_token_id": 63})()
+    contract = RecurrentAnswerEmissionContract(
+        digit_token_ids=tuple(range(10, 20)),
+        eos_token_id=63,
+        family_markers=(
+            ("khop", (1,)),
+            ("modular", (2,)),
+            ("register_trace", (3,)),
+        ),
+        syntax=(
+            ("close", (4,)),
+            ("khop", (5,)),
+            ("modular", (6,)),
+            ("register_head", (7,)),
+            ("register_mid_r1", (8,)),
+            ("register_mid_r2", (9,)),
+        ),
+    )
+
+    report = _evaluate_answer_bridge_diagnostic(bundle, tokenizer, [task], spec, "", contract)
+
+    assert calls == 3
+    assert report["oracle_exact"] == 1
+    assert report["autonomous_process_exact"] == 0
+    assert report["diagnosis"] == "recurrent_process_limited"
 
 
 def test_model_identity_hashes_weight_content_not_only_path(tmp_path: Path) -> None:
@@ -1311,6 +1463,50 @@ def test_student_rollin_schedule_and_gradient_trust_bound() -> None:
     assert float(after.item()) == pytest.approx(1.0)
 
 
+def test_answer_bridge_teacher_policy_ends_unassisted_and_blocks_bad_process() -> None:
+    mapping = _answer_bridge_teacher_policy(
+        11,
+        bridge_start=10,
+        bridge_steps=10,
+        autonomous_tail_steps=4,
+        process_exact=False,
+    )
+    tail_start = _answer_bridge_teacher_policy(
+        16,
+        bridge_start=10,
+        bridge_steps=10,
+        autonomous_tail_steps=4,
+        process_exact=True,
+    )
+    tail_bad = _answer_bridge_teacher_policy(
+        18,
+        bridge_start=10,
+        bridge_steps=10,
+        autonomous_tail_steps=4,
+        process_exact=False,
+    )
+    terminal = _answer_bridge_teacher_policy(
+        19,
+        bridge_start=10,
+        bridge_steps=10,
+        autonomous_tail_steps=4,
+        process_exact=True,
+    )
+
+    assert mapping == {
+        "state_teacher_forcing_probability": 1.0,
+        "autonomous_tail": False,
+        "update_admitted": True,
+    }
+    assert tail_start["state_teacher_forcing_probability"] == 1.0
+    assert tail_start["autonomous_tail"] is True
+    assert tail_start["update_admitted"] is True
+    assert tail_bad["state_teacher_forcing_probability"] == pytest.approx(1 / 3)
+    assert tail_bad["update_admitted"] is False
+    assert terminal["state_teacher_forcing_probability"] == 0.0
+    assert terminal["update_admitted"] is True
+
+
 def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     gradients = {
         "model": {"layer": {"lora_a": mx.array([3.0, 4.0])}},
@@ -1335,15 +1531,13 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         "typed_action_codebook",
         "recurrent_controller",
     }
-    assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(
-        1.0
-    )
+    assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(1.0)
     assert float(
         mx.linalg.norm(flat["controller.state_transition_output"]).item()
     ) == pytest.approx(1.0)
-    assert float(
-        mx.linalg.norm(flat["controller.state_value_embeddings"]).item()
-    ) == pytest.approx(1.0)
+    assert float(mx.linalg.norm(flat["controller.state_value_embeddings"]).item()) == pytest.approx(
+        1.0
+    )
     action_transition_norm = mx.sqrt(
         mx.sum(flat["controller.action_output"] ** 2)
         + mx.sum(flat["controller.opcode_copy_logit"] ** 2)
@@ -1353,9 +1547,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     assert float(
         mx.linalg.norm(flat["controller.action_value_embeddings"]).item()
     ) == pytest.approx(1.0)
-    assert float(
-        mx.linalg.norm(flat["controller.transport_bias"]).item()
-    ) == pytest.approx(0.5)
+    assert float(mx.linalg.norm(flat["controller.transport_bias"]).item()) == pytest.approx(0.5)
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:
@@ -1489,9 +1681,7 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
     )
 
     imported = _trainable(child)
-    assert all(
-        bool(mx.array_equal(imported[name], value)) for name, value in expected.items()
-    )
+    assert all(bool(mx.array_equal(imported[name], value)) for name, value in expected.items())
     assert receipt["parent_step"] == 73
     assert receipt["optimizer_inherited"] is False
     assert receipt["history_inherited"] is False
@@ -1572,10 +1762,7 @@ def test_bootstrap_extends_legacy_parent_with_exact_process_reader(
     )
 
     imported = _trainable(child)
-    assert all(
-        bool(mx.array_equal(imported[name], value))
-        for name, value in parent_values.items()
-    )
+    assert all(bool(mx.array_equal(imported[name], value)) for name, value in parent_values.items())
     extension = receipt["process_reader_extension"]
     assert extension["parent_tensor_inventory_preserved"] is True
     assert set(extension["new_tensor_names"]) == {
@@ -1750,9 +1937,7 @@ def test_named_best_checkpoint_does_not_overwrite_latest(tmp_path: Path) -> None
     assert (tmp_path / "checkpoint_latest.json").is_file()
     assert (tmp_path / "checkpoint_best_trained.json").is_file()
     assert (tmp_path / "checkpoint_best_trained_pointer.json").is_file()
-    step, _history, _training_state = _restore_checkpoint(
-        tmp_path, bundle, optimizer, identity
-    )
+    step, _history, _training_state = _restore_checkpoint(tmp_path, bundle, optimizer, identity)
     assert step == 3
 
 

@@ -143,11 +143,13 @@ def _terminal_fixture(
         lambda *_args, **_kwargs: SimpleNamespace(receipt=selected_receipt),
     )
     admission_body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v6",
         "answer_digit_pointer_enabled": False,
         "process_tape_enabled": True,
         "admitted": True,
         "exact": 1,
+        "answer_exact": 1,
+        "process_exact": 1,
         "tasks": 1,
     }
     admission = {
@@ -162,10 +164,18 @@ def _terminal_fixture(
         "identity": {
             "dataset": {"holdout_count": 1},
             "controller_rank": 16,
+            "answer_bridge_autonomous_tail_steps": 8,
             "answer_bridge_supervision": {
-                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v5",
+                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v6",
                 "answer_digit_pointer_enabled": False,
                 "generated_history_policy": "full_autonomous_prefix",
+                "process_teacher_policy": {
+                    "mapping_phase": "exact_verified_process",
+                    "autonomous_tail_steps": 8,
+                    "tail_schedule": "linear_to_zero",
+                    "tail_update_authority": "exact_autonomous_process_only",
+                    "wrong_process_can_supervise_correct_answer": False,
+                },
                 "process_tape": {
                     "schema": "aura.unified_intrinsic.process_tape.v4",
                     "ordering": "bounded_sinusoidal_step_and_transition_role",
@@ -230,16 +240,20 @@ def test_prepare_binds_terminal_checkpoint_and_frozen_evaluator(
     assert plan["scientific"]["checkpoint"]["answer_bridge_admission"] == {
         "admission_sha256": launcher.canonical_sha256(
             {
-                "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
+                "schema": "aura.unified_intrinsic.answer_bridge_admission.v6",
                 "answer_digit_pointer_enabled": False,
                 "process_tape_enabled": True,
                 "admitted": True,
                 "exact": 1,
+                "answer_exact": 1,
+                "process_exact": 1,
                 "tasks": 1,
             }
         ),
         "tasks": 1,
         "exact": 1,
+        "answer_exact": 1,
+        "process_exact": 1,
         "answer_digit_pointer_enabled": False,
         "process_tape_enabled": True,
     }
@@ -424,17 +438,11 @@ def test_prepare_rejects_admission_with_a_different_pointer_policy(
     receipt = launcher._read_document(output / "training_receipt.json")
     admission = receipt["answer_bridge_admission"]
     admission["answer_digit_pointer_enabled"] = True
-    admission_body = {
-        key: value for key, value in admission.items() if key != "admission_sha256"
-    }
+    admission_body = {key: value for key, value in admission.items() if key != "admission_sha256"}
     admission["admission_sha256"] = launcher.canonical_sha256(admission_body)
-    receipt_body = {
-        key: value for key, value in receipt.items() if key != "receipt_sha256"
-    }
+    receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     receipt["receipt_sha256"] = launcher.canonical_sha256(receipt_body)
-    (output / "training_receipt.json").write_bytes(
-        launcher.canonical_bytes(receipt) + b"\n"
-    )
+    (output / "training_receipt.json").write_bytes(launcher.canonical_bytes(receipt) + b"\n")
 
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,
@@ -460,13 +468,9 @@ def test_prepare_rejects_a_different_answer_bridge_training_policy(
     output = Path(str(config["paths"]["training_output"]))
     receipt = launcher._read_document(output / "training_receipt.json")
     receipt["identity"]["answer_bridge_supervision"][field] = value
-    receipt_body = {
-        key: item for key, item in receipt.items() if key != "receipt_sha256"
-    }
+    receipt_body = {key: item for key, item in receipt.items() if key != "receipt_sha256"}
     receipt["receipt_sha256"] = launcher.canonical_sha256(receipt_body)
-    (output / "training_receipt.json").write_bytes(
-        launcher.canonical_bytes(receipt) + b"\n"
-    )
+    (output / "training_receipt.json").write_bytes(launcher.canonical_bytes(receipt) + b"\n")
 
     with pytest.raises(
         launcher.ResidentEvaluationLaunchError,

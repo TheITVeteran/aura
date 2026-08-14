@@ -204,7 +204,7 @@ def _selected_checkpoint(
             supervision_identity.get("answer_digit_pointer_enabled")
             if isinstance(supervision_identity, dict)
             and supervision_identity.get("schema")
-            == "aura.unified_intrinsic.answer_bridge_supervision.v5"
+            == "aura.unified_intrinsic.answer_bridge_supervision.v6"
             else None
         )
         expected_history_policy = (
@@ -218,13 +218,21 @@ def _selected_checkpoint(
             else None
         )
         expected_reader_rank = (
-            4 * controller_rank
-            if type(controller_rank) is int and controller_rank > 0
-            else None
+            4 * controller_rank if type(controller_rank) is int and controller_rank > 0 else None
         )
         process_tape_identity = (
             supervision_identity.get("process_tape")
             if isinstance(supervision_identity, dict)
+            else None
+        )
+        process_teacher_policy = (
+            supervision_identity.get("process_teacher_policy")
+            if isinstance(supervision_identity, dict)
+            else None
+        )
+        expected_autonomous_tail_steps = (
+            training_identity.get("answer_bridge_autonomous_tail_steps")
+            if isinstance(training_identity, dict)
             else None
         )
         expected_tasks = (
@@ -242,11 +250,10 @@ def _selected_checkpoint(
             or persisted.get("receipt_sha256") != training_receipt.get("receipt_sha256")
             or persisted.get("receipt_sha256") != canonical_sha256(persisted_body)
             or not isinstance(admission, dict)
-            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v5"
+            or admission.get("schema") != "aura.unified_intrinsic.answer_bridge_admission.v6"
             or admission.get("admission_sha256") != canonical_sha256(admission_body)
             or type(expected_pointer_policy) is not bool
-            or admission.get("answer_digit_pointer_enabled")
-            is not expected_pointer_policy
+            or admission.get("answer_digit_pointer_enabled") is not expected_pointer_policy
             or admission.get("process_tape_enabled") is not True
             or expected_history_policy
             != (
@@ -271,8 +278,20 @@ def _selected_checkpoint(
                 "terminal_stutter_entries_masked": True,
                 "private_answer_exposed": False,
             }
+            or process_teacher_policy
+            != {
+                "mapping_phase": "exact_verified_process",
+                "autonomous_tail_steps": expected_autonomous_tail_steps,
+                "tail_schedule": "linear_to_zero",
+                "tail_update_authority": "exact_autonomous_process_only",
+                "wrong_process_can_supervise_correct_answer": False,
+            }
+            or type(expected_autonomous_tail_steps) is not int
+            or expected_autonomous_tail_steps < 1
             or admission.get("admitted") is not True
             or admission.get("exact") != admission.get("tasks")
+            or admission.get("answer_exact") != admission.get("tasks")
+            or admission.get("process_exact") != admission.get("tasks")
             or type(admission.get("tasks")) is not int
             or int(admission["tasks"]) < 1
             or type(expected_tasks) is not int
@@ -294,9 +313,9 @@ def _selected_checkpoint(
             "admission_sha256": admission["admission_sha256"],
             "tasks": admission["tasks"],
             "exact": admission["exact"],
-            "answer_digit_pointer_enabled": admission[
-                "answer_digit_pointer_enabled"
-            ],
+            "answer_exact": admission["answer_exact"],
+            "process_exact": admission["process_exact"],
+            "answer_digit_pointer_enabled": admission["answer_digit_pointer_enabled"],
             "process_tape_enabled": admission["process_tape_enabled"],
         }
     return selected_checkpoint

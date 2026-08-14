@@ -222,9 +222,7 @@ def _model_identity(model_path: str) -> dict[str, Any]:
     if not config.is_file() or not weights:
         raise ValueError("model checkpoint identity is incomplete")
     files = sorted(
-        path
-        for path in directory.iterdir()
-        if path.is_file() and path.name != "README.md"
+        path for path in directory.iterdir() if path.is_file() and path.name != "README.md"
     )
     rows: list[dict[str, Any]] = []
     by_name: dict[str, dict[str, Any]] = {}
@@ -256,9 +254,7 @@ def _model_identity(model_path: str) -> dict[str, Any]:
         rows.append(row)
         by_name[path.name] = row
     weight_rows = [by_name[path.name] for path in weights]
-    behavior_rows = [
-        row for row in rows if not row["name"].endswith(".safetensors")
-    ]
+    behavior_rows = [row for row in rows if not row["name"].endswith(".safetensors")]
     body = {
         "canonical_path": str(directory),
         "config_sha256": by_name[config.name]["sha256"],
@@ -386,15 +382,17 @@ def _resolve_recurrent_window(
         "layer_count": layer_count,
         "prelude_end": resolved_prelude,
         "coda_start": resolved_coda,
-        "prelude_fraction": (
-            float(prelude_fraction) if mode == "fractional" else None
-        ),
+        "prelude_fraction": (float(prelude_fraction) if mode == "fractional" else None),
         "coda_fraction": float(coda_fraction) if mode == "fractional" else None,
     }
-    return resolved_prelude, resolved_coda, {
-        **body,
-        "contract_sha256": _canonical_sha256(body),
-    }
+    return (
+        resolved_prelude,
+        resolved_coda,
+        {
+            **body,
+            "contract_sha256": _canonical_sha256(body),
+        },
+    )
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -403,13 +401,16 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _atomic_canonical_json(path: Path, value: dict[str, Any]) -> None:
-    encoded = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ) + "\n"
+    encoded = (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
     atomic_write_text(path, encoded, encoding="ascii", mode=0o600)
 
 
@@ -457,9 +458,7 @@ def _await_resource_guard(
                 "ack_sha256": sha256_bytes(acknowledgement_raw),
             }
         time.sleep(0.25)
-    raise ResourceStageGuardError(
-        "external sentinel did not acknowledge unified training in time"
-    )
+    raise ResourceStageGuardError("external sentinel did not acknowledge unified training in time")
 
 
 def _attach_window_adapters(
@@ -624,9 +623,7 @@ def _ground_state_value_embeddings(
                 dtype=mx.int32,
             )
             hidden = model.model.embed_tokens(tokens)
-            terminal = _run(model.model.layers[:prelude_end], hidden)[:, -1, :].astype(
-                mx.float32
-            )
+            terminal = _run(model.model.layers[:prelude_end], hidden)[:, -1, :].astype(mx.float32)
             mx.eval(terminal)
             for row, (index, _token_ids) in enumerate(batch):
                 grounded_rows[index] = terminal[row]
@@ -645,12 +642,8 @@ def _ground_state_value_embeddings(
         cursor += count
         return mx.stack(selected).reshape(row_count, cardinality, -1)
 
-    grounded = take(
-        (len(STATE_SLOT_NAMES), controller.config.state_cardinality)
-    )
-    grounded_actions = take(
-        (len(ACTION_SLOT_NAMES), controller.config.action_cardinality)
-    )
+    grounded = take((len(STATE_SLOT_NAMES), controller.config.state_cardinality))
+    grounded_actions = take((len(ACTION_SLOT_NAMES), controller.config.action_cardinality))
     literal_count = LITERAL_MAX_VALUE + 1
     grounded_literals = mx.stack(concrete_rows[cursor : cursor + literal_count])
     cursor += literal_count
@@ -739,9 +732,7 @@ def _phase_schedule(
         raise ValueError("optimization phases exceed maximum steps")
     bridge_only = recurrence_steps == 0
     if bridge_only and (answer_bridge_steps < 1 or bootstrap_output_dir is None):
-        raise ValueError(
-            "zero-recurrence training requires a bootstrapped answer-bridge campaign"
-        )
+        raise ValueError("zero-recurrence training requires a bootstrapped answer-bridge campaign")
     return {
         "schema": "aura.unified_intrinsic.phase_schedule.v1",
         "mode": "bootstrap_answer_bridge_only" if bridge_only else "recurrent_training",
@@ -787,9 +778,7 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
             and "continuous_depth_" not in name
             and (name.endswith(".lora_a") or name.endswith(".lora_b"))
         )
-        neural_answer_bridge = name.startswith(
-            ("controller.answer_", "controller.process_reader_")
-        )
+        neural_answer_bridge = name.startswith(("controller.answer_", "controller.process_reader_"))
         if phase == "semantic_anchor":
             keep = shared_adapter
         elif phase == "answer_bridge":
@@ -811,14 +800,7 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
     if not flattened:
         raise ValueError("gradient tree must not be empty")
     norm = mx.sqrt(
-        mx.sum(
-            mx.stack(
-                [
-                    mx.sum(value.astype(mx.float32) ** 2)
-                    for _name, value in flattened
-                ]
-            )
-        )
+        mx.sum(mx.stack([mx.sum(value.astype(mx.float32) ** 2) for _name, value in flattened]))
     )
     scale = mx.minimum(1.0, float(max_norm) / mx.maximum(norm, 1e-12))
     return tree_unflatten(
@@ -848,9 +830,7 @@ def _gradient_ownership_group(name: str) -> str:
         )
     ):
         return "state_answer_bridge"
-    if name.startswith(
-        ("controller.action_value_embeddings", "controller.action_slot_embeddings")
-    ):
+    if name.startswith(("controller.action_value_embeddings", "controller.action_slot_embeddings")):
         return "typed_action_codebook"
     if name.startswith(
         (
@@ -906,11 +886,7 @@ def _clip_gradient_groups(
         grouped.setdefault(_gradient_ownership_group(name), []).append(value)
     group_norms = {
         group: mx.sqrt(
-            mx.sum(
-                mx.stack(
-                    [mx.sum(value.astype(mx.float32) ** 2) for value in values]
-                )
-            )
+            mx.sum(mx.stack([mx.sum(value.astype(mx.float32) ** 2) for value in values]))
         )
         for group, values in grouped.items()
     }
@@ -1045,18 +1021,14 @@ def _student_rollin_probability(
         raise ValueError("student roll-in schedule step is outside recurrent phase")
     recurrent_steps = max_steps - semantic_warmup_steps
     progress = (
-        (step - semantic_warmup_steps) / (recurrent_steps - 1)
-        if recurrent_steps > 1
-        else 1.0
+        (step - semantic_warmup_steps) / (recurrent_steps - 1) if recurrent_steps > 1 else 1.0
     )
     return float(initial + progress * (final - initial))
 
 
 def _sha256_tokens(tokens: Any) -> str:
     values = [int(value) for value in tokens.tolist()[0]]
-    return hashlib.sha256(
-        json.dumps(values, separators=(",", ":")).encode("ascii")
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("ascii")).hexdigest()
 
 
 def _deterministic_student_mix(
@@ -1084,9 +1056,7 @@ def _deterministic_student_mix(
     threshold = int(float(probability) * (1 << 64))
     effective: list[int] = []
     selected: list[int] = []
-    for position, (target, produced) in enumerate(
-        zip(answer, generated, strict=True)
-    ):
+    for position, (target, produced) in enumerate(zip(answer, generated, strict=True)):
         # The final decoder input has no successor label and cannot influence
         # this sequence loss, so leave it canonical.
         digest = hashlib.sha256(
@@ -1094,10 +1064,7 @@ def _deterministic_student_mix(
             + seed.to_bytes(8, "big")
             + position.to_bytes(8, "big")
         ).digest()
-        use_generated = (
-            position + 1 < len(answer)
-            and int.from_bytes(digest[:8], "big") < threshold
-        )
+        use_generated = position + 1 < len(answer) and int.from_bytes(digest[:8], "big") < threshold
         if use_generated and interchangeable_token_ids is not None:
             # A generated digit may replace another digit because this exposes
             # the decoder to a wrong value while preserving the same grammar
@@ -1105,8 +1072,7 @@ def _deterministic_student_mix(
             # shifts every later role/place target and trains against labels
             # that no longer describe the autoregressive prefix.
             use_generated = produced == target or (
-                produced in interchangeable_token_ids
-                and target in interchangeable_token_ids
+                produced in interchangeable_token_ids and target in interchangeable_token_ids
             )
         effective.append(produced if use_generated else target)
         if use_generated:
@@ -1129,9 +1095,7 @@ def _record_student_rollin(
     totals["examples"] += 1
     totals["answer_tokens"] += len(answer)
     totals["generated_positions"] += len(selected)
-    totals["generated_matches"] += sum(
-        generated[index] == answer[index] for index in selected
-    )
+    totals["generated_matches"] += sum(generated[index] == answer[index] for index in selected)
     totals["last_generated_sha256"] = _sha256_tokens(generated_tokens)
     totals["last_effective_sha256"] = _sha256_tokens(effective_tokens)
     totals["last_probability"] = probability
@@ -1253,13 +1217,9 @@ def _answer_bridge_task(tasks: list[Any], bridge_index: int) -> Any:
         min((cell for cell in cells if cell[0] == family), key=lambda cell: cell[1])
         for family in sorted({family for family, _depth in cells})
     ]
-    ordered_cells = first_by_family + [
-        cell for cell in cells if cell not in first_by_family
-    ]
+    ordered_cells = first_by_family + [cell for cell in cells if cell not in first_by_family]
     cell = ordered_cells[bridge_index % len(ordered_cells)]
-    cell_tasks = [
-        task for task in tasks if (str(task.family), int(task.depth)) == cell
-    ]
+    cell_tasks = [task for task in tasks if (str(task.family), int(task.depth)) == cell]
     cycle = bridge_index // len(ordered_cells)
     return cell_tasks[cycle % len(cell_tasks)]
 
@@ -1304,6 +1264,11 @@ def _cached_answer_binding_features(
     prompt: Any,
     answer_tokens: Any,
     plan: Any,
+    *,
+    initial_state_teacher_values: tuple[int, ...] | None = None,
+    state_teacher_values: tuple[tuple[int, ...], ...] | None = None,
+    action_teacher_values: tuple[tuple[int, ...], ...] | None = None,
+    state_teacher_forcing_probability: float = 0.0,
 ) -> tuple[Any, Any, Any]:
     """Run the expensive tissue once and detach its causal binding features."""
 
@@ -1316,12 +1281,83 @@ def _cached_answer_binding_features(
         bundle.controller,
         state_slot_start=int(prompt.shape[-1]),
         answer_binding_feature_trajectory=features,
+        initial_state_teacher_values=initial_state_teacher_values,
+        state_teacher_values=state_teacher_values,
+        action_teacher_values=action_teacher_values,
+        state_teacher_forcing_probability=state_teacher_forcing_probability,
     )
     if not features:
         raise RuntimeError("answer bridge emitted no reusable causal features")
     selected = tuple(mx.stop_gradient(value) for value in features[-1])
     mx.eval(*selected)
     return selected
+
+
+def _capture_autonomous_process(
+    bundle: UnifiedTrainingBundle,
+    prompt: Any,
+    plan: Any,
+) -> dict[str, Any]:
+    """Capture one prefix-only autonomous process execution without decoding."""
+
+    initial_state_logits: list[Any] = []
+    state_logits: list[Any] = []
+    action_logits: list[Any] = []
+    unified_recurrent_hidden_states(
+        bundle.model,
+        prompt,
+        plan,
+        bundle.controller,
+        state_slot_start=int(prompt.shape[-1]),
+        initial_state_logit_trajectory=initial_state_logits,
+        state_logit_trajectory=state_logits,
+        action_logit_trajectory=action_logits,
+    )
+    if len(initial_state_logits) != 1:
+        raise RuntimeError("autonomous process emitted no initial state decision")
+    mx.eval(initial_state_logits[0], *state_logits, *action_logits)
+    return {
+        "initial_state_logits": initial_state_logits[0],
+        "state_logits": tuple(state_logits),
+        "action_logits": tuple(action_logits),
+    }
+
+
+def _answer_bridge_teacher_policy(
+    step: int,
+    *,
+    bridge_start: int,
+    bridge_steps: int,
+    autonomous_tail_steps: int,
+    process_exact: bool,
+) -> dict[str, Any]:
+    """Keep bad autonomous traces from becoming answer-bridge supervision."""
+
+    if (
+        type(step) is not int
+        or type(bridge_start) is not int
+        or type(bridge_steps) is not int
+        or type(autonomous_tail_steps) is not int
+        or type(process_exact) is not bool
+        or bridge_steps < 1
+        or not 1 <= autonomous_tail_steps <= bridge_steps
+        or not bridge_start <= step < bridge_start + bridge_steps
+    ):
+        raise ValueError("answer bridge teacher policy coordinates are invalid")
+    tail_start = bridge_start + bridge_steps - autonomous_tail_steps
+    in_autonomous_tail = step >= tail_start
+    if not in_autonomous_tail:
+        probability = 1.0
+    elif autonomous_tail_steps == 1:
+        probability = 0.0
+    else:
+        tail_index = step - tail_start
+        probability = 1.0 - tail_index / (autonomous_tail_steps - 1)
+    return {
+        "state_teacher_forcing_probability": probability,
+        "autonomous_tail": in_autonomous_tail,
+        "update_admitted": not in_autonomous_tail or process_exact,
+    }
 
 
 def _cached_answer_binding_loss(
@@ -1343,6 +1379,12 @@ def _generate_student_rollin(
     answer_emission_contract: RecurrentAnswerEmissionContract | None = None,
     answer_digit_pointer_enabled: bool = True,
     state_slot_start: int | None = None,
+    process_capture: dict[str, Any] | None = None,
+    initial_state_teacher_values: tuple[int, ...] | None = None,
+    state_teacher_values: tuple[tuple[int, ...], ...] | None = None,
+    action_teacher_values: tuple[tuple[int, ...], ...] | None = None,
+    state_teacher_forcing_probability: float = 0.0,
+    process_tape_lesion: bool = False,
 ) -> Any:
     """Greedily materialize a fixed-length deep-policy decoder history."""
 
@@ -1352,10 +1394,13 @@ def _generate_student_rollin(
     tokens = prompt
     generated: list[int] = []
     stopped = False
-    for _position in range(token_count):
+    for position in range(token_count):
         if stopped and eos_token_id is not None:
             token = int(eos_token_id)
         else:
+            initial_state_logits: list[Any] = []
+            state_logits: list[Any] = []
+            action_logits: list[Any] = []
             logits, _telemetry = unified_recurrent_logits(
                 bundle.model,
                 tokens,
@@ -1364,7 +1409,36 @@ def _generate_student_rollin(
                 state_slot_start=state_slot_start,
                 answer_emission_contract=answer_emission_contract,
                 answer_digit_pointer_enabled=answer_digit_pointer_enabled,
+                initial_state_logit_trajectory=(
+                    initial_state_logits if process_capture is not None and position == 0 else None
+                ),
+                state_logit_trajectory=(
+                    state_logits if process_capture is not None and position == 0 else None
+                ),
+                action_logit_trajectory=(
+                    action_logits if process_capture is not None and position == 0 else None
+                ),
+                initial_state_teacher_values=initial_state_teacher_values,
+                state_teacher_values=state_teacher_values,
+                action_teacher_values=action_teacher_values,
+                state_teacher_forcing_probability=state_teacher_forcing_probability,
+                process_tape_lesion=process_tape_lesion,
             )
+            if process_capture is not None and position == 0:
+                if len(initial_state_logits) != 1:
+                    raise RuntimeError("student roll-in emitted no initial state decision")
+                mx.eval(
+                    initial_state_logits[0],
+                    *state_logits,
+                    *action_logits,
+                )
+                process_capture.update(
+                    {
+                        "initial_state_logits": initial_state_logits[0],
+                        "state_logits": tuple(state_logits),
+                        "action_logits": tuple(action_logits),
+                    }
+                )
             token = int(mx.argmax(logits[0, -1]).item())
             stopped = eos_token_id is not None and token == eos_token_id
         generated.append(token)
@@ -1373,6 +1447,213 @@ def _generate_student_rollin(
             axis=1,
         )
     return mx.array([generated], dtype=answer_tokens.dtype)
+
+
+def _masked_process_decisions(
+    logits: tuple[Any, ...],
+    values: tuple[tuple[int, ...], ...],
+    masks: tuple[tuple[bool, ...], ...],
+) -> dict[str, Any]:
+    """Measure exact typed decisions without serializing evaluator labels."""
+
+    if not logits or len(logits) != len(values) or len(values) != len(masks):
+        raise ValueError("process decision trajectory differs from verifier targets")
+    correct = 0
+    required = 0
+    exact_steps = 0
+    required_steps = 0
+    predictions: list[list[int]] = []
+    for decision, expected, active in zip(logits, values, masks, strict=True):
+        predicted = tuple(int(value) for value in mx.argmax(decision[0], axis=-1).tolist())
+        if len(predicted) != len(expected) or len(expected) != len(active):
+            raise ValueError("process decision width differs from verifier targets")
+        step_required = sum(active)
+        step_correct = sum(
+            enabled and observed == target
+            for observed, target, enabled in zip(predicted, expected, active, strict=True)
+        )
+        required += step_required
+        correct += step_correct
+        if step_required > 0:
+            required_steps += 1
+            exact_steps += int(step_correct == step_required)
+        predictions.append(list(predicted))
+    return {
+        "correct": correct,
+        "required": required,
+        "accuracy": correct / required if required else None,
+        "exact_steps": exact_steps,
+        "required_steps": required_steps,
+        "steps": len(values),
+        "exact": required > 0 and correct == required and exact_steps == required_steps,
+        "prediction_sha256": _canonical_sha256(predictions),
+    }
+
+
+def _process_evidence_from_capture(
+    task: Any,
+    depth: int,
+    capture: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind autonomous process correctness to the private exact trace authority."""
+
+    state_targets = state_targets_from_trace(task.transition_trace, depth)
+    action_targets = action_targets_from_program(task.transition_program, depth)
+    initial = _masked_process_decisions(
+        (capture["initial_state_logits"],),
+        (state_targets.initial_values,),
+        (state_targets.initial_masks,),
+    )
+    states = _masked_process_decisions(
+        tuple(capture["state_logits"]),
+        state_targets.values,
+        state_targets.masks,
+    )
+    actions = _masked_process_decisions(
+        tuple(capture["action_logits"]),
+        action_targets.values,
+        action_targets.masks,
+    )
+    body = {
+        "schema": "aura.unified_intrinsic.autonomous_process_evidence.v1",
+        "depth": depth,
+        "initial_state": initial,
+        "states": states,
+        "actions": actions,
+        "trace_sha256": state_targets.trace_sha256,
+        "state_target_sha256": state_targets.target_sha256,
+        "program_sha256": action_targets.program_sha256,
+        "action_target_sha256": action_targets.target_sha256,
+        "process_exact": initial["exact"] and states["exact"] and actions["exact"],
+        "private_values_exposed": False,
+    }
+    return {**body, "evidence_sha256": _canonical_sha256(body)}
+
+
+def _answer_bridge_diagnostic_tasks(tasks: list[Any]) -> list[Any]:
+    """Choose one deepest deterministic development example per family."""
+
+    selected: dict[str, Any] = {}
+    for task in sorted(
+        tasks, key=lambda item: (str(item.family), int(item.depth), str(item.task_id))
+    ):
+        selected[str(task.family)] = task
+    if not selected:
+        raise ValueError("answer bridge diagnostic requires development tasks")
+    return [selected[family] for family in sorted(selected)]
+
+
+def _evaluate_answer_bridge_diagnostic(
+    bundle: UnifiedTrainingBundle,
+    tokenizer: Any,
+    tasks: list[Any],
+    spec: UnifiedIntrinsicTrainingSpec,
+    bridge: str,
+    contract: RecurrentAnswerEmissionContract,
+    *,
+    answer_digit_pointer_enabled: bool = True,
+) -> dict[str, Any]:
+    """Separate process, reader, and causal-tape failures on development tasks."""
+
+    rows: list[dict[str, Any]] = []
+    depth = max(spec.train_depths)
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+
+    with recurrence_adapter_scope(start=None, stop=None):
+        for task in _answer_bridge_diagnostic_tasks(tasks):
+            prompt, answer = encode_example(tokenizer, task, bridge)
+            process_capture: dict[str, Any] = {}
+            autonomous = _generate_student_rollin(
+                bundle,
+                prompt,
+                answer,
+                spec.plan_at(depth),
+                eos_token_id=tokenizer.eos_token_id,
+                answer_emission_contract=contract,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
+                state_slot_start=int(prompt.shape[-1]),
+                process_capture=process_capture,
+            )
+            process = _process_evidence_from_capture(task, depth, process_capture)
+            state_targets = state_targets_from_trace(task.transition_trace, depth)
+            action_targets = action_targets_from_program(task.transition_program, depth)
+            oracle = _generate_student_rollin(
+                bundle,
+                prompt,
+                answer,
+                spec.plan_at(depth),
+                eos_token_id=tokenizer.eos_token_id,
+                answer_emission_contract=contract,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
+                state_slot_start=int(prompt.shape[-1]),
+                initial_state_teacher_values=state_targets.initial_values,
+                state_teacher_values=state_targets.values,
+                action_teacher_values=action_targets.values,
+                state_teacher_forcing_probability=1.0,
+            )
+            sham = _generate_student_rollin(
+                bundle,
+                prompt,
+                answer,
+                spec.plan_at(depth),
+                eos_token_id=tokenizer.eos_token_id,
+                answer_emission_contract=contract,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
+                state_slot_start=int(prompt.shape[-1]),
+                process_tape_lesion=True,
+            )
+            expected = tuple(int(value) for value in answer.tolist()[0])
+            arms = {
+                "oracle": tuple(int(value) for value in oracle.tolist()[0]),
+                "autonomous": tuple(int(value) for value in autonomous.tolist()[0]),
+                "sham": tuple(int(value) for value in sham.tolist()[0]),
+            }
+            rows.append(
+                {
+                    "task_id": task.task_id,
+                    "family": task.family,
+                    "task_depth": task.depth,
+                    "process_exact": process["process_exact"],
+                    "process_evidence_sha256": process["evidence_sha256"],
+                    "oracle_exact": arms["oracle"] == expected,
+                    "autonomous_exact": arms["autonomous"] == expected,
+                    "sham_exact": arms["sham"] == expected,
+                    "expected_sha256": _sha256_tokens(answer),
+                    "oracle_sha256": _sha256_tokens(oracle),
+                    "autonomous_sha256": _sha256_tokens(autonomous),
+                    "sham_sha256": _sha256_tokens(sham),
+                }
+            )
+    tasks_count = len(rows)
+    oracle_exact = sum(row["oracle_exact"] for row in rows)
+    autonomous_process_exact = sum(row["process_exact"] for row in rows)
+    autonomous_exact = sum(row["autonomous_exact"] for row in rows)
+    sham_exact = sum(row["sham_exact"] for row in rows)
+    if oracle_exact < tasks_count:
+        diagnosis = "reader_or_bridge_limited"
+    elif autonomous_process_exact < tasks_count:
+        diagnosis = "recurrent_process_limited"
+    elif autonomous_exact < tasks_count:
+        diagnosis = "autonomous_emission_limited"
+    elif sham_exact == autonomous_exact:
+        diagnosis = "causal_dependence_unresolved"
+    else:
+        diagnosis = "ready_for_joint_admission"
+    body = {
+        "schema": "aura.unified_intrinsic.answer_bridge_diagnostic.v1",
+        "scope": "development_deepest_task_per_family",
+        "depth": depth,
+        "tasks": tasks_count,
+        "oracle_exact": oracle_exact,
+        "autonomous_process_exact": autonomous_process_exact,
+        "autonomous_exact": autonomous_exact,
+        "sham_exact": sham_exact,
+        "diagnosis": diagnosis,
+        "rows": rows,
+    }
+    return {**body, "diagnostic_sha256": _canonical_sha256(body)}
 
 
 def _evaluate_answer_bridge_admission(
@@ -1385,7 +1666,7 @@ def _evaluate_answer_bridge_admission(
     *,
     answer_digit_pointer_enabled: bool = True,
 ) -> dict[str, Any]:
-    """Require exact autonomous emission on every supplied unseen task."""
+    """Require exact autonomous process and emission on every unseen task."""
 
     if type(answer_digit_pointer_enabled) is not bool:
         raise TypeError("answer bridge admission pointer policy must be boolean")
@@ -1410,6 +1691,7 @@ def _evaluate_answer_bridge_admission(
     with recurrence_adapter_scope(start=None, stop=None):
         for task in selected:
             prompt, answer = encode_example(tokenizer, task, bridge)
+            process_capture: dict[str, Any] = {}
             generated = _generate_student_rollin(
                 bundle,
                 prompt,
@@ -1419,6 +1701,12 @@ def _evaluate_answer_bridge_admission(
                 answer_emission_contract=contract,
                 answer_digit_pointer_enabled=answer_digit_pointer_enabled,
                 state_slot_start=int(prompt.shape[-1]),
+                process_capture=process_capture,
+            )
+            process = _process_evidence_from_capture(
+                task,
+                max(spec.train_depths),
+                process_capture,
             )
             expected_values = tuple(int(value) for value in answer.tolist()[0])
             generated_values = tuple(int(value) for value in generated.tolist()[0])
@@ -1438,7 +1726,10 @@ def _evaluate_answer_bridge_admission(
                     "task_id": task.task_id,
                     "family": task.family,
                     "task_depth": task.depth,
-                    "exact": generated_values == expected_values,
+                    "exact": (generated_values == expected_values and process["process_exact"]),
+                    "answer_exact": generated_values == expected_values,
+                    "process_exact": process["process_exact"],
+                    "process_evidence": process,
                     "matching_tokens": sum(
                         observed == expected
                         for observed, expected in zip(
@@ -1457,13 +1748,15 @@ def _evaluate_answer_bridge_admission(
     matching = sum(row["matching_tokens"] for row in rows)
     token_count = sum(row["token_count"] for row in rows)
     body = {
-        "schema": "aura.unified_intrinsic.answer_bridge_admission.v5",
+        "schema": "aura.unified_intrinsic.answer_bridge_admission.v6",
         "process_tape_enabled": True,
         "depth": max(spec.train_depths),
         "answer_digit_pointer_enabled": answer_digit_pointer_enabled,
         "cells": len(cells),
         "tasks": len(rows),
         "exact": exact,
+        "answer_exact": sum(row["answer_exact"] for row in rows),
+        "process_exact": sum(row["process_exact"] for row in rows),
         "exact_accuracy": exact / len(rows),
         "token_accuracy": matching / token_count,
         "admitted": exact == len(rows),
@@ -1482,9 +1775,7 @@ def _residual_hidden_size(model: Any) -> int:
 
     layers = getattr(getattr(model, "model", None), "layers", None)
     weight = (
-        getattr(getattr(layers[0], "input_layernorm", None), "weight", None)
-        if layers
-        else None
+        getattr(getattr(layers[0], "input_layernorm", None), "weight", None) if layers else None
     )
     if weight is None or len(weight.shape) != 1 or int(weight.shape[0]) < 1:
         raise ValueError("model residual hidden size is unavailable")
@@ -1552,6 +1843,9 @@ def _initial_rollin_totals() -> dict[str, Any]:
         "last_probability": None,
         "last_state_teacher_forcing_probability": None,
         "answer_bridge_inner_updates": 0,
+        "answer_bridge_autonomous_tail_examples": 0,
+        "answer_bridge_autonomous_process_exact": 0,
+        "answer_bridge_wrong_process_updates_blocked": 0,
     }
 
 
@@ -1567,6 +1861,9 @@ def _restore_rollin_totals(training_state: dict[str, Any]) -> dict[str, Any]:
         "answer_tokens",
         "generated_positions",
         "generated_matches",
+        "answer_bridge_autonomous_tail_examples",
+        "answer_bridge_autonomous_process_exact",
+        "answer_bridge_wrong_process_updates_blocked",
     ):
         value = candidate[key]
         if type(value) is not int or value < 0:
@@ -1676,9 +1973,7 @@ def _publish_latest_checkpoint_generation(
     generations = ensure_private_directory(out_dir / "checkpoint_generations")
     checkpoint_id = f"{stem}-step-{step:08d}-{uuid.uuid4().hex}"
     generation_dir = generations / checkpoint_id
-    stage_dir = ensure_private_directory(
-        generations / f".checkpoint-stage-{uuid.uuid4().hex}"
-    )
+    stage_dir = ensure_private_directory(generations / f".checkpoint-stage-{uuid.uuid4().hex}")
     try:
         weights_path = stage_dir / "bundle.safetensors"
         atomic_write_bytes(weights_path, payload, mode=0o400)
@@ -1776,28 +2071,27 @@ def _load_latest_checkpoint(
             pointer = json.loads(pointer_path.read_text(encoding="ascii"))
         except (json.JSONDecodeError, OSError, UnicodeError) as exc:
             raise RuntimeError("unified recurrence checkpoint pointer is unreadable") from exc
-        if not isinstance(pointer, dict) or set(pointer) != {
-            "schema",
-            "checkpoint",
-            "complete_sha256",
-            "identity_sha256",
-            "step",
-        } or pointer.get("schema") != CHECKPOINT_POINTER_SCHEMA:
+        if (
+            not isinstance(pointer, dict)
+            or set(pointer)
+            != {
+                "schema",
+                "checkpoint",
+                "complete_sha256",
+                "identity_sha256",
+                "step",
+            }
+            or pointer.get("schema") != CHECKPOINT_POINTER_SCHEMA
+        ):
             raise RuntimeError("unified recurrence checkpoint pointer differs")
         relative = pointer.get("checkpoint")
-        if not isinstance(relative, str) or not relative.startswith(
-            "checkpoint_generations/"
-        ):
+        if not isinstance(relative, str) or not relative.startswith("checkpoint_generations/"):
             raise RuntimeError("unified recurrence checkpoint pointer path is invalid")
         try:
             generation_dir = (out_dir / relative).resolve(strict=True)
-            generation_root = (out_dir / "checkpoint_generations").resolve(
-                strict=True
-            )
+            generation_root = (out_dir / "checkpoint_generations").resolve(strict=True)
         except (FileNotFoundError, OSError) as exc:
-            raise RuntimeError(
-                "unified recurrence checkpoint generation is unavailable"
-            ) from exc
+            raise RuntimeError("unified recurrence checkpoint generation is unavailable") from exc
         if generation_dir.parent != generation_root or not generation_dir.is_dir():
             raise RuntimeError("unified recurrence checkpoint pointer escapes its root")
         complete_path = generation_dir / "complete.json"
@@ -1809,20 +2103,15 @@ def _load_latest_checkpoint(
         identity = receipt.get("identity") if isinstance(receipt, dict) else None
         if (
             not isinstance(receipt, dict)
-            or hashlib.sha256(complete_bytes).hexdigest()
-            != pointer.get("complete_sha256")
-            or receipt.get("checkpoint_generation_schema")
-            != CHECKPOINT_GENERATION_SCHEMA
+            or hashlib.sha256(complete_bytes).hexdigest() != pointer.get("complete_sha256")
+            or receipt.get("checkpoint_generation_schema") != CHECKPOINT_GENERATION_SCHEMA
             or receipt.get("checkpoint_id") != generation_dir.name
             or receipt.get("step") != pointer.get("step")
             or not isinstance(identity, dict)
-            or identity.get("identity_sha256")
-            != pointer.get("identity_sha256")
+            or identity.get("identity_sha256") != pointer.get("identity_sha256")
         ):
             raise RuntimeError("unified recurrence checkpoint generation differs")
-        receipt_body = {
-            key: value for key, value in receipt.items() if key != "receipt_sha256"
-        }
+        receipt_body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
         if receipt.get("receipt_sha256") != _canonical_sha256(receipt_body):
             raise RuntimeError("unified recurrence checkpoint receipt differs")
         weights_name = receipt.get("checkpoint_file")
@@ -1834,9 +2123,8 @@ def _load_latest_checkpoint(
             digest = _file_sha256(weights_path)
         except OSError as exc:
             raise RuntimeError("unified recurrence checkpoint weights are unreadable") from exc
-        if (
-            size != receipt.get("checkpoint_size_bytes")
-            or digest != receipt.get("checkpoint_sha256")
+        if size != receipt.get("checkpoint_size_bytes") or digest != receipt.get(
+            "checkpoint_sha256"
         ):
             raise RuntimeError("unified recurrence checkpoint weights differ")
         return receipt, weights_path
@@ -1871,15 +2159,8 @@ def _save_checkpoint(
 ) -> None:
     if not stem.startswith("checkpoint_") or not stem.replace("_", "").isalnum():
         raise ValueError("unified recurrence checkpoint stem is invalid")
-    tensors = {
-        f"bundle.{name}": value for name, value in _trainable(bundle).items()
-    }
-    tensors.update(
-        {
-            f"optimizer.{name}": value
-            for name, value in tree_flatten(optimizer.state)
-        }
-    )
+    tensors = {f"bundle.{name}": value for name, value in _trainable(bundle).items()}
+    tensors.update({f"optimizer.{name}": value for name, value in tree_flatten(optimizer.state)})
     payload = _checkpoint_tensor_bytes(tensors, out_dir)
     with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
         _publish_latest_checkpoint_generation(
@@ -1915,17 +2196,13 @@ def _restore_checkpoint(
     if not isinstance(stored_identity, dict):
         stored_identity = {}
     stored_identity_body = {
-        key: value
-        for key, value in stored_identity.items()
-        if key != "identity_sha256"
+        key: value for key, value in stored_identity.items() if key != "identity_sha256"
     }
     if (
         receipt.get("receipt_sha256") != _canonical_sha256(body)
         or _canonical_sha256(stored_identity) != _canonical_sha256(identity)
-        or stored_identity.get("identity_sha256")
-        != _canonical_sha256(stored_identity_body)
-        or receipt.get("checkpoint_sha256")
-        != hashlib.sha256(weights_path.read_bytes()).hexdigest()
+        or stored_identity.get("identity_sha256") != _canonical_sha256(stored_identity_body)
+        or receipt.get("checkpoint_sha256") != hashlib.sha256(weights_path.read_bytes()).hexdigest()
     ):
         raise RuntimeError("unified recurrence checkpoint identity differs")
     expected_phase = _optimization_phase(
@@ -1995,8 +2272,7 @@ def _bootstrap_bundle_from_checkpoint(
     unexpected_tensors = sorted(set(bundle_values) - expected)
     if unexpected_tensors:
         raise RuntimeError(
-            "unified recurrence bootstrap tensor inventory differs: "
-            + ",".join(unexpected_tensors)
+            "unified recurrence bootstrap tensor inventory differs: " + ",".join(unexpected_tensors)
         )
     incompatible_tensors = sorted(
         name
@@ -2057,16 +2333,13 @@ def _merge_bootstrap_process_reader_extension(
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Add only the independently initialized causal-reader parameter family."""
 
-    expected = {
-        f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES
-    }
+    expected = {f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES}
     missing = set(child_values) - set(parent_values)
     if not missing:
         return dict(parent_values), None
     if missing != expected:
         raise RuntimeError(
-            "unified recurrence bootstrap tensor inventory differs: "
-            + ",".join(sorted(missing))
+            "unified recurrence bootstrap tensor inventory differs: " + ",".join(sorted(missing))
         )
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
@@ -2100,9 +2373,7 @@ def _merge_bootstrap_codebook_extension(
     if not mismatches:
         return dict(parent_values), None
     if mismatches != ["state_codebook_sha256"]:
-        raise RuntimeError(
-            "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
-        )
+        raise RuntimeError("unified recurrence bootstrap topology differs: " + ",".join(mismatches))
 
     action_key = "controller.action_value_embeddings"
     if action_key not in parent_values or action_key not in child_values:
@@ -2145,9 +2416,7 @@ def _merge_bootstrap_codebook_extension(
         "migration_rule": "parent_exact_except_freshly_grounded_extension_rows",
         "parent_coordinates_preserved": True,
         "other_parent_tensors_preserved": True,
-        "parent_state_codebook_sha256": parent_identity.get(
-            "state_codebook_sha256"
-        ),
+        "parent_state_codebook_sha256": parent_identity.get("state_codebook_sha256"),
         "child_state_codebook_sha256": child_identity.get("state_codebook_sha256"),
         "parent_tensor_sha256": _tensor_sha256(parent_action),
         "replacement_sha256": _tensor_sha256(child_action[0, start:stop]),
@@ -2167,25 +2436,21 @@ def _evaluate_depth(
 
     initial_state_logits: list[Any] = []
     action_logits: list[Any] = []
-    recurrent_states, _states, losses, state_logits = (
-        unified_answer_and_recurrent_trajectory(
-            bundle.model,
-            prompt,
-            answer,
-            spec.plan_at(depth),
-            bundle.controller,
-            use_state_slots=(getattr(task, "transition_trace", None) is not None),
-            initial_state_logit_trajectory=initial_state_logits,
-            action_logit_trajectory=action_logits,
-            answer_digit_pointer_enabled=(
-                not str(getattr(task, "family", "")).startswith("frontier_")
-            ),
-            # Evaluation consumes only the final answer loss. Decoding every
-            # recurrent intermediate through the resident 32B coda retains a
-            # depth-sized family of lazy Metal graphs; T16 alone can cross the
-            # host safety ceiling before the caller gets a chance to reclaim.
-            final_answer_only=True,
-        )
+    recurrent_states, _states, losses, state_logits = unified_answer_and_recurrent_trajectory(
+        bundle.model,
+        prompt,
+        answer,
+        spec.plan_at(depth),
+        bundle.controller,
+        use_state_slots=(getattr(task, "transition_trace", None) is not None),
+        initial_state_logit_trajectory=initial_state_logits,
+        action_logit_trajectory=action_logits,
+        answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
+        # Evaluation consumes only the final answer loss. Decoding every
+        # recurrent intermediate through the resident 32B coda retains a
+        # depth-sized family of lazy Metal graphs; T16 alone can cross the
+        # host safety ceiling before the caller gets a chance to reclaim.
+        final_answer_only=True,
     )
     loss = float(losses[-1].item())
     trace = getattr(task, "transition_trace", None)
@@ -2218,29 +2483,17 @@ def _evaluate_depth(
     _action_loss, action_accuracy, _action_steps = structured_action_loss(
         action_logits, action_targets
     )
-    action_breakdown = structured_action_accuracy_breakdown(
-        action_logits, action_targets
-    )
+    action_breakdown = structured_action_accuracy_breakdown(action_logits, action_targets)
     return {
         "loss": loss,
         "state_accuracy": float(state_accuracy),
         "initial_state_accuracy": float(initial_accuracy),
         "state_value_accuracy": float(state_breakdown["value_accuracy"] or 0.0),
-        "state_control_accuracy": float(
-            state_breakdown["control_accuracy"] or 0.0
-        ),
-        "initial_value_accuracy": float(
-            initial_breakdown["value_accuracy"] or 0.0
-        ),
-        "initial_control_accuracy": float(
-            initial_breakdown["control_accuracy"] or 0.0
-        ),
-        "state_value_exact_accuracy": float(
-            state_breakdown["value_exact_accuracy"] or 0.0
-        ),
-        "initial_value_exact_accuracy": float(
-            initial_breakdown["value_exact_accuracy"] or 0.0
-        ),
+        "state_control_accuracy": float(state_breakdown["control_accuracy"] or 0.0),
+        "initial_value_accuracy": float(initial_breakdown["value_accuracy"] or 0.0),
+        "initial_control_accuracy": float(initial_breakdown["control_accuracy"] or 0.0),
+        "state_value_exact_accuracy": float(state_breakdown["value_exact_accuracy"] or 0.0),
+        "initial_value_exact_accuracy": float(initial_breakdown["value_exact_accuracy"] or 0.0),
         "action_accuracy": float(action_accuracy),
         "action_instruction_exact_accuracy": float(
             action_breakdown["instruction_exact_accuracy"] or 0.0
@@ -2291,25 +2544,13 @@ def _evaluate(
                     state_totals[depth] += metrics["state_accuracy"]
                     initial_state_totals[depth] += metrics["initial_state_accuracy"]
                     state_value_totals[depth] += metrics["state_value_accuracy"]
-                    state_control_totals[depth] += metrics[
-                        "state_control_accuracy"
-                    ]
-                    initial_value_totals[depth] += metrics[
-                        "initial_value_accuracy"
-                    ]
-                    initial_control_totals[depth] += metrics[
-                        "initial_control_accuracy"
-                    ]
-                    state_value_exact_totals[depth] += metrics[
-                        "state_value_exact_accuracy"
-                    ]
-                    initial_value_exact_totals[depth] += metrics[
-                        "initial_value_exact_accuracy"
-                    ]
+                    state_control_totals[depth] += metrics["state_control_accuracy"]
+                    initial_value_totals[depth] += metrics["initial_value_accuracy"]
+                    initial_control_totals[depth] += metrics["initial_control_accuracy"]
+                    state_value_exact_totals[depth] += metrics["state_value_exact_accuracy"]
+                    initial_value_exact_totals[depth] += metrics["initial_value_exact_accuracy"]
                     action_totals[depth] += metrics["action_accuracy"]
-                    action_exact_totals[depth] += metrics[
-                        "action_instruction_exact_accuracy"
-                    ]
+                    action_exact_totals[depth] += metrics["action_instruction_exact_accuracy"]
                     state_counts[depth] += 1
                 # Reclaim after each depth. Holding the full ladder's lazy MLX
                 # graphs caused resident-32B evaluation to exceed 51 GiB.
@@ -2317,27 +2558,17 @@ def _evaluate(
     count = len(tasks)
     ce = {f"T{depth}": totals[depth] / count for depth in depths}
     state_accuracy = {
-        f"T{depth}": (
-            state_totals[depth] / state_counts[depth]
-            if state_counts[depth]
-            else None
-        )
+        f"T{depth}": (state_totals[depth] / state_counts[depth] if state_counts[depth] else None)
         for depth in depths
     }
     initial_state_accuracy = {
         f"T{depth}": (
-            initial_state_totals[depth] / state_counts[depth]
-            if state_counts[depth]
-            else None
+            initial_state_totals[depth] / state_counts[depth] if state_counts[depth] else None
         )
         for depth in depths
     }
     action_accuracy = {
-        f"T{depth}": (
-            action_totals[depth] / state_counts[depth]
-            if state_counts[depth]
-            else None
-        )
+        f"T{depth}": (action_totals[depth] / state_counts[depth] if state_counts[depth] else None)
         for depth in depths
     }
     state_value_accuracy = {
@@ -2383,9 +2614,7 @@ def _evaluate(
         for depth in depths
     }
     anchor = ce["T1"]
-    trained_deeper = [
-        ce[f"T{depth}"] for depth in spec.train_depths if depth != 1
-    ]
+    trained_deeper = [ce[f"T{depth}"] for depth in spec.train_depths if depth != 1]
     heldout = [ce[f"T{depth}"] for depth in spec.heldout_depths]
     all_deeper = trained_deeper + heldout
     return {
@@ -2403,16 +2632,12 @@ def _evaluate(
         "action_instruction_exact_accuracy": action_instruction_exact_accuracy,
         "best_depth": min(ce, key=ce.__getitem__),
         "best_deep_relative_gain": (
-            (anchor - min(all_deeper)) / max(anchor, 1e-9)
-            if all_deeper
-            else 0.0
+            (anchor - min(all_deeper)) / max(anchor, 1e-9) if all_deeper else 0.0
         ),
         "best_heldout_relative_gain": (
             (anchor - min(heldout)) / max(anchor, 1e-9) if heldout else 0.0
         ),
-        "trained_depth_helps": bool(
-            trained_deeper and min(trained_deeper) < anchor
-        ),
+        "trained_depth_helps": bool(trained_deeper and min(trained_deeper) < anchor),
         "heldout_depth_helps": bool(heldout and min(heldout) < anchor),
     }
 
@@ -2509,6 +2734,14 @@ def main() -> int:
         help=(
             "head-only optimizer updates per expensive bridge feature pass; "
             "values above one use detached causal features"
+        ),
+    )
+    parser.add_argument(
+        "--answer-bridge-autonomous-tail-steps",
+        type=int,
+        help=(
+            "final answer-bridge steps that anneal to zero process teacher forcing; "
+            "defaults to min(8, answer bridge steps)"
         ),
     )
     parser.add_argument(
@@ -2627,6 +2860,11 @@ def main() -> int:
         max_steps=args.max_steps,
         bootstrap_output_dir=args.bootstrap_output_dir,
     )
+    answer_bridge_autonomous_tail_steps = (
+        min(8, args.answer_bridge_steps)
+        if args.answer_bridge_autonomous_tail_steps is None
+        else args.answer_bridge_autonomous_tail_steps
+    )
     rollin_final_probability = (
         args.student_rollin_probability
         if args.student_rollin_final_probability is None
@@ -2639,23 +2877,32 @@ def main() -> int:
     ):
         raise ValueError("student roll-in probability must be inside [0, 1]")
     if not (
-        0.0 <= args.answer_bridge_rollin_probability
+        0.0
+        <= args.answer_bridge_rollin_probability
         <= args.answer_bridge_rollin_final_probability
         <= 1.0
     ):
         raise ValueError("answer bridge roll-in probability must increase inside [0, 1]")
     if not (
-        0.0 <= args.state_teacher_forcing_final_probability
+        0.0
+        <= args.state_teacher_forcing_final_probability
         <= args.state_teacher_forcing_probability
         <= 1.0
     ):
-        raise ValueError(
-            "state teacher-forcing schedule must decrease inside [0, 1]"
-        )
+        raise ValueError("state teacher-forcing schedule must decrease inside [0, 1]")
     if args.max_gradient_norm <= 0.0:
         raise ValueError("maximum gradient norm must be positive")
     if args.answer_bridge_inner_steps < 1:
         raise ValueError("answer bridge inner steps must be positive")
+    if (
+        type(answer_bridge_autonomous_tail_steps) is not int
+        or (
+            args.answer_bridge_steps > 0
+            and not 1 <= answer_bridge_autonomous_tail_steps <= args.answer_bridge_steps
+        )
+        or (args.answer_bridge_steps == 0 and answer_bridge_autonomous_tail_steps != 0)
+    ):
+        raise ValueError("answer bridge autonomous tail must fit the answer bridge phase")
     if args.max_minutes <= 0.0:
         raise ValueError("maximum minutes must be positive")
     if any(
@@ -2684,22 +2931,17 @@ def main() -> int:
     if args.expected_model_identity_sha256 is not None and (
         len(args.expected_model_identity_sha256) != 64
         or any(
-            character not in "0123456789abcdef"
-            for character in args.expected_model_identity_sha256
+            character not in "0123456789abcdef" for character in args.expected_model_identity_sha256
         )
     ):
         raise ValueError("expected model identity SHA-256 is invalid")
     if args.grounding_batch_size < 1:
         raise ValueError("grounding batch size must be positive")
     recurrent_learning_rate = (
-        args.learning_rate
-        if args.recurrent_learning_rate is None
-        else args.recurrent_learning_rate
+        args.learning_rate if args.recurrent_learning_rate is None else args.recurrent_learning_rate
     )
     state_learning_rate = (
-        recurrent_learning_rate
-        if args.state_learning_rate is None
-        else args.state_learning_rate
+        recurrent_learning_rate if args.state_learning_rate is None else args.state_learning_rate
     )
     answer_bridge_learning_rate = (
         args.learning_rate
@@ -2716,9 +2958,7 @@ def main() -> int:
     if args.state_weight <= 0.0 or args.stutter_weight < 0.0:
         raise ValueError("state weight must be positive and stutter weight non-negative")
     if args.window_tissue_mode == "controller_only" and args.semantic_warmup_steps:
-        raise ValueError(
-            "controller-only tissue cannot schedule transformer semantic warmup"
-        )
+        raise ValueError("controller-only tissue cannot schedule transformer semantic warmup")
     resource_guard_values = (
         args.resource_stage_path,
         args.resource_startup_lethal_mb,
@@ -2730,9 +2970,7 @@ def main() -> int:
     if resource_guard_enabled and not (
         math.isfinite(float(args.resource_startup_lethal_mb))
         and math.isfinite(float(args.resource_steady_lethal_mb))
-        and float(args.resource_startup_lethal_mb)
-        > float(args.resource_steady_lethal_mb)
-        > 0.0
+        and float(args.resource_startup_lethal_mb) > float(args.resource_steady_lethal_mb) > 0.0
         and math.isfinite(args.resource_guard_timeout_s)
         and args.resource_guard_timeout_s > 0.0
     ):
@@ -2773,9 +3011,7 @@ def main() -> int:
             preload_host_pressure.get("available") is not True
             or preload_host_pressure.get("under_pressure") is not False
         ):
-            raise RuntimeError(
-                "resident unified training refused unavailable or pressured host"
-            )
+            raise RuntimeError("resident unified training refused unavailable or pressured host")
 
     from mlx_lm import load
 
@@ -2783,9 +3019,7 @@ def main() -> int:
     from core.runtime.model_lane_control import standalone_model_lane
 
     train_depths = tuple(int(value) for value in args.train_depths.split(","))
-    heldout_depths = tuple(
-        int(value) for value in args.heldout_depths.split(",")
-    )
+    heldout_depths = tuple(int(value) for value in args.heldout_depths.split(","))
     prelude_end, coda_start, window_geometry = _resolve_recurrent_window(
         args.model,
         prelude_end=args.prelude_end,
@@ -2816,12 +3050,8 @@ def main() -> int:
     )
     if not task_depths or any(depth < 1 for depth in task_depths):
         raise ValueError("task depths must be positive")
-    families = tuple(
-        value.strip() for value in args.families.split(",") if value.strip()
-    )
-    targets = tuple(
-        value.strip() for value in args.lora_targets.split(",") if value.strip()
-    )
+    families = tuple(value.strip() for value in args.families.split(",") if value.strip())
+    targets = tuple(value.strip() for value in args.lora_targets.split(",") if value.strip())
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
         args.bridge,
         args.bridge,
@@ -2906,9 +3136,7 @@ def main() -> int:
         holdout = [task for task in holdout if task.prompt not in train_prompts]
     if not holdout:
         raise RuntimeError("unified recurrence holdout is empty")
-    observed_task_depths = tuple(
-        sorted({int(task.depth) for task in train_tasks + holdout})
-    )
+    observed_task_depths = tuple(sorted({int(task.depth) for task in train_tasks + holdout}))
     frontier_depth_mismatch = args.task_source == "frontier_process" and any(
         depth not in spec.train_depths for depth in observed_task_depths
     )
@@ -2923,9 +3151,7 @@ def main() -> int:
     if args.task_source == "frontier_process":
         task_depths = observed_task_depths
     missing_traces = [
-        task.task_id
-        for task in train_tasks + holdout
-        if task.transition_trace is None
+        task.task_id for task in train_tasks + holdout if task.transition_trace is None
     ]
     if missing_traces:
         raise RuntimeError(
@@ -2933,9 +3159,7 @@ def main() -> int:
             + ",".join(missing_traces[:5])
         )
     missing_programs = [
-        task.task_id
-        for task in train_tasks + holdout
-        if task.transition_program is None
+        task.task_id for task in train_tasks + holdout if task.transition_program is None
     ]
     if missing_programs:
         raise RuntimeError(
@@ -2956,31 +3180,33 @@ def main() -> int:
     model_identity = _model_identity(args.model)
     if (
         args.expected_model_identity_sha256 is not None
-        and model_identity["identity_sha256"]
-        != args.expected_model_identity_sha256
+        and model_identity["identity_sha256"] != args.expected_model_identity_sha256
     ):
         raise RuntimeError("resident unified model identity differs from campaign")
     started = time.time()
     deadline = started + args.max_minutes * 60.0
-    with standalone_model_lane(
-        owner_id=f"train-unified-intrinsic:{out_dir.name}",
-        model_path=args.model,
-        purpose=_model_lane_purpose(args.window_tissue_mode),
-        preemptible=False,
-        require_exclusive=args.exclusive_model_lane,
-        allow_owner_eviction=False,
-        metadata={
-            "tool": "train_unified_intrinsic_recurrence",
-            "operator_launched": True,
-            "window_tissue_mode": args.window_tissue_mode,
-        },
-    ), mlx_memory_envelope(
-        fraction=args.memory_fraction,
-        memory_gb=args.memory_limit_gb,
-        cache_gb=args.cache_limit_gb,
-        wired_gb=args.wired_limit_gb,
-        restore_limits_on_exit=False,
-    ) as envelope:
+    with (
+        standalone_model_lane(
+            owner_id=f"train-unified-intrinsic:{out_dir.name}",
+            model_path=args.model,
+            purpose=_model_lane_purpose(args.window_tissue_mode),
+            preemptible=False,
+            require_exclusive=args.exclusive_model_lane,
+            allow_owner_eviction=False,
+            metadata={
+                "tool": "train_unified_intrinsic_recurrence",
+                "operator_launched": True,
+                "window_tissue_mode": args.window_tissue_mode,
+            },
+        ),
+        mlx_memory_envelope(
+            fraction=args.memory_fraction,
+            memory_gb=args.memory_limit_gb,
+            cache_gb=args.cache_limit_gb,
+            wired_gb=args.wired_limit_gb,
+            restore_limits_on_exit=False,
+        ) as envelope,
+    ):
         mx.random.seed(args.init_seed)
         model, tokenizer = load(args.model)
         model.freeze()
@@ -3022,7 +3248,7 @@ def main() -> int:
         training_families = sorted({str(task.family) for task in train_tasks})
         hidden_size = _residual_hidden_size(model)
         answer_bridge_supervision = {
-            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v5",
+            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v6",
             "semantic_cross_entropy_families": training_families,
             "role_place_binding_families": sorted(
                 family for family in training_families if family in pointer_bound_families
@@ -3037,6 +3263,13 @@ def main() -> int:
                 if args.task_source == "frontier_process"
                 else "grammar_preserving_digit_substitution"
             ),
+            "process_teacher_policy": {
+                "mapping_phase": "exact_verified_process",
+                "autonomous_tail_steps": answer_bridge_autonomous_tail_steps,
+                "tail_schedule": "linear_to_zero",
+                "tail_update_authority": "exact_autonomous_process_only",
+                "wrong_process_can_supervise_correct_answer": False,
+            },
             "process_tape": {
                 "schema": PROCESS_TAPE_SCHEMA,
                 "ordering": "bounded_sinusoidal_step_and_transition_role",
@@ -3048,9 +3281,7 @@ def main() -> int:
                     "post_state",
                     "state_delta",
                 ],
-                "entries_per_live_step": (
-                    len(ACTION_SLOT_NAMES) + 3 * len(STATE_SLOT_NAMES)
-                ),
+                "entries_per_live_step": (len(ACTION_SLOT_NAMES) + 3 * len(STATE_SLOT_NAMES)),
                 "terminal_stutter_entries_masked": True,
                 "private_answer_exposed": False,
             },
@@ -3105,19 +3336,14 @@ def main() -> int:
             "state_warmup_steps": args.state_warmup_steps,
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
+            "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
             "max_steps": args.max_steps,
             "phase_schedule": phase_schedule,
-            "answer_bridge_rollin_probability": (
-                args.answer_bridge_rollin_probability
-            ),
-            "answer_bridge_rollin_final_probability": (
-                args.answer_bridge_rollin_final_probability
-            ),
+            "answer_bridge_rollin_probability": (args.answer_bridge_rollin_probability),
+            "answer_bridge_rollin_final_probability": (args.answer_bridge_rollin_final_probability),
             "student_rollin_probability": args.student_rollin_probability,
             "student_rollin_final_probability": rollin_final_probability,
-            "state_teacher_forcing_probability": (
-                args.state_teacher_forcing_probability
-            ),
+            "state_teacher_forcing_probability": (args.state_teacher_forcing_probability),
             "state_teacher_forcing_final_probability": (
                 args.state_teacher_forcing_final_probability
             ),
@@ -3132,9 +3358,7 @@ def main() -> int:
             "controller_rank": args.controller_rank,
             "state_weight": args.state_weight,
             "stutter_weight": args.stutter_weight,
-            "state_codebook": (
-                "frozen_prelude_state_action_and_tokenizer_literal_labels"
-            ),
+            "state_codebook": ("frozen_prelude_state_action_and_tokenizer_literal_labels"),
             "state_codebook_sha256": state_codebook_grounding["sha256"],
             "state_codebook_grounding": state_codebook_grounding,
             "literal_observation_contract": {
@@ -3184,6 +3408,7 @@ def main() -> int:
         identity["initial_controller_sha256"] = controller.parameter_sha256()
         identity["bootstrap"] = bootstrap
         identity["identity_sha256"] = _canonical_sha256(identity)
+
         def phase_learning_rate(phase: str) -> float:
             return {
                 "semantic_anchor": args.learning_rate,
@@ -3260,9 +3485,7 @@ def main() -> int:
                     args.answer_bridge_steps,
                 )
                 if phase == "answer_bridge":
-                    bridge_start = (
-                        args.state_warmup_steps + args.semantic_warmup_steps
-                    )
+                    bridge_start = args.state_warmup_steps + args.semantic_warmup_steps
                     task = _answer_bridge_task(train_tasks, step - bridge_start)
                 elif phase == "recurrence":
                     recurrent_start = (
@@ -3282,6 +3505,44 @@ def main() -> int:
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     update_applied = False
+                    bridge_state_targets = None
+                    bridge_action_targets = None
+                    bridge_teacher_policy = None
+                    semantic_depth = _semantic_execution_depth(task.depth, spec)
+                    if phase == "answer_bridge":
+                        bridge_state_targets = state_targets_from_trace(
+                            task.transition_trace,
+                            semantic_depth,
+                        )
+                        bridge_action_targets = action_targets_from_program(
+                            task.transition_program,
+                            semantic_depth,
+                        )
+                        process_capture = _capture_autonomous_process(
+                            bundle,
+                            prompt,
+                            spec.plan_at(semantic_depth),
+                        )
+                        process_evidence = _process_evidence_from_capture(
+                            task,
+                            semantic_depth,
+                            process_capture,
+                        )
+                        bridge_teacher_policy = _answer_bridge_teacher_policy(
+                            step,
+                            bridge_start=bridge_start,
+                            bridge_steps=args.answer_bridge_steps,
+                            autonomous_tail_steps=(answer_bridge_autonomous_tail_steps),
+                            process_exact=process_evidence["process_exact"],
+                        )
+                        rollin_totals["last_state_teacher_forcing_probability"] = (
+                            bridge_teacher_policy["state_teacher_forcing_probability"]
+                        )
+                        if bridge_teacher_policy["autonomous_tail"]:
+                            rollin_totals["answer_bridge_autonomous_tail_examples"] += 1
+                            rollin_totals["answer_bridge_autonomous_process_exact"] += int(
+                                process_evidence["process_exact"]
+                            )
                     binding_targets = (
                         _answer_role_place_targets(
                             task.family,
@@ -3291,17 +3552,26 @@ def main() -> int:
                         if phase == "answer_bridge"
                         else None
                     )
-                    if (
+                    if phase == "answer_bridge" and not bridge_teacher_policy["update_admitted"]:
+                        rollin_totals["answer_bridge_wrong_process_updates_blocked"] += 1
+                        loss = mx.array(0.0, dtype=mx.float32)
+                        update_applied = True
+                    elif (
                         phase == "answer_bridge"
                         and args.answer_bridge_inner_steps > 1
                         and binding_targets is not None
                     ):
-                        semantic_depth = _semantic_execution_depth(task.depth, spec)
                         features = _cached_answer_binding_features(
                             bundle,
                             prompt,
                             answer,
                             spec.plan_at(semantic_depth),
+                            initial_state_teacher_values=(bridge_state_targets.initial_values),
+                            state_teacher_values=bridge_state_targets.values,
+                            action_teacher_values=bridge_action_targets.values,
+                            state_teacher_forcing_probability=(
+                                bridge_teacher_policy["state_teacher_forcing_probability"]
+                            ),
                         )
                         for _inner_step in range(args.answer_bridge_inner_steps):
                             loss, gradients = nn.value_and_grad(
@@ -3322,12 +3592,9 @@ def main() -> int:
                         )
                         update_applied = True
                     elif phase in {"semantic_anchor", "answer_bridge"}:
-                        semantic_depth = _semantic_execution_depth(task.depth, spec)
                         effective = None
                         if phase == "answer_bridge":
-                            bridge_start = (
-                                args.state_warmup_steps + args.semantic_warmup_steps
-                            )
+                            bridge_start = args.state_warmup_steps + args.semantic_warmup_steps
                             bridge_stop = bridge_start + args.answer_bridge_steps
                             rollin_probability = _student_rollin_probability(
                                 step,
@@ -3356,9 +3623,7 @@ def main() -> int:
                                 interchangeable_token_ids=(
                                     None
                                     if args.task_source == "frontier_process"
-                                    else frozenset(
-                                        answer_emission_contract.digit_token_ids
-                                    )
+                                    else frozenset(answer_emission_contract.digit_token_ids)
                                 ),
                             )
                             _record_student_rollin(
@@ -3377,6 +3642,13 @@ def main() -> int:
                             objective_depth: int = semantic_depth,
                             objective_rollin: Any | None = effective,
                             objective_binding_targets: Any = binding_targets,
+                            objective_state_targets: Any = bridge_state_targets,
+                            objective_action_targets: Any = bridge_action_targets,
+                            objective_teacher_probability: float = (
+                                bridge_teacher_policy["state_teacher_forcing_probability"]
+                                if bridge_teacher_policy is not None
+                                else 0.0
+                            ),
                         ):
                             role_logits: list[Any] = []
                             place_logits: list[Any] = []
@@ -3391,14 +3663,30 @@ def main() -> int:
                                     use_state_slots=True,
                                     answer_role_logit_trajectory=role_logits,
                                     answer_place_logit_trajectory=place_logits,
+                                    initial_state_teacher_values=(
+                                        objective_state_targets.initial_values
+                                        if objective_state_targets is not None
+                                        else None
+                                    ),
+                                    state_teacher_values=(
+                                        objective_state_targets.values
+                                        if objective_state_targets is not None
+                                        else None
+                                    ),
+                                    action_teacher_values=(
+                                        objective_action_targets.values
+                                        if objective_action_targets is not None
+                                        else None
+                                    ),
+                                    state_teacher_forcing_probability=(
+                                        objective_teacher_probability
+                                    ),
                                 )
                             )
                             if objective_binding_targets is None:
                                 return losses[-1]
                             if not role_logits or len(role_logits) != len(place_logits):
-                                raise RuntimeError(
-                                    "answer bridge emitted no binding trajectory"
-                                )
+                                raise RuntimeError("answer bridge emitted no binding trajectory")
                             role_targets, place_targets = objective_binding_targets
                             binding_loss = _answer_binding_loss(
                                 role_logits[-1],
@@ -3457,9 +3745,7 @@ def main() -> int:
                                 interchangeable_token_ids=(
                                     None
                                     if args.task_source == "frontier_process"
-                                    else frozenset(
-                                        answer_emission_contract.digit_token_ids
-                                    )
+                                    else frozenset(answer_emission_contract.digit_token_ids)
                                 ),
                             )
                             _record_student_rollin(
@@ -3471,9 +3757,10 @@ def main() -> int:
                                 rollin_probability,
                             )
                             objective_spec = spec
-                        rollin_totals[
-                            "last_state_teacher_forcing_probability"
-                        ] = state_teacher_probability
+                        rollin_totals["last_state_teacher_forcing_probability"] = (
+                            state_teacher_probability
+                        )
+
                         def recurrent_objective(
                             candidate: UnifiedTrainingBundle,
                             objective_prompt: Any,
@@ -3481,12 +3768,8 @@ def main() -> int:
                             objective_rollin: Any,
                             transition_trace: Any = task.transition_trace,
                             transition_program: Any = task.transition_program,
-                            state_teacher_forcing_probability: float = (
-                                state_teacher_probability
-                            ),
-                            training_spec: UnifiedIntrinsicTrainingSpec = (
-                                objective_spec
-                            ),
+                            state_teacher_forcing_probability: float = (state_teacher_probability),
+                            training_spec: UnifiedIntrinsicTrainingSpec = (objective_spec),
                         ):
                             return unified_intrinsic_training_loss(
                                 candidate.model,
@@ -3516,9 +3799,7 @@ def main() -> int:
                                 decoder_input_tokens=effective,
                                 transition_trace=task.transition_trace,
                                 transition_program=task.transition_program,
-                                state_teacher_forcing_probability=(
-                                    state_teacher_probability
-                                ),
+                                state_teacher_forcing_probability=(state_teacher_probability),
                                 answer_digit_pointer_enabled=(
                                     args.task_source != "frontier_process"
                                 ),
@@ -3581,10 +3862,9 @@ def main() -> int:
                     print(f"[eval {step}] {report}", flush=True)
                     prior = history[:-1]
                     if report["heldout_depth_helps"] and (
-                        not prior or report["best_heldout_relative_gain"] > max(
-                            row.get("best_heldout_relative_gain", float("-inf"))
-                            for row in prior
-                        )
+                        not prior
+                        or report["best_heldout_relative_gain"]
+                        > max(row.get("best_heldout_relative_gain", float("-inf")) for row in prior)
                     ):
                         _save_checkpoint(
                             out_dir,
@@ -3598,10 +3878,9 @@ def main() -> int:
                             training_state={"rollin_totals": rollin_totals},
                         )
                     if report["trained_depth_helps"] and (
-                        not prior or report["best_deep_relative_gain"] > max(
-                            row.get("best_deep_relative_gain", float("-inf"))
-                            for row in prior
-                        )
+                        not prior
+                        or report["best_deep_relative_gain"]
+                        > max(row.get("best_deep_relative_gain", float("-inf")) for row in prior)
                     ):
                         _save_checkpoint(
                             out_dir,
@@ -3630,8 +3909,7 @@ def main() -> int:
         if (
             not history
             or int(history[-1].get("step", -1)) != step
-            or set(history[-1].get("ce", {}))
-            != {f"T{depth}" for depth in spec.depths}
+            or set(history[-1].get("ce", {})) != {f"T{depth}" for depth in spec.depths}
             or "heldout_depth_helps" not in history[-1]
         ):
             final_ladder = _evaluate(
@@ -3671,6 +3949,19 @@ def main() -> int:
         if final_readout != readout_sha256:
             raise RuntimeError("unified training changed the frozen readout")
         final = history[-1] if history else None
+        answer_bridge_diagnostic = (
+            _evaluate_answer_bridge_diagnostic(
+                bundle,
+                tokenizer,
+                holdout,
+                spec,
+                bridge,
+                answer_emission_contract,
+                answer_digit_pointer_enabled=(args.task_source != "frontier_process"),
+            )
+            if args.answer_bridge_steps > 0 and step >= args.max_steps
+            else None
+        )
         answer_bridge_admission = (
             _evaluate_answer_bridge_admission(
                 bundle,
@@ -3679,9 +3970,7 @@ def main() -> int:
                 spec,
                 bridge,
                 answer_emission_contract,
-                answer_digit_pointer_enabled=(
-                    args.task_source != "frontier_process"
-                ),
+                answer_digit_pointer_enabled=(args.task_source != "frontier_process"),
             )
             if args.answer_bridge_steps > 0 and step >= args.max_steps
             else None
@@ -3741,6 +4030,7 @@ def main() -> int:
                 "receipt_sha256": checkpoint_receipt["receipt_sha256"],
             },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
+            "answer_bridge_diagnostic": answer_bridge_diagnostic,
             "answer_bridge_admission": answer_bridge_admission,
             "phase_schedule": phase_schedule,
             "verdict": _training_verdict(
