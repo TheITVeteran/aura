@@ -825,7 +825,7 @@ def test_phase_schedule_allows_explicit_process_only_acquisition() -> None:
         )
 
 
-def test_phase_schedule_allows_only_explicit_bootstrapped_action_process(
+def test_phase_schedule_allows_only_explicit_bootstrapped_process_acquisition(
     tmp_path: Path,
 ) -> None:
     bootstrap = tmp_path / "parent"
@@ -839,7 +839,7 @@ def test_phase_schedule_allows_only_explicit_bootstrapped_action_process(
         process_bootstrap=True,
     )
 
-    assert schedule["mode"] == "bootstrap_process_action_only"
+    assert schedule["mode"] == "bootstrap_process_acquisition_only"
     assert schedule["bootstrap_required"] is True
     with pytest.raises(ValueError, match="process-only acquisition"):
         _phase_schedule(
@@ -851,6 +851,31 @@ def test_phase_schedule_allows_only_explicit_bootstrapped_action_process(
             process_only=True,
             process_bootstrap=True,
         )
+
+
+def test_phase_schedule_admits_bootstrapped_factorized_process_completion(
+    tmp_path: Path,
+) -> None:
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=256,
+        answer_bridge_steps=0,
+        max_steps=256,
+        bootstrap_output_dir=tmp_path / "parent",
+        process_only=True,
+        process_bootstrap=True,
+    )
+
+    assert schedule == {
+        "schema": "aura.unified_intrinsic.phase_schedule.v1",
+        "mode": "bootstrap_process_acquisition_only",
+        "semantic_anchor_steps": 0,
+        "state_transition_steps": 256,
+        "answer_bridge_steps": 0,
+        "recurrence_steps": 0,
+        "max_steps": 256,
+        "bootstrap_required": True,
+    }
 
 
 def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> None:

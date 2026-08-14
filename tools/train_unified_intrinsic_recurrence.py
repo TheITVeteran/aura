@@ -936,7 +936,7 @@ def _phase_schedule(
     return {
         "schema": "aura.unified_intrinsic.phase_schedule.v1",
         "mode": (
-            "bootstrap_process_action_only"
+            "bootstrap_process_acquisition_only"
             if bridge_only and process_only and process_bootstrap
             else "process_acquisition_only"
             if bridge_only and process_only
@@ -3816,7 +3816,7 @@ def main() -> int:
             and args.state_warmup_steps == args.max_steps
             and args.answer_bridge_steps == 0
         ),
-        process_bootstrap=args.process_curriculum == "action_workspace",
+        process_bootstrap=args.bootstrap_output_dir is not None,
     )
     if args.process_curriculum == "factorized" and (
         args.task_source != "frontier_process" or args.state_warmup_steps < 8
@@ -3831,10 +3831,11 @@ def main() -> int:
             "action-workspace curriculum requires bootstrapped frontier process acquisition"
         )
     if args.process_family_batch_size < 1 or (
-        args.process_family_batch_size > 1 and args.process_curriculum != "action_workspace"
+        args.process_family_batch_size > 1
+        and args.process_curriculum not in {"action_workspace", "factorized"}
     ):
         raise ValueError(
-            "process family batching requires a positive action-workspace acquisition batch"
+            "process family batching requires a supported process-acquisition curriculum"
         )
     if (
         args.process_family_batch_mode == "balanced_families"
