@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 76,
-  "total_lines": 70488,
+  "total_lines": 70262,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -29,8 +29,8 @@
       "returns": 33
     },
     "core/brain/latent_cortex_service.py::LatentCortexService._receipt_contract_errors": {
-      "lines": 2479,
-      "complexity": 702,
+      "lines": 2187,
+      "complexity": 617,
       "returns": 24
     },
     "core/brain/latent_cortex_service.py::LatentCortexService.deep_reason": {
@@ -49,8 +49,8 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine._latent_episode": {
-      "lines": 5021,
-      "complexity": 584,
+      "lines": 5051,
+      "complexity": 589,
       "returns": 14
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine.reason": {
@@ -59,8 +59,8 @@
       "returns": 3
     },
     "core/brain/llm/latent_cortex/fast_weight_learning.py::validate_fast_weight_learning_receipt": {
-      "lines": 570,
-      "complexity": 274,
+      "lines": 596,
+      "complexity": 282,
       "returns": 1
     },
     "core/brain/llm/latent_cortex/frontier_certification.py::verify_frontier_gain_bundle": {
@@ -94,8 +94,8 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/types.py::CortexConfig.validate": {
-      "lines": 585,
-      "complexity": 262,
+      "lines": 595,
+      "complexity": 263,
       "returns": 3
     },
     "core/brain/llm/latent_cortex/virtual_quanta.py::validate_virtual_quanta_receipt": {

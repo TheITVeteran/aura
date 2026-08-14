@@ -3069,6 +3069,17 @@ class LatentCortexService:
                     accepted_steps=int(receipt.get("latent_opt_steps") or 0),
                 ):
                     errors.append("latent_optimization_verifier_receipt_invalid")
+        LatentCortexService._receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting)
+        return errors
+
+    @staticmethod
+    def _receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting):
+        """Body lifted verbatim out of ``LatentCortexService._receipt_contract_errors``.
+
+        Moved by tools/extract_seam.py, which refuses to write unless the
+        relocated body diffs clean against the original. The seam was
+        10 names in, 0 out, 0 early return(s), 0 awaits.
+        """
         if config.get("fast_weights") is True:
             learning: dict[str, Any] | None = None
             try:
@@ -3362,7 +3373,6 @@ class LatentCortexService:
                         errors.append(
                             "fast_weight_causal_improvement_without_step"
                         )
-        return errors
 
     @staticmethod
     def select_foreground_episode(

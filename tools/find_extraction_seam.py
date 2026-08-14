@@ -166,9 +166,20 @@ def _read_before_written(node: ast.AST) -> set[str]:
 
 
 def _module_scope(tree: ast.Module) -> set[str]:
+    """Names bound at MODULE level only.
+
+    Walking the whole tree was wrong and quietly destructive. ``ast.walk``
+    reaches functions nested inside other functions, so a helper defined in the
+    body of a large function — ``positive_int``, ``finite_number_list`` and
+    four siblings inside LatentCortexService._receipt_contract_errors — was
+    treated as globally available and dropped from the seam's free-variable
+    set. Extracting on that analysis produced a helper referencing six names
+    that do not exist in its new scope; ruff caught it as F821 only after the
+    file was written.
+    """
     scope = {
         n.name
-        for n in ast.walk(tree)
+        for n in tree.body
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     }
     for node in tree.body:
