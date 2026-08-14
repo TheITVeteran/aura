@@ -526,3 +526,97 @@ def test_the_fit_pass_runs_on_every_dispatch_including_prebuilt_messages():
                 "the fit pass is not on the path prebuilt messages take"
             )
             break
+
+
+# ─────────────── assembly advances state; that is now visible and single
+
+
+def test_the_receipt_names_what_assembly_advanced():
+    """Reading CRSM, the hedonic gradient, personality and circadian state
+    also MOVES them, and nothing else in the runtime advances those four. A
+    turn that then times out has advanced internal state with no response to
+    show for it."""
+    context = LivingMindContext(token_budget=10_000)
+    context.add("crsm", "## CRSM\nstate")
+    context.advanced("crsm")
+
+    _rendered, receipt = context.render()
+
+    assert receipt.advanced_subsystems == ["crsm"]
+    assert receipt.as_dict()["advanced_subsystems"] == ["crsm"]
+
+
+def test_an_advance_is_recorded_once_however_often_it_is_reported():
+    context = LivingMindContext(token_budget=10_000)
+    context.advanced("crsm")
+    context.advanced("crsm")
+
+    _rendered, receipt = context.render()
+
+    assert receipt.advanced_subsystems == ["crsm"]
+
+
+def test_the_fallback_assembly_does_not_advance_state_twice():
+    """A full attempt that timed out has already integrated this turn's affect
+    axes. The compact fallback must not integrate them again."""
+    import ast
+    import inspect
+
+    from core.brain.inference_gate import InferenceGate
+
+    source = inspect.getsource(InferenceGate._assemble_live_context)
+    tree = ast.parse(source.lstrip())
+
+    compact_calls = [
+        call
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_build_compact_living_mind_context"
+    ]
+
+    assert compact_calls, "the compact builder is no longer called from here"
+    for call in compact_calls:
+        passed = {keyword.arg for keyword in call.keywords}
+        assert "advance_state" in passed, (
+            "the compact fallback advances CRSM, the hedonic gradient, "
+            "personality and circadian state a second time for one turn"
+        )
+
+
+def test_every_advancing_call_is_gated_and_recorded():
+    """A new `update()` added to assembly without the gate would advance state
+    on a turn that produced nothing, invisibly."""
+    import ast
+    import inspect
+
+    from core.brain import inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+    tree = ast.parse(source)
+
+    advancing = {"crsm", "hedonic_gradient", "circadian", "personality"}
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.AsyncFunctionDef)
+            and node.name
+            in {"_build_living_mind_context", "_build_compact_living_mind_context"}
+        ):
+            continue
+        recorded = {
+            call.args[0].value
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "advanced"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+        }
+        body = ast.get_source_segment(source, node) or ""
+        for name in advancing & recorded:
+            assert f'segments.advanced("{name}")' in body
+        # And the gate itself is present wherever an advance happens.
+        assert body.count("advance_state") >= len(recorded) + 1, (
+            f"{node.name}: an advance is not gated by advance_state"
+        )

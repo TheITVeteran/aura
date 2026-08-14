@@ -154,6 +154,15 @@ class ContextReceipt:
     token_budget: int = 0
     tokens_used: int = 0
     learned_blocks: list[str] = field(default_factory=list)
+    #: Subsystems this assembly ADVANCED, not merely read. Assembly refreshes
+    #: CRSM, the hedonic gradient, personality and circadian state from the
+    #: current affect axes before reading them, and nothing else in the
+    #: runtime advances those four. So the advance has to stay — but a turn
+    #: that then times out or fails has advanced internal state with no
+    #: response to show for it, and that used to leave no trace at all.
+    #: There is no rollback here and this does not pretend otherwise: these
+    #: are integrators, not transactional stores.
+    advanced_subsystems: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
@@ -167,6 +176,7 @@ class ContextReceipt:
             "token_budget": int(self.token_budget),
             "tokens_used": int(self.tokens_used),
             "learned_blocks": list(self.learned_blocks),
+            "advanced_subsystems": list(self.advanced_subsystems),
             "complete": self.complete,
         }
 
@@ -194,6 +204,7 @@ class LivingMindContext:
         self._budget = max(0, int(token_budget))
         self._blocks: list[ContextBlock] = []
         self._omitted: dict[str, str] = {}
+        self._advanced: list[str] = []
 
     def add(
         self,
@@ -226,10 +237,16 @@ class LivingMindContext:
         """Record that a subsystem could not report. This is the hole."""
         self._omitted[str(name)] = str(reason)[:200] or "unavailable"
 
+    def advanced(self, name: str) -> None:
+        """Record that reading this subsystem also moved it."""
+        if str(name) not in self._advanced:
+            self._advanced.append(str(name))
+
     def render(self) -> tuple[str, ContextReceipt]:
         receipt = ContextReceipt(
             omitted=dict(self._omitted),
             token_budget=self._budget,
+            advanced_subsystems=list(self._advanced),
         )
         if not self._blocks:
             return "", receipt

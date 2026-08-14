@@ -444,6 +444,10 @@ def _reflex_model_status(raw_path: str) -> tuple[str, str]:
 #: Foreground prompt budget when nothing better is readable. Below the floor
 #: the compactor strips the system prompt; above the registry's ceiling the
 #: serving runtime silently truncates whatever we sent.
+#: What a denied viability envelope allows. Long-standing policy; named here
+#: so the override below has something to be an override OF.
+_STAKES_DENIED_TOKEN_CAP = 128
+
 _FOREGROUND_CONTEXT_WINDOW_DEFAULT = 16384
 _FOREGROUND_CONTEXT_WINDOW_FLOOR = 4096
 
@@ -5843,7 +5847,13 @@ class InferenceGate:
             return ""
         try:
             return await asyncio.wait_for(
-                self._build_compact_living_mind_context(prompt, origin),
+                # A full attempt that timed out has already advanced CRSM, the
+                # hedonic gradient, personality and circadian state for this
+                # turn. Advancing them again on the fallback would integrate
+                # the same axes twice for one turn.
+                self._build_compact_living_mind_context(
+                    prompt, origin, advance_state=not full
+                ),
                 timeout=remaining,
             )
         except TimeoutError:
@@ -5880,7 +5890,12 @@ class InferenceGate:
         return receipt.as_dict() if receipt is not None else {}
 
     async def _build_living_mind_context(
-        self, prompt: str, origin: str, *, token_budget: int | None = None
+        self,
+        prompt: str,
+        origin: str,
+        *,
+        token_budget: int | None = None,
+        advance_state: bool = True,
     ) -> str:
         """Inject live self-model state so speech is driven by current mind.
 
@@ -6019,8 +6034,9 @@ class InferenceGate:
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
             if personality:
-                if hasattr(personality, "update"):
+                if advance_state and hasattr(personality, "update"):
                     await _resolve(personality.update())
+                    segments.advanced("personality")
                 emo = await _resolve(personality.get_emotional_context_for_response())
                 mood = emo.get("mood", "neutral")
                 tone = emo.get("tone", "balanced")
@@ -6225,13 +6241,15 @@ class InferenceGate:
             from core.consciousness.crsm import get_crsm
 
             _crsm = get_crsm()
-            _crsm.update(
-                valence=_shared_valence,
-                arousal=_shared_arousal,
-                curiosity=_shared_curiosity,
-                energy=_shared_energy,
-                surprise=_crsm.surprise_signal,  # self-referential: own recent error
-            )
+            if advance_state:
+                _crsm.update(
+                    valence=_shared_valence,
+                    arousal=_shared_arousal,
+                    curiosity=_shared_curiosity,
+                    energy=_shared_energy,
+                    surprise=_crsm.surprise_signal,  # self-referential: own recent error
+                )
+                segments.advanced("crsm")
             _crsm_block = _crsm.get_context_block()
             if _crsm_block:
                 segments.add("crsm", _crsm_block)
@@ -6274,12 +6292,14 @@ class InferenceGate:
 
             _hg = get_hedonic_gradient()
             # Update with current affect state before reading context block
-            _hg.update(
-                valence=_shared_valence,
-                arousal=_shared_arousal,
-                curiosity=_shared_curiosity,
-                energy=_shared_energy,
-            )
+            if advance_state:
+                _hg.update(
+                    valence=_shared_valence,
+                    arousal=_shared_arousal,
+                    curiosity=_shared_curiosity,
+                    energy=_shared_energy,
+                )
+                segments.advanced("hedonic_gradient")
             _hg_block = _hg.get_context_block()
             if _hg_block:
                 segments.add("hedonic_gradient", _hg_block)
@@ -6359,7 +6379,9 @@ class InferenceGate:
             from core.senses.circadian import get_circadian
 
             _circ_eng = get_circadian()
-            _circ_eng.update()
+            if advance_state:
+                _circ_eng.update()
+                segments.advanced("circadian")
             _circ_block = _circ_eng.get_context_block()
             if _circ_block:
                 segments.add("circadian", _circ_block, priority=PRIORITY_COLOUR)
@@ -6551,7 +6573,12 @@ class InferenceGate:
         return rendered
 
     async def _build_compact_living_mind_context(
-        self, prompt: str, origin: str, *, token_budget: int | None = None
+        self,
+        prompt: str,
+        origin: str,
+        *,
+        token_budget: int | None = None,
+        advance_state: bool = True,
     ) -> str:
         """Minimal live context for fast foreground conversation turns."""
 
@@ -6572,8 +6599,9 @@ class InferenceGate:
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
             if personality:
-                if hasattr(personality, "update"):
+                if advance_state and hasattr(personality, "update"):
                     await _resolve(personality.update())
+                    segments.advanced("personality")
                 emo = await _resolve(personality.get_emotional_context_for_response())
                 mood = str(emo.get("mood", "neutral") or "neutral")
                 tone = str(emo.get("tone", "balanced") or "balanced")
@@ -7360,6 +7388,42 @@ class InferenceGate:
             tail = max(1, remaining - head)
             return f"{clean[:head].rstrip()}{marker}{clean[-tail:].lstrip()}"
         return clean[: limit - 1].rstrip() + "…"
+
+    @classmethod
+    def _stakes_capped_tokens(
+        cls,
+        max_tokens: int,
+        *,
+        envelope_cap: int,
+        protected: bool,
+        prompt: str,
+        context: dict[str, Any],
+        reason: str,
+    ) -> tuple[int, int]:
+        """Apply the viability ceiling, with a BOUNDED override for the
+        protected capability lane.
+
+        The protected lane exists so a capability-inventory answer is not
+        truncated into uselessness. What it needs is the token floor this same
+        turn's compute profile already computed from the request — a derived
+        quantity, not an exemption — so the override raises the ceiling to that
+        floor and stops there. Under a denied envelope the ceiling is still a
+        ceiling; it is just high enough to finish a sentence.
+        """
+        ceiling = max(1, int(envelope_cap))
+        if protected:
+            floor, _cap, _loops = cls._foreground_compute_profile(str(prompt or ""))
+            override = max(ceiling, int(floor))
+            if override > ceiling:
+                context["resource_stakes_protected_override"] = {
+                    "reason": reason,
+                    "envelope_ceiling": ceiling,
+                    "override_ceiling": override,
+                    # Derived from the request, so the receipt can be checked.
+                    "derived_from": "foreground_compute_profile_floor",
+                }
+            ceiling = override
+        return min(int(max_tokens), ceiling), ceiling
 
     #: Where a system block gets its middle removed. Same convention the
     #: per-message compactor uses, so a trimmed prompt reads the same wherever
@@ -8622,18 +8686,36 @@ class InferenceGate:
                 # limit is recorded as a CEILING and re-applied as the last
                 # token transformation before generation, next to the existing
                 # caller-cap clamp that already works this way.
+                #
+                # The protected capability lane used to skip the cap
+                # ENTIRELY, on both branches. That is an exemption from
+                # viability control, and the denied branch is exactly where an
+                # exemption is worst: the ledger has said the runtime is out
+                # of resources and this lane ignored it with no ceiling at all.
+                # It is a bounded override now — the lane gets enough tokens to
+                # answer the question it was protected for, and not one more,
+                # with the raise recorded.
                 if not envelope.allowed:
                     requested_tier = "primary"
                     deep_handoff = False
-                    if not protected_compact_capability_contract:
-                        max_tokens = min(max_tokens, 128)
-                        stakes_token_ceiling = 128
+                    max_tokens, stakes_token_ceiling = self._stakes_capped_tokens(
+                        max_tokens,
+                        envelope_cap=_STAKES_DENIED_TOKEN_CAP,
+                        protected=protected_compact_capability_contract,
+                        prompt=prompt,
+                        context=context,
+                        reason="envelope_denied",
+                    )
                     context["resource_stakes_blocked"] = True
                 else:
-                    if not protected_compact_capability_contract:
-                        envelope_cap = max(1, int(envelope.max_tokens))
-                        max_tokens = min(max_tokens, envelope_cap)
-                        stakes_token_ceiling = envelope_cap
+                    max_tokens, stakes_token_ceiling = self._stakes_capped_tokens(
+                        max_tokens,
+                        envelope_cap=max(1, int(envelope.max_tokens)),
+                        protected=protected_compact_capability_contract,
+                        prompt=prompt,
+                        context=context,
+                        reason="envelope_allowed",
+                    )
                     if "large_model_cortex" in set(envelope.disabled_capabilities):
                         requested_tier = "primary"
                         deep_handoff = False

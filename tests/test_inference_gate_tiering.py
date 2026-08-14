@@ -808,7 +808,7 @@ async def test_live_self_process_prebuilt_prompt_is_compacted_and_live_grounded(
     cortex = _RecordingClient(cortex_reply)
     gate._mlx_client = cortex
 
-    async def _compact_live_context(_self, _prompt, _origin):
+    async def _compact_live_context(_self, _prompt, _origin, **_kwargs):
         return "## LIVE TONE\nMood: focused\nTone: direct\n## UNITY\nLevel: integrated | Unity: 0.91"
 
     async def _full_live_context(*_args, **_kwargs):
