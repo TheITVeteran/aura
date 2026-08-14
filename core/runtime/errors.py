@@ -612,7 +612,27 @@ def record_degradation(
         ):
             from core.runtime.service_registry import get_service_failure_policy
 
-            if get_service_failure_policy(subsystem) == "fail-closed" and not _is_timeout:
+            # Backpressure is exempt for the same reason timeouts are.
+            #
+            # LIVE, 2026-08-13, on every boot:
+            #   FAULT RUNTIME-INFERENCE_GATE [CRITICAL] in inference_gate:
+            #   RuntimeError: warmup_deferred
+            #   CRITICAL SERVICE FAILURE: Subsystem 'inference_gate' failed
+            #   with failure policy 'fail-closed'
+            #   🚨 Background task 'InferenceGate.deferred_cortex_prewarm' crashed
+            #
+            # warmup_deferred is already in backpressure_markers above, and
+            # that demotes it from degraded to WARNING — then this branch
+            # accepts warning and escalates it to critical anyway, so the
+            # demotion bought nothing. A lane saying "not warm yet, try later"
+            # is the system working, and the comment 60 lines up says exactly
+            # that: these drove felt existential threat to 1.00 while the CPU
+            # was idle.
+            if (
+                get_service_failure_policy(subsystem) == "fail-closed"
+                and not _is_timeout
+                and not _is_admission_backpressure
+            ):
                 # An escalation must never escalate itself. The raised
                 # CRITICAL SERVICE FAILURE propagates and is recorded again for
                 # the same subsystem, and because both wraps are RuntimeError

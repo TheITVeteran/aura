@@ -3691,9 +3691,46 @@ def _load_unified_recurrent_shadow(
             model_path=Path(model_path),
         )
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        raise RuntimeError(
-            f"configured_unified_recurrent_shadow_invalid:{package}:{exc}"
-        ) from exc
+        # A shadow that does not match this model is DECLINED, not fatal.
+        #
+        # LIVE, 2026-08-13: every boot logged
+        #   MLXWorker CRITICAL: configured_unified_recurrent_shadow_invalid:
+        #   .../releases/cp366-source-migrated-recurrent: unified shadow
+        #   mechanics or resident model binding differs
+        #   🔄 [MLX] Worker init failed ... Retrying spawn
+        #
+        # The integrity check is right — that package was built against a
+        # different resident binding and must not be used. But it runs in
+        # shadow_only mode with serving_authority False, so it is by
+        # construction not load-bearing, and refusing it took the whole worker
+        # down and put boot into a respawn loop. An optional component that
+        # cannot serve must not be able to stop the thing it decorates.
+        record_degradation(
+            "mlx_worker",
+            exc,
+            action=(
+                "declined an incompatible unified recurrent shadow and started "
+                "the worker without it"
+            ),
+        )
+        return None, seal_shadow_load_receipt(
+            {
+                "schema": LOAD_SCHEMA,
+                "configured": True,
+                "loaded": False,
+                "reason": f"incompatible:{exc}"[:300],
+                "package_id": str(package),
+                "manifest_sha256": "",
+                "checkpoint_sha256": "",
+                "controller_sha256": "",
+                "families": [],
+                "task_depths": [],
+                "recurrence_depth": 0,
+                "model_identity_strength": "none",
+                "mode": "shadow_only",
+                "serving_authority": False,
+            }
+        )
     receipt = dict(loaded.receipt)
     errors = shadow_load_receipt_errors(receipt)
     if errors:
