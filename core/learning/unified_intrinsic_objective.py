@@ -889,7 +889,13 @@ def unified_process_training_loss(
 
     if transition_trace is None or transition_program is None:
         raise ValueError("process training requires exact state and action supervision")
-    if component not in {"initializer", "action", "transition", "joint"}:
+    if component not in {
+        "initializer",
+        "action",
+        "action_workspace",
+        "transition",
+        "joint",
+    }:
         raise ValueError("process training component is invalid")
     if (
         isinstance(state_weight, bool)
@@ -941,6 +947,7 @@ def unified_process_training_loss(
     component_losses = {
         "initializer": initial_loss,
         "action": action_loss,
+        "action_workspace": action_loss,
         "transition": state_loss,
         "joint": (state_loss + initial_loss + action_loss) / 3.0,
     }
@@ -956,6 +963,7 @@ def unified_process_training_loss(
         "component_losses": {
             "initializer": float(initial_loss.item()),
             "action": float(action_loss.item()),
+            "action_workspace": float(action_loss.item()),
             "transition": float(state_loss.item()),
             "joint": float(component_losses["joint"].item()),
         },

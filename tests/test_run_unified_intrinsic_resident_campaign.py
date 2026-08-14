@@ -77,7 +77,8 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     training = _profile_training(profile)
     campaign_id = f"unit-{profile}"
     bootstrap = None
-    if profile == "recovery":
+    bootstrap_profiles = {"process_action_canary", "recovery"}
+    if profile in bootstrap_profiles:
         bootstrap_output = _private(inputs / "bootstrap-output")
         body_without_sha = {
             "schema": "aura.unified_intrinsic.bootstrap_input.v1",
@@ -114,7 +115,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "dataset": {"identity_sha256": "1" * 64},
         "tokenizer": {"identity_sha256": "2" * 64},
         "tokenized_dataset": {"identity_sha256": "3" * 64},
-        **({"bootstrap": bootstrap} if profile == "recovery" else {}),
+        **({"bootstrap": bootstrap} if profile in bootstrap_profiles else {}),
         "paths": {
             "workspace_root": str(tmp_path),
             "campaign_root": str(root),
@@ -256,6 +257,50 @@ def test_process_canary_trains_scoped_tissue_on_autonomous_frontier_process() ->
     assert arguments[arguments.index("--task-source") + 1] == "frontier_process"
     assert arguments[arguments.index("--window-tissue-mode") + 1] == "scoped_lora"
     assert arguments[arguments.index("--process-curriculum") + 1] == "factorized"
+
+
+def test_process_action_canary_trains_only_new_workspace_from_parent() -> None:
+    training = _profile_training("process_action_canary")
+    arguments = _training_cli(training)
+
+    assert training["task_source"] == "frontier_process"
+    assert training["state_warmup_steps"] == training["max_steps"] == 112
+    assert training["process_curriculum"] == "action_workspace"
+    assert training["state_learning_rate"] == 0.0005
+    assert training["eval_every"] == 28
+    assert training["checkpoint_every"] == 14
+    assert arguments[arguments.index("--process-curriculum") + 1] == (
+        "action_workspace"
+    )
+
+
+def test_process_action_config_binds_parent_and_one_step_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, raw = _config(tmp_path, profile="process_action_canary")
+    resolved = SimpleNamespace(
+        receipt={
+            "step": 73,
+            "checkpoint_sha256": "c" * 64,
+            "receipt_sha256": "d" * 64,
+            "identity": {"identity_sha256": "e" * 64},
+        }
+    )
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: resolved,
+    )
+
+    config = controller._load_config(path)
+    command = controller._trainer_command(path, config, invocation_steps=1)
+
+    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"][
+        "bootstrap_output"
+    ]
+    assert command[-2:] == ["--max-invocation-steps", "1"]
+    assert controller._planned_invocation_steps(config, {"step": 0}) == 1
 
 
 def test_recovery_profile_warm_starts_fresh_data_without_parent_optimizer() -> None:

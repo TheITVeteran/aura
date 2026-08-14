@@ -279,6 +279,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         or config.get("profile") not in {
             "canary",
             "full",
+            "process_action_canary",
             "process_canary",
             "recovery",
         }
@@ -302,9 +303,10 @@ def _load_config(path: Path) -> dict[str, Any]:
         "detached_attempts",
         "heartbeat_key",
     }
+    bootstrap_profiles = {"process_action_canary", "recovery"}
     expected_path_keys = (
         base_path_keys | {"bootstrap_output"}
-        if config["profile"] == "recovery"
+        if config["profile"] in bootstrap_profiles
         else base_path_keys
     )
     if not isinstance(paths, dict) or set(paths) != expected_path_keys:
@@ -323,7 +325,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "heartbeat_key": root / "heartbeat.key",
         **(
             {"bootstrap_output": inputs / "bootstrap-output"}
-            if config["profile"] == "recovery"
+            if config["profile"] in bootstrap_profiles
             else {}
         ),
     }
@@ -334,7 +336,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     if path != root / "campaign.json":
         _fail("campaign_config_path_drift")
     bootstrap = config.get("bootstrap")
-    if config["profile"] == "recovery":
+    if config["profile"] in bootstrap_profiles:
         if not isinstance(bootstrap, dict):
             _fail("campaign_bootstrap_invalid")
         bootstrap_body = {
@@ -991,7 +993,7 @@ def _trainer_command(
         str(config["config_sha256"]),
         *[str(value) for value in config["training_args"]],
     ]
-    if config["profile"] == "recovery":
+    if config["profile"] in {"process_action_canary", "recovery"}:
         bootstrap = config["bootstrap"]
         command.extend(
             (
@@ -1734,7 +1736,12 @@ def _trailing_no_progress(config: Mapping[str, Any], completed_attempts: int) ->
 def _planned_invocation_steps(
     config: Mapping[str, Any], checkpoint: Mapping[str, Any]
 ) -> int | None:
-    if config["profile"] not in {"canary", "process_canary", "recovery"}:
+    if config["profile"] not in {
+        "canary",
+        "process_action_canary",
+        "process_canary",
+        "recovery",
+    }:
         return None
     step = int(checkpoint["step"])
     if step == 0:

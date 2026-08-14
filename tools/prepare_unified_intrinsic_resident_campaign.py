@@ -60,7 +60,9 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 
 PREPARATION_SCHEMA: Final = "aura.unified_intrinsic.resident_preparation.v1"
 CONFIG_SCHEMA: Final = "aura.unified_intrinsic.resident_campaign.v1"
-PROFILES: Final = frozenset({"canary", "full", "process_canary", "recovery"})
+PROFILES: Final = frozenset(
+    {"canary", "full", "process_action_canary", "process_canary", "recovery"}
+)
 DEFAULT_MODEL: Final = Path(
     "/Users/bryan/.aura/live-source/training/fused-model/"
     "Aura-32B-crsm-closeout-jul1-20260701-215118"
@@ -226,12 +228,14 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "cache_limit_gb": 2.0,
         "wired_limit_gb": 48.0,
     }
-    if profile == "process_canary":
+    if profile in {"process_action_canary", "process_canary"}:
         families = (
             "novel_algorithms,mathematics,coding,scientific_inference,"
             "long_horizon_planning,calibration,misleading_premise"
         )
         training_examples = 14
+        action_only = profile == "process_action_canary"
+        process_steps = training_examples * (8 if action_only else 20)
         return {
             **common,
             "window_tissue_mode": "scoped_lora",
@@ -242,18 +246,21 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "heldout_depths": "12,16",
             "per_cell": 2,
             "holdout_per_cell": 1,
-            "max_steps": training_examples * 20,
+            "max_steps": process_steps,
             "semantic_warmup_steps": 0,
-            "state_warmup_steps": training_examples * 20,
-            "process_curriculum": "factorized",
+            "state_warmup_steps": process_steps,
+            "process_curriculum": (
+                "action_workspace" if action_only else "factorized"
+            ),
             "answer_bridge_steps": 0,
             "answer_bridge_inner_steps": 1,
             "student_rollin_probability": 0.0,
             "student_rollin_final_probability": 0.5,
             "state_teacher_forcing_probability": 1.0,
             "state_teacher_forcing_final_probability": 0.0,
-            "eval_every": training_examples * 5,
+            "eval_every": training_examples * (2 if action_only else 5),
             "checkpoint_every": training_examples,
+            "state_learning_rate": 0.0005 if action_only else 0.00005,
             "seed": 2026081401,
             "init_seed": 2026081402,
             "memory_fraction": 0.35,
@@ -464,8 +471,9 @@ def _freeze_campaign(
     _private_directory(root / "training-output")
     detached_attempts = _private_directory(root / "detached-attempts")
     del detached_attempts
-    if (profile == "recovery") != (bootstrap_output_dir is not None):
-        _fail("recovery_profile_requires_exactly_one_bootstrap_checkpoint")
+    bootstrap_profiles = {"process_action_canary", "recovery"}
+    if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
+        _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
     bootstrap = (
         _freeze_bootstrap_checkpoint(
             bootstrap_output_dir,
@@ -577,7 +585,7 @@ def _freeze_campaign(
             "heartbeat_stale_s": 180.0,
             "attempt_timeout_s": (
                 5.0 * 3600.0
-                if profile in {"canary", "process_canary"}
+                if profile in {"canary", "process_action_canary", "process_canary"}
                 else 14.0 * 3600.0
                 if profile == "recovery"
                 else 54.0 * 3600.0

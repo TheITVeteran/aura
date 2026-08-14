@@ -739,6 +739,12 @@ def _process_training_policy(
             "teacher_forcing_probability": 1.0,
             "stage_progress": (step + 1) / total_steps,
         }
+    if curriculum == "action_workspace":
+        return {
+            "component": "action_workspace",
+            "teacher_forcing_probability": 1.0,
+            "stage_progress": (step + 1) / total_steps,
+        }
     if curriculum != "factorized" or total_steps < 8:
         raise ValueError("process curriculum is invalid or too short")
     initializer_stop = max(1, total_steps // 8)
@@ -780,6 +786,7 @@ def _phase_schedule(
     max_steps: int,
     bootstrap_output_dir: Path | None,
     process_only: bool = False,
+    process_bootstrap: bool = False,
 ) -> dict[str, Any]:
     """Validate and bind a full campaign or a bootstrap-only bridge adaptation."""
 
@@ -802,7 +809,7 @@ def _phase_schedule(
             and state_warmup_steps == max_steps
             and semantic_warmup_steps == 0
             and answer_bridge_steps == 0
-            and bootstrap_output_dir is None
+            and (bootstrap_output_dir is not None) is process_bootstrap
         )
         bridge_contract = answer_bridge_steps > 0 and bootstrap_output_dir is not None
         if not process_contract and not bridge_contract:
@@ -813,7 +820,9 @@ def _phase_schedule(
     return {
         "schema": "aura.unified_intrinsic.phase_schedule.v1",
         "mode": (
-            "process_acquisition_only"
+            "bootstrap_process_action_only"
+            if bridge_only and process_only and process_bootstrap
+            else "process_acquisition_only"
             if bridge_only and process_only
             else "bootstrap_answer_bridge_only"
             if bridge_only
@@ -824,7 +833,7 @@ def _phase_schedule(
         "answer_bridge_steps": answer_bridge_steps,
         "recurrence_steps": recurrence_steps,
         "max_steps": max_steps,
-        "bootstrap_required": bridge_only and not process_only,
+        "bootstrap_required": bridge_only and (not process_only or process_bootstrap),
     }
 
 
@@ -925,6 +934,8 @@ def _gradient_ownership_group(name: str) -> str:
         return "state_answer_bridge"
     if name.startswith("controller.action_value_embeddings"):
         return "typed_action_codebook"
+    if name.startswith("controller.action_workspace_"):
+        return "typed_action_workspace"
     if name.startswith(
         (
             "controller.action_query",
@@ -936,7 +947,6 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.action_literal_copy_logit",
             "controller.opcode_copy_logit",
             "controller.action_slot_embeddings",
-            "controller.action_workspace_",
         )
     ):
         return "typed_action_transition"
@@ -966,7 +976,8 @@ def _process_component_gradients(gradients: Any, component: str) -> Any:
 
     allowed = {
         "initializer": {"scoped_transformer_bridge", "typed_state_initializer"},
-        "action": {"typed_action_transition"},
+        "action": {"typed_action_transition", "typed_action_workspace"},
+        "action_workspace": {"typed_action_workspace"},
         "transition": {
             "typed_action_codebook",
             "typed_state_codebook",
@@ -975,6 +986,7 @@ def _process_component_gradients(gradients: Any, component: str) -> Any:
         "joint": {
             "typed_action_codebook",
             "typed_action_transition",
+            "typed_action_workspace",
             "typed_state_codebook",
             "typed_state_initializer",
             "typed_state_transition",
@@ -3104,7 +3116,7 @@ def main() -> int:
     parser.add_argument("--state-warmup-steps", type=int, default=0)
     parser.add_argument(
         "--process-curriculum",
-        choices=("joint", "factorized"),
+        choices=("joint", "factorized", "action_workspace"),
         default="joint",
         help="typed-process acquisition policy during the state-transition phase",
     )
@@ -3252,6 +3264,7 @@ def main() -> int:
             and args.state_warmup_steps == args.max_steps
             and args.answer_bridge_steps == 0
         ),
+        process_bootstrap=args.process_curriculum == "action_workspace",
     )
     if args.process_curriculum == "factorized" and (
         args.task_source != "frontier_process"
@@ -3259,6 +3272,14 @@ def main() -> int:
     ):
         raise ValueError(
             "factorized process curriculum requires frontier process acquisition"
+        )
+    if args.process_curriculum == "action_workspace" and (
+        args.task_source != "frontier_process"
+        or args.state_warmup_steps != args.max_steps
+        or args.bootstrap_output_dir is None
+    ):
+        raise ValueError(
+            "action-workspace curriculum requires bootstrapped frontier process acquisition"
         )
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)

@@ -588,6 +588,34 @@ def test_phase_schedule_allows_explicit_process_only_acquisition() -> None:
         )
 
 
+def test_phase_schedule_allows_only_explicit_bootstrapped_action_process(
+    tmp_path: Path,
+) -> None:
+    bootstrap = tmp_path / "parent"
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=112,
+        answer_bridge_steps=0,
+        max_steps=112,
+        bootstrap_output_dir=bootstrap,
+        process_only=True,
+        process_bootstrap=True,
+    )
+
+    assert schedule["mode"] == "bootstrap_process_action_only"
+    assert schedule["bootstrap_required"] is True
+    with pytest.raises(ValueError, match="process-only acquisition"):
+        _phase_schedule(
+            semantic_warmup_steps=0,
+            state_warmup_steps=112,
+            answer_bridge_steps=0,
+            max_steps=112,
+            bootstrap_output_dir=None,
+            process_only=True,
+            process_bootstrap=True,
+        )
+
+
 def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> None:
     expected = {
         0: ("initializer", 1.0),
@@ -612,6 +640,11 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
         "teacher_forcing_probability": 1.0,
         "stage_progress": 0.625,
     }
+    assert _process_training_policy(4, 8, "action_workspace") == {
+        "component": "action_workspace",
+        "teacher_forcing_probability": 1.0,
+        "stage_progress": 0.625,
+    }
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")
 
@@ -633,6 +666,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "controller.action_output",
             "controller.action_workspace_output",
         },
+        "action_workspace": {"controller.action_workspace_output"},
         "transition": {"controller.state_transition_output"},
         "joint": {
             "controller.initial_state_output",

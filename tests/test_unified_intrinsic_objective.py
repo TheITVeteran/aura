@@ -403,7 +403,13 @@ def test_process_objective_can_train_each_causal_component_exclusively() -> None
         actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
     )
 
-    for component in ("initializer", "action", "transition", "joint"):
+    for component in (
+        "initializer",
+        "action",
+        "action_workspace",
+        "transition",
+        "joint",
+    ):
         loss, receipt = unified_process_training_loss(
             model,
             TOKENS,
