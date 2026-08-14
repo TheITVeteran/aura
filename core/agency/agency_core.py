@@ -231,8 +231,27 @@ class SovereignSwarm:
                 logger.info("⏸️ Swarm: shard deferred for '%s' (%s).", str(goal)[:80], reason)
                 return False
         except _AGENCY_BOUNDARY_ERRORS as exc:
-            _record_agency_degradation(exc, action="swarm background-policy probe skipped")
-            logger.debug("Swarm background-policy check failed: %s", exc)
+            # The admission policy DISAPPEARED when its dependencies failed:
+            # the exception was recorded and control fell straight through to
+            # scheduling the shard, so a broken resource or conversation-
+            # readiness probe admitted background work precisely when nobody
+            # could tell whether there was room for it.
+            #
+            # Deferring costs one cycle — this is background swarm work with
+            # no caller waiting — and the shard will be reconsidered on the
+            # next attempt with a working probe.
+            _record_agency_degradation(
+                exc,
+                action="deferred a swarm shard because the background-policy probe failed",
+                severity="warning",
+                extra={"goal": str(goal)[:120]},
+            )
+            logger.warning(
+                "⏸️ Swarm: shard deferred for '%s' — background-policy probe failed: %s",
+                str(goal)[:80],
+                exc,
+            )
+            return False
 
         raw_uuid = uuid.uuid4().hex
         shard_id = f"shard_{raw_uuid[:8]}"
@@ -290,7 +309,25 @@ class SovereignSwarm:
                 elif mem.percent > 85:
                     await asyncio.sleep(1.0)
             except ImportError as _e:
-                logger.debug("psutil unavailable; swarm RAM throttle skipped: %s", _e)
+                # Skipping the throttle entirely meant an unmeasurable host
+                # spawned shards at FULL RATE — the pacing disappeared
+                # exactly when nobody could tell whether there was memory for
+                # it. Same shape as the generation throttle: an unmeasured
+                # resource must not read as headroom.
+                #
+                # The 85%-band delay is applied instead of the 90% one:
+                # conservative without behaving as though the host were
+                # already critical.
+                _record_agency_degradation(
+                    _e,
+                    action="paced swarm shard spawning because RAM could not be measured",
+                    severity="warning",
+                )
+                logger.warning(
+                    "⚖️ Swarm: RAM unmeasurable (%s); pacing shard spawn conservatively.",
+                    _e,
+                )
+                await asyncio.sleep(1.0)
 
             accepted = await self.spawn_shard(
                 goal=f"Debate Perspective - {p}",
@@ -1179,8 +1216,25 @@ class AgencyCore:
                 logger.debug("AgencyCore pulse deferred by background policy: %s", policy_reason)
                 return None
         except _AGENCY_BOUNDARY_ERRORS as exc:
-            _record_agency_degradation(exc, action="agency background-policy probe skipped")
-            logger.debug("AgencyCore background-policy probe failed: %s", exc)
+            # Second instance of the same fall-through, on the PULSE rather
+            # than the shard: the probe raised, the exception was recorded,
+            # and control continued into the pathway loop below — so every
+            # autonomous pathway ran with the idle, memory, failure-pressure
+            # and conversation-readiness policy unevaluated. The gate that
+            # decides whether Aura should act on her own initiative vanished
+            # exactly when its inputs were unreadable.
+            #
+            # Returning None defers this pulse. Pulses are frequent and
+            # nothing waits on one, so the cost is a single skipped tick.
+            _record_agency_degradation(
+                exc,
+                action="deferred the agency pulse because the background-policy probe failed",
+                severity="warning",
+            )
+            logger.warning(
+                "AgencyCore pulse deferred — background-policy probe failed: %s", exc
+            )
+            return None
 
         # Update temporal state
         idle_seconds = now - self.state.last_user_interaction
@@ -1515,7 +1569,21 @@ class AgencyCore:
             return buffer.get_summary(seconds=120)
         return "No recent sensory summary available."
 
-    def _constitutional_runtime_live(self) -> bool:
+    def _constitutional_runtime_live(self) -> bool | None:
+        """True when a constitutional runtime is up, False when it plainly is
+        not, and None when the probe itself failed.
+
+        The third state is the point. This returned False on an exception,
+        and the only caller reads `if not self._constitutional_runtime_live():
+        return True` — an APPROVAL, on the reasoning that there is no
+        constitutional core to consult during boot or in tests. So a probe
+        that RAISED produced the same answer as a runtime that is genuinely
+        absent, and a broken ServiceContainer approved every autonomous state
+        mutation without review.
+
+        "The runtime is not up" and "I could not find out" are different
+        facts. Only the first one justifies proceeding.
+        """
         try:
             return (
                 ServiceContainer.has("executive_core")
@@ -1524,9 +1592,13 @@ class AgencyCore:
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
             )
         except _AGENCY_BOUNDARY_ERRORS as exc:
-            _record_agency_degradation(exc, action="constitutional runtime probe failed")
-            logger.debug("AgencyCore constitutional runtime probe failed: %s", exc)
-            return False
+            _record_agency_degradation(
+                exc,
+                action="refused an agency state mutation because the constitutional runtime probe failed",
+                severity="error",
+            )
+            logger.error("AgencyCore constitutional runtime probe failed: %s", exc)
+            return None
 
     def _approve_agency_state_mutation(
         self,
@@ -1535,7 +1607,12 @@ class AgencyCore:
         content: Any,
         priority: float,
     ) -> bool:
-        if not self._constitutional_runtime_live():
+        runtime_live = self._constitutional_runtime_live()
+        if runtime_live is None:
+            # The probe failed. Not "no runtime to consult" — unknown. Fail
+            # closed rather than granting the bypass that absence earns.
+            return False
+        if not runtime_live:
             return True
         try:
             from core.constitution import get_constitutional_core

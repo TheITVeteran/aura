@@ -701,3 +701,128 @@ def test_no_gate_reads_verification_ok_without_asking_whether_it_checked():
         f"these gate on a verifier's `ok` without asking whether it checked "
         f"anything: {offenders}. Use `conclusively_ok`."
     )
+
+
+# ─────── "the runtime is not up" vs "I could not find out"
+
+
+def test_a_failed_constitutional_probe_is_not_a_bypass(monkeypatch):
+    """`_approve_agency_state_mutation` reads
+    `if not self._constitutional_runtime_live(): return True` — an APPROVAL,
+    on the reasoning that there is no constitutional core to consult during
+    boot. The probe returned False on an exception, so a broken
+    ServiceContainer approved every autonomous state mutation without review.
+    """
+    from core.agency import agency_core as ac
+
+    core = ac.AgencyCore.__new__(ac.AgencyCore)
+
+    class _Broken:
+        @staticmethod
+        def has(_name):
+            raise RuntimeError("service container is broken")
+
+    monkeypatch.setattr(ac, "ServiceContainer", _Broken)
+
+    assert core._constitutional_runtime_live() is None, (
+        "a raising probe is reported as 'runtime not live', which grants the "
+        "bypass that genuine absence earns"
+    )
+
+
+def test_an_absent_runtime_still_bypasses(monkeypatch):
+    """The bypass exists for boot and tests. The fix must not remove it."""
+    from core.agency import agency_core as ac
+
+    core = ac.AgencyCore.__new__(ac.AgencyCore)
+
+    class _Empty:
+        _registration_locked = False
+
+        @staticmethod
+        def has(_name):
+            return False
+
+    monkeypatch.setattr(ac, "ServiceContainer", _Empty)
+
+    assert core._constitutional_runtime_live() is False
+
+
+def test_the_mutation_helper_fails_closed_on_an_unknown_runtime(monkeypatch):
+    from core.agency import agency_core as ac
+
+    core = ac.AgencyCore.__new__(ac.AgencyCore)
+    monkeypatch.setattr(
+        ac.AgencyCore, "_constitutional_runtime_live", lambda self: None
+    )
+
+    approved = core._approve_agency_state_mutation(
+        kind="goal", content="x", priority=0.5
+    )
+
+    assert approved is False, (
+        "an unknown constitutional runtime approved a state mutation"
+    )
+
+
+def test_a_failed_readiness_probe_defers_the_shard():
+    """The admission policy disappeared when its dependencies failed: the
+    exception was recorded and control fell through to scheduling."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "agency" / "agency_core.py"
+    ).read_text("utf-8")
+
+    # Structural, via AST: the handler for the background-policy probe must
+    # END the function rather than fall through. A string slice around the
+    # log text broke the moment that text was reworded, which is how this
+    # kind of test goes green on a defect.
+    import ast
+
+    tree = ast.parse(source)
+    handler_returns = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        if "background-policy probe failed" not in rendered:
+            continue
+        handler_returns.append(
+            any(isinstance(inner, ast.Return) for inner in ast.walk(node))
+        )
+
+    assert handler_returns, "the background-policy handler was not found"
+    assert all(handler_returns), (
+        "a failed background-policy probe falls through to scheduling the "
+        "shard instead of deferring it"
+    )
+
+
+def test_unmeasurable_ram_paces_shard_spawning():
+    """Skipping the throttle entirely meant an unmeasurable host spawned at
+    full rate — pacing disappeared exactly when nobody could tell whether
+    there was memory for it."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "agency" / "agency_core.py"
+    ).read_text("utf-8")
+
+    import ast
+
+    tree = ast.parse(source)
+    paced = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        if "RAM could not be measured" not in rendered:
+            continue
+        paced.append("sleep" in rendered)
+
+    assert paced, "the swarm RAM-throttle handler was not found"
+    assert all(paced), (
+        "an unmeasurable host skips the swarm RAM throttle entirely again, "
+        "so shards spawn at full rate with no idea whether there is memory"
+    )
