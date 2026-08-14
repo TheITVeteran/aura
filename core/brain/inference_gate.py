@@ -3186,6 +3186,37 @@ class InferenceGate:
             )
         )
 
+    @staticmethod
+    def _foreign_owner_holds_model_lane() -> bool:
+        """True when a live process other than this one owns the model lane.
+
+        Fail-safe by construction: any error answers False, which restores the
+        previous cold-boot wait rather than shortening a legitimate one.
+        """
+        try:
+            from core.runtime.model_lane_control import (
+                ProcessIdentity,
+                get_model_lane_controller,
+            )
+
+            observations = get_model_lane_controller().owner_observations()
+        except Exception:  # noqa: BLE001 - never let a probe break a turn
+            return False
+        if not observations:
+            return False
+        try:
+            mine = str(ProcessIdentity.current().pid)
+        except Exception:  # noqa: BLE001
+            mine = ""
+        for observation in observations:
+            owner_id = str(getattr(observation, "owner_id", "") or "")
+            if not owner_id:
+                continue
+            if mine and f":{mine}:" in owner_id:
+                continue  # our own lease is not a foreign holder
+            return True
+        return False
+
     def _foreground_warmup_timeout(
         self, lane_status: dict[str, Any], primary_timeout: float
     ) -> float:
@@ -3208,6 +3239,25 @@ class InferenceGate:
         if was_ever_ready:
             return InferenceGate._env_float(
                 "AURA_FOREGROUND_RECOVERY_WARMUP_CAP_S", 15.0
+            )
+        # A lane held by SOMEONE ELSE is not a cold boot, and waiting the cold
+        # budget for it waits for something that cannot happen.
+        #
+        # LIVE 2026-08-13: a training run (standalone:96317, CP399) held the
+        # exclusive model lane. The cortex was admission-deferred 15 times in a
+        # row; last_ready_at was 0.0 because it had never been ready THIS boot,
+        # so every turn took the cold-boot branch and waited the full 180s for
+        # a lane whose owner would hold it for hours. The brainstem — loaded,
+        # weights present, not the lane owner — was never asked once, and the
+        # user got "the live answer lane could not finish preparing".
+        #
+        # Preempting the owner is not the answer: that would destroy whatever
+        # it is doing. Falling to the fallback tier is. The cortex keeps
+        # warming behind a shielded task and takes over the moment the lane
+        # frees.
+        if InferenceGate._foreign_owner_holds_model_lane():
+            return InferenceGate._env_float(
+                "AURA_FOREGROUND_FOREIGN_LANE_WARMUP_CAP_S", 15.0
             )
         # [STABILITY v56] Cold 32B load can take 150s; give it at least 180s
         # or the primary timeout, whichever is greater.

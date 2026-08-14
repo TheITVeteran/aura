@@ -226,6 +226,42 @@ class NucleusManager(LLMProvider):
         entry.setdefault("last_error", None)
         return entry
 
+    def check_health(self) -> bool:
+        """Is at least one local model actually loaded and error-free?
+
+        `LLMProvider.check_health` used to return True for anything that did
+        not override it, and this class did not. So the primary local lane
+        answered "healthy" with no model loaded, no MLX available and no
+        successful call ever made — and `FallbackLLMClient` selects the lane
+        to use from precisely this answer, which kept a dead lane at the
+        front of the chain instead of falling through to one that works.
+
+        Deliberately inference-free: this is called on selection paths and
+        during audits, so it inspects the loaded state rather than spending
+        a generation to find out. A model marked loaded whose last operation
+        raised is not healthy — that is the shape a wedged worker takes.
+        """
+        entries = getattr(self, "models", None)
+        if not isinstance(entries, dict) or not entries:
+            return False
+        for name, entry in entries.items():
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("loaded"):
+                continue
+            if entry.get("model") is None:
+                # "loaded" with nothing behind it is the state a failed load
+                # leaves; treating it as healthy is how it stayed selected.
+                continue
+            if entry.get("last_error"):
+                logger.debug(
+                    "Nucleus model %s is loaded but carries last_error=%s",
+                    name, entry.get("last_error"),
+                )
+                continue
+            return True
+        return False
+
     def _model_path_for(self, name: str) -> str:
         return self.brainstem_path if name == "brainstem" else self.cortex_path
 

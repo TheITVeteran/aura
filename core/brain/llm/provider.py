@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(ABC):
@@ -34,5 +37,23 @@ class LLMProvider(ABC):
         raise NotImplementedError
 
     def check_health(self) -> bool:
-        """Check if the provider is available and working."""
-        return True
+        """Whether this provider is available and working.
+
+        Returns False on the base class, and that is the point. It used to
+        return True unconditionally, so every provider that never overrode
+        it — `NucleusManager`, the primary local model lane — reported
+        healthy without probing configuration, dependencies, model identity,
+        readiness, or a single successful call. `FallbackLLMClient` selects
+        providers on exactly this answer, so a lane with nothing loaded
+        stayed at the front of the chain.
+
+        A provider that has not implemented a health check has not
+        established that it is healthy. Overriding this is how a provider
+        says otherwise.
+        """
+        logger.warning(
+            "%s does not implement check_health(); reporting unhealthy "
+            "rather than certifying a provider that was never probed.",
+            type(self).__name__,
+        )
+        return False

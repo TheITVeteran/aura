@@ -314,3 +314,97 @@ async def test_an_unchecked_candidate_is_preferred_over_a_rejected_one():
         "the rejected majority won because failed candidates stayed in the "
         "pool alongside the unchecked one"
     )
+
+
+# ──────────── a provider that never probed has not established health
+
+
+def test_the_provider_base_does_not_certify_what_it_never_checked():
+    """`LLMProvider.check_health` returned True unconditionally.
+
+    `FallbackLLMClient` selects which lane to use from exactly this answer,
+    so any provider that never overrode it stayed at the front of the chain
+    with nothing loaded, no dependency present and no successful call ever
+    made.
+    """
+    from core.brain.llm.provider import LLMProvider
+
+    class _NeverOverrode(LLMProvider):
+        async def generate_text(self, *args, **kwargs):
+            return ""
+
+        async def generate_json(self, *args, **kwargs):
+            return {}
+
+        async def generate_stream(self, *args, **kwargs):
+            yield ""
+
+    assert _NeverOverrode().check_health() is False, (
+        "a provider with no health check reported itself healthy"
+    )
+
+
+def test_the_nucleus_lane_reports_unhealthy_with_nothing_loaded():
+    """The primary local lane inherited the unconditional True."""
+    from core.brain.llm.nucleus_manager import NucleusManager
+
+    manager = NucleusManager.__new__(NucleusManager)
+    manager.models = {}
+
+    assert manager.check_health() is False
+
+
+def test_a_model_marked_loaded_with_nothing_behind_it_is_not_healthy():
+    """The state a failed load leaves. Treating it as healthy is how a dead
+    lane stayed selected."""
+    from core.brain.llm.nucleus_manager import NucleusManager
+
+    manager = NucleusManager.__new__(NucleusManager)
+    manager.models = {"cortex": {"loaded": True, "model": None, "last_error": None}}
+
+    assert manager.check_health() is False
+
+
+def test_a_loaded_model_carrying_an_error_is_not_healthy():
+    """The shape a wedged worker takes."""
+    from core.brain.llm.nucleus_manager import NucleusManager
+
+    manager = NucleusManager.__new__(NucleusManager)
+    manager.models = {
+        "cortex": {"loaded": True, "model": object(), "last_error": "worker died"}
+    }
+
+    assert manager.check_health() is False
+
+
+def test_a_genuinely_loaded_model_is_healthy():
+    """The fix must not report a working lane as dead."""
+    from core.brain.llm.nucleus_manager import NucleusManager
+
+    manager = NucleusManager.__new__(NucleusManager)
+    manager.models = {
+        "brainstem": {"loaded": False, "model": None, "last_error": None},
+        "cortex": {"loaded": True, "model": object(), "last_error": None},
+    }
+
+    assert manager.check_health() is True
+
+
+def test_the_health_probe_runs_no_inference():
+    """It is called on selection paths and during audits; spending a
+    generation to answer would make every health check a model call."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "brain"
+        / "llm"
+        / "nucleus_manager.py"
+    ).read_text("utf-8")
+
+    body = source[source.index("def check_health") :]
+    body = body[: body.index("def _model_path_for")]
+
+    for spender in ("generate", "await ", "load_model"):
+        assert spender not in body, f"check_health reaches for {spender}"
