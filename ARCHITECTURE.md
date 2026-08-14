@@ -2518,3 +2518,127 @@ physical actuation, effect, weakpoint, or ambient-constant claim is made
 from the foundation existing. The faculty model measures what its probes
 can measure and reports the rest as blind spots — a low blind-spot count is
 a claim about instrumentation coverage, not about capability.
+
+---
+
+## 19. Recursive Latent Cortex: compute the checkpoint does not have
+
+**Files**: `core/brain/llm/latent_cortex/` (150 modules, worker-side, pure MLX,
+lazy imports), `core/learning/intrinsic_recurrence.py`,
+`core/learning/unified_intrinsic_recurrence.py`,
+`core/learning/recurrent_action_schema.py`, `tools/latent_cortex_lab.py`,
+`tools/train_unified_intrinsic_recurrence.py`.
+
+**Service**: `ServiceNames.LATENT_CORTEX`. **Worker action**: `latent_reason`,
+on the resident model, no reload. **Kill switch**: `AURA_LATENT_CORTEX=0`.
+
+The full programme — spec, claims ladder, and the preregistered campaign that
+refuted its own central hypothesis — is
+[docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md), with the
+training front in
+[docs/INTRINSIC_RECURRENCE.md](docs/INTRINSIC_RECURRENCE.md). This section
+covers the architecture only.
+
+### 19.1 The two architectures
+
+A frozen checkpoint is a fixed-depth pipeline: `L` layers, once, per token.
+Two distinct ways to spend more compute on a harder problem were built, and
+the difference between them is the programme's central finding.
+
+**Latent workspace (the original RLC).** `M` thought slots are seeded beside
+the prompt from the mean prompt embedding plus role anchors and jitter. A
+window of the middle layers `[p..c)` runs over those slots repeatedly under a
+schedule program `π = [(start, end, repeats, α), ...]`, and the refined slots'
+K/V persists at every layer so every generated token attends to them.
+
+```
+prompt ──prefill (all L layers)──▶ prompt KV (read-only)
+seed M slots ──prelude [0..p)──▶ Z₀
+loop over π:  Z̃ = Window(Zₜ);  Uₜ = RMSMatch((1-αₜ)Zₜ + αₜ·RMSMatch(Z̃, A), A)
+              Zₜ₊₁ = Uₜ if CalibratedAccept(...) else Zₜ
+final clean pass persists slot KV; coda [c..L) persists slot KV
+decode: answer tokens attend to [prompt; refined slots] at every layer
+```
+
+**Intrinsic recurrence.** The real token stream re-enters the middle block `T`
+times:
+
+```python
+h = layers[:prelude](h)
+for t in range(T):
+    h = layers[prelude:coda](h)
+h = layers[coda:](h)
+```
+
+Effective depth is `prelude + T·(coda-prelude) + (L-coda)` — a 64-layer
+checkpoint running 160 layers deep at `T=4` with the same weights. This is the
+Ouro/LoopLM architecture retrofitted onto a checkpoint not pretrained for it.
+**At `T=1` it is bit-identical to the base forward pass**, which is the
+load-bearing safety property: recurrence is added by raising `T` from a
+known-good anchor, never by a cutover.
+
+### 19.2 Why the distinction decided the result
+
+In the latent-workspace architecture the answer tokens traverse
+`layers[prelude:coda]` exactly once, at every depth setting. Only the slot
+positions ever recurred. **The computation producing the answer always received
+the base checkpoint's `L` layers — identical to vanilla** — so "depth" changed
+nothing except the contents of a scratchpad. Measured: RLC at depth 1/2/4/8
+scored 25/29/25/25% against vanilla greedy 21%, flat across an 8× compute
+range. Slots are causal and worth a few points as a prior; depth was worth
+nothing, and the architecture predicts exactly that.
+
+### 19.3 Stabilizers
+
+A checkpoint pretrained without recurrence has no reason for its middle block
+to be a stable map; iterating it can drift in norm until the coda receives
+activations outside its training distribution.
+
+- **RMSMatch** — per-position RMS rescaling toward the immutable post-prelude
+  anchor `A`, ratio-clamped.
+- **α-interpolation** — constant or cosine-decay schedule.
+- **Calibrated update admission** — a pinned learned sigmoid scores bounded
+  evidence/anchor/dynamics features before state mutation; below-threshold
+  proposals are receipted and discarded with the exact prior state preserved.
+- **Divergence guard** — NaN or norm-ratio blowout halts and reverts to best.
+- **Fixed-point halting** — relative residual `‖Zₜ₊₁−Zₜ‖/‖Zₜ‖ < ε`.
+- **Anchor injection / renormalize** (intrinsic path) — both default **OFF**,
+  so the plain loop is what gets measured first.
+
+### 19.4 The checkpoint invariant
+
+`governance.CheckpointInvariant` enforces four properties per episode and emits
+a receipt. A violation is a CRITICAL degradation and the episode's output is
+discarded.
+
+| Property | How |
+|---|---|
+| Checkpoint bytes unchanged | SHA-256 cached per `(path, mtime, size)` |
+| Permanent parameters unchanged | Sampled-tensor fingerprint pre/post episode |
+| Episode fast weights erased | Post-erase probe-batch equality |
+| No hidden fine-tuning | Consolidation only via the governed LoRA queue |
+
+### 19.5 Typed program supervision
+
+Answer-only SFT taught the model to stop reasoning — recurrence itself became
+the damage — so supervision moved to a typed program the recurrence executes.
+Per step the controller emits a structured action against
+`aura.recurrent_action_target.v2`: `opcode`, `arg0`–`arg5`, `terminal`. The
+narrow vocabulary is exact machine semantics (copy, add/mul/sub modulo, boolean
+ops, register affine); CP394 added seven broader process opcodes. Because the
+targets are typed and exactly checkable, the training signal is a verifier
+rather than a preference model.
+
+### 19.6 Evidence boundary
+
+The mechanics are proven and the runtime integration is live. **The capability
+dividend is not claimed.** A preregistered, adequately powered, Holm-corrected
+campaign refuted the frozen-loop hypothesis at 1.5B — vanilla beat all seven
+latent arms — and returned statistical parity with a negative point estimate at
+32B. Resident-32B serving authority exists only for a typed battery
+(`qualified_typed_only`; `ordinary_chat_authorized=false`). No broad reasoning
+gain, static fusion, or frontier claim is made anywhere in this programme.
+
+The floor is enforced rather than assumed: `≥ vanilla always`, checked by
+`tests/test_rlc_never_worse_than_vanilla.py`, which enumerates the decode
+contract and requires every arm to declare which side of the floor it sits on.

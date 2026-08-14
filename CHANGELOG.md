@@ -149,6 +149,23 @@ supply-chain instruction that pointed at the wrong requirements file. Added
 [docs/README.md](docs/README.md), [AGENTS.md](AGENTS.md), and runbooks for
 all 19 known failure modes.
 
+**Second reconciliation, 2026-08-13** (1,660 commits later). Resolved 2,317
+code-path references across 272 tracked docs against the tree; nine were dead
+and are fixed, and the ones deliberately naming absent files are recorded as
+such rather than repaired. Corrected the test count (24,931 → **34,382**), the
+architecture map (154/2,597 → **153/2,741**), the Brainstem lane
+(Qwen2.5-7B → **Qwen3.5-9B**), the ASR engine (Whisper → **Parakeet TDT**), and
+the embedding backend (MiniLM → **Qwen3-Embedding-0.6B**).
+
+The Recursive Latent Cortex now has a landing page linked from the top of the
+README — [docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md),
+restructured so the status and claims ladder sit above the spec. Added
+[docs/INTRINSIC_RECURRENCE.md](docs/INTRINSIC_RECURRENCE.md) (the training
+front, which had existed only as ledger entries),
+[docs/COGNITIVE_ARCHITECTURE_ADOPTION.md](docs/COGNITIVE_ARCHITECTURE_ADOPTION.md)
+(Soar and ACT-R), [docs/MODEL_ROSTER.md](docs/MODEL_ROSTER.md) (every lane and
+the measurement behind it), and `ARCHITECTURE.md` §19.
+
 ---
 
 ## 2026-07 — 2,041 commits (346 features, 681 fixes)

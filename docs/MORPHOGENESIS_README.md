@@ -14,12 +14,16 @@ This patch adds a bounded morphogenetic runtime:
 - `core/morphogenesis/integration.py` — default Aura cells and ServiceContainer registration.
 - `tests/test_morphogenesis_runtime.py` — minimal regression tests.
 
-## Install
+## Boot
 
-Copy the `core/morphogenesis` directory into your repo and add the boot snippet from
-`patches/bootstrap_morphogenesis_snippet.py`.
+Already wired. `aura_main.py` awaits
+`core.morphogenesis.integration.start_morphogenesis_runtime()` after core
+services are registered, and `core/runtime/flagship_readiness.py` warns
+(`MORPHOGENESIS_NOT_BOOTED`) if that hook goes missing.
 
-Then run:
+The standalone-patch install instructions this section used to carry — copy
+the directory, apply a snippet from a `patches/` tree — described a portability
+path that does not exist in this repository.
 
 ```bash
 pytest tests/test_morphogenesis_runtime.py

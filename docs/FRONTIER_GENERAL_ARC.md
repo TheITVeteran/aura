@@ -70,7 +70,7 @@ contamination controls, repeated matched-budget runs, and independent review.
 
 **P1 — Verifier Foundry** (the ceiling-mover; genuinely new):
 `core/brain/verifiers/foundry.py`. Extends the existing registry
-(`verifiers/registry.py`, 6 domain engines, binary hard-gate + soft mean)
+(`core/brain/verifiers/registry.py`, 6 domain engines, binary hard-gate + soft mean)
 with: per-verifier **measured reliability** (score every verdict against
 later ground truth / spot audits; Brier-style ledger), reliability-weighted
 verdict folding, an **admission gate** — a domain may enter the self-training

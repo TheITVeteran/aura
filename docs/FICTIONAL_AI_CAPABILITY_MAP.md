@@ -84,7 +84,7 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 ### Caine — *The Amazing Digital Circus*
 - **Levels:** AI ringmaster who *generates* endless immersive worlds/adventures on demand and improvises — but cannot address the humans' real underlying needs.
 - **Real science:** procedural content generation, LLM-driven simulation/roleplay environments, world models.
-- **Verdict:** **BUILD** → a generative **ScenarioForge**: procedurally build structured scenarios/simulations for planning, training, and creative exploration. Caine's own limitation is a *feature* to bake in: flag when a generated scenario can't solve the user's real need (ties to the Tron advocate). Extends `core/brain/imagination.py` + `core/sim/world_simulator.py` + `dream_processor`.
+- **Verdict:** **BUILD** → a generative **ScenarioForge**: procedurally build structured scenarios/simulations for planning, training, and creative exploration. Caine's own limitation is a *feature* to bake in: flag when a generated scenario can't solve the user's real need (ties to the Tron advocate). Extends `core/brain/imagination.py` + `core/sim/scenario_forge.py` + `dream_processor`. (Built: `ScenarioForge` is live; the earlier `world_simulator` prototype was retired.)
 - **Home:** `core/brain/imagination.py`, `core/sim/`.
 
 ### The Minds — *Iain M. Banks' Culture*

@@ -142,12 +142,12 @@ it names which premise broke.
 
 | seam | file | effect |
 |---|---|---|
-| RLC episode | `latent_cortex/engine.py` `_build_episode_ratchet` | refuted branches become rejection-set entries; stated requirements and unanimous agreement remain prompt-visible commitments |
-| repair redraw | `latent_cortex/engine.py` local-repair loop | exact repeats are rejected before decomposition or verification and receive up to three bounded generations |
-| live response lane | `brain/reasoning_revision_gate.py` `deliberate_best_of` | verifier-call-bounded best-of-N samples **without replacement**; excluded text never enters the prompt |
-| standalone policy | `latent_cortex/sequential_exclusion.py` | verifier calls, generations, compliance and rejected redraws are independently receipted |
+| RLC episode | `core/brain/llm/latent_cortex/engine.py` `_build_episode_ratchet` | refuted branches become rejection-set entries; stated requirements and unanimous agreement remain prompt-visible commitments |
+| repair redraw | `core/brain/llm/latent_cortex/engine.py` local-repair loop | exact repeats are rejected before decomposition or verification and receive up to three bounded generations |
+| live response lane | `core/brain/reasoning_revision_gate.py` `deliberate_best_of` | verifier-call-bounded best-of-N samples **without replacement**; excluded text never enters the prompt |
+| standalone policy | `core/brain/llm/latent_cortex/sequential_exclusion.py` | verifier calls, generations, compliance and rejected redraws are independently receipted |
 | receipts | `EpisodeReceipt.commitment_ratchet` | commitments, refusals, measured narrowing |
-| operator view | `latent_cortex/commitment_telemetry.py` | `rlc.duplicate_passes` goes RED at 4 — best-of-8 behaving like best-of-2, visible at last |
+| operator view | `core/brain/llm/latent_cortex/commitment_telemetry.py` | `rlc.duplicate_passes` goes RED at 4 — best-of-8 behaving like best-of-2, visible at last |
 
 ### On blindness
 

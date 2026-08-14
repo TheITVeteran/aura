@@ -152,8 +152,8 @@ requests outright.
 | `AURA_LORA_PATH` | auto-detected | Path to the LoRA adapter directory |
 | `AURA_MODEL` | `Qwen2.5-32B-Instruct-8bit` | Primary Cortex model |
 | `AURA_DEEP_MODEL` | auto-detected (72B) | Solver model for deep reasoning |
-| `AURA_BRAINSTEM_MODEL` | `Qwen2.5-7B-Instruct-4bit` | Fast fallback |
-| `AURA_FALLBACK_MODEL` | `Qwen2.5-1.5B-Instruct-4bit` | CPU emergency fallback |
+| `AURA_BRAINSTEM_MODEL` | `Qwen3.5-9B-4bit` | Fast fallback (replaced Qwen2.5-7B on 2026-08-12) |
+| `AURA_FALLBACK_MODEL` | `Qwen2.5-1.5B-Instruct-4bit` | CPU emergency fallback. Locked to the Cortex family — it is also the speculative draft and contrastive amateur, so it cannot drift from the Cortex distribution the way the Brainstem could |
 | `AURA_LOCAL_BACKEND` | `mlx` | Internal MLX runtime. Live Aura always uses this path. |
 | `AURA_SUBSTRATE_PRIMARY` | `1` | Try substrate token readout before transformer fallback |
 | `AURA_SUBSTRATE_DIM` | `64` | Continuous substrate dimension, clamped to 16-512 |
@@ -195,7 +195,7 @@ checks hit `/api/health`.
 
 - **Out of memory.** Close other apps, or drop to a smaller model. The 32B
   8-bit wants about 20 GB of GPU RAM and will not negotiate. On a smaller
-  machine set `AURA_MODEL=Qwen2.5-7B-Instruct-4bit` and take the smaller
+  machine set `AURA_MODEL=Qwen3.5-9B-4bit` and take the smaller
   lane on purpose rather than discovering it under load.
 - **Model won't load.** Check that `mlx-lm` is installed
   (`pip install mlx-lm`). Desktop and runtime operation both use the

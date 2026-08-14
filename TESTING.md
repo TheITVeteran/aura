@@ -1,6 +1,6 @@
 # Testing
 
-As of 2026-08-01 the tree collects **24,931 tests across 1,771 files**.
+As of 2026-08-13 the tree collects **34,382 tests across 2,373 files**.
 Re-collect rather than trusting that sentence:
 
 ```bash

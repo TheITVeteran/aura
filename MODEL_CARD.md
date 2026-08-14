@@ -58,11 +58,18 @@ is promoted only when a problem warrants it. Auto-detected/enabled via
 | Field | Value |
 |-------|-------|
 | **Role** | Background maintenance, classification, lightweight tasks |
-| **Architecture** | Transformer LLM (7B parameters) |
+| **Architecture** | Transformer LLM (9B parameters, Qwen3.5-9B) |
 | **Runtime** | MLX on Apple Silicon |
 | **Quantization** | 4-bit (MLX native) |
 | **Context Window** | 4096 tokens |
 | **Inference** | Local, on-device |
+| **Reasoning mode** | Explicitly controlled |
+
+Qwen3.5-9B replaced Qwen2.5-7B on 2026-08-12. Nothing is keyed to this tier's
+weights — verified before the swap that no draft, contrastive-amateur, or
+speculative-decoding path references the Brainstem — so the generation gap was
+free to close. The Reflex lane below could *not* move for exactly that reason.
+See [docs/MODEL_ROSTER.md](docs/MODEL_ROSTER.md).
 
 ### Intended Use
 Background tasks: memory consolidation, classification, health probes,
@@ -116,6 +123,55 @@ state — this lane cannot activate at all.
   content is not sent.
 - Cloud usage is logged in the Will receipt trail and is visible in the
   audit chain export.
+
+---
+
+## Speech-to-Text Model
+
+| Field | Value |
+|-------|-------|
+| **Role** | Primary ASR; serves both duplex stages (480 ms partials and the final) |
+| **Architecture** | Parakeet TDT 0.6B v3 (`parakeet_mlx`) |
+| **Runtime** | MLX on Apple Silicon |
+| **Inference** | Local, on-device. Audio does not leave the machine |
+| **Fallback** | `faster_whisper` on CPU |
+
+Replaced a two-stage Whisper configuration on 2026-08-12. Measured on this
+host over 12.4 s of real speech, median of 5 warm runs: Parakeet **166 ms** vs
+`whisper-small.en` 193 ms (the model it replaced on partials) vs
+`whisper-large-v3-turbo` 317 ms (finals). One streaming decode is cheaper than
+the incumbent partial, so both stages share one model-lane lease with no
+accuracy sacrificed on partials.
+
+### Limitations
+- English-focused; the cited accuracy figure (6.32% vs 7.83% English WER) is
+  from published benchmarks, not a local measurement — the local sample scored
+  0% WER for all candidates and could not discriminate.
+
+---
+
+## Embedding Model
+
+| Field | Value |
+|-------|-------|
+| **Role** | Semantic memory retrieval — the dense half of hybrid scoring |
+| **Architecture** | `Qwen/Qwen3-Embedding-0.6B` |
+| **Dimensions** | 384 |
+| **Inference** | Local, on-device |
+
+Replaced `all-MiniLM-L6-v2` on 2026-08-12. MiniLM declared a 256-token window
+against an 800-word ingestion chunk — 1,122 tokens through its own tokenizer,
+so **77% of every full chunk never reached the encoder**, silently, because
+tokenizer truncation logs nothing. On documents whose distinguishing sentence
+sits past token 256, MiniLM scored 1/4 on tail retrieval (chance) against
+Qwen3's 3/4, at 10.7 vs 20.2 ms/query. Chunk size is now *derived* from the
+encoder's declared window rather than fixed.
+
+### Limitations
+- Roughly 2× the per-query latency of the model it replaced.
+- Signal and null score populations overlap on the calibration sample, so the
+  admission threshold is calibrated against measured nulls
+  (`core/memory/retrieval_calibration.py`) rather than asserted.
 
 ---
 

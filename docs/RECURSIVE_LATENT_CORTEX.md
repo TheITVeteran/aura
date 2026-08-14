@@ -1,5 +1,19 @@
 # Recursive Latent Cortex (RLC)
 
+Status: Guide · Programme landing page · Reviewed against the tree 2026-08-13
+
+Aura's largest research programme, and the one most likely to be worth your
+time if you only read one. It asks a question with a checkable answer:
+
+> A frozen 32B checkpoint is a fixed-depth pipeline — 64 layers, once, per
+> token. Can you make it *think longer* on a hard problem without changing a
+> single stored weight?
+
+The machinery says yes. **The capability dividend has not appeared, and the
+programme's own preregistered campaign is what proved it hadn't.** That
+result is the reason this page is worth reading: the harness was built to be
+able to say so without flinching, and then it did.
+
 Turn the frozen resident checkpoint from a fixed-depth 64-layer pipeline into
 a **programmable, stateful, self-configuring reasoning machine** — without
 changing a single stored weight. This is the productionization of the
@@ -8,9 +22,137 @@ programs, virtual-width branches, hidden-state optimization, episode-scoped
 fast weights, adaptive halting, and a falsification harness that keeps every
 capability claim honest.
 
-Package: `core/brain/llm/latent_cortex/` (worker-side, pure MLX, lazy imports)
+Package: `core/brain/llm/latent_cortex/` (worker-side, pure MLX, lazy imports —
+150 modules)
 Service: `ServiceNames.LATENT_CORTEX = "latent_cortex"` (orchestrator-side)
 Worker action: `latent_reason` (runs on the RESIDENT model, no reload)
+Surface: 68 `tools/` entry points, 163 test files, 204 frozen evidence
+artifacts under `artifacts/closeout/latent_cortex/`
+
+---
+
+## The short version
+
+Ordinary decoding runs the prompt through 64 layers and emits a token. RLC
+seeds a set of **thought slots** beside the prompt, runs a *window* of the
+middle layers over those slots repeatedly under a schedule program, and
+persists the refined slots' K/V so every generated token attends to them.
+
+The recurrence is the compute. The slots are the state. Nothing is written
+back to disk, and the checkpoint bytes are hash-checked before and after
+every episode.
+
+Four things make it a research instrument rather than a trick:
+
+1. **The invariant is checked, not promised.** Checkpoint bytes, permanent
+   parameters, episode fast-weight erasure, and no-hidden-fine-tuning are
+   each enforced per episode with a receipt. A violation is a CRITICAL
+   degradation and the output is discarded.
+2. **Causality is testable.** Ablate a thought slot and the answer
+   distribution must change. If it doesn't, the latent computation was
+   decoration and the harness says so.
+3. **Budgets are matched.** Equal-FLOP accounting (token-layer applications)
+   is first-class, so "more compute helped" can never be mistaken for "the
+   architecture helped."
+4. **The floor is absolute.** `≥ vanilla always` — ordinary decode owns the
+   answer until a gain gate promotes something over it. Enforced by
+   `tests/test_rlc_never_worse_than_vanilla.py`, which enumerates the decode
+   contract rather than trusting it.
+
+## Where the programme actually stands
+
+Read this before crediting anything. Verdicts are the programme's own, from
+preregistered campaigns with committed seeds.
+
+| | |
+|---|---|
+| **Mechanics** | **PROVEN.** KV rewind, RMSMatch stability, schedule validation, fast-weight identity-at-attach and proven-erase, checkpoint invariant, slot-ablation causality, matched-magnitude controls, equal-FLOP accounting — all on real `mlx_lm` Qwen2 weights, plus a full episode end to end on a trained 1.5B checkpoint in ~1.3s with contracting residuals (0.95 → 0.10). |
+| **Runtime integration** | **PROVEN.** Live on the resident 32B through the signed installed app; deep deliberation routes DEEP passes through latent episodes. Kill switch `AURA_LATENT_CORTEX=0`. |
+| **Capability gain, frozen loop** | **REFUTED at 1.5B scale.** The 2026-07-17 preregistered campaign (seed committed first, n=24/family, Holm-corrected) returned: slot causality REFUTED at n=72; all 7 factorial ablation arms REFUTED — vanilla 21/72 beat every latent arm (7–13/72); self-consistency beat virtual width; gradient latent optimization was indistinguishable from its random control *and* from off. On an untrained-for-recurrence checkpoint at this scale, the frozen loop does not merely fail to help — **it hurts.** |
+| **Capability gain, 32B frozen loop** | **CONJECTURE (negative point estimate).** Template-parity sweep: latent 0.167→0.375 over 1→2 recurrent steps then plateau; vanilla 0.417 leads with fully overlapping Wilson intervals at n=24. Statistical parity. |
+| **Recurrence-native training** | **OPEN — this is the live front.** If the frozen loop hurts, the dividend has to come from training the checkpoint to use recurrence. That is what every CP-numbered checkpoint since is about. |
+| **Broad reasoning gain, fusion, frontier performance** | **NOT CLAIMED.** No checkpoint in this programme authorizes any of them, and each entry in the ledger says so explicitly. |
+
+### What the training front has established
+
+Working on a 1.5B vehicle so the resident 32B stays live, at
+`tools/train_unified_intrinsic_recurrence.py` and its evaluator:
+
+- **Answer-only SFT is the wrong objective.** Training on answers taught the
+  model to *stop reasoning* — recurrence itself became the damage. Output-only
+  transfer is now rejected fast and by contract (CP393).
+- **Trained recurrence is not inert.** Package-depth trained parameters beat
+  their exact initialization control 3/7 to 2/7 (CP368). Small, but not zero,
+  and measured against the right control.
+- **The serving policy was the bug, not the tissue.** Fixed depth four
+  discarded a correct depth-one answer. Decode now produces separately
+  attested depth-one and package-depth candidates, so deeper recurrence can
+  add a success but can never erase a shallow one already proven correct
+  (CP376, "recurrent depth is monotonic").
+- **Typed recurrent serving authority is durable and narrow.** The resident
+  32B holds `qualified_typed_only` authority for the `khop` / `modular` /
+  `register_trace` families at task depths 1,2,4 — decoded 9/9 exactly across
+  two independent cold loads. `ordinary_chat_authorized=false` and
+  `arbitrary_reasoning_authorized=false` remain the boundary (CP357).
+- **Process, not output, is now what gets taught** (CP394–CP400): a broad
+  opcode vocabulary that executes causally, the proven narrow tissue recovered
+  immutably from CP232, and a certified append-only migration that extends it
+  to the new vocabulary while every other learned parameter stays byte-exact.
+
+Next bounded step: the 1.5B adaptation over train depths 1,3,4,5,6,8,10 with
+held-out 12,16, then the already-frozen four-arm behavioral canary.
+
+### A structural warning worth generalizing
+
+Between 2026-08-06 and 2026-08-07 the programme produced two clean negative
+results — 13-vs-5 and a 9-vs-4 reproduction. Both were void. **A win had been
+structurally impossible**: the promotion gate was wired to the one decode
+policy that removes the vanilla floor, so no configuration could keep the
+floor *and* gain. The coupling existed in three places, and fixing fewer than
+all three left every receipt reporting `answer_replacement_unproven`.
+
+Every negative result measured a system that was never switched on. If you
+take one methodological lesson from this repository, take that one — and see
+[RLC_RECONCILIATION.md](RLC_RECONCILIATION.md) for the fourteen defects in
+dependency order.
+
+## The programme's documents
+
+| Document | What it is |
+|---|---|
+| **This page** | The spec, the mechanism, the claims ladder. Start here. |
+| [RLC_RECONCILIATION.md](RLC_RECONCILIATION.md) | State of the campaign, the `≥ vanilla always` invariant, and the fourteen defects that made a win impossible |
+| [RLC_SPARK_EXECUTION_LEDGER.md](RLC_SPARK_EXECUTION_LEDGER.md) | The append-only execution ledger. Long, dated, never revised — the primary record |
+| [RLC_WIRING_HANDOFF.md](RLC_WIRING_HANDOFF.md) | How the organ attaches to the live runtime |
+| [RLC_COMMITMENT_SEARCH.md](RLC_COMMITMENT_SEARCH.md) | Commitment extraction and search over latent state |
+| [RLC_KNOWLEDGE_SOURCE_MATRIX.md](RLC_KNOWLEDGE_SOURCE_MATRIX.md) | Which organ is allowed to supply which kind of knowledge |
+| [RLC_SPARK_LITERATURE.md](RLC_SPARK_LITERATURE.md) | The 2026 frozen-loop and latent-reasoning literature this is built against |
+| [SPARK_PRETRAINING_LEGS.md](SPARK_PRETRAINING_LEGS.md) | The pre-training legs of the Spark programme |
+| [INTRINSIC_RECURRENCE.md](INTRINSIC_RECURRENCE.md) | The recurrence-native training front in detail |
+
+Checkpoint-by-checkpoint narrative lands in
+[AURA_EXECUTION_TRACKER.md](AURA_EXECUTION_TRACKER.md) (append-only; read the
+tail as current).
+
+## Running it
+
+```bash
+# Bounded lab run — 1.5B/7B only while the live 32B is resident
+caffeinate -dims .venv/bin/python tools/latent_cortex_lab.py \
+  --model <mlx-dir> --experiments 1,2,3,5 --max-minutes 30
+```
+
+The live path needs no command: restart Aura and the worker gains the
+`latent_reason` action. Budgets are damped by body pressure. Set
+`AURA_LATENT_CORTEX=0` to disable.
+
+**Never double-launch a training protocol.** There is one, it is
+memory-hungry, and a second one beside the resident 32B will take the host
+down. See [CLAUDE.md](../CLAUDE.md) for the memory budget rules.
+
+---
+
+# The mechanism in detail
 
 ## The invariant (checked, not promised)
 

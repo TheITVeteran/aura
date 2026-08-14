@@ -26,6 +26,14 @@ want the same ideas without the math, read [HOW_IT_WORKS.md](HOW_IT_WORKS.md). I
 you want the evidence standard for autonomy and novel output claims, read
 [docs/BEHAVIORAL_PROOF_STANDARD.md](docs/BEHAVIORAL_PROOF_STANDARD.md).
 
+**If you only read one research page, read
+[docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md).** It asks
+whether a frozen 32B checkpoint can be made to think longer without changing a
+weight, builds the machinery, runs a preregistered campaign against it — and
+reports that the capability dividend did not appear. That page is the clearest
+picture of how this repository handles a result it didn't want. See
+[Recursive Latent Cortex](#recursive-latent-cortex) below for the summary.
+
 **Evidence map:** Claims should point to runnable tests, proof bundles, receipts,
 or replayable logs. Test counts move with the repo; use `pytest --collect-only`,
 `make proof-bundle`, and [TESTING.md](TESTING.md) for the current surface rather
@@ -150,13 +158,13 @@ from how confident the prose sounds.
 - `core/brain/llm/sensorimotor_grounding.py` maps camera/screen/audio
   observations into the substrate input vector, so live sensor events perturb
   the ODE directly instead of arriving only as text/tool summaries.
-- `core/consciousness/phi_core.py` (2,114 lines) implements real IIT-style
+- `core/consciousness/phi_core.py` (2,939 lines) implements real IIT-style
   integration math: binarization, empirical TPM, KL-divergence φ, exclusion
   postulate, polynomial-time spectral partitioning, with an exhaustive
   8-bipartition validation baseline.
 - `core/consciousness/hierarchical_phi.py` implements the 32-node hierarchical
   φ with K=8 overlapping subsystems and Bayesian-smoothed estimation.
-- `core/consciousness/affective_steering.py` (2,258 lines) is a real CAA
+- `core/consciousness/affective_steering.py` (2,640 lines) is a real CAA
   injection pipeline that hooks MLX transformer blocks and modifies the
   residual stream at generation time.
 - `training/caa_32b_validation.py` validates production-model CAA artifacts:
@@ -222,6 +230,57 @@ from how confident the prose sounds.
 
 ---
 
+## Recursive Latent Cortex
+
+The largest research programme in the repo, and the one that best shows how
+evidence is handled here. Full page:
+[docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md).
+
+The question: a frozen 32B checkpoint is a fixed-depth pipeline — 64 layers,
+once, per token. **Can you make it think longer on a hard problem without
+changing a single stored weight?**
+
+The machinery says yes. Thought slots are seeded beside the prompt, a window
+of middle layers runs over them repeatedly under a schedule program, and the
+refined slots' K/V persists so every generated token attends to them. Checkpoint
+bytes are hash-checked before and after every episode; episode-scoped fast
+weights are provably erased; equal-FLOP accounting is first-class so "more
+compute helped" can't be mistaken for "the architecture helped."
+
+Then the preregistered campaign ran — seed committed before any task was
+generated, n=24 per family, Holm-corrected — and returned this:
+
+| | |
+|---|---|
+| Mechanics (KV rewind, stability bounds, slot causality, erasure, invariants) | **PROVEN** on real MLX weights |
+| Live runtime integration on the resident 32B | **PROVEN** |
+| Capability gain, frozen loop, 1.5B | **REFUTED** — vanilla 21/72 beat every one of 7 latent arms (7–13/72) |
+| Capability gain, frozen loop, 32B | **CONJECTURE**, negative point estimate — latent 0.375 vs vanilla 0.417, overlapping intervals |
+| Broad reasoning gain, fusion, frontier performance | **NOT CLAIMED** |
+
+The honest headline the programme published about itself: *on an
+untrained-for-recurrence checkpoint at this scale, the frozen loop does not
+merely fail to help — it hurts.*
+
+Two things came out of that. First, an architectural explanation rather than a
+tuning excuse: the answer tokens had always traversed the middle block exactly
+once, so no depth was ever applied to the answer's own computation. Only the
+scratchpad was recurring. Second, the follow-on programme —
+[docs/INTRINSIC_RECURRENCE.md](docs/INTRINSIC_RECURRENCE.md) — which makes the
+real token stream re-enter the middle block, so a 64-layer checkpoint runs 160
+layers deep at T=4 with the same weights, and trains it on typed, exactly
+checkable program traces instead of answers.
+
+Worth knowing before you read either page: two clean negative results from
+early August were **void**, because the promotion gate had been wired to the
+one decode policy that removes the vanilla floor. A win had been structurally
+impossible. Every negative result up to that point measured a system that was
+never switched on. That's in
+[docs/RLC_RECONCILIATION.md](docs/RLC_RECONCILIATION.md), with the fourteen
+defects in dependency order.
+
+---
+
 ## Why Aura is Different
 
 Most "AI companion" projects do the same thing. Store a mood number. Paste it
@@ -251,6 +310,7 @@ It's a research project. It's also one you can talk to while it's running.
 - [Quick start](#quick-start)
 - [Evidence boundary](#evidence-boundary)
 - [Behavioral proof standard](docs/BEHAVIORAL_PROOF_STANDARD.md)
+- [Recursive Latent Cortex](#recursive-latent-cortex) — the flagship research programme
 - [Tracked vs local workspace](#tracked-vs-local-workspace)
 - [Architecture overview](#architecture-overview)
 - [Decisive evidence runner](#decisive-evidence-runner)
@@ -376,8 +436,8 @@ Local LLM router with automatic failover:
    everything.
 2. **Secondary (Solver)** — Qwen 2.5 / Qwen 3 72B for deep reasoning, hot-swapped
    only when the request actually needs it.
-3. **Tertiary (Brainstem)** — Qwen 2.5 7B 4-bit, lazy-loaded to save ~5 GB for
-   the Cortex.
+3. **Tertiary (Brainstem)** — Qwen 3.5 9B 4-bit, lazy-loaded to save memory for
+   the Cortex, with explicit reasoning-mode control.
 4. **Reflex** — Qwen 2.5 1.5B 4-bit on CPU as an emergency fallback.
 5. **Cloud** — Gemini Flash/Pro, PII-scrubbed and rate-limited. Off by default.
 6. **Last resort** — rule-based static responses that can't fail.
@@ -385,8 +445,27 @@ Local LLM router with automatic failover:
 Lane names map to `core/config.py`: `fast_model` is the Cortex
 (`Qwen2.5-32B-Instruct-8bit`), `deep_model` the Solver
 (`Qwen2.5-72B-Instruct-4bit`), `chat_model` the Brainstem
-(`Qwen2.5-7B-Instruct-4bit`), and `vision_model` is pinned to the Cortex build
+(`Qwen3.5-9B-4bit`), and `vision_model` is pinned to the Cortex build
 so vision and conversation share one identity.
+
+Two non-LLM lanes were replaced in August 2026 after measurement, not taste:
+
+- **Speech-to-text** is one streaming-native Parakeet TDT pass
+  (`core/voice/duplex/streaming_asr.py`) serving both duplex stages, replacing
+  a two-stage Whisper setup (`small.en` for partials, `large-v3-turbo` for the
+  final). Measured on this host over 12.4s of real speech, median of 5 warm
+  runs: Parakeet 166 ms vs Whisper-small 193 ms vs Whisper-large-v3-turbo
+  317 ms. One decode is cheaper than the incumbent *partial* and about half the
+  incumbent *final*, so both stages run the same weights on one model-lane
+  lease. `faster_whisper` remains as the CPU fallback.
+- **Embeddings** are `Qwen3-Embedding-0.6B` at 384 dimensions
+  (`core/memory/embedding_model.py`), replacing `all-MiniLM-L6-v2`. MiniLM
+  declares `max_seq_length: 256` while the ingestion path chunks at 800 words —
+  1,122 tokens through the model's own tokenizer, so **77% of every full chunk
+  never reached the encoder**, silently. On four documents whose distinguishing
+  sentence sits past token 256, MiniLM scored 1/4 on tail retrieval (chance —
+  it ranked the same document first every time) against Qwen3's 3/4, at 10.7
+  vs 20.2 ms/query.
 
 **What this ladder costs, stated plainly.** It is good for availability and bad
 for attribution. A visible success can mean the Cortex answered; it can also
@@ -460,7 +539,7 @@ decision the agent can make. Volition levels 0–3 gate progressively autonomous
 behavior up to and including self-modification.
 
 ### Skills (`core/skills/`, legacy wrappers in `skills/`)
-Roughly 90 modules: shell with sandboxing, web search and browse, coding, sleep and
+Roughly 80 modules: shell with sandboxing, web search and browse, coding, sleep and
 dream consolidation, local media generation, social media (Twitter, Reddit),
 screen capture, filesystem, browser automation, network recon, malware
 analysis, self-evolution and self-repair, inter-agent messaging, knowledge
@@ -470,7 +549,7 @@ legacy compatibility layer for older imports. Every skill call carries a
 capability token and has to pass the Will gate.
 
 ### Orchestrator (`core/orchestrator/`)
-About 3,240 lines in `main.py` split across 11 mixins: message handling,
+About 3,250 lines in `main.py` split across 11 mixins: message handling,
 message pipeline, incoming logic, response processing, tool execution,
 autonomy, cognitive background, context streaming, learning and evolution,
 personality bridge, output formatting. Handlers under `orchestrator/handlers/`
@@ -496,7 +575,7 @@ that tests modifications without actually restarting, a shadow AST healer, and
 code repair. Nothing modifies itself without Will sign-off.
 
 ### Resilience (`core/resilience/`)
-30+ modules for not crashing: a stability guardian, circuit breakers with
+60+ modules for not crashing: a stability guardian, circuit breakers with
 persistent state, a cognitive write-ahead log, graceful degradation that
 sheds capability under pressure, a healing swarm, a sovereign watchdog, a
 resource arbitrator, a lock watchdog that hunts deadlocks, a memory governor,
@@ -508,8 +587,8 @@ FastAPI and WebSocket with streaming. The main UI is vanilla JS
 (`interface/static/aura.js`) with a live neural feed, telemetry, chat, and
 substrate visualization. The memory dashboard is React + Vite + Tailwind
 (`interface/static/memory/`). Routes cover chat, inner-state inspection,
-memory browsing, system management, and privacy. Whisper for STT. Hot-reload
-button in the UI for code changes.
+memory browsing, system management, and privacy. Parakeet TDT for STT.
+Hot-reload button in the UI for code changes.
 
 ---
 
@@ -628,7 +707,7 @@ pool; MLX Metal is used opportunistically where available.
 
 ## Consciousness modules
 
-There are 90+ modules in `core/consciousness/`. The ones that do most of the
+There are 138 modules in `core/consciousness/`. The ones that do most of the
 load-bearing work:
 
 | Module | What it does | File |
@@ -851,7 +930,7 @@ make smoke     # ~100 contract tests, under 10s — the after-every-change gate
 make test      # full offline suite in 6 bounded process chunks
 ```
 
-As of 2026-08-01 the tree collects **24,931 tests across 1,771 test files**
+As of 2026-08-13 the tree collects **34,382 tests across 2,373 test files**
 (`pytest tests/ --collect-only -q`). Counts move with the repo — re-collect
 rather than trusting this number.
 

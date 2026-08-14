@@ -42,6 +42,7 @@ mind." Those are different claims.
 - [Goals and agency](#goals-and-agency)
 - [The newer layer (April 2026)](#the-newer-layer)
 - [The reasoning-and-self layer (mid-2026)](#the-reasoning-and-self-layer-mid-2026)
+- [The thinking-longer layer (August 2026)](#the-thinking-longer-layer-august-2026)
 - [What the tests show](#what-the-tests-show)
 - [How this differs from other AI companions](#how-this-differs)
 - [The learned layer](#the-learned-layer)
@@ -452,6 +453,76 @@ can run every day.
 
 ---
 
+## The thinking-longer layer (August 2026)
+
+Three strands, all about the same thing: making a fixed model do better
+thinking rather than making it a bigger model.
+
+### Can a frozen model think longer?
+
+A language model is a fixed pipeline. The prompt goes through 64 layers, once,
+and a word comes out. Hard question or easy one, it's the same amount of
+thinking. That's strange if you consider that *you* take longer on hard things.
+
+So: seed a set of scratch positions next to the prompt, run a slice of the
+middle layers over just those positions several times, and keep the result
+where every word the model generates can see it. Nothing about the model
+changes — the weights are checksummed before and after — but the problem got
+more thinking than the pipeline normally allows.
+
+Then came the part worth reading. The experiment was registered in advance —
+the tasks were sealed before anyone saw a result — and it came back **negative.
+Plain decoding won.** Not "no significant difference": the ordinary model beat
+every one of the seven variants.
+
+The explanation turned out to be architectural rather than a tuning failure,
+and it's a satisfying one. The extra thinking was going into the scratchpad,
+but the *answer itself* still went through the 64 layers exactly once. The
+scratchpad was being read, not reasoned with. So the follow-on work sends the
+real text back through the middle block instead: a 64-layer model running 160
+layers deep with the same weights, then trained on step-by-step traces that can
+be checked exactly rather than on finished answers.
+
+That's still open. Nothing about it is being claimed yet.
+[docs/RECURSIVE_LATENT_CORTEX.md](docs/RECURSIVE_LATENT_CORTEX.md) is the whole
+story, negative results first.
+
+### Noticing when a decision wasn't a decision
+
+Aura's subsystems compete to be the one thought that gets broadcast each tick.
+When two of them tied exactly, the winner was whichever one had spoken first —
+and nothing recorded that the choice had been arbitrary, so nothing could
+learn from it.
+
+Now a tie is a named event with a type, borrowed from a cognitive architecture
+that has taken deadlock seriously since the 1980s. Ties go to whoever has
+waited longest, and when that's level too, the rotation moves on. More
+importantly, working out how to break a deadlock gets *compiled* so the same
+one isn't reasoned through twice — but only while it pays for itself, because
+remembered shortcuts cost something to check and a system that memorises
+indiscriminately gets slower the more it knows.
+
+### Remembering the way memory actually works
+
+Aura's sense of "how recent is this memory" was, on inspection, broken in a
+specific and slightly funny way: it was counting from a hardcoded date in
+March. By August, a memory from one minute ago and one from thirty days ago
+scored *identically*. The recency term had become a constant that contributed
+nothing.
+
+The replacement is the forgetting curve from psychology — which depends only on
+how much time has passed, so it can't go stale the way a fixed date does. It
+was then fitted against Aura's own recall data, and the honest outcome is that
+**half of it fitted and half of it didn't.** She can now predict which memories
+will come back. She cannot predict how long recall will take, the model that
+was supposed to say so had no relationship to reality, and rather than tune a
+number until it looked right, the null is recorded and a test holds it there.
+
+[docs/COGNITIVE_ARCHITECTURE_ADOPTION.md](docs/COGNITIVE_ARCHITECTURE_ADOPTION.md)
+has both, with the equations.
+
+---
+
 ## What the tests show
 
 Every claim the architecture makes is backed by something you can run
@@ -783,7 +854,7 @@ Each is independently publishable. Together they're a research program.
   suites — null hypothesis defeat, causal exclusion, grounding, functional
   phenomenology, embodied dynamics, phenomenal convergence — plus the
   consciousness-conditions, technological-autonomy and stability suites.
-  Those sit inside a tree that collects **24,931 tests across 1,771 files**
+  Those sit inside a tree that collects **34,382 tests across 2,373 files**
   as of 2026-08-01, covering kernel lifecycle, infrastructure, resilience,
   cognitive routing, and memory. Counts move; re-collect rather than
   trusting this sentence.

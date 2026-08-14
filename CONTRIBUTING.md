@@ -33,7 +33,8 @@ make lint
 3. **No monkey-patching.** Event-bus hooks, provider registries, typed
    extension points. Not `setattr` on a live object.
 4. **Immutable messages.** Subsystems talk through the frozen dataclasses
-   in `core/runtime/immutable_messages.py`.
+   in `core/bus/events.py` (`Event`, `DeliveryReceipt`). An actor must not be
+   able to mutate a message another actor is reading.
 5. **Lifecycle tracking.** Subsystems report state through
    `core/runtime/service_state.py:ServiceState`.
 6. **Locks are checked.** Use `checked_lock` / `checked_async_lock` from

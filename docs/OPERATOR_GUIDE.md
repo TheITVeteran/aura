@@ -43,8 +43,8 @@ Two gates worth knowing separately:
   agency. The grandfathered baseline in `config/layering_baseline.json` only
   ever shrinks.
 - `make test` — the full offline suite, run as 6 bounded process chunks via
-  `tools/run_test_chunks.py`. As of 2026-08-01 the tree collects **24,931
-  tests across 1,771 files**. A single pytest process over the whole suite
+  `tools/run_test_chunks.py`. As of 2026-08-13 the tree collects **34,382
+  tests across 2,373 files**. A single pytest process over the whole suite
   gets OOM-killed around 83%; always use the chunk runner.
 
 ## Backup & restore
