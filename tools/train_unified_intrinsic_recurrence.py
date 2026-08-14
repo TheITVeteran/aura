@@ -218,24 +218,45 @@ def _ownership_optimizer(
     learning_rate: float,
     *,
     transformer_rate_scale: float = 1.0,
+    query_rate_scale: float | None = None,
 ) -> Any:
-    """Use distinct Adam moments and rates for tissue and controller readouts."""
+    """Use distinct Adam moments and rates for query, bridge, and controller tissue."""
 
-    if (
-        isinstance(transformer_rate_scale, bool)
-        or not isinstance(transformer_rate_scale, (int, float))
-        or not 0.0 <= float(transformer_rate_scale) <= 1.0
-    ):
-        raise ValueError("transformer optimizer rate scale must be inside [0, 1]")
+    scales = [("transformer", transformer_rate_scale)]
+    if query_rate_scale is not None:
+        scales.append(("query", query_rate_scale))
+    for label, scale in scales:
+        if (
+            isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not 0.0 <= float(scale) <= 1.0
+        ):
+            raise ValueError(f"{label} optimizer rate scale must be inside [0, 1]")
+    if query_rate_scale is None:
+        return optim.MultiOptimizer(
+            [
+                _adam(float(learning_rate) * float(transformer_rate_scale)),
+                _adam(float(learning_rate)),
+            ],
+            filters=[
+                lambda name, _value: (
+                    _gradient_ownership_group(name) == "scoped_transformer_bridge"
+                )
+            ],
+        )
     return optim.MultiOptimizer(
         [
+            _adam(float(learning_rate) * float(query_rate_scale)),
             _adam(float(learning_rate) * float(transformer_rate_scale)),
             _adam(float(learning_rate)),
         ],
         filters=[
             lambda name, _value: (
+                _gradient_ownership_group(name) == "scoped_transformer_query"
+            ),
+            lambda name, _value: (
                 _gradient_ownership_group(name) == "scoped_transformer_bridge"
-            )
+            ),
         ],
     )
 
@@ -245,21 +266,37 @@ def _set_ownership_optimizer_rates(
     learning_rate: float,
     *,
     transformer_rate_scale: float,
+    query_rate_scale: float | None,
 ) -> None:
     """Restore phase rates without collapsing MultiOptimizer group identity."""
 
-    if not isinstance(optimizer, optim.MultiOptimizer) or len(optimizer.optimizers) != 2:
-        raise TypeError("unified recurrence optimizer topology differs")
+    expected_optimizers = 3 if query_rate_scale is not None else 2
     if (
-        isinstance(transformer_rate_scale, bool)
-        or not isinstance(transformer_rate_scale, (int, float))
-        or not 0.0 <= float(transformer_rate_scale) <= 1.0
+        not isinstance(optimizer, optim.MultiOptimizer)
+        or len(optimizer.optimizers) != expected_optimizers
     ):
-        raise ValueError("transformer optimizer rate scale must be inside [0, 1]")
-    optimizer.optimizers[0].learning_rate = float(learning_rate) * float(
-        transformer_rate_scale
-    )
-    optimizer.optimizers[1].learning_rate = float(learning_rate)
+        raise TypeError("unified recurrence optimizer topology differs")
+    scales = [("transformer", transformer_rate_scale)]
+    if query_rate_scale is not None:
+        scales.append(("query", query_rate_scale))
+    for label, scale in scales:
+        if (
+            isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not 0.0 <= float(scale) <= 1.0
+        ):
+            raise ValueError(f"{label} optimizer rate scale must be inside [0, 1]")
+    if query_rate_scale is None:
+        optimizer.optimizers[0].learning_rate = float(learning_rate) * float(
+            transformer_rate_scale
+        )
+        optimizer.optimizers[1].learning_rate = float(learning_rate)
+    else:
+        optimizer.optimizers[0].learning_rate = float(learning_rate) * float(query_rate_scale)
+        optimizer.optimizers[1].learning_rate = float(learning_rate) * float(
+            transformer_rate_scale
+        )
+        optimizer.optimizers[2].learning_rate = float(learning_rate)
     mx.eval(*(candidate.learning_rate for candidate in optimizer.optimizers))
 
 
@@ -967,6 +1004,8 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
 
 def _gradient_ownership_group(name: str) -> str:
     if name.startswith("model."):
+        if ".self_attn.q_proj." in name:
+            return "scoped_transformer_query"
         return "scoped_transformer_bridge"
     if name.startswith("controller.initial_state_") or name == ("controller.state_slot_embeddings"):
         return "typed_state_initializer"
@@ -1040,25 +1079,26 @@ def _process_component_gradients(
 ) -> Any:
     """Prevent one typed-process role from rewriting another role's tissue."""
 
+    transformer_groups = {"scoped_transformer_query", "scoped_transformer_bridge"}
     allowed = {
-        "initializer": {"scoped_transformer_bridge", "typed_state_initializer"},
+        "initializer": {*transformer_groups, "typed_state_initializer"},
         "action": {
-            "scoped_transformer_bridge",
+            *transformer_groups,
             "typed_action_transition",
             "typed_action_workspace",
         },
         "action_workspace": {
-            "scoped_transformer_bridge",
+            *transformer_groups,
             "typed_action_workspace",
         },
         "transition": {
-            "scoped_transformer_bridge",
+            *transformer_groups,
             "typed_action_codebook",
             "typed_state_codebook",
             "typed_state_transition",
         },
         "joint": {
-            "scoped_transformer_bridge",
+            *transformer_groups,
             "typed_action_codebook",
             "typed_action_transition",
             "typed_action_workspace",
@@ -3504,6 +3544,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--process-query-gradient-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "relative Adam learning-rate scale applied only to scoped query "
+            "projection adapters during typed-process optimization"
+        ),
+    )
+    parser.add_argument(
         "--answer-bridge-steps",
         type=int,
         default=0,
@@ -3677,6 +3726,8 @@ def main() -> int:
         )
     if not 0.0 <= args.process_transformer_gradient_scale <= 1.0:
         raise ValueError("process transformer gradient scale must be inside [0, 1]")
+    if not 0.0 <= args.process_query_gradient_scale <= 1.0:
+        raise ValueError("process query gradient scale must be inside [0, 1]")
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)
         if args.answer_bridge_autonomous_tail_steps is None
@@ -3869,6 +3920,7 @@ def main() -> int:
         raise ValueError("task depths must be positive")
     families = tuple(value.strip() for value in args.families.split(",") if value.strip())
     targets = tuple(value.strip() for value in args.lora_targets.split(",") if value.strip())
+    query_optimizer_enabled = "q_proj" in targets
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
         args.bridge,
         args.bridge,
@@ -4163,6 +4215,7 @@ def main() -> int:
             "process_family_batch_size": args.process_family_batch_size,
             "process_family_batch_mode": args.process_family_batch_mode,
             "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
+            "process_query_gradient_scale": args.process_query_gradient_scale,
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
@@ -4220,14 +4273,24 @@ def main() -> int:
             "source_sha256s": source_sha256s,
             "campaign_binding": campaign_binding,
             "optimizer_contract": {
-                "class": "mlx.optimizers.MultiOptimizer[Adam,Adam]",
+                "class": (
+                    "mlx.optimizers.MultiOptimizer[Adam,Adam,Adam]"
+                    if query_optimizer_enabled
+                    else "mlx.optimizers.MultiOptimizer[Adam,Adam]"
+                ),
                 "betas": [0.9, 0.999],
                 "eps": 1e-8,
                 "bias_correction": False,
                 "ownership_groups": {
+                    **(
+                        {"scoped_transformer_query": "independent_adam"}
+                        if query_optimizer_enabled
+                        else {}
+                    ),
                     "scoped_transformer_bridge": "independent_adam",
                     "controller_and_readouts": "independent_adam",
                 },
+                "process_query_rate_scale": args.process_query_gradient_scale,
                 "process_transformer_rate_scale": (
                     args.process_transformer_gradient_scale
                 ),
@@ -4279,6 +4342,11 @@ def main() -> int:
                 if initial_phase == "state_transition"
                 else 1.0
             ),
+            query_rate_scale=(
+                args.process_query_gradient_scale
+                if query_optimizer_enabled and initial_phase == "state_transition"
+                else 1.0 if query_optimizer_enabled else None
+            ),
         )
         should_restore = args.resume or args.resume_if_available
         step, history, restored_training_state = (
@@ -4315,6 +4383,11 @@ def main() -> int:
                 args.process_transformer_gradient_scale
                 if resumed_phase == "state_transition"
                 else 1.0
+            ),
+            query_rate_scale=(
+                args.process_query_gradient_scale
+                if query_optimizer_enabled and resumed_phase == "state_transition"
+                else 1.0 if query_optimizer_enabled else None
             ),
         )
         resource_guard_receipt: dict[str, Any] | None = None
@@ -4800,6 +4873,11 @@ def main() -> int:
                             args.process_transformer_gradient_scale
                             if next_phase == "state_transition"
                             else 1.0
+                        ),
+                        query_rate_scale=(
+                            args.process_query_gradient_scale
+                            if query_optimizer_enabled and next_phase == "state_transition"
+                            else 1.0 if query_optimizer_enabled else None
                         ),
                     )
                 if step % 5 == 0:

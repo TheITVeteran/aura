@@ -831,7 +831,12 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
 
 def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
     gradients = {
-        "model": {"layer": {"lora_a": mx.ones((2, 2))}},
+        "model": {
+            "layer": {"lora_a": mx.ones((2, 2))},
+            "block": {
+                "self_attn": {"q_proj": {"lora_b": mx.ones((2, 2))}}
+            },
+        },
         "controller": {
             "initial_state_output": mx.ones((2, 2)),
             "action_output": mx.ones((2, 2)),
@@ -842,20 +847,31 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
         },
     }
     expected = {
-        "initializer": {"model.layer.lora_a", "controller.initial_state_output"},
+        "initializer": {
+            "model.block.self_attn.q_proj.lora_b",
+            "model.layer.lora_a",
+            "controller.initial_state_output",
+        },
         "action": {
+            "model.block.self_attn.q_proj.lora_b",
             "model.layer.lora_a",
             "controller.action_output",
             "controller.action_workspace_output",
             "controller.action_causal_output",
         },
         "action_workspace": {
+            "model.block.self_attn.q_proj.lora_b",
             "model.layer.lora_a",
             "controller.action_workspace_output",
             "controller.action_causal_output",
         },
-        "transition": {"model.layer.lora_a", "controller.state_transition_output"},
+        "transition": {
+            "model.block.self_attn.q_proj.lora_b",
+            "model.layer.lora_a",
+            "controller.state_transition_output",
+        },
         "joint": {
+            "model.block.self_attn.q_proj.lora_b",
             "model.layer.lora_a",
             "controller.initial_state_output",
             "controller.action_output",
@@ -2116,7 +2132,12 @@ def test_answer_bridge_teacher_policy_ends_unassisted_and_blocks_bad_process() -
 
 def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     gradients = {
-        "model": {"layer": {"lora_a": mx.array([3.0, 4.0])}},
+        "model": {
+            "layer": {"lora_a": mx.array([3.0, 4.0])},
+            "block": {
+                "self_attn": {"q_proj": {"lora_b": mx.array([6.0, 8.0])}}
+            },
+        },
         "controller": {
             "state_transition_output": mx.array([0.0, 12.0]),
             "state_value_embeddings": mx.array([0.0, 8.0]),
@@ -2131,6 +2152,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
     mx.eval(clipped, global_before, *groups.values())
     assert float(global_before.item()) > 15.0
     assert set(groups) == {
+        "scoped_transformer_query",
         "scoped_transformer_bridge",
         "typed_state_transition",
         "typed_state_codebook",
@@ -2139,6 +2161,9 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         "recurrent_controller",
     }
     assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(1.0)
+    assert float(
+        mx.linalg.norm(flat["model.block.self_attn.q_proj.lora_b"]).item()
+    ) == pytest.approx(1.0)
     assert float(
         mx.linalg.norm(flat["controller.state_transition_output"]).item()
     ) == pytest.approx(1.0)
@@ -2159,27 +2184,49 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
 
 def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:
     parameters = {
-        "model": {"layer": {"lora_a": mx.array([1.0])}},
+        "model": {
+            "layer": {"lora_a": mx.array([1.0])},
+            "block": {
+                "self_attn": {"q_proj": {"lora_b": mx.array([1.0])}}
+            },
+        },
         "controller": {"action_workspace_output": mx.array([1.0])},
     }
     gradients = {
-        "model": {"layer": {"lora_a": mx.array([50.0])}},
+        "model": {
+            "layer": {"lora_a": mx.array([50.0])},
+            "block": {
+                "self_attn": {"q_proj": {"lora_b": mx.array([50.0])}}
+            },
+        },
         "controller": {"action_workspace_output": mx.array([50.0])},
     }
-    optimizer = _ownership_optimizer(0.01, transformer_rate_scale=0.1)
+    optimizer = _ownership_optimizer(
+        0.01,
+        transformer_rate_scale=0.1,
+        query_rate_scale=0.01,
+    )
     updated = optimizer.apply_gradients(gradients, parameters)
     mx.eval(updated, optimizer.state)
     flat = dict(tree_flatten(updated))
     tissue_delta = 1.0 - float(flat["model.layer.lora_a"].item())
+    query_delta = 1.0 - float(flat["model.block.self_attn.q_proj.lora_b"].item())
     controller_delta = 1.0 - float(flat["controller.action_workspace_output"].item())
 
     assert tissue_delta > 0.0
     assert controller_delta > tissue_delta
     assert tissue_delta / controller_delta == pytest.approx(0.1, rel=1e-4)
+    assert query_delta / controller_delta == pytest.approx(0.01, rel=1e-4)
 
-    _set_ownership_optimizer_rates(optimizer, 0.02, transformer_rate_scale=0.25)
-    assert float(optimizer.optimizers[0].learning_rate.item()) == pytest.approx(0.005)
-    assert float(optimizer.optimizers[1].learning_rate.item()) == pytest.approx(0.02)
+    _set_ownership_optimizer_rates(
+        optimizer,
+        0.02,
+        transformer_rate_scale=0.25,
+        query_rate_scale=0.05,
+    )
+    assert float(optimizer.optimizers[0].learning_rate.item()) == pytest.approx(0.001)
+    assert float(optimizer.optimizers[1].learning_rate.item()) == pytest.approx(0.005)
+    assert float(optimizer.optimizers[2].learning_rate.item()) == pytest.approx(0.02)
 
     with pytest.raises(ValueError, match=r"inside \[0, 1\]"):
         _ownership_optimizer(0.01, transformer_rate_scale=1.1)
