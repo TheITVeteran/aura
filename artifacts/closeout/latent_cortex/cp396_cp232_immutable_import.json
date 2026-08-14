@@ -1,0 +1,21 @@
+{
+  "bootstrap_contract": {
+    "dataset_inherited": false,
+    "dataset_transfer": "explicit_new_campaign",
+    "history_inherited": false,
+    "optimizer_inherited": false,
+    "tensor_dtypes_verified": true,
+    "tensor_shapes_verified": true
+  },
+  "destination": "/Users/bryan/.aura/experiments/cp396-cp232-controller-import",
+  "immutable_generation": "checkpoint_best_trained-step-00000060-22287a833f4f443bb27a1cdad1058e88",
+  "import_receipt_sha256": "70f49da1b4b040ee5466c69a2b31fd9895ae4ea23b0832ff8ed6146893029950",
+  "parent_checkpoint_sha256": "8238caa44241d57b789c9bdb57458a74b6a6681c77661557c7146c7bda92350e",
+  "parent_controller_sha256": "214f1c68fb1def13e763d810e54b51937cfb719b19cde5e4fe91f8fccc26b9b6",
+  "parent_identity_sha256": "4ecd8ffaef5ac967b3c8af8e543ca98f17da45be475e0a818ba80d87307180bb",
+  "parent_step": 60,
+  "schema": "aura.unified_intrinsic.cp396_import_evidence.v1",
+  "source_bytes_preserved_exactly": true,
+  "source_controller_sha256": "214f1c68fb1def13e763d810e54b51937cfb719b19cde5e4fe91f8fccc26b9b6",
+  "source_receipt_commitment": "c335722f1cd595e66d3ab087787b976cff8dae3e0be50648671093c6188923db"
+}

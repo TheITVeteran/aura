@@ -48974,3 +48974,40 @@ task-disjoint behavioral gain, resident-32B improvement, fusion, frontier
 performance or `WOW Signal`. Next is immutable import of the exact published
 CP232 typed controller, compatibility-bound broad adaptation, and the frozen
 1.5B treatment/parent/lesion canary.
+
+## Checkpoint 2026-08-13-396: Proven Typed Tissue Is Recovered Immutably
+
+CP396 recovers the strongest retained 1.5B controller rather than retraining a
+nearby substitute. The historical CP232 artifact was found in its original
+worktree and independently matched both published commitments: checkpoint
+`8238caa44241d57b789c9bdb57458a74b6a6681c77661557c7146c7bda92350e`
+and campaign identity
+`4ecd8ffaef5ac967b3c8af8e543ca98f17da45be475e0a818ba80d87307180bb`.
+That is the controller whose frozen prompt-disjoint result was T4 `36/36`
+versus the same tissue at T1 `14/36` and pointer lesion `2/36`.
+
+A hash-pinned one-time importer validates stable source-file custody, legacy
+receipt and identity commitments, controller-only tensor inventory, and exact
+payload bytes before publishing a current immutable checkpoint generation.
+The imported generation preserves 51 controller and 104 optimizer tensors, but
+marks optimizer inheritance false; a new campaign may import controller tissue
+only. Wrong commitments, symlinks, changing files, non-controller bundle
+tensors, nonempty destinations and malformed custody all fail closed.
+
+Bootstrap compatibility is now separated from experiment identity. A fresh
+dataset may change task source, families, natural trace depths and objective
+weights while exact resume remains fully identity-bound. Transfer still rejects
+changes to base tensor/config hashes, recurrent window, controller topology,
+state codebook, tokenizer-bound literal/opcode/emission contracts and frozen
+readout. Every imported tensor is checked for exact name, shape and dtype before
+the child is updated. A deliberate wrong-shape controller was rejected.
+
+The recovered and imported controller hashes are exactly equal at
+`214f1c68fb1def13e763d810e54b51937cfb719b19cde5e4fe91f8fccc26b9b6`.
+Custody evidence is recorded in
+`artifacts/closeout/latent_cortex/cp396_cp232_immutable_import.json`; the private
+immutable generation lives under `~/.aura/experiments`. This proves exact
+recovery and topology-safe cross-dataset initialization. It does not prove
+broad adaptation, task-disjoint gain, resident-32B improvement, fusion,
+frontier performance or `WOW Signal`. Next is the bounded 1.5B broad-process
+adaptation and frozen parent/treatment/lesion comparison.

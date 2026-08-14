@@ -1917,21 +1917,49 @@ def _bootstrap_bundle_from_checkpoint(
     parent_identity = receipt.get("identity")
     if not isinstance(parent_identity, dict):
         raise RuntimeError("unified recurrence bootstrap identity is unavailable")
+    def model_tensor_identity(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        weights = value.get("weights")
+        if not isinstance(weights, list) or not weights:
+            return None
+        normalized = []
+        for row in weights:
+            if not isinstance(row, dict):
+                return None
+            size = row.get("size", row.get("size_bytes"))
+            if (
+                not isinstance(row.get("name"), str)
+                or not isinstance(row.get("sha256"), str)
+                or type(size) is not int
+                or size < 1
+            ):
+                return None
+            normalized.append(
+                {
+                    "name": row["name"],
+                    "sha256": row["sha256"],
+                    "size": size,
+                }
+            )
+        return {
+            "config_sha256": value.get("config_sha256"),
+            "weights": sorted(normalized, key=lambda row: row["name"]),
+        }
+
+    def recurrent_window(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        return {
+            "prelude_end": value.get("prelude_end"),
+            "coda_start": value.get("coda_start"),
+        }
+
     compatibility_fields = (
-        "model",
-        "runtime",
-        "tokenizer",
-        "spec",
-        "window_geometry",
-        "families",
-        "task_depths",
-        "init_seed",
         "bridge",
         "window_tissue_mode",
         "lora_rank",
         "controller_rank",
-        "state_weight",
-        "stutter_weight",
         "state_codebook_sha256",
         "literal_observation_contract",
         "opcode_observation_contract",
@@ -1946,6 +1974,14 @@ def _bootstrap_bundle_from_checkpoint(
         if _canonical_sha256(parent_identity.get(name))
         != _canonical_sha256(expected_identity.get(name))
     ]
+    if _canonical_sha256(model_tensor_identity(parent_identity.get("model"))) != (
+        _canonical_sha256(model_tensor_identity(expected_identity.get("model")))
+    ):
+        mismatches.append("model_tensor_identity")
+    if _canonical_sha256(recurrent_window(parent_identity.get("spec"))) != (
+        _canonical_sha256(recurrent_window(expected_identity.get("spec")))
+    ):
+        mismatches.append("recurrent_window")
     if mismatches:
         raise RuntimeError(
             "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
@@ -1959,6 +1995,18 @@ def _bootstrap_bundle_from_checkpoint(
     expected = set(_trainable(bundle))
     if set(bundle_values) != expected:
         raise RuntimeError("unified recurrence bootstrap tensor inventory differs")
+    child_values = _trainable(bundle)
+    incompatible_tensors = sorted(
+        name
+        for name, value in bundle_values.items()
+        if tuple(value.shape) != tuple(child_values[name].shape)
+        or str(value.dtype) != str(child_values[name].dtype)
+    )
+    if incompatible_tensors:
+        raise RuntimeError(
+            "unified recurrence bootstrap tensor topology differs: "
+            + ",".join(incompatible_tensors)
+        )
     bundle.update(tree_unflatten(list(bundle_values.items())))
     mx.eval(bundle.parameters())
     return {
@@ -1971,6 +2019,9 @@ def _bootstrap_bundle_from_checkpoint(
         "optimizer_inherited": False,
         "history_inherited": False,
         "dataset_inherited": False,
+        "dataset_transfer": "explicit_new_campaign",
+        "tensor_shapes_verified": True,
+        "tensor_dtypes_verified": True,
     }
 
 

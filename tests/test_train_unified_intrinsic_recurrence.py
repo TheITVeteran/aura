@@ -1213,8 +1213,15 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
         )
     }
     compatibility["spec"] = {
+        "prelude_end": 2,
+        "coda_start": 4,
         "train_depths": [1, 2, 4],
         "heldout_depths": [8, 16],
+    }
+    compatibility["model"] = {
+        "canonical_path": "/old/location",
+        "config_sha256": "c" * 64,
+        "weights": [{"name": "model.safetensors", "sha256": "d" * 64, "size": 8}],
     }
     parent_identity_body = {"schema": "test", **compatibility}
     parent_identity = {
@@ -1239,9 +1246,24 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
         child,
         expected_identity={
             **compatibility,
+            "model": {
+                "canonical_path": "/new/location",
+                "config_sha256": "c" * 64,
+                "weights": [
+                    {
+                        "name": "model.safetensors",
+                        "sha256": "d" * 64,
+                        "size_bytes": 8,
+                    }
+                ],
+            },
+            "families": ["fresh", "broad"],
+            "task_depths": [3, 5, 7],
             "spec": {
-                "train_depths": (1, 2, 4),
-                "heldout_depths": (8, 16),
+                "prelude_end": 2,
+                "coda_start": 4,
+                "train_depths": (3, 5, 7),
+                "heldout_depths": (9, 11),
             },
             "dataset": "fresh",
         },
@@ -1255,6 +1277,9 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
     assert receipt["optimizer_inherited"] is False
     assert receipt["history_inherited"] is False
     assert receipt["dataset_inherited"] is False
+    assert receipt["dataset_transfer"] == "explicit_new_campaign"
+    assert receipt["tensor_shapes_verified"] is True
+    assert receipt["tensor_dtypes_verified"] is True
 
     with pytest.raises(RuntimeError, match="topology differs: controller_rank"):
         _bootstrap_bundle_from_checkpoint(
@@ -1262,6 +1287,16 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
             "checkpoint_latest",
             child,
             expected_identity={**compatibility, "controller_rank": "different"},
+        )
+
+    wrong_shape, _wrong_shape_wiring = _bundle()
+    wrong_shape.controller.correction_a = wrong_shape.controller.correction_a[:-1]
+    with pytest.raises(RuntimeError, match="tensor topology differs"):
+        _bootstrap_bundle_from_checkpoint(
+            tmp_path,
+            "checkpoint_latest",
+            wrong_shape,
+            expected_identity=compatibility,
         )
 
 
