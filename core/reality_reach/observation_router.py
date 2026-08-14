@@ -1596,6 +1596,7 @@ class RealityObservationRouter:
                     lease_token,
                     sink_states,
                 ) = await self._next_observation()
+                reached_the_person = False
                 if observation is None:
                     try:
                         await asyncio.wait_for(self._wake.wait(), timeout=1.0)
@@ -1614,6 +1615,12 @@ class RealityObservationRouter:
                     lease_token=lease_token,
                     sink_states=sink_states,
                 )
+                # The observation has now REACHED the person. Everything
+                # below is bookkeeping about an event that already happened,
+                # and the failure handler must not treat it as a delivery
+                # that did not occur — `mark_delivery_failed` requeues, and
+                # requeuing something already seen shows it to them twice.
+                reached_the_person = True
                 if self._historian is not None and claimed_id:
                     await self._historian.mark_delivered(
                         claimed_id,
@@ -1649,32 +1656,109 @@ class RealityObservationRouter:
                 if isinstance(exc, HistorianError):
                     self._historian_failures += 1
                 if self._historian is not None and claimed_id:
-                    try:
-                        failed_state = await self._historian.mark_delivery_failed(
-                            claimed_id,
-                            error_code=f"{type(exc).__name__}_delivery_failure".lower(),
-                            lease_token=lease_token,
+                    if reached_the_person:
+                        # Delivered, then the RECORD failed. Two different
+                        # events wearing one exception: the person has seen
+                        # this observation, and only the bookkeeping is
+                        # broken. Requeuing here — which is what
+                        # `mark_delivery_failed` does — would deliver it to
+                        # them a second time and blame the sink for a
+                        # historian fault.
+                        #
+                        # One bounded retry of the RECORD, then quarantine.
+                        # Quarantine is the honest terminal state: it means
+                        # "do not deliver again", which is exactly right for
+                        # something already delivered, and it keeps the row
+                        # for the recovery audit instead of losing it.
+                        await self._settle_unconfirmed_delivery(
+                            claimed_id, lease_token=lease_token, cause=exc
                         )
-                        if failed_state == "quarantined":
-                            self._durable_queue_depth = max(
-                                0,
-                                self._durable_queue_depth - 1,
+                    else:
+                        try:
+                            failed_state = await self._historian.mark_delivery_failed(
+                                claimed_id,
+                                error_code=f"{type(exc).__name__}_delivery_failure".lower(),
+                                lease_token=lease_token,
                             )
-                    except (RuntimeError, ValueError) as receipt_exc:
-                        record_degradation(
-                            "reality_observation_router.delivery_receipt",
-                            receipt_exc,
-                            action="left durable delivery failure visible for recovery audit",
-                        )
+                            if failed_state == "quarantined":
+                                self._durable_queue_depth = max(
+                                    0,
+                                    self._durable_queue_depth - 1,
+                                )
+                        except (RuntimeError, ValueError) as receipt_exc:
+                            record_degradation(
+                                "reality_observation_router.delivery_receipt",
+                                receipt_exc,
+                                action="left durable delivery failure visible for recovery audit",
+                            )
                 record_degradation(
                     "reality_observation_router.delivery",
                     exc,
-                    action="retained and scheduled retry for a failed physical observation delivery",
+                    action=(
+                        "recorded an unconfirmed delivery that already reached the person"
+                        if reached_the_person
+                        else "retained and scheduled retry for a failed physical observation delivery"
+                    ),
                 )
                 if isinstance(exc, HistorianError):
                     delay = self._historian_backoff_s
                     self._historian_backoff_s = min(30.0, delay * 2.0)
                     await asyncio.sleep(delay)
+
+    async def _settle_unconfirmed_delivery(
+        self,
+        claimed_id: str,
+        *,
+        lease_token: str,
+        cause: BaseException,
+    ) -> None:
+        """Close out an observation the person SAW but we failed to record.
+
+        Never requeues. The delivery happened; the only open question is the
+        row, and answering it by scheduling a redelivery would make a
+        historian fault into a duplicate ambient interruption for the person.
+
+        One retry of the record — most historian faults here are a transient
+        lock or a WAL checkpoint — and then quarantine, which means "do not
+        deliver again". That is the honest terminal state for something
+        already delivered, and it keeps the row for the recovery audit
+        instead of dropping it on the floor.
+        """
+        if self._historian is None or not claimed_id:
+            return
+        try:
+            await self._historian.mark_delivered(claimed_id, lease_token=lease_token)
+            self._durable_queue_depth = max(0, self._durable_queue_depth - 1)
+            return
+        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as retry_exc:
+            record_degradation(
+                "reality_observation_router.delivery_receipt",
+                retry_exc,
+                severity="error",
+                action="could not confirm a delivery that already reached the person",
+                extra={"observation_id": str(claimed_id)[:120]},
+            )
+        try:
+            await self._historian.quarantine_delivery(
+                claimed_id,
+                reason="delivered_but_unconfirmed",
+                lease_token=lease_token,
+            )
+            self._durable_queue_depth = max(0, self._durable_queue_depth - 1)
+        except (AttributeError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as quarantine_exc:
+            # Even quarantine failed. The lease will expire and the recovery
+            # sweep will requeue it, so say plainly that a duplicate is now
+            # possible rather than letting it look like an ordinary retry.
+            record_degradation(
+                "reality_observation_router.delivery_receipt",
+                quarantine_exc,
+                severity="critical",
+                action=(
+                    "left a delivered observation unquarantined; lease expiry "
+                    "will requeue it and the person may see it twice"
+                ),
+                extra={"observation_id": str(claimed_id)[:120], "cause": repr(cause)[:160]},
+            )
 
     async def _next_observation(
         self,

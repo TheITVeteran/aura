@@ -2776,6 +2776,39 @@ class RealityHistorian:
             lease_token,
         )
 
+    async def quarantine_delivery(
+        self,
+        observation_id: str,
+        *,
+        reason: str,
+        lease_token: str,
+    ) -> None:
+        """Terminate a delivery WITHOUT scheduling it again.
+
+        The state machine had `mark_delivered` (it worked), and
+        `mark_delivery_failed` (it did not, so requeue) — and no way to say
+        the third thing that actually happens: the observation REACHED the
+        person and the record of that failed. The router was forced to call
+        `mark_delivery_failed`, which requeued something already seen and
+        showed it to them twice.
+
+        Quarantine is the honest terminal state for that: it means "do not
+        deliver again", which is exactly right for something already
+        delivered, and it keeps the row for the recovery audit rather than
+        dropping it.
+        """
+        await asyncio.to_thread(
+            self._run_serialized,
+            self._set_delivery_state_sync,
+            observation_id,
+            "quarantined",
+            _identifier(reason, name="reason"),
+            "",
+            frozenset({"delivering"}),
+            True,
+            lease_token,
+        )
+
     async def supersede_delivery(
         self,
         observation_id: str,
