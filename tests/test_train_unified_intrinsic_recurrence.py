@@ -2748,5 +2748,6 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     )
     assert report["trained_depth_helps"] is True
     assert report["heldout_depth_helps"] is False
+    assert report["process_by_family_at_max_depth"] == {"depth": 8, "families": {}}
     assert final_only_calls == [True] * len(spec.depths)
     assert reclaim_calls == [True] * len(spec.depths)

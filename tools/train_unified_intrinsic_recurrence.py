@@ -3398,6 +3398,8 @@ def _evaluate(
     initial_value_exact_totals = {depth: 0.0 for depth in depths}
     action_totals = {depth: 0.0 for depth in depths}
     action_exact_totals = {depth: 0.0 for depth in depths}
+    diagnostic_depth = max(depths)
+    family_process_totals: dict[str, dict[str, float | int]] = {}
     with recurrence_adapter_scope(start=None, stop=None):
         for task in tasks:
             prompt, answer = encode_example(tokenizer, task, bridge)
@@ -3423,6 +3425,25 @@ def _evaluate(
                     action_totals[depth] += metrics["action_accuracy"]
                     action_exact_totals[depth] += metrics["action_instruction_exact_accuracy"]
                     state_counts[depth] += 1
+                    if depth == diagnostic_depth:
+                        family = str(task.family)
+                        family_totals = family_process_totals.setdefault(
+                            family,
+                            {
+                                "examples": 0,
+                                "action_accuracy": 0.0,
+                                "action_instruction_exact_accuracy": 0.0,
+                                "state_value_exact_accuracy": 0.0,
+                            },
+                        )
+                        family_totals["examples"] += 1
+                        family_totals["action_accuracy"] += metrics["action_accuracy"]
+                        family_totals["action_instruction_exact_accuracy"] += metrics[
+                            "action_instruction_exact_accuracy"
+                        ]
+                        family_totals["state_value_exact_accuracy"] += metrics[
+                            "state_value_exact_accuracy"
+                        ]
                 # Reclaim after each depth. Holding the full ladder's lazy MLX
                 # graphs caused resident-32B evaluation to exceed 51 GiB.
                 envelope.reclaim(force=True)
@@ -3484,6 +3505,19 @@ def _evaluate(
         else None
         for depth in depths
     }
+    process_by_family_at_max_depth = {
+        family: {
+            "examples": int(values["examples"]),
+            "action_accuracy": float(values["action_accuracy"]) / int(values["examples"]),
+            "action_instruction_exact_accuracy": float(
+                values["action_instruction_exact_accuracy"]
+            )
+            / int(values["examples"]),
+            "state_value_exact_accuracy": float(values["state_value_exact_accuracy"])
+            / int(values["examples"]),
+        }
+        for family, values in sorted(family_process_totals.items())
+    }
     anchor = ce["T1"]
     trained_deeper = [ce[f"T{depth}"] for depth in spec.train_depths if depth != 1]
     heldout = [ce[f"T{depth}"] for depth in spec.heldout_depths]
@@ -3501,6 +3535,10 @@ def _evaluate(
         "state_value_exact_accuracy": state_value_exact_accuracy,
         "initial_value_exact_accuracy": initial_value_exact_accuracy,
         "action_instruction_exact_accuracy": action_instruction_exact_accuracy,
+        "process_by_family_at_max_depth": {
+            "depth": diagnostic_depth,
+            "families": process_by_family_at_max_depth,
+        },
         "best_depth": min(ce, key=ce.__getitem__),
         "best_deep_relative_gain": (
             (anchor - min(all_deeper)) / max(anchor, 1e-9) if all_deeper else 0.0
