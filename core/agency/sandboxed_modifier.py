@@ -240,7 +240,6 @@ class SandboxedModifier:
 
                 # Write modified file in worktree
                 wt_file = worktree_path / file_path
-                wt_file.parent.mkdir(parents=True, exist_ok=True)
                 await async_atomic_write_text(wt_file, new_content)
 
                 # Syntax check in worktree

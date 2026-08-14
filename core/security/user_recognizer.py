@@ -423,7 +423,6 @@ class UserRecognizer:
 
     def _save_fingerprint(self):
         try:
-            FINGERPRINT_PATH.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(FINGERPRINT_PATH, json.dumps(self._fingerprint, indent=2))
         except (json.JSONDecodeError, TypeError, ValueError) as _exc:
             record_degradation('user_recognizer', _exc)

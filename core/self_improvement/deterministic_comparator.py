@@ -78,7 +78,6 @@ class DeterministicComparator:
 
         # 4. Write candidate to workspace and run tests
         candidate_path = workspace.workspace_dir / spec.module_path
-        candidate_path.parent.mkdir(parents=True, exist_ok=True)
         await async_atomic_write_text(candidate_path, candidate.source_code, encoding="utf-8")
 
         # 5. Run tests

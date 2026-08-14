@@ -246,7 +246,6 @@ def runtime_write_bytes(path: object, payload: bytes, *, source: str = "unknown"
     from core.runtime.atomic_writer import atomic_write_bytes
 
     target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_bytes(target, bytes(payload))
 
 
@@ -267,5 +266,4 @@ def runtime_write_text(
     from core.runtime.atomic_writer import atomic_write_text
 
     target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(target, str(text), encoding=encoding)

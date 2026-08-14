@@ -97,7 +97,6 @@ class EvidenceMode:
 
     def dump(self, path: str | Path) -> None:
         p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(p, json.dumps(self.snapshot(), indent=2, sort_keys=True) + "\n")
 
 

@@ -716,7 +716,6 @@ class SandboxTester:
                 return False, {"error": "Target file not found"}
             
             sandbox_file = temp_path / file_path
-            sandbox_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Write the PATCHED version
             await async_atomic_write_text(sandbox_file, code_patch, encoding="utf-8")

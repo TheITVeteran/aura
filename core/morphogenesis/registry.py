@@ -26,7 +26,6 @@ def _default_root() -> Path:
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any], *, schema_name: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         from core.runtime.atomic_writer import atomic_write_json
         atomic_write_json(path, payload, schema_version=1, schema_name=schema_name)

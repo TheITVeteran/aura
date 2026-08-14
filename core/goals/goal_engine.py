@@ -399,7 +399,6 @@ class GoalEngine:
 
     def _save_subgoals_stack(self) -> None:
         try:
-            self.subgoals_stack_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(
                 self.subgoals_stack_path,
                 json.dumps(self._subgoals_stack, indent=2, sort_keys=True, default=str),

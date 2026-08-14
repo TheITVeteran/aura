@@ -769,7 +769,6 @@ class ParaconsistentEngine:
     def _save_graph(self):
         """Save belief graph and paradoxes to disk."""
         try:
-            self._graph_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "beliefs": {bid: b.to_dict() for bid, b in self._beliefs.items()},
                 "paradoxes": {pid: p.to_dict() for pid, p in self._paradoxes.items()},

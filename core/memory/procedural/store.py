@@ -109,7 +109,6 @@ class ProceduralMemoryStore:
     def save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(
             self.path,
             [asdict(rec) for rec in self.records.values()],

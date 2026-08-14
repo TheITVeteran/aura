@@ -7225,14 +7225,6 @@
       "scope": "<module>.SandboxOperator.execute_synthesized_tool"
     },
     {
-      "callee": "self.storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/abstraction_engine.py",
-      "scope": "<module>.AbstractionEngine.__init__"
-    },
-    {
       "callee": "self._state_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7561,14 +7553,6 @@
       "scope": "<module>.CanvasManager.__init__"
     },
     {
-      "callee": "PERSIST_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/commitment_engine.py",
-      "scope": "<module>.CommitmentEngine._save"
-    },
-    {
       "callee": "self._state_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7591,14 +7575,6 @@
       "count": 1,
       "path": "core/agency/environment_pipeline.py",
       "scope": "<module>._append_run_ledger"
-    },
-    {
-      "callee": "digest_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/environment_pipeline.py",
-      "scope": "<module>.run_workspace_digest"
     },
     {
       "callee": "self._db_path.parent.mkdir",
@@ -7649,28 +7625,12 @@
       "scope": "<module>.SandboxedModifier._apply_direct"
     },
     {
-      "callee": "wt_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/sandboxed_modifier.py",
-      "scope": "<module>.SandboxedModifier._apply_via_worktree"
-    },
-    {
       "callee": "backup.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/agency/sandboxed_modifier.py",
       "scope": "<module>.SandboxedModifier._rollback_direct"
-    },
-    {
-      "callee": "self.data_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/skill_library.py",
-      "scope": "<module>.SkillLibrary._save"
     },
     {
       "callee": "self._state_path.parent.mkdir",
@@ -7689,36 +7649,12 @@
       "scope": "<module>.TensionEngine._load"
     },
     {
-      "callee": "self._persist_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agency/tension_engine.py",
-      "scope": "<module>.TensionEngine._save"
-    },
-    {
       "callee": "self._persist_path.rename",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/agi/hierarchical_planner.py",
       "scope": "<module>.HierarchicalPlanner._quarantine"
-    },
-    {
-      "callee": "self._persist_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agi/hierarchical_planner.py",
-      "scope": "<module>.HierarchicalPlanner._save"
-    },
-    {
-      "callee": "PERSIST_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/agi/skill_synthesizer.py",
-      "scope": "<module>.SkillSynthesizer._save"
     },
     {
       "callee": "path.parent.mkdir",
@@ -7817,14 +7753,6 @@
       "scope": "<module>.PromotionGovernor.promote"
     },
     {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/promotion_governor.py",
-      "scope": "<module>.PromotionGovernor.promote"
-    },
-    {
       "callee": "self.root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7839,14 +7767,6 @@
       "count": 1,
       "path": "core/architect/quarantine.py",
       "scope": "<module>.QuarantineManager.quarantine_file"
-    },
-    {
-      "callee": "dest.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/quarantine.py",
-      "scope": "<module>.QuarantineManager.restore"
     },
     {
       "callee": "plan_dir.mkdir",
@@ -7879,30 +7799,6 @@
       "count": 1,
       "path": "core/architect/rollback_manager.py",
       "scope": "<module>.RollbackManager.__init__"
-    },
-    {
-      "callee": "candidate_target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/rollback_manager.py",
-      "scope": "<module>.RollbackManager.create_packet"
-    },
-    {
-      "callee": "original_target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/rollback_manager.py",
-      "scope": "<module>.RollbackManager.create_packet"
-    },
-    {
-      "callee": "dest.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/rollback_manager.py",
-      "scope": "<module>.RollbackManager.restore"
     },
     {
       "callee": "os.unlink",
@@ -7985,14 +7881,6 @@
       "scope": "<module>.ShadowWorkspaceManager._copy_tree"
     },
     {
-      "callee": "dest.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/shadow_workspace.py",
-      "scope": "<module>.ShadowWorkspaceManager._snapshot_candidates"
-    },
-    {
       "callee": "manifest_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8002,14 +7890,6 @@
     },
     {
       "callee": "proposals.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/architect/shadow_workspace.py",
-      "scope": "<module>.ShadowWorkspaceManager.apply_plan"
-    },
-    {
-      "callee": "target.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -8081,14 +7961,6 @@
       "scope": "<module>.ResourceStakesLedger.__init__"
     },
     {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/autonomy/autonomous_research_orchestrator.py",
-      "scope": "<module>.AutonomousResearchOrchestrator._save_session"
-    },
-    {
       "callee": "source.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8129,14 +8001,6 @@
       "scope": "<module>.ContentFetcher._enforce_cache_budget"
     },
     {
-      "callee": "self._cache_index.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/autonomy/content_fetcher.py",
-      "scope": "<module>.ContentFetcher._save_index"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8167,22 +8031,6 @@
       "count": 1,
       "path": "core/autonomy/memory_persister.py",
       "scope": "<module>.MemoryPersister._enqueue"
-    },
-    {
-      "callee": "self._dedup_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/autonomy/memory_persister.py",
-      "scope": "<module>.MemoryPersister._save_dedup"
-    },
-    {
-      "callee": "self._queue_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/autonomy/memory_persister.py",
-      "scope": "<module>.MemoryPersister.replay_queue"
     },
     {
       "callee": "fallback_root.mkdir",
@@ -8369,14 +8217,6 @@
       "scope": "<module>.IdentityService.save"
     },
     {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/gemini_adapter.py",
-      "scope": "<module>.DailyRateLimiter._save_state"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -8561,14 +8401,6 @@
       "scope": "<module>.MLXLocalClient._spawn_worker_blocking"
     },
     {
-      "callee": "_MLX_RUNTIME_PROBE_CACHE_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/mlx_client.py",
-      "scope": "<module>._store_probe_cache_to_disk"
-    },
-    {
       "callee": "pathlib.Path().mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8625,14 +8457,6 @@
       "scope": "<module>._publish_shadow_pointer_locked"
     },
     {
-      "callee": "self._dedup_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/nonparametric_ingest.py",
-      "scope": "<module>.NonParametricIngestor._save_seen"
-    },
-    {
       "callee": "os.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8665,28 +8489,12 @@
       "scope": "<module>.PersonalityEngine._load_or_generate_key"
     },
     {
-      "callee": "self.key_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/personality_engine.py",
-      "scope": "<module>.PersonalityEngine._load_or_generate_key"
-    },
-    {
       "callee": "path.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/personality_engine.py",
       "scope": "<module>.PersonalityEngine._quarantine_file"
-    },
-    {
-      "callee": "self.seal_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/personality_engine.py",
-      "scope": "<module>.PersonalityEngine._write_identity_seal"
     },
     {
       "callee": "os.chmod",
@@ -8711,14 +8519,6 @@
       "count": 1,
       "path": "core/brain/personality_kernel.py",
       "scope": "<module>.PersonalityKernel._read_validated_key"
-    },
-    {
-      "callee": "self.seal_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/personality_kernel.py",
-      "scope": "<module>.PersonalityKernel._write_seal"
     },
     {
       "callee": "base.mkdir",
@@ -9041,22 +8841,6 @@
       "scope": "<module>.OutcomeLedger.__init__"
     },
     {
-      "callee": "self._graph_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/cognition/paraconsistent_logic.py",
-      "scope": "<module>.ParaconsistentEngine._save_graph"
-    },
-    {
-      "callee": "self._data_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/cognition/precognitive_model.py",
-      "scope": "<module>.PrecognitiveEngine._save_patterns"
-    },
-    {
       "callee": "pathlib.Path().parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9205,14 +8989,6 @@
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
-      "path": "core/consciousness/crsm.py",
-      "scope": "<module>.ContinuousRecurrentSelfModel._save"
-    },
-    {
-      "callee": "PERSIST_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
       "path": "core/consciousness/crsm_lora_bridge.py",
       "scope": "<module>.CRSMLoraBridge.__init__"
     },
@@ -9353,14 +9129,6 @@
       "scope": "<module>.SynapticPlasticityEngine._persist_state"
     },
     {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/consciousness/unified_audit.py",
-      "scope": "<module>.AuditReport.save_to_file"
-    },
-    {
       "callee": "self.REPORT_DIR.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9383,14 +9151,6 @@
       "count": 1,
       "path": "core/container.py",
       "scope": "<module>.ServiceContainer.write_service_ownership_manifest"
-    },
-    {
-      "callee": "seal_path.parent.mkdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/container.py",
-      "scope": "<module>.ServiceContainer.write_sovereignty_seal"
     },
     {
       "callee": "os.makedirs",
@@ -9471,14 +9231,6 @@
       "count": 1,
       "path": "core/control/dynamic_router.py",
       "scope": "<module>.DynamicRouter._quarantine_history"
-    },
-    {
-      "callee": "self.db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/control/dynamic_router.py",
-      "scope": "<module>.DynamicRouter._save_history"
     },
     {
       "callee": "path.parent.mkdir",
@@ -9585,14 +9337,6 @@
       "scope": "<module>.MinorityReportStore.__init__"
     },
     {
-      "callee": "self._journal_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/creativity/aesthetic_engine.py",
-      "scope": "<module>.AestheticEngine._save_journal"
-    },
-    {
       "callee": "self.db_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9665,14 +9409,6 @@
       "scope": "<module>.ResistanceSandbox.__init__"
     },
     {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/embodiment/resistance_sandbox.py",
-      "scope": "<module>.ResistanceSandbox._execute_default_action"
-    },
-    {
       "callee": "path.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9703,14 +9439,6 @@
       "count": 1,
       "path": "core/embodiment/world_bridge.py",
       "scope": "<module>.PermissionStore._save"
-    },
-    {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/embodiment/world_bridge.py",
-      "scope": "<module>._file_workspace_handler"
     },
     {
       "callee": "<pathlib.Path>.parent.mkdir",
@@ -9801,14 +9529,6 @@
       "scope": "<module>.BeliefRevisionEngine._quarantine_unreadable_store"
     },
     {
-      "callee": "self.db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/epistemics/belief_revision.py",
-      "scope": "<module>.BeliefRevisionEngine._save"
-    },
-    {
       "callee": "self._db_path.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9817,36 +9537,12 @@
       "scope": "<module>.EpistemicTracker._quarantine_corrupt_store"
     },
     {
-      "callee": "self._db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/epistemics/epistemic_tracker.py",
-      "scope": "<module>.EpistemicTracker._save"
-    },
-    {
       "callee": "self._db_path.replace",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/epistemics/inquiry_engine.py",
       "scope": "<module>.InquiryEngine._quarantine_corrupt_store"
-    },
-    {
-      "callee": "self._db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/epistemics/inquiry_engine.py",
-      "scope": "<module>.InquiryEngine._save"
-    },
-    {
-      "callee": "self._db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/epistemics/opinion_engine.py",
-      "scope": "<module>.OpinionEngine._save"
     },
     {
       "callee": "self.db_path.parent.mkdir",
@@ -9881,44 +9577,12 @@
       "scope": "<module>._install_rules_hash"
     },
     {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evaluation/behavioral_proof.py",
-      "scope": "<module>.run_behavioral_proof_bundle"
-    },
-    {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evaluation/behavioral_proof.py",
-      "scope": "<module>.run_behavioral_proof_smoke"
-    },
-    {
       "callee": "artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/evaluation/behavioral_proof.py",
       "scope": "<module>.run_live_autonomy_loop_smoke"
-    },
-    {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evaluation/evidence_mode.py",
-      "scope": "<module>.EvidenceMode.dump"
-    },
-    {
-      "callee": "self._STATE_FILE.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/evolution/evolution_orchestrator.py",
-      "scope": "<module>.EvolutionOrchestrator._save"
     },
     {
       "callee": "<pathlib.Path>.mkdir",
@@ -10057,14 +9721,6 @@
       "scope": "<module>.GoalEngine._initialize"
     },
     {
-      "callee": "self.subgoals_stack_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/goals/goal_engine.py",
-      "scope": "<module>.GoalEngine._save_subgoals_stack"
-    },
-    {
       "callee": "self.db_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10145,14 +9801,6 @@
       "scope": "<module>.IdentityLedger.__init__"
     },
     {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/initiative_synthesis.py",
-      "scope": "<module>.InitiativeSynthesizer._save_tensions"
-    },
-    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -10183,14 +9831,6 @@
       "count": 1,
       "path": "core/introspection/insight_journal.py",
       "scope": "<module>.InsightJournal._quarantine_corrupt_store"
-    },
-    {
-      "callee": "self._db_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/introspection/insight_journal.py",
-      "scope": "<module>.InsightJournal._save"
     },
     {
       "callee": "self.log_dir.mkdir",
@@ -11033,14 +10673,6 @@
       "scope": "<module>.Memory._create_backup"
     },
     {
-      "callee": "self._storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/aura_self_profile.py",
-      "scope": "<module>.AuraSelfProfile._save_to_disk"
-    },
-    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11273,14 +10905,6 @@
       "scope": "<module>.MemorySynthesizer._quarantine_snapshot"
     },
     {
-      "callee": "self._snapshot_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/memory_synthesizer.py",
-      "scope": "<module>.MemorySynthesizer._save_snapshot"
-    },
-    {
       "callee": "self._quarantine_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11295,14 +10919,6 @@
       "count": 1,
       "path": "core/memory/memory_write_gateway.py",
       "scope": "<module>.ConcreteMemoryWriteGateway.__init__"
-    },
-    {
-      "callee": "self.path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/procedural/store.py",
-      "scope": "<module>.ProceduralMemoryStore.save"
     },
     {
       "callee": "_COURT_DIR.mkdir",
@@ -11410,14 +11026,6 @@
     },
     {
       "callee": "os.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/morphogenesis/registry.py",
-      "scope": "<module>._atomic_write_json"
-    },
-    {
-      "callee": "path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -11559,14 +11167,6 @@
       "count": 1,
       "path": "core/ops/lymphatic_reaper.py",
       "scope": "<module>.LymphaticReaper._filesystem_sweep"
-    },
-    {
-      "callee": "self.state_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/ops/metabolic_monitor.py",
-      "scope": "<module>.PersistentComputeCostTracker._save_state"
     },
     {
       "callee": "heartbeat_file.touch",
@@ -12649,14 +12249,6 @@
       "scope": "<module>._write_directory_batch_journal"
     },
     {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/flagship_doctor.py",
-      "scope": "<module>.main"
-    },
-    {
       "callee": "self._db_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -12703,22 +12295,6 @@
       "count": 1,
       "path": "core/runtime/performance_guard.py",
       "scope": "<module>"
-    },
-    {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/persistence_ownership.py",
-      "scope": "<module>.atomic_write_json_owned"
-    },
-    {
-      "callee": "<pathlib.Path>.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/persistence_ownership.py",
-      "scope": "<module>.atomic_write_text_owned"
     },
     {
       "callee": "<pathlib.Path>.unlink",
@@ -12887,22 +12463,6 @@
       "count": 1,
       "path": "core/runtime/self_healing.py",
       "scope": "<module>"
-    },
-    {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/service_registry.py",
-      "scope": "<module>.runtime_write_bytes"
-    },
-    {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/service_registry.py",
-      "scope": "<module>.runtime_write_text"
     },
     {
       "callee": "target.unlink",
@@ -13281,22 +12841,6 @@
       "scope": "<module>.ExistenceGuard.build_ark"
     },
     {
-      "callee": "target.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.build_ark"
-    },
-    {
-      "callee": "live.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/existence_guard.py",
-      "scope": "<module>.ExistenceGuard.restore_from_ark"
-    },
-    {
       "callee": "root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13393,14 +12937,6 @@
       "scope": "<module>.TrustEngine.__init__"
     },
     {
-      "callee": "FINGERPRINT_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/security/user_recognizer.py",
-      "scope": "<module>.UserRecognizer._save_fingerprint"
-    },
-    {
       "callee": "_PERSIST_DIR.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13447,22 +12983,6 @@
       "count": 1,
       "path": "core/self_improvement/blinded_workspace.py",
       "scope": "<module>.BlindedWorkspaceFactory.create"
-    },
-    {
-      "callee": "candidate_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_improvement/deterministic_comparator.py",
-      "scope": "<module>.DeterministicComparator.compare"
-    },
-    {
-      "callee": "DATA_FILE.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_model.py",
-      "scope": "<module>.SelfModel.persist"
     },
     {
       "callee": "clone_dir.mkdir",
@@ -13561,14 +13081,6 @@
       "scope": "<module>.SandboxTester.run_custom_probe"
     },
     {
-      "callee": "sandbox_file.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification/code_repair.py",
-      "scope": "<module>.SandboxTester.run_custom_probe"
-    },
-    {
       "callee": "shutil.copy2",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13607,14 +13119,6 @@
       "count": 1,
       "path": "core/self_modification/formal_verifier.py",
       "scope": "<module>._is_in_allow_list"
-    },
-    {
-      "callee": "self._state_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/self_modification/growth_ladder.py",
-      "scope": "<module>.GrowthLadder._save"
     },
     {
       "callee": "self.db_path.parent.mkdir",
@@ -13969,14 +13473,6 @@
       "scope": "<module>.ComputerUseSkill._create_folder"
     },
     {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/computer_use.py",
-      "scope": "<module>.ComputerUseSkill._fetch_topic_image"
-    },
-    {
       "callee": "destination.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13999,14 +13495,6 @@
       "count": 1,
       "path": "core/skills/computer_use.py",
       "scope": "<module>.ComputerUseSkill._render_text_pdf"
-    },
-    {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/computer_use.py",
-      "scope": "<module>.ComputerUseSkill._write_text_file"
     },
     {
       "callee": "os.remove",
@@ -14095,14 +13583,6 @@
       "count": 1,
       "path": "core/skills/plugin_loader.py",
       "scope": "<module>.PluginManager.__init__"
-    },
-    {
-      "callee": "out_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/program_dna_equivalence_battery.py",
-      "scope": "<module>.ProgramDNAEquivalenceBatterySkill.execute"
     },
     {
       "callee": "<pathlib.Path>.mkdir",
@@ -14225,14 +13705,6 @@
       "scope": "<module>.LocalSandbox.start"
     },
     {
-      "callee": "full_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/sovereign/local_sandbox.py",
-      "scope": "<module>.LocalSandbox.write_file"
-    },
-    {
       "callee": "_MIG_DIR.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -14345,14 +13817,6 @@
       "scope": "<module>.PastReflectionEngine.__init__"
     },
     {
-      "callee": "BLACKLIST_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/terminal_monitor.py",
-      "scope": "<module>.TerminalMonitor._save_blacklist"
-    },
-    {
       "callee": "os.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -14449,14 +13913,6 @@
       "scope": "<module>.test_patch_in_sandbox"
     },
     {
-      "callee": "path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/utils/singleton.py",
-      "scope": "<module>._write_instance_lock_metadata"
-    },
-    {
       "callee": "lock_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -14519,14 +13975,6 @@
       "count": 1,
       "path": "core/world_model/learned_world_model.py",
       "scope": "<module>.LearnedWorldModel.__init__"
-    },
-    {
-      "callee": "_USER_MODEL_PATH.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/world_model/user_model.py",
-      "scope": "<module>.BryanModelEngine._write_now"
     },
     {
       "callee": "GEN_IMAGES_DIR.mkdir",
@@ -16818,6 +16266,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "225867820787cfdf90756e69b395b8159e0bd2c1967af6daa05e11635f0a29a3",
+  "inventory_sha256": "3144a820228e450b1186263881307ddc88f3efcbef2142c54d69641b02889326",
   "schema_version": 1
 }

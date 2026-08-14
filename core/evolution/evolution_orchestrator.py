@@ -586,7 +586,6 @@ class EvolutionOrchestrator:
 
     def _save(self) -> None:
         try:
-            self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "overall_progress": self._snapshot.overall_progress,
                 "phase_label": self._snapshot.phase_label,

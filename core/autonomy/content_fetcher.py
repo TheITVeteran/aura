@@ -919,7 +919,6 @@ class ContentFetcher:
 
     def _save_index(self) -> None:
         try:
-            self._cache_index.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._cache_index, json.dumps(self._index), encoding="utf-8")
         except OSError as e:
             _record_fetch_degradation(

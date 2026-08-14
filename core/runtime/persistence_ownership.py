@@ -42,7 +42,6 @@ def atomic_write_text_owned(
     Use for non-JSON durable state. For JSON, prefer atomic_write_json_owned.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     # Prefer canonical writer if it supports text; many Aura versions only
     # expose JSON, so fallback remains important.
@@ -81,7 +80,6 @@ def atomic_write_json_owned(
 ) -> None:
     """Durably write JSON with Aura's AtomicWriter when available."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         from core.runtime.atomic_writer import atomic_write_json

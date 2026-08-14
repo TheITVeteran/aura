@@ -173,7 +173,6 @@ class PromotionGovernor:
         try:
             for rel, target, payload in staged:
                 previous = target.read_bytes() if target.exists() else None
-                target.parent.mkdir(parents=True, exist_ok=True)
                 restore.append((target, previous))
                 atomic_write_bytes(target, payload)
                 promoted.append(rel)

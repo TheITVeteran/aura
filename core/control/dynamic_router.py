@@ -232,7 +232,6 @@ class DynamicRouter:
 
     def _save_history(self):
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
             payload = self._sanitize_history(self.performance_history)
             atomic_write_text(self.db_path, json.dumps(payload, indent=2, allow_nan=False))
             self._dirty_outcomes = 0

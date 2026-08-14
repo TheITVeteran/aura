@@ -712,7 +712,6 @@ class AutonomousResearchOrchestrator:
     def _save_session(self, path: Path, payload: dict[str, Any]) -> None:
         phase = str(payload.get("phase", "unknown"))
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(path, json.dumps(payload, indent=2, default=str), encoding="utf-8")
         except (OSError, RuntimeError, TypeError, ValueError) as e:
             _record_research_degradation(

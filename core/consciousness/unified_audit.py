@@ -83,7 +83,6 @@ class AuditReport:
 
     def save_to_file(self, path: str) -> None:
         p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(p, json.dumps(self.to_dict(), indent=2))
         logger.info("Audit saved to %s", path)
 

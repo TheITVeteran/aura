@@ -128,7 +128,6 @@ class TensionEngine:
 
     def _save(self) -> None:
         try:
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             payload = [t.to_dict() for t in self._tensions.values()]
             atomic_write_text(self._persist_path, json.dumps(payload, indent=2))
         except (json.JSONDecodeError, TypeError, ValueError) as exc:

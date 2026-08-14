@@ -281,7 +281,6 @@ Respond with JSON only:
 
     def _save(self):
         try:
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._state_path, json.dumps({
                 "current_level": int(self._current_level),
                 "level_start_times": self._level_start_times,

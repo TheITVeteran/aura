@@ -77,7 +77,6 @@ class ShadowWorkspaceManager:
                 if step.new_content is None:
                     raise ShadowWorkspaceError(f"replace_file step lacks content: {step.id}")
                 target = shadow_root / step.target_path
-                target.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(target, step.new_content)
                 changed.append(step.target_path)
             elif step.operation == "proposal":
@@ -239,7 +238,6 @@ class ShadowWorkspaceManager:
             if not src.exists():
                 continue
             dest = candidate_root / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_bytes(dest, src.read_bytes())
             candidate_files[rel] = str(dest)
         return candidate_files

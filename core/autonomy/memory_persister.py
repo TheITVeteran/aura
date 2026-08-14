@@ -291,7 +291,6 @@ class MemoryPersister:
         self._save_dedup()
 
         try:
-            self._queue_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._queue_path, "\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             # Was `pass  # no-op: intentional`. It is not harmless: every
@@ -511,7 +510,6 @@ class MemoryPersister:
         and abandoned every record still queued behind it.
         """
         try:
-            self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._dedup_path, json.dumps(self._dedup), encoding="utf-8")
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation(

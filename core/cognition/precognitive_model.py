@@ -832,7 +832,6 @@ class PrecognitiveEngine:
     def _save_patterns(self) -> None:
         """Persist pattern database to disk."""
         try:
-            self._data_path.parent.mkdir(parents=True, exist_ok=True)
             data = self._db.to_dict()
             atomic_write_text(self._data_path, json.dumps(data, indent=2, default=str))
             self._last_save = time.time()

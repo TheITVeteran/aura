@@ -324,7 +324,6 @@ Sound like yourself. Be direct. You can note if your thinking has evolved."""
                 del self._opinions[old.topic]
 
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._db_path, 
                 json.dumps([asdict(o) for o in self._opinions.values()], indent=2)
             )

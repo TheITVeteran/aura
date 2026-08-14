@@ -32,8 +32,11 @@ ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 
 #: Measured at the time of splitting. Both may only fall.
+#: RAW was 973 and is 905 after removing 69 `X.parent.mkdir(...)` calls that
+#: the atomic writer already performs — dead code that also registered as
+#: ungoverned effect debt.
 GOVERNED_CEILING = 1000
-RAW_CEILING = 973
+RAW_CEILING = 905
 
 
 def _split() -> tuple[int, int]:

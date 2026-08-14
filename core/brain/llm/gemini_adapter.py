@@ -217,7 +217,6 @@ class DailyRateLimiter:
             try:
                 from pathlib import Path
                 state_path = Path(self._state_path)
-                state_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(state_path, json.dumps({
                     "date": self._reset_date,
                     "counts": dict(self._counts),

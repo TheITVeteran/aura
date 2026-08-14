@@ -232,7 +232,6 @@ class InsightJournal:
 
     def _save(self):
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
             data = [asdict(i) for i in self._insights]
             atomic_write_text(self._db_path, json.dumps(data, indent=2))
         except (OSError, TypeError, ValueError) as e:

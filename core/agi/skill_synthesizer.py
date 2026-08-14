@@ -294,7 +294,6 @@ class SkillSynthesizer:
 
     def _save(self):
         try:
-            PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "gaps": self._gaps[-50:],
                 "gap_counts": self._gap_counts,

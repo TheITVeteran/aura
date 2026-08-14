@@ -3823,7 +3823,6 @@ def _load_probe_cache_from_disk() -> tuple[bool | None, str, float]:
 
 def _store_probe_cache_to_disk(ok: bool, detail: str) -> None:
     try:
-        _MLX_RUNTIME_PROBE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             _MLX_RUNTIME_PROBE_CACHE_PATH,
             json.dumps(

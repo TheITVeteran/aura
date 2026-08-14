@@ -292,7 +292,6 @@ class SkillLibrary:
         try:
             from core.utils.file_utils import atomic_write_json
 
-            self.data_path.parent.mkdir(parents=True, exist_ok=True)
             data = {"skills": {k: asdict(v) for k, v in self.skills.items()}}
             atomic_write_json(self.data_path, data)
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:

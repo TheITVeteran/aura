@@ -44,7 +44,6 @@ class ProgramDNAEquivalenceBatterySkill(BaseSkill):
         battery = importlib.import_module("tools.program_dna.behavioral_equivalence_battery")
         report = await battery.run_battery(project_root=Path.cwd())
         out_path = Path(params.out_path).expanduser()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         # Async lane: a sync write here blocks the live event loop (the
         # ratchet exists because one such fsync froze it for 20 minutes).
         from core.runtime.atomic_writer import async_atomic_write_text

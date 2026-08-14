@@ -101,6 +101,5 @@ class QuarantineManager:
         data = (self.root / quarantine_id / "artifact.bin").read_bytes()
         if hashlib.sha256(data).hexdigest() != manifest.original_hash:
             raise ValueError(f"quarantine artifact hash mismatch for {quarantine_id}")
-        dest.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(dest, data)
         return dest

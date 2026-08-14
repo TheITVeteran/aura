@@ -81,7 +81,12 @@ def test_a_failing_phase_does_not_abort_the_tick() -> None:
 
     from core.kernel.aura_kernel import AuraKernel
 
-    source = textwrap.dedent(inspect.getsource(AuraKernel.tick))
+    # The whole tick implementation. tick's body was extracted into
+    # _tick_body, and this gate's own failure message anticipated exactly
+    # that: "the handler moved and this gate needs to follow it".
+    from tools.find_extraction_seam import implementation_source
+
+    source = textwrap.dedent(implementation_source(AuraKernel, "tick"))
     tree = ast.parse(source)
 
     handlers_that_continue = 0

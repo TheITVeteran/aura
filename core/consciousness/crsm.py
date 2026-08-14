@@ -288,7 +288,6 @@ class ContinuousRecurrentSelfModel:
 
     def _save(self):
         try:
-            PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "h": self._h.tolist(),
                 "gru": self._gru.to_dict(),

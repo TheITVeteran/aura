@@ -108,7 +108,6 @@ class BryanModelEngine:
         # schema-versioned envelope. The previous direct os.replace path was
         # missing fsync, schema version, and receipt linkage.
         try:
-            _USER_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
             payload = self._serialize()
             from core.runtime.atomic_writer import atomic_write_json
 

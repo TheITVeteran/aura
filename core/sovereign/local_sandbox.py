@@ -246,5 +246,4 @@ class LocalSandbox(Sandbox):
     def write_file(self, path: str, content: str):
         """Write a file to the sandbox."""
         full_path = self._safe_path(path)
-        full_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(full_path, content, encoding="utf-8")

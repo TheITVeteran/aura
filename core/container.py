@@ -1470,7 +1470,6 @@ class ServiceContainer:
             "covers": "registry_shape_only",
         }
         seal_path = cls._seal_path()
-        seal_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(seal_path, json.dumps(payload, sort_keys=True, indent=2))
         cls._last_seal_hash = digest
         return payload

@@ -388,7 +388,6 @@ class CommitmentEngine:
 
     def _save(self):
         try:
-            PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "fulfilled_count": self._fulfilled_count,
                 "broken_count": self._broken_count,

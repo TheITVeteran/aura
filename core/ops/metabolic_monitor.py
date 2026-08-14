@@ -541,7 +541,6 @@ class PersistentComputeCostTracker:
 
     def _save_state(self) -> None:
         try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
             payload = json.dumps(
                 {
                     "total_ergs": round(self.total_ergs, 6),

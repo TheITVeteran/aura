@@ -784,7 +784,6 @@ class HierarchicalPlanner:
                         for g_id, g in self._goals.items()
                     },
                 }
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._persist_path, json.dumps(payload, indent=2, default=str))
         except _PLANNER_RECOVERABLE_ERRORS as e:
             record_degradation(

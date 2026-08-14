@@ -356,7 +356,6 @@ class PersonalityEngine:
         self._new_key_generated = True
         key = os.urandom(32)
         try:
-            self.key_file.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_bytes(self.key_file, key)
             os.chmod(self.key_file, 0o600)
             self._identity_key_persistent = True
@@ -430,7 +429,6 @@ class PersonalityEngine:
 
     def _write_identity_seal(self, signature: str, *, reason: str) -> bool:
         try:
-            self.seal_file.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self.seal_file, signature)
             logger.info("Identity seal initialized: %s...", signature[:16])
             return True

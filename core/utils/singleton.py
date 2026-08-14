@@ -201,7 +201,6 @@ def _current_process_metadata(lock_name: str, pid: int) -> dict[str, Any]:
 def _write_instance_lock_metadata(lock_name: str, pid: int) -> None:
     path = instance_lock_metadata_path(lock_name)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             path,
             json.dumps(_current_process_metadata(lock_name, pid), indent=2, sort_keys=True),

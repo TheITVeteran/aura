@@ -747,7 +747,6 @@ class AestheticEngine:
     def _save_journal(self):
         """Save journal to disk."""
         try:
-            self._journal_path.parent.mkdir(parents=True, exist_ok=True)
             # Keep only the most recent entries
             trimmed = self._journal[-_MAX_JOURNAL_ENTRIES:]
             atomic_write_text(self._journal_path, 

@@ -374,7 +374,6 @@ def run_behavioral_proof_bundle(
     )
     if output_path is not None:
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             path,
             json.dumps(bundle.to_dict(), indent=2, sort_keys=True, default=str),
@@ -459,7 +458,6 @@ def run_behavioral_proof_smoke(
 
     if output_path is not None:
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             path,
             json.dumps(report.to_dict(), indent=2, sort_keys=True, default=str),

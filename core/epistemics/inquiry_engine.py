@@ -636,7 +636,6 @@ Be honest about uncertainty. Don't manufacture confidence. Output only JSON."""
 
     def _save(self):
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "questions": [asdict(q) for q in self._questions],
                 "settled":   [asdict(q) for q in self._settled[-50:]],

@@ -218,7 +218,6 @@ class TerminalMonitor:
 
     def _save_blacklist(self):
         try:
-            BLACKLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
             payload = sorted(str(item) for item in self._blacklist)
             try:
                 from core.runtime.atomic_writer import atomic_write_json

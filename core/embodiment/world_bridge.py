@@ -426,7 +426,6 @@ async def _file_workspace_handler(payload: dict[str, Any], *, capability_token: 
         target = (_WORKSPACE_DIR / rel).resolve()
         if not str(target).startswith(str(_WORKSPACE_DIR.resolve())):
             raise PermissionError("workspace_path_escape")
-        target.parent.mkdir(parents=True, exist_ok=True)
         await async_atomic_write_text(target, body, encoding="utf-8")
         return {"path": rel, "bytes": len(body)}
     raise ValueError(f"unknown_op:{op}")

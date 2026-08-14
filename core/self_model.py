@@ -125,7 +125,6 @@ class SelfModel:
         async with self._lock:
             self._trim_retention()
             new_version = self.version + 1
-            DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
             try:
                 data = {
                     "id": self.id,

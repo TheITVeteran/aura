@@ -344,7 +344,6 @@ class ResistanceSandbox:
         """Execute a filesystem action in the sandbox."""
         path = self._resolve_target(target)
         if action_type == "create":
-            path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(path, f"Created at {time.time()}")
             return "created"
         if action_type == "read":

@@ -355,7 +355,6 @@ class ExistenceGuard:
                     digest = _sha256_file(file_path)
                     key = str(file_path.relative_to(self.repo_root))
                     target = root / digest[:2] / digest
-                    target.parent.mkdir(parents=True, exist_ok=True)
                     if not target.exists():
                         # Through the gateway: an ark blob that is torn or
                         # half-written is worse than an absent one, because the
@@ -464,7 +463,6 @@ class ExistenceGuard:
             blob = root / str(digest)[:2] / str(digest)
             live = self.repo_root / key
             try:
-                live.parent.mkdir(parents=True, exist_ok=True)
                 # Restoring over a live file is the one moment a torn write
                 # would destroy the thing being rescued.
                 atomic_write_bytes(live, blob.read_bytes())

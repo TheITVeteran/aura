@@ -128,7 +128,6 @@ class PersonalityKernel:
 
     def _write_seal(self, signature: str) -> bool:
         try:
-            self.seal_file.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self.seal_file, signature)
             # The marker records that identity was genuinely initialized, so a
             # later MISSING seal is detected as deletion rather than re-trusted

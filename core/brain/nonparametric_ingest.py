@@ -488,7 +488,6 @@ class NonParametricIngestor:
 
     def _save_seen(self) -> bool:
         try:
-            self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             # Keep the dedup ledger bounded by RECENCY. The old code sliced
             # list(set), whose iteration order is neither insertion nor recency
             # and differs between processes, so retention dropped an arbitrary

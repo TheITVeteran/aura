@@ -845,7 +845,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     report = run_doctor(args.root, include_gates=not args.no_gates)
     if args.out:
         out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(out, report.to_json(), encoding="utf-8")
     if args.json:
         sys.stdout.write(report.to_json() + "\n")

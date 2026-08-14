@@ -101,7 +101,6 @@ class RollbackManager:
                 live_bytes = live.read_bytes()
                 original_hashes[rel] = hashlib.sha256(live_bytes).hexdigest()
                 original_target = _contained(original_dir, rel)
-                original_target.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_bytes(original_target, live_bytes)
             else:
                 original_hashes[rel] = ABSENT_SENTINEL
@@ -110,7 +109,6 @@ class RollbackManager:
             candidate_bytes = candidate.read_bytes()
             candidate_hashes[rel] = hashlib.sha256(candidate_bytes).hexdigest()
             candidate_target = _contained(candidate_dir, rel)
-            candidate_target.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_bytes(candidate_target, candidate_bytes)
         repo_hash = self._repo_hash(changed)
         receipt_hash = compute_receipt_hash(
@@ -232,7 +230,6 @@ class RollbackManager:
                     if dest.exists():
                         os.unlink(dest)
                     continue
-                dest.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_bytes(dest, data)
         except (OSError, RollbackError) as exc:
             for dest, previous in reversed(undo):

@@ -769,7 +769,6 @@ class InitiativeSynthesizer:
         """Persist unresolved tensions to disk."""
         try:
             path = self._tension_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
             data = [
                 {
                     "content": t.content,

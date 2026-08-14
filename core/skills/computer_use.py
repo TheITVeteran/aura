@@ -1913,7 +1913,6 @@ end tell
         requested = path
         if path.exists() and not overwrite:
             path = self._versioned_path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, content, encoding="utf-8")
         expected_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         actual_digest = self._file_sha256(path)
@@ -2374,7 +2373,6 @@ end tell
         sniffed = _image_suffix_from_bytes(raw)
         if sniffed and path.suffix.lower() != sniffed:
             path = path.with_suffix(sniffed)
-        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(path, raw)
         expected_digest = hashlib.sha256(raw).hexdigest()
         actual_digest = self._file_sha256(path)

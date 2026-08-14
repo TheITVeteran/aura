@@ -239,7 +239,6 @@ class AuraSelfProfile:
     def _save_to_disk(self):
         """Persist Aura profile to disk and attest that Aura wrote it."""
         try:
-            self._storage_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 category: [fact.to_dict() for fact in facts]
                 for category, facts in self._profile_data.items()

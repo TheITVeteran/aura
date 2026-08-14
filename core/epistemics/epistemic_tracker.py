@@ -565,7 +565,6 @@ class EpistemicTracker:
 
     def _save(self) -> bool:
         try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "nodes": {k: asdict(v) for k, v in list(self._nodes.items())[-500:]},
                 "gaps":  [asdict(g) for g in self._gaps],

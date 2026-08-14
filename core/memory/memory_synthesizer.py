@@ -964,7 +964,6 @@ class MemorySynthesizer:
         if not self._snapshot:
             return
         try:
-            self._snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             data = asdict(self._snapshot)
             atomic_write_text(
                 self._snapshot_path,

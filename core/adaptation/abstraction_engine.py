@@ -47,7 +47,6 @@ class AbstractionEngine:
         else:
             self.storage_path = Path(storage_path)
             
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         
         # Initialize the file if it doesn't exist

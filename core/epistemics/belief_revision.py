@@ -295,7 +295,6 @@ class BeliefRevisionEngine:
     def _save(self):
         """Synchronous save to disk."""
         try:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "self_model": self.self_model,
                 "beliefs": [asdict(b) for b in self.beliefs],

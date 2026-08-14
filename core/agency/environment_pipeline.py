@@ -194,7 +194,6 @@ def run_workspace_digest(
         receipt.note = "safe mode is on — surveyed only, did not write the digest"
     else:
         try:
-            digest_path.parent.mkdir(parents=True, exist_ok=True)
             from core.governance_context import local_internal_governed_scope
             with local_internal_governed_scope("environment_pipeline.workspace_digest", domain="file_write"):
                 atomic_write_text(digest_path, _compose_digest(root, s, when))
