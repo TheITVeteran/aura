@@ -350,7 +350,7 @@ def test_root_control_binding_requires_a_true_compatible_root(
 
 def test_evaluation_without_external_guard_uses_live_pressure(monkeypatch) -> None:
     observed = {"available": True, "under_pressure": False, "source": "live"}
-    monkeypatch.setattr(evaluator, "host_pressure", lambda: observed)
+    monkeypatch.setattr(evaluator, "host_pressure", lambda **_kwargs: observed)
     monkeypatch.setattr(
         evaluator,
         "verify_release",
@@ -367,6 +367,63 @@ def test_evaluation_without_external_guard_uses_live_pressure(monkeypatch) -> No
 
     assert pressure == observed
     assert release is None
+
+
+def test_detached_evaluation_can_use_exact_brokered_pressure_evidence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    observed = {"available": True, "under_pressure": False, "source": "broker"}
+    calls = []
+
+    def fake_pressure(**kwargs):
+        calls.append(kwargs)
+        return observed
+
+    monkeypatch.setattr(evaluator, "host_pressure", fake_pressure)
+    vm_stat = tmp_path / "vm-stat.txt"
+    swapusage = tmp_path / "swapusage.txt"
+
+    pressure, release = _evaluation_preload_evidence(
+        resource_enabled=False,
+        preload_ready_path=None,
+        preload_release_path=None,
+        preload_key_path=None,
+        preload_config_sha256=None,
+        pressure_broker_vm_stat_path=vm_stat,
+        pressure_broker_swapusage_path=swapusage,
+    )
+
+    assert pressure == observed
+    assert release is None
+    assert calls == [
+        {
+            "broker_vm_stat_path": vm_stat,
+            "broker_swapusage_path": swapusage,
+        }
+    ]
+
+
+def test_evaluation_rejects_partial_or_competing_pressure_authority(tmp_path) -> None:
+    with pytest.raises(ValueError, match="broker arguments must be supplied together"):
+        _evaluation_preload_evidence(
+            resource_enabled=False,
+            preload_ready_path=None,
+            preload_release_path=None,
+            preload_key_path=None,
+            preload_config_sha256=None,
+            pressure_broker_vm_stat_path=tmp_path / "vm-stat.txt",
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _evaluation_preload_evidence(
+            resource_enabled=True,
+            preload_ready_path=tmp_path / "ready.json",
+            preload_release_path=tmp_path / "release.json",
+            preload_key_path=tmp_path / "key",
+            preload_config_sha256="b" * 64,
+            pressure_broker_vm_stat_path=tmp_path / "vm-stat.txt",
+            pressure_broker_swapusage_path=tmp_path / "swapusage.txt",
+        )
 
 
 def test_external_evaluation_guard_requires_complete_signed_preload(tmp_path) -> None:

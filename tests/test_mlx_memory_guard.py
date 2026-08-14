@@ -9,6 +9,9 @@ long loops.
 """
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -17,6 +20,7 @@ from core.runtime.mlx_memory_guard import (  # noqa: E402
     DEFAULT_FRACTION,
     MLX_MEMORY_GUARD_SCHEMA,
     MemoryEnvelope,
+    _host_probe_output,
     _parse_swap_used_gb,
     _pressure_reasons,
     host_memory_bytes,
@@ -186,6 +190,46 @@ def test_allocated_swap_does_not_latch_pressure_on_a_healthy_host() -> None:
         compressed_gb=4.3,
         swap_used_gb=17.9,
     ) == ()
+
+
+def test_detached_host_probe_uses_exact_broker_and_retains_output(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from core.runtime import detached_subprocess_broker as broker
+
+    output = tmp_path / "vm-stat.txt"
+    observed = {}
+
+    def fake_run(command, *, cwd, stdout_path, timeout_s):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            stdout_path=stdout_path,
+            timeout_s=timeout_s,
+        )
+        stdout_path.write_text("probe evidence\n", encoding="utf-8")
+        return SimpleNamespace(
+            returncode=0,
+            status="passed",
+            containment_verified=True,
+        )
+
+    monkeypatch.setattr(broker, "broker_available", lambda: True)
+    monkeypatch.setattr(broker, "run_brokered_process", fake_run)
+
+    assert _host_probe_output(
+        ["vm_stat"],
+        source="test",
+        broker_stdout_path=output,
+    ) == "probe evidence\n"
+    assert observed == {
+        "command": ["vm_stat"],
+        "cwd": Path.cwd(),
+        "stdout_path": output,
+        "timeout_s": 5.0,
+    }
+    assert output.read_text(encoding="utf-8") == "probe evidence\n"
 
 
 @pytest.mark.parametrize(

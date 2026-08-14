@@ -58,6 +58,7 @@ SOURCE_PATHS: Final = (
     "core/learning/frontier_process_supervision.py",
     "core/learning/unified_intrinsic_objective.py",
     "core/learning/unified_intrinsic_recurrence.py",
+    "core/runtime/mlx_memory_guard.py",
     "tools/evaluate_unified_intrinsic_checkpoint.py",
     "tools/run_unified_recurrent_broad_canary.py",
     "tools/run_unified_recurrent_transfer_canary.py",
@@ -290,6 +291,8 @@ def run_canary(
     memory_limit_gb: float,
     cache_limit_gb: float,
     wired_limit_gb: float,
+    pressure_broker_vm_stat_path: Path | None = None,
+    pressure_broker_swapusage_path: Path | None = None,
 ) -> dict[str, Any]:
     output_dir = _ensure_private_directory(output_dir)
     issuer = _issuer(output_dir, seeds, difficulty)
@@ -309,6 +312,8 @@ def run_canary(
         memory_limit_gb=memory_limit_gb,
         cache_limit_gb=cache_limit_gb,
         wired_limit_gb=wired_limit_gb,
+        pressure_broker_vm_stat_path=pressure_broker_vm_stat_path,
+        pressure_broker_swapusage_path=pressure_broker_swapusage_path,
     ) as loaded:
         bundle, parent_controller, tokenizer, spec, identity, _envelope, _guard = loaded
         bootstrap = identity.get("bootstrap")
@@ -372,6 +377,8 @@ def main() -> int:
     parser.add_argument("--memory-limit-gb", type=float, default=40.0)
     parser.add_argument("--cache-limit-gb", type=float, default=2.0)
     parser.add_argument("--wired-limit-gb", type=float, default=48.0)
+    parser.add_argument("--pressure-broker-vm-stat-path", type=Path)
+    parser.add_argument("--pressure-broker-swapusage-path", type=Path)
     arguments = parser.parse_args()
     if len(set(arguments.seed)) != len(arguments.seed):
         parser.error("--seed values must be unique")
@@ -387,6 +394,8 @@ def main() -> int:
         memory_limit_gb=arguments.memory_limit_gb,
         cache_limit_gb=arguments.cache_limit_gb,
         wired_limit_gb=arguments.wired_limit_gb,
+        pressure_broker_vm_stat_path=arguments.pressure_broker_vm_stat_path,
+        pressure_broker_swapusage_path=arguments.pressure_broker_swapusage_path,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["verdict"]["supported"] is True else 2

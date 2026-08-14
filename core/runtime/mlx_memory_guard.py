@@ -28,6 +28,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("Aura.MLXMemoryGuard")
@@ -105,7 +106,62 @@ def host_memory_bytes() -> int:
     return 8 * 1024**3
 
 
-def host_pressure() -> dict[str, Any]:
+def _host_probe_output(
+    command: list[str],
+    *,
+    source: str,
+    broker_stdout_path: Path | None,
+) -> str:
+    """Run one host probe directly or through the detached exact-command broker."""
+
+    if broker_stdout_path is None:
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        return get_subprocess_gateway().run(
+            command,
+            timeout=5,
+            check=True,
+            read_only=True,
+            source=source,
+            accelerator_capability="none",
+        ).stdout
+
+    from core.runtime.detached_subprocess_broker import (
+        broker_available,
+        run_brokered_process,
+    )
+
+    path = broker_stdout_path.expanduser()
+    if (
+        not path.is_absolute()
+        or path.exists()
+        or not path.parent.is_dir()
+        or not broker_available()
+    ):
+        raise RuntimeError("detached host-pressure broker evidence is unavailable")
+    result = run_brokered_process(
+        command,
+        cwd=Path.cwd(),
+        stdout_path=path,
+        timeout_s=5.0,
+    )
+    if (
+        result.returncode != 0
+        or result.status != "passed"
+        or result.containment_verified is not True
+    ):
+        raise RuntimeError("detached host-pressure probe failed")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError("detached host-pressure evidence is unreadable") from exc
+
+
+def host_pressure(
+    *,
+    broker_vm_stat_path: Path | None = None,
+    broker_swapusage_path: Path | None = None,
+) -> dict[str, Any]:
     """Real memory pressure, not the misleading 'Pages free' number.
 
     On macOS, ``Pages free`` excludes inactive/purgeable pages that the
@@ -114,18 +170,19 @@ def host_pressure() -> dict[str, Any]:
     number is a false alarm; the signals that actually preceded this host's
     jetsam kill were SWAP and COMPRESSOR growth.
     """
-    from core.runtime.subprocess_gateway import get_subprocess_gateway
+    broker_values = (broker_vm_stat_path, broker_swapusage_path)
+    if any(value is not None for value in broker_values) != all(
+        value is not None for value in broker_values
+    ):
+        return {"available": False, "pressure_reasons": ["broker_contract_incomplete"]}
 
     stats: dict[str, int] = {}
     try:
-        output = get_subprocess_gateway().run(
+        output = _host_probe_output(
             ["vm_stat"],
-            timeout=5,
-            check=True,
-            read_only=True,
             source="mlx_memory_guard.host_pressure.vm_stat",
-            accelerator_capability="none",
-        ).stdout
+            broker_stdout_path=broker_vm_stat_path,
+        )
     except (OSError, RuntimeError, ValueError):
         return {"available": False}
     page_size = 16384
@@ -155,14 +212,11 @@ def host_pressure() -> dict[str, Any]:
     reclaimable = free + inactive + speculative + purgeable
     swap_used: float | None = None
     try:
-        swap = get_subprocess_gateway().run(
+        swap = _host_probe_output(
             ["sysctl", "-n", "vm.swapusage"],
-            timeout=5,
-            check=True,
-            read_only=True,
             source="mlx_memory_guard.host_pressure.swapusage",
-            accelerator_capability="none",
-        ).stdout
+            broker_stdout_path=broker_swapusage_path,
+        )
         swap_used = _parse_swap_used_gb(swap)
     except (OSError, RuntimeError, ValueError):
         pass

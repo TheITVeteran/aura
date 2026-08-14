@@ -211,6 +211,8 @@ def _evaluation_preload_evidence(
     preload_release_path: Path | None,
     preload_key_path: Path | None,
     preload_config_sha256: str | None,
+    pressure_broker_vm_stat_path: Path | None = None,
+    pressure_broker_swapusage_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Resolve pressure from the live probe or a signed external handoff."""
 
@@ -223,6 +225,12 @@ def _evaluation_preload_evidence(
     preload_enabled = all(value is not None for value in preload_values)
     if any(value is not None for value in preload_values) != preload_enabled:
         raise ValueError("evaluation preload arguments must be supplied together")
+    broker_values = (pressure_broker_vm_stat_path, pressure_broker_swapusage_path)
+    broker_enabled = all(value is not None for value in broker_values)
+    if any(value is not None for value in broker_values) != broker_enabled:
+        raise ValueError("evaluation pressure broker arguments must be supplied together")
+    if preload_enabled and broker_enabled:
+        raise ValueError("evaluation pressure evidence authorities are mutually exclusive")
     if resource_enabled and not preload_enabled:
         raise ValueError("external evaluation resource guard requires signed preload")
     if preload_enabled and not resource_enabled:
@@ -238,7 +246,10 @@ def _evaluation_preload_evidence(
         pressure = dict(release["host_pressure"])
     else:
         release = None
-        pressure = host_pressure()
+        pressure = host_pressure(
+            broker_vm_stat_path=pressure_broker_vm_stat_path,
+            broker_swapusage_path=pressure_broker_swapusage_path,
+        )
     if pressure.get("available") is not True or pressure.get("under_pressure") is not False:
         raise RuntimeError("unified evaluation refused unavailable or pressured host")
     return pressure, release
@@ -798,6 +809,8 @@ def unified_evaluation_context(
     preload_release_path: Path | None = None,
     preload_key_path: Path | None = None,
     preload_config_sha256: str | None = None,
+    pressure_broker_vm_stat_path: Path | None = None,
+    pressure_broker_swapusage_path: Path | None = None,
 ) -> Iterator[
     tuple[
         UnifiedTrainingBundle,
@@ -839,6 +852,8 @@ def unified_evaluation_context(
         preload_release_path=preload_release_path,
         preload_key_path=preload_key_path,
         preload_config_sha256=preload_config_sha256,
+        pressure_broker_vm_stat_path=pressure_broker_vm_stat_path,
+        pressure_broker_swapusage_path=pressure_broker_swapusage_path,
     )
     with (
         standalone_model_lane(
