@@ -272,3 +272,90 @@ def test_the_reward_is_not_maximal_for_an_uncommitted_turn():
 
     assert "_cycle_reward = 1.0 if commit_outcome in {" in source
     assert "reward=_cycle_reward," in source
+
+
+# ─────────────────── the deadline reaches past phase execution
+
+
+def test_the_commit_loop_is_bounded_by_the_cycle_deadline():
+    """asyncio.timeout wrapped phase execution only. Repository reads,
+    advisors, augmentors and this commit loop all ran outside it, so a
+    configured cycle timeout was never the end-to-end budget it reads as."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "_commit_budget = max(0.0, cycle_deadline_at - time.monotonic())" in source
+    assert "timeout=_commit_budget," in source
+
+
+def test_an_expired_cycle_skips_the_commit_rather_than_waiting():
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert 'commit_outcome = "cycle_deadline_expired"' in source
+    assert 'commit_outcome = "commit_timeout"' in source
+
+
+def test_a_deadline_outcome_lowers_confidence_like_any_other_failure():
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    for outcome in ("cycle_deadline_expired", "commit_timeout"):
+        assert CognitiveEngine._cycle_confidence(
+            commit_outcome=outcome, degraded_subsystems=0
+        ) < CognitiveEngine._cycle_confidence(
+            commit_outcome="committed", degraded_subsystems=0
+        )
+
+
+# ─────────────────── the retry keeps the contract, the phase loop keeps failures
+
+
+def test_the_deep_downshift_forwards_the_context():
+    """A retry that drops the desktop flags, the live-mind evidence and the
+    scoped request metadata is a different request."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "context=dict(context or {})," in source
+    assert (
+        "return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)"
+        not in source
+    )
+
+
+def test_the_phase_loop_catches_what_phases_actually_raise():
+    """It caught sqlite3.Error and OSError only, so a RuntimeError or a
+    malformed phase return escaped the cognitive API entirely."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "except (sqlite3.Error, *_COGNITIVE_ENGINE_RECOVERABLE_ERRORS) as e:" in source
+
+
+# ─────────────────── her prior position is not the person's words
+
+
+def test_the_spine_injection_is_not_spliced_into_the_objective():
+    """The prompt builder appends the whole objective as role=user, so a
+    prepended prior position was persisted as something the PERSON said."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert 'objective = check.injection + "\\n\\n" + objective' not in source
+    assert '"type": "spine_prior_position"' in source
+    assert '"role": "system",' in source

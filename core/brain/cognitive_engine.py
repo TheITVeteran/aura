@@ -2289,10 +2289,25 @@ class CognitiveEngine:
 
             check = await spine.pre_response_check(objective, topic=topic)
             if check.injection:
-                logger.info("⚡ [Spine] Injecting prior position into cognitive objective.")
-                # Prepend the injection to the objective so it influences the entire cycle
-                objective = check.injection + "\n\n" + objective
-                state.cognition.current_objective = objective
+                logger.info("⚡ [Spine] Binding prior position as system context.")
+                # As a SYSTEM message, not spliced into the objective.
+                #
+                # The injection used to be prepended to `objective`, and the
+                # prompt builder appends the whole objective as role=user — so
+                # Aura's own prior position was persisted, and re-read on every
+                # later turn, as something the PERSON had said. It still
+                # influences the cycle (working memory is history, and history
+                # reaches the prompt); it is just attributed to the side that
+                # produced it.
+                state.cognition.working_memory.append(
+                    {
+                        "role": "system",
+                        "content": str(check.injection),
+                        "timestamp": time.time(),
+                        "metadata": {"type": "spine_prior_position", "topic": topic},
+                    }
+                )
+                state.cognition.modifiers["spine_prior_position"] = str(check.injection)
                 _record_objective_binding(
                     state,
                     objective,
@@ -2424,9 +2439,8 @@ class CognitiveEngine:
             else:
                 cycle_timeout = 240.0
         cycle_timeout = max(8.0, min(240.0, cycle_timeout))
-        context["cognitive_cycle_deadline_monotonic"] = (
-            time.monotonic() + cycle_timeout
-        )
+        cycle_deadline_at = time.monotonic() + cycle_timeout
+        context["cognitive_cycle_deadline_monotonic"] = cycle_deadline_at
 
         # 4. Phase Execution Loop with Watchdog
         import copy
@@ -2589,7 +2603,14 @@ class CognitiveEngine:
                     "timeout",
                     context=context,
                 )
-            except (sqlite3.Error, OSError) as e:
+            except (sqlite3.Error, *_COGNITIVE_ENGINE_RECOVERABLE_ERRORS) as e:
+                # This caught sqlite3.Error and OSError only, so the failures a
+                # phase ACTUALLY produces — RuntimeError, AttributeError,
+                # TypeError, ValueError from a malformed return or an
+                # implementation defect — escaped the cognitive API entirely.
+                # The caller got a raw exception where reactive recovery was
+                # the designed behaviour, and the degradation record that names
+                # the phase was never written.
                 record_degradation(
                     "cognitive_engine",
                     e,
@@ -2602,7 +2623,19 @@ class CognitiveEngine:
                     logger.warning(
                         "🔄 [COGNITION] Downshifting to REACTIVE mode due to Deep Failure..."
                     )
-                    return await self.think(objective, mode=ThinkingMode.FAST, origin=origin, **kwargs)
+                    # WITH the context. The downshift used to call think()
+                    # without it, so the retry lost the desktop-required
+                    # flags, the live-mind evidence, the scoped request
+                    # metadata and the recent exchanges — and then answered a
+                    # question it could no longer see the terms of. A retry
+                    # that drops the contract is a different request.
+                    return await self.think(
+                        objective,
+                        context=dict(context or {}),
+                        mode=ThinkingMode.FAST,
+                        origin=origin,
+                        **kwargs,
+                    )
 
                 record_response_path("reactive_recovery_crash", model_generation=False)
                 return await self._reactive_recovery(
@@ -2663,6 +2696,13 @@ class CognitiveEngine:
             or os.environ.get("AURA_TESTING") is not None
         )
         should_bypass_commit = is_test_run or self.state_repository is None
+        # The watchdog above wraps PHASE EXECUTION only. Repository reads,
+        # advisors, spine checks, augmentors, the deep copy, this commit loop
+        # and feedback learning all run outside it, so a configured cycle
+        # timeout was never the end-to-end budget it reads as. The commit loop
+        # is the largest of those — three attempts, each a database round trip
+        # — so it gets what is left of the same deadline instead of an
+        # unbounded wait after the budget is already gone.
 
         from core.state.state_repository import StateVersionConflictError
 
@@ -2679,11 +2719,33 @@ class CognitiveEngine:
                 )
                 logger.info("🧠 [STATE] Test run state isolation: bypassing database commit.")
                 break
+            _commit_budget = max(0.0, cycle_deadline_at - time.monotonic())
+            if _commit_budget <= 0.0:
+                commit_outcome = "cycle_deadline_expired"
+                record_degradation(
+                    "cognitive_engine",
+                    TimeoutError("cognitive cycle budget spent before state commit"),
+                    severity="warning",
+                    action="skipped the state commit because the cycle deadline had passed",
+                )
+                break
             try:
                 # v14.2: Ensure the repository reference is correct (self.state_repository)
-                await self.state_repository.commit(state, "cognitive_cycle")
+                await asyncio.wait_for(
+                    self.state_repository.commit(state, "cognitive_cycle"),
+                    timeout=_commit_budget,
+                )
                 commit_outcome = "committed"
                 break  # Success!
+            except TimeoutError:
+                commit_outcome = "commit_timeout"
+                record_degradation(
+                    "cognitive_engine",
+                    TimeoutError(f"state commit exceeded {_commit_budget:.1f}s"),
+                    severity="error",
+                    action="abandoned the state commit at the cognitive cycle deadline",
+                )
+                break
             except StateVersionConflictError as v_err:
                 if attempt == max_retries - 1:
                     commit_outcome = "version_conflict_exhausted"
