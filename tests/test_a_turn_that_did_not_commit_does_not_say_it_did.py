@@ -870,3 +870,107 @@ def test_a_usable_caller_integer_is_kept():
     assert (
         CognitiveEngine._bounded_request_int(512, default=768, low=1, high=32_768) == 512
     )
+
+
+# ─────────────────── a receipt cannot report a check nobody ran
+
+
+def test_a_gate_that_did_not_run_has_no_verdict():
+    """surface_quality_gate_passed was True beside enabled=False — a passed
+    verdict in the receipt for a check nobody performed."""
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.utils.injected_blocks import stamp_runtime_payload
+
+    metadata = CognitiveEngine._live_mind_structured_floor_metadata(
+        {
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context": stamp_runtime_payload(
+                {
+                    "required_subsystems_ok": True,
+                    "mind_snapshot": {"present": True},
+                    "mind_snapshot_quality": {"ready": True},
+                }
+            ),
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+        },
+        source="test",
+    )
+
+    receipt = metadata["live_mind_surface_control_receipt"]
+    assert receipt["surface_quality_gate_enabled"] is False
+    assert receipt["surface_quality_gate_passed"] is None
+    assert receipt["surface_quality_gate_status"] == "not_run_structured_floor"
+
+
+def test_the_floor_receipt_does_not_bind_from_the_caller_flag():
+    """controls_bound was granted by the caller's own flag, with the
+    authoritative check consulted only as a fallback."""
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    metadata = CognitiveEngine._live_mind_structured_floor_metadata(
+        {
+            "desktop_cognitive_engine_required": True,
+            "live_mind_controls_bound": True,
+            "live_mind_generation_controls": {
+                "temperature": 0.5,
+                "top_p": 0.9,
+                "clean_user_surface_recurrent_loops": 1,
+                "clean_user_surface_steering_alpha": 0.2,
+            },
+            "live_mind_context": {"mind_snapshot_quality": {"ready": True}},
+        },
+        source="test",
+    )
+
+    assert metadata.get("live_mind_controls_bound") is not True
+
+
+# ─────────────────── the one way to ask for no strategy did not work
+
+
+def test_forcing_direct_generation_does_not_raise():
+    """classify_target was assigned only inside `if strategy is None`, and the
+    condition below read it unconditionally — so force_strategy=DIRECT, the
+    one way a caller says "no strategy, just answer", raised
+    UnboundLocalError."""
+    import asyncio
+
+    import core.brain.cognitive_engine as engine_mod
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.reasoning_strategies import StrategyType
+
+    class _Router:
+        async def think(self, prompt, **kwargs):
+            return "direct answer"
+
+    class _Container:
+        def get(self, name, default=None):
+            return _Router() if name == "llm_router" else default
+
+    original = engine_mod.get_container
+    engine_mod.get_container = lambda: _Container()
+    try:
+        result = asyncio.run(
+            CognitiveEngine().generate(
+                "hello there", force_strategy=StrategyType.DIRECT
+            )
+        )
+    finally:
+        engine_mod.get_container = original
+
+    assert result == "direct answer"
+
+
+def test_the_reasoning_layer_follows_a_router_replacement():
+    """The closure captured whichever router the FIRST caller resolved, so a
+    failover left every later strategy call generating through the old one."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert "self._reasoning is None or self._reasoning_router is not router" in source
+    assert "with self._reasoning_lock:" in source
+    assert "async def _raw_generate(p, _router=router, **kw):" in source

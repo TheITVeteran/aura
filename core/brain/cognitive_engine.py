@@ -19,6 +19,7 @@ from core.goals.objective_lifecycle import (
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.pipeline_blueprint import (
     instantiate_legacy_runtime_phases,
     legacy_runtime_phase_specs,
@@ -1198,6 +1199,12 @@ class CognitiveEngine:
             "CognitiveEngine.RecoveryLock"
         )  # Audit Fix: Mutex for recovery
         self._reasoning: ReasoningStrategies | None = None  # Lazy-init
+        #: The router the reasoning layer was built around, so a
+        #: replacement or failover rebuilds it instead of being ignored.
+        self._reasoning_router: Any = None
+        self._reasoning_lock = checked_lock(
+            "cognitive_engine.reasoning_layer", rank=LockRank.LEAF
+        )
 
     @property
     def consciousness(self) -> Any:
@@ -5068,15 +5075,15 @@ class CognitiveEngine:
                 user_message=context.get("visible_user_message"),
             )
             controls_provenance = "live_mind_snapshot"
+        # The caller's own live_mind_controls_bound flag used to grant this,
+        # with _live_mind_controls_bound only consulted as a fallback — so a
+        # context asserting it was bound produced a receipt saying it was
+        # bound. The authoritative check decides; the flag may agree with it
+        # and nothing more.
         controls_bound = bool(
-            context.get("live_mind_controls_bound")
-            and generation_controls
+            generation_controls
+            and _live_mind_controls_bound(live_mind_context, generation_controls)
         )
-        if not controls_bound:
-            controls_bound = _live_mind_controls_bound(
-                live_mind_context,
-                generation_controls,
-            )
         desktop_required = bool(
             context.get("desktop_cognitive_engine_required")
             or context.get("cognitive_engine_required")
@@ -5134,7 +5141,12 @@ class CognitiveEngine:
                 context.get("clean_user_surface_contract", True)
             ),
             "surface_quality_gate_enabled": False,
-            "surface_quality_gate_passed": True,
+            # A gate that did not run did not PASS. True here put a passed
+            # verdict in the receipt for a check nobody performed, which is
+            # the exact shape this pass exists to remove. None is "no verdict";
+            # the status says why there is none.
+            "surface_quality_gate_passed": None,
+            "surface_quality_gate_status": "not_run_structured_floor",
             "surface_quality_gate_attempts": 0,
             "surface_quality_gate_reasons": [],
             "source": source,
@@ -5337,14 +5349,30 @@ class CognitiveEngine:
 
         if router and use_strategies:
             # Lazy-init the reasoning layer on first use
-            if self._reasoning is None:
+            # Rebuild when the ROUTER changes, not only when the layer is
+            # absent. The closure below captured whichever router object the
+            # first caller resolved, so a replacement or a failover left every
+            # later strategy call generating through the old one — and the
+            # lazy construction itself was unsynchronised, so two first callers
+            # could each build one and the loser's closure vanished silently.
+            with self._reasoning_lock:
+                if self._reasoning is None or self._reasoning_router is not router:
 
-                async def _raw_generate(p, **kw):
-                    return await router.think(p, **kw)
+                    async def _raw_generate(p, _router=router, **kw):
+                        return await _router.think(p, **kw)
 
-                self._reasoning = ReasoningStrategies(_raw_generate)
+                    self._reasoning = ReasoningStrategies(_raw_generate)
+                    self._reasoning_router = router
 
             strategy = force_strategy
+            # Bound BEFORE the branch that assigns it.
+            #
+            # classify_target was assigned only inside `if strategy is None`,
+            # and the condition below reads it unconditionally — so a caller
+            # passing force_strategy=DIRECT hit UnboundLocalError instead of
+            # getting direct generation. The one path a caller takes to say
+            # "no strategy, just answer" was the one that crashed.
+            classify_target = strategy_query or prompt
             if strategy is None:
                 if not strategy_query:
                     messages = kwargs.get("messages")

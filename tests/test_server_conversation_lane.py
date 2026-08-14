@@ -9850,12 +9850,16 @@ async def test_cognitive_engine_identity_floor_does_not_call_router(monkeypatch)
             "identity_continuity_contract": True,
             "grounded_identity_continuity_context": "I'm Aura: a local governed cognitive-agent runtime.",
             "live_mind_context_required": True,
-            "live_mind_context": {
+            # A runtime-produced snapshot. Binding used to be granted by
+            # the caller's own live_mind_controls_bound flag, so this
+            # fixture proved the receipt could be written by the request.
+            "live_mind_context": stamp_runtime_payload({
                 "required_for_live_desktop": True,
                 "must_answer_from_full_mind_path": True,
                 "required_subsystems_ok": True,
+                "mind_snapshot": {"present": True},
                 "mind_snapshot_quality": {"present": True, "ready": True},
-            },
+            }),
             "live_mind_generation_controls": {
                 "temperature": 0.58,
                 "top_p": 0.88,
