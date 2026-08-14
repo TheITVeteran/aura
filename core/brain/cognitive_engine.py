@@ -1225,6 +1225,69 @@ class CognitiveEngine:
         self.setup()
         logger.info("⚡ CognitiveEngine active.")
 
+    @staticmethod
+    def _reapply_turn_changes(target: Any, worked: Any, baseline: dict[str, Any]) -> None:
+        """Put back what THIS turn changed, and nothing else.
+
+        ``baseline`` is the value each field held before the phases ran. A
+        field the turn left alone keeps whatever the rebased state carries —
+        which, after a version conflict, is a concurrent writer's work.
+        """
+        for field, before in baseline.items():
+            after = getattr(worked, field, None)
+            if field in {"active_goals", "pending_initiatives"}:
+                after_list = list(after or [])
+                if after_list != list(before or []):
+                    setattr(target, field, after_list)
+                continue
+            if field == "modifiers":
+                after_map = dict(after or {})
+                if after_map != dict(before or {}):
+                    setattr(target, field, after_map)
+                continue
+            if after != before:
+                setattr(target, field, after)
+
+    @staticmethod
+    def _turn_response_message(
+        working_memory: Any, *, mark: int
+    ) -> dict[str, Any] | None:
+        """The assistant message THIS turn produced, or None.
+
+        Extraction used to take the last message if its role was "assistant".
+        A duplicate or suppressed user append leaves an older assistant message
+        at the end of working memory, and that previous answer went out again
+        as this turn's — correct-looking, addressed to the wrong question.
+        """
+        memory = list(working_memory or [])
+        if len(memory) <= max(0, int(mark)):
+            return None
+        last = memory[-1]
+        if not isinstance(last, dict):
+            return None
+        if str(last.get("role", "") or "").strip().lower() != "assistant":
+            return None
+        return last
+
+    @staticmethod
+    def _cycle_confidence(*, commit_outcome: str, degraded_subsystems: int) -> float:
+        """Confidence from what the cycle can show, not a constant.
+
+        0.9 was returned for every successful phase cycle regardless of whether
+        durable state committed, whether subsystems were degraded, or whether
+        anything validated the response. It still is not a calibrated
+        probability — nothing here measures correctness — but it now moves with
+        the evidence the cycle actually has, and the floor is what a cycle that
+        produced text but could not persist it deserves.
+        """
+        confidence = 0.9
+        if commit_outcome not in {"committed", "bypassed_test_isolation"}:
+            # The answer exists; the record of the turn that produced it does
+            # not. Downstream retry and learning both need to see that.
+            confidence -= 0.25
+        confidence -= min(0.2, 0.05 * max(0, int(degraded_subsystems)))
+        return round(max(0.3, min(0.95, confidence)), 3)
+
     def pipeline_receipt(self) -> dict[str, Any]:
         """What setup() built, against what the blueprint declares."""
         return dict(getattr(self, "_pipeline_receipt", {}) or {})
@@ -2371,6 +2434,24 @@ class CognitiveEngine:
         backup_state = copy.deepcopy(state)
         temp_state = state
         success = False
+        # Where this turn's working memory begins. An assistant message at or
+        # before this mark belongs to an EARLIER turn: a duplicate or
+        # suppressed user append leaves one sitting at the end, and extraction
+        # checked only `role == "assistant"`, so the previous answer went out
+        # again as this one's.
+        turn_memory_mark = len(getattr(state.cognition, "working_memory", []) or [])
+        # What this turn changed, so a rebase can restore only that. Restoring
+        # everything from the per-turn snapshot overwrote whatever a concurrent
+        # writer had done to goals, initiatives, focus and modifiers.
+        pre_turn_cognition = {
+            "active_goals": list(getattr(state.cognition, "active_goals", []) or []),
+            "pending_initiatives": list(
+                getattr(state.cognition, "pending_initiatives", []) or []
+            ),
+            "attention_focus": getattr(state.cognition, "attention_focus", None),
+            "phenomenal_state": getattr(state.cognition, "phenomenal_state", None),
+            "modifiers": dict(getattr(state.cognition, "modifiers", {}) or {}),
+        }
 
         direct_quick_reply = await self._direct_desktop_quick_reply(
             objective,
@@ -2558,15 +2639,19 @@ class CognitiveEngine:
         is_action_imperative = (
             "[ACTION IMPERATIVE]" in objective or "[ACTION IMPERATIVE]" in routed_obj
         )
-        if self._is_user_facing_origin(origin) and not is_background:
+        # finalize_foreground_turn_state mutates the state about to be
+        # committed, so it belongs here. The CLOSURE notification does not: it
+        # tells external lifecycle state that the turn completed, and it used
+        # to fire before persistence, so a bypassed or failed commit left the
+        # rest of the runtime believing a turn had completed that durable state
+        # has no record of. It moves below the commit loop.
+        _is_foreground_turn = self._is_user_facing_origin(origin) and not is_background
+        if _is_foreground_turn:
             finalize_foreground_turn_state(
                 state,
                 objective=foreground_turn_objective,
                 origin=origin,
             )
-            closure = get_container().get("executive_closure", default=None)
-            if closure is not None and hasattr(closure, "complete_foreground_turn"):
-                closure.complete_foreground_turn(foreground_turn_objective, origin)
 
         # ─── SUCCESS PATH (Unreachable before fix) ──────────────────────────
         # 5. Final State Commit
@@ -2581,17 +2666,27 @@ class CognitiveEngine:
 
         from core.state.state_repository import StateVersionConflictError
 
+        # What actually happened to durable state. Every exit from this loop
+        # used to be a bare `break`, after which extraction returned a
+        # 0.9-confidence "completed successfully" thought whether the commit
+        # had landed, been bypassed, exhausted its retries, or raised.
+        commit_outcome = "not_attempted"
         max_retries = 3
         for attempt in range(max_retries):
             if should_bypass_commit:
+                commit_outcome = (
+                    "bypassed_test_isolation" if is_test_run else "no_state_repository"
+                )
                 logger.info("🧠 [STATE] Test run state isolation: bypassing database commit.")
                 break
             try:
                 # v14.2: Ensure the repository reference is correct (self.state_repository)
                 await self.state_repository.commit(state, "cognitive_cycle")
+                commit_outcome = "committed"
                 break  # Success!
             except StateVersionConflictError as v_err:
                 if attempt == max_retries - 1:
+                    commit_outcome = "version_conflict_exhausted"
                     logger.error(
                         "Final state commit failed after %d retries: %s", max_retries, v_err
                     )
@@ -2615,17 +2710,20 @@ class CognitiveEngine:
                 state.cognition.current_objective = preserved_objective
                 state.cognition.current_origin = preserved_origin
 
-                # HF12 Extension: Preserve additional cognitive labor
-                # These might have been updated by InitiativeGeneration or Consciousness phases
-                state.cognition.active_goals = list(temp_state.cognition.active_goals)
-                state.cognition.pending_initiatives = list(temp_state.cognition.pending_initiatives)
-                state.cognition.attention_focus = temp_state.cognition.attention_focus
-                state.cognition.phenomenal_state = temp_state.cognition.phenomenal_state
-                # Audit Fix: Preserve modifiers (CIL-injected fields)
-                if hasattr(temp_state.cognition, "modifiers"):
-                    state.cognition.modifiers = dict(
-                        getattr(temp_state.cognition, "modifiers", {}) or {}
-                    )
+                # HF12 Extension: Preserve additional cognitive labor —
+                # ONLY the fields this turn actually changed.
+                #
+                # Copying all of them from the per-turn snapshot overwrote
+                # whatever a concurrent writer had committed in the meantime,
+                # which is the exact thing a version conflict is telling us
+                # happened. A field this turn did not touch keeps the latest
+                # value; a field it did touch wins, because that work would
+                # otherwise be lost.
+                self._reapply_turn_changes(
+                    state.cognition,
+                    temp_state.cognition,
+                    pre_turn_cognition,
+                )
             except (RuntimeError, AttributeError, TypeError) as e:
                 record_degradation(
                     "cognitive_engine",
@@ -2636,24 +2734,52 @@ class CognitiveEngine:
                 logger.error("Failed to commit final cognitive state: %s", e)
                 break
 
+        # The turn completed durably (or was legitimately isolated). Only now
+        # may external lifecycle state be told it finished.
+        if _is_foreground_turn and commit_outcome in {
+            "committed",
+            "bypassed_test_isolation",
+        }:
+            closure = get_container().get("executive_closure", default=None)
+            if closure is not None and hasattr(closure, "complete_foreground_turn"):
+                closure.complete_foreground_turn(foreground_turn_objective, origin)
+        elif _is_foreground_turn:
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError(f"foreground_turn_uncommitted:{commit_outcome}"),
+                severity="warning",
+                action="withheld foreground closure because cognitive state did not commit",
+            )
+
         # 6. Extract Response
-        last_msg = state.cognition.working_memory[-1] if state.cognition.working_memory else None
-        if last_msg and last_msg.get("role") == "assistant":
+        last_msg = self._turn_response_message(
+            state.cognition.working_memory, mark=turn_memory_mark
+        )
+        if last_msg:
             self.autopoiesis.experience_friction(objective[:20], 0.05)
+            # Reward is no longer 1.0 for the mere existence of an
+            # assistant-shaped message. Three learning systems were given the
+            # maximum positive signal with no user feedback, no correctness
+            # check, no tool postcondition and no persistence outcome — an
+            # answer that failed to commit taught them it had gone perfectly.
+            _cycle_reward = 1.0 if commit_outcome in {
+                "committed",
+                "bypassed_test_isolation",
+            } else 0.5
             feedback = self._learn_spiking_active_inference_outcome(
                 context,
                 outcome="assistant_response",
-                reward=1.0,
+                reward=_cycle_reward,
             )
             imagination_feedback = self._learn_imagination_workspace_outcome(
                 context,
                 outcome="assistant_response",
-                reward=1.0,
+                reward=_cycle_reward,
             )
             bicameral_feedback = self._learn_bicameral_advisory_outcome(
                 context,
                 outcome="assistant_response",
-                reward=1.0,
+                reward=_cycle_reward,
             )
 
             if direct_quick_reply is not None:
@@ -2722,13 +2848,28 @@ class CognitiveEngine:
                     )
                     if key in state.response_modifiers
                 }
+                _degraded_count = len(
+                    [
+                        key
+                        for key in state.response_modifiers
+                        if str(key).endswith("_degraded")
+                        and state.response_modifiers.get(key)
+                    ]
+                )
                 thought = Thought(
                     id=str(uuid.uuid4()),
                     content=last_msg["content"],
                     mode=mode,
-                    confidence=0.9,
-                    reasoning=["Phase-based cognitive cycle completed successfully."],
+                    confidence=self._cycle_confidence(
+                        commit_outcome=commit_outcome,
+                        degraded_subsystems=_degraded_count,
+                    ),
+                    reasoning=[
+                        "Phase-based cognitive cycle completed.",
+                        f"State commit: {commit_outcome}.",
+                    ],
                     metadata={
+                        "state_commit_outcome": commit_outcome,
                         "spiking_active_inference": context.get("spiking_active_inference")
                         if isinstance(context, dict)
                         else None,
