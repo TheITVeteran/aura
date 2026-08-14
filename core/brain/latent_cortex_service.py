@@ -2734,106 +2734,7 @@ class LatentCortexService:
                     raise ValueError("decoy preflight rejection was not disclosed")
             except (ImportError, TypeError, ValueError):
                 errors.append("decoy_verifier_preflight_unproven")
-        if any(
-            receipt.get(field)
-            for field in (
-                "branch_contract",
-                "contract_repair",
-                "post_adaptation_candidate",
-                "blind_review",
-                "decoy_verification",
-            )
-        ):
-            contract_repair_expected = bool(receipt.get("contract_repair")) or (
-                config.get("decode_contract") == "final_answer_v1"
-                or config.get("verifier_probe_contract") == "final_answer_v1"
-            )
-            if contract_repair_expected:
-                try:
-                    from core.brain.llm.latent_cortex.contract_repair import (
-                        validate_contract_repair_receipt,
-                    )
-                    from core.brain.llm.latent_cortex.worker_handler import (
-                        config_from_job,
-                    )
-
-                    executed_config = config_from_job(config)
-                    contract_repair = validate_contract_repair_receipt(
-                        receipt.get("contract_repair")
-                    )
-                    expected_requests = (
-                        executed_config.local_repair_max_attempts
-                        if executed_config.local_repair_enabled
-                        else 0
-                    )
-                    if (
-                        contract_repair["max_requests"] != expected_requests
-                        or contract_repair["max_tokens"]
-                        != executed_config.local_repair_max_tokens
-                    ):
-                        raise ValueError("contract repair policy differs")
-                except (ImportError, TypeError, ValueError):
-                    errors.append("contract_repair_unproven")
-            if receipt.get("post_adaptation_candidate"):
-                try:
-                    from core.brain.llm.latent_cortex.post_adaptation_candidate import (
-                        validate_post_adaptation_candidate_receipt,
-                    )
-
-                    post_adaptation = validate_post_adaptation_candidate_receipt(
-                        receipt.get("post_adaptation_candidate")
-                    )
-                    if post_adaptation["selected_branch"] != receipt.get(
-                        "selected_branch"
-                    ):
-                        raise ValueError(
-                            "post-adaptation candidate branch differs"
-                        )
-                except (ImportError, TypeError, ValueError):
-                    errors.append("post_adaptation_candidate_unproven")
-            try:
-                from core.brain.llm.latent_cortex.blind_review import (
-                    validate_blind_review_receipt,
-                    validate_decoy_review_receipt,
-                )
-
-                decoy = validate_decoy_review_receipt(
-                    receipt.get("decoy_verification"),
-                    blind_receipt=receipt.get("blind_review"),
-                    episode_id=receipt.get("episode_id"),
-                    objective_sha256=receipt.get("input_tokens_sha256"),
-                )
-                review_selected_branch = receipt.get("selected_branch")
-                if isinstance(verified_counterfactual, dict):
-                    review_selected_branch = verified_counterfactual[
-                        "source_selected_branch"
-                    ]
-                elif (
-                    isinstance(verified_generation, dict)
-                    and verified_generation.get("selection_effect")
-                    == "winner_replaced"
-                ):
-                    review_selected_branch = verified_generation["vetoed_branch"]
-                validate_blind_review_receipt(
-                    receipt.get("blind_review"),
-                    n_branches=int(receipt.get("n_branches")),
-                    branch_scores=receipt.get("branch_scores"),
-                    isolation_receipt=receipt.get("branch_isolation"),
-                    objective_sha256=receipt.get("input_tokens_sha256"),
-                    episode_id=receipt.get("episode_id"),
-                    selected_branch=review_selected_branch,
-                    decoy_receipt=receipt.get("decoy_verification"),
-                )
-                honest_flags = receipt.get("honest_flags")
-                if not isinstance(honest_flags, list):
-                    raise ValueError("decoy-review honest flags are invalid")
-                if (
-                    decoy["selection_admitted"] is False
-                    and "branch_verifier_decoy_calibration_failed" not in honest_flags
-                ):
-                    raise ValueError("decoy selection rejection was not disclosed")
-            except (ImportError, TypeError, ValueError):
-                errors.append("blind_or_decoy_branch_review_unproven")
+        LatentCortexService._receipt_counterfactual_errors(config, errors, receipt, verified_counterfactual, verified_generation)
         exchange_interval = config.get("exchange_interval")
         if (
             type(exchange_interval) is int
@@ -3071,6 +2972,115 @@ class LatentCortexService:
                     errors.append("latent_optimization_verifier_receipt_invalid")
         LatentCortexService._receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting)
         return errors
+
+    @staticmethod
+    def _receipt_counterfactual_errors(config, errors, receipt, verified_counterfactual, verified_generation):
+        """Body lifted verbatim out of ``LatentCortexService._receipt_contract_errors``.
+
+        Moved by tools/extract_seam.py, which refuses to write unless the
+        relocated body diffs clean against the original. The seam was
+        5 names in, 0 out, 0 early return(s), 0 awaits.
+        """
+        if any(
+            receipt.get(field)
+            for field in (
+                "branch_contract",
+                "contract_repair",
+                "post_adaptation_candidate",
+                "blind_review",
+                "decoy_verification",
+            )
+        ):
+            contract_repair_expected = bool(receipt.get("contract_repair")) or (
+                config.get("decode_contract") == "final_answer_v1"
+                or config.get("verifier_probe_contract") == "final_answer_v1"
+            )
+            if contract_repair_expected:
+                try:
+                    from core.brain.llm.latent_cortex.contract_repair import (
+                        validate_contract_repair_receipt,
+                    )
+                    from core.brain.llm.latent_cortex.worker_handler import (
+                        config_from_job,
+                    )
+
+                    executed_config = config_from_job(config)
+                    contract_repair = validate_contract_repair_receipt(
+                        receipt.get("contract_repair")
+                    )
+                    expected_requests = (
+                        executed_config.local_repair_max_attempts
+                        if executed_config.local_repair_enabled
+                        else 0
+                    )
+                    if (
+                        contract_repair["max_requests"] != expected_requests
+                        or contract_repair["max_tokens"]
+                        != executed_config.local_repair_max_tokens
+                    ):
+                        raise ValueError("contract repair policy differs")
+                except (ImportError, TypeError, ValueError):
+                    errors.append("contract_repair_unproven")
+            if receipt.get("post_adaptation_candidate"):
+                try:
+                    from core.brain.llm.latent_cortex.post_adaptation_candidate import (
+                        validate_post_adaptation_candidate_receipt,
+                    )
+
+                    post_adaptation = validate_post_adaptation_candidate_receipt(
+                        receipt.get("post_adaptation_candidate")
+                    )
+                    if post_adaptation["selected_branch"] != receipt.get(
+                        "selected_branch"
+                    ):
+                        raise ValueError(
+                            "post-adaptation candidate branch differs"
+                        )
+                except (ImportError, TypeError, ValueError):
+                    errors.append("post_adaptation_candidate_unproven")
+            try:
+                from core.brain.llm.latent_cortex.blind_review import (
+                    validate_blind_review_receipt,
+                    validate_decoy_review_receipt,
+                )
+
+                decoy = validate_decoy_review_receipt(
+                    receipt.get("decoy_verification"),
+                    blind_receipt=receipt.get("blind_review"),
+                    episode_id=receipt.get("episode_id"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                )
+                review_selected_branch = receipt.get("selected_branch")
+                if isinstance(verified_counterfactual, dict):
+                    review_selected_branch = verified_counterfactual[
+                        "source_selected_branch"
+                    ]
+                elif (
+                    isinstance(verified_generation, dict)
+                    and verified_generation.get("selection_effect")
+                    == "winner_replaced"
+                ):
+                    review_selected_branch = verified_generation["vetoed_branch"]
+                validate_blind_review_receipt(
+                    receipt.get("blind_review"),
+                    n_branches=int(receipt.get("n_branches")),
+                    branch_scores=receipt.get("branch_scores"),
+                    isolation_receipt=receipt.get("branch_isolation"),
+                    objective_sha256=receipt.get("input_tokens_sha256"),
+                    episode_id=receipt.get("episode_id"),
+                    selected_branch=review_selected_branch,
+                    decoy_receipt=receipt.get("decoy_verification"),
+                )
+                honest_flags = receipt.get("honest_flags")
+                if not isinstance(honest_flags, list):
+                    raise ValueError("decoy-review honest flags are invalid")
+                if (
+                    decoy["selection_admitted"] is False
+                    and "branch_verifier_decoy_calibration_failed" not in honest_flags
+                ):
+                    raise ValueError("decoy selection rejection was not disclosed")
+            except (ImportError, TypeError, ValueError):
+                errors.append("blind_or_decoy_branch_review_unproven")
 
     @staticmethod
     def _receipt_fast_weight_errors(config, errors, expected_worker_identity, finite_number_list, nonnegative_int, output_text, output_tokens, positive_int, receipt, resource_accounting):

@@ -767,113 +767,7 @@ def validate_fast_weight_learning_receipt(
                 raise ValueError("fast-weight query-gate layer receipt is malformed")
         if not teaching_event:
             raise ValueError("fast-weight query gate lacks a teaching event")
-    if supervised_trajectory_map:
-        map_schema = supervised_trajectory_map.get("schema")
-        expected_map_fields = {
-            "schema",
-            "gain",
-            "regularization",
-            "corrections_normalized",
-            "layers",
-        }
-        if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
-            expected_map_fields.add("key_source")
-        if (
-            set(supervised_trajectory_map) != expected_map_fields
-            or map_schema
-            not in {
-                "aura.fast_weight_supervised_trajectory_map.v1",
-                "aura.fast_weight_supervised_trajectory_map.v2",
-            }
-            or (
-                map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
-                and supervised_trajectory_map["key_source"]
-                not in {
-                    "captured_query_activation",
-                    "verified_incumbent_trajectory",
-                }
-            )
-            or not _is_finite_number(supervised_trajectory_map["gain"])
-            or not 0.0 < float(supervised_trajectory_map["gain"]) <= 16.0
-            or not _is_finite_number(supervised_trajectory_map["regularization"])
-            or not 0.0 < float(supervised_trajectory_map["regularization"]) <= 1.0
-            or type(supervised_trajectory_map["corrections_normalized"]) is not bool
-            or not isinstance(supervised_trajectory_map["layers"], list)
-            or not supervised_trajectory_map["layers"]
-        ):
-            raise ValueError("fast-weight supervised trajectory receipt is malformed")
-        expected_row_fields = {
-            "layer",
-            "teaching_pairs",
-            "input_width",
-            "output_width",
-            "inputs_sha256",
-            "corrections_sha256",
-            "u_sha256",
-            "v_sha256",
-            "training_relative_error",
-            "ridge_scale",
-            "input_norm_min",
-            "input_norm_max",
-            "correction_norm_min",
-            "correction_norm_max",
-        }
-        for row in supervised_trajectory_map["layers"]:
-            if (
-                not isinstance(row, Mapping)
-                or set(row) != expected_row_fields
-                or type(row["layer"]) is not int
-                or row["layer"] < 0
-                or any(
-                    type(row[field]) is not int or row[field] <= 0
-                    for field in ("teaching_pairs", "input_width", "output_width")
-                )
-                or any(
-                    not _is_sha256(row[field])
-                    for field in (
-                        "inputs_sha256",
-                        "corrections_sha256",
-                        "u_sha256",
-                        "v_sha256",
-                    )
-                )
-                or any(
-                    not _is_finite_number(row[field]) or float(row[field]) < 0.0
-                    for field in (
-                        "training_relative_error",
-                        "ridge_scale",
-                        "input_norm_min",
-                        "input_norm_max",
-                        "correction_norm_min",
-                        "correction_norm_max",
-                    )
-                )
-            ):
-                raise ValueError("fast-weight supervised trajectory row is invalid")
-            if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
-                receipt_key_source = supervised_trajectory_map["key_source"]
-                expected_key_source = (
-                    "captured_query_activation"
-                    if trajectory_transplant["supervised_key_source"] == "live_query"
-                    else "verified_incumbent_trajectory"
-                )
-                commitment_field = (
-                    "query_activation_sha256s"
-                    if receipt_key_source == "captured_query_activation"
-                    else "incumbent_input_sha256s"
-                )
-                if (
-                    receipt_key_source != expected_key_source
-                    or row["inputs_sha256"]
-                    != trajectory_transplant[commitment_field].get(
-                        str(row["layer"])
-                    )
-                ):
-                    raise ValueError(
-                        "fast-weight supervised trajectory key provenance differs"
-                    )
-        if not teaching_event:
-            raise ValueError("fast-weight supervised trajectory lacks a teaching event")
+    _validate_trajectory_transplant(supervised_trajectory_map, teaching_event, trajectory_transplant)
     if output_associative_memory:
         from core.brain.llm.latent_cortex.episodic_output_memory_contract import (
             validate_output_memory_experiment_receipt,
@@ -1139,6 +1033,121 @@ def validate_fast_weight_learning_receipt(
     ):
         raise ValueError("fast-weight final answer commitment is invalid")
     return dict(value)
+
+def _validate_trajectory_transplant(supervised_trajectory_map, teaching_event, trajectory_transplant):
+    """Body lifted verbatim out of ``validate_fast_weight_learning_receipt``.
+
+    Moved by tools/extract_seam.py, which refuses to write unless the
+    relocated body diffs clean against the original. The seam was
+    3 names in, 0 out, 0 early return(s), 0 awaits.
+    """
+    if supervised_trajectory_map:
+        map_schema = supervised_trajectory_map.get("schema")
+        expected_map_fields = {
+            "schema",
+            "gain",
+            "regularization",
+            "corrections_normalized",
+            "layers",
+        }
+        if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
+            expected_map_fields.add("key_source")
+        if (
+            set(supervised_trajectory_map) != expected_map_fields
+            or map_schema
+            not in {
+                "aura.fast_weight_supervised_trajectory_map.v1",
+                "aura.fast_weight_supervised_trajectory_map.v2",
+            }
+            or (
+                map_schema == "aura.fast_weight_supervised_trajectory_map.v2"
+                and supervised_trajectory_map["key_source"]
+                not in {
+                    "captured_query_activation",
+                    "verified_incumbent_trajectory",
+                }
+            )
+            or not _is_finite_number(supervised_trajectory_map["gain"])
+            or not 0.0 < float(supervised_trajectory_map["gain"]) <= 16.0
+            or not _is_finite_number(supervised_trajectory_map["regularization"])
+            or not 0.0 < float(supervised_trajectory_map["regularization"]) <= 1.0
+            or type(supervised_trajectory_map["corrections_normalized"]) is not bool
+            or not isinstance(supervised_trajectory_map["layers"], list)
+            or not supervised_trajectory_map["layers"]
+        ):
+            raise ValueError("fast-weight supervised trajectory receipt is malformed")
+        expected_row_fields = {
+            "layer",
+            "teaching_pairs",
+            "input_width",
+            "output_width",
+            "inputs_sha256",
+            "corrections_sha256",
+            "u_sha256",
+            "v_sha256",
+            "training_relative_error",
+            "ridge_scale",
+            "input_norm_min",
+            "input_norm_max",
+            "correction_norm_min",
+            "correction_norm_max",
+        }
+        for row in supervised_trajectory_map["layers"]:
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != expected_row_fields
+                or type(row["layer"]) is not int
+                or row["layer"] < 0
+                or any(
+                    type(row[field]) is not int or row[field] <= 0
+                    for field in ("teaching_pairs", "input_width", "output_width")
+                )
+                or any(
+                    not _is_sha256(row[field])
+                    for field in (
+                        "inputs_sha256",
+                        "corrections_sha256",
+                        "u_sha256",
+                        "v_sha256",
+                    )
+                )
+                or any(
+                    not _is_finite_number(row[field]) or float(row[field]) < 0.0
+                    for field in (
+                        "training_relative_error",
+                        "ridge_scale",
+                        "input_norm_min",
+                        "input_norm_max",
+                        "correction_norm_min",
+                        "correction_norm_max",
+                    )
+                )
+            ):
+                raise ValueError("fast-weight supervised trajectory row is invalid")
+            if map_schema == "aura.fast_weight_supervised_trajectory_map.v2":
+                receipt_key_source = supervised_trajectory_map["key_source"]
+                expected_key_source = (
+                    "captured_query_activation"
+                    if trajectory_transplant["supervised_key_source"] == "live_query"
+                    else "verified_incumbent_trajectory"
+                )
+                commitment_field = (
+                    "query_activation_sha256s"
+                    if receipt_key_source == "captured_query_activation"
+                    else "incumbent_input_sha256s"
+                )
+                if (
+                    receipt_key_source != expected_key_source
+                    or row["inputs_sha256"]
+                    != trajectory_transplant[commitment_field].get(
+                        str(row["layer"])
+                    )
+                ):
+                    raise ValueError(
+                        "fast-weight supervised trajectory key provenance differs"
+                    )
+        if not teaching_event:
+            raise ValueError("fast-weight supervised trajectory lacks a teaching event")
 
 
 __all__ = [
