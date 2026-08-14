@@ -754,19 +754,6 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
         masked = dict(tree_flatten(_process_component_gradients(gradients, component)))
         assert {name for name, value in masked.items() if bool(mx.any(value != 0))} == live_names
 
-    scaled = dict(
-        tree_flatten(
-            _process_component_gradients(
-                gradients,
-                "action_workspace",
-                transformer_scale=0.1,
-            )
-        )
-    )
-    assert bool(mx.all(scaled["model.layer.lora_a"] == 0.1))
-    assert bool(mx.all(scaled["controller.action_workspace_output"] == 1.0))
-
-
 def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:
     schedule = _phase_schedule(
         semantic_warmup_steps=0,
@@ -2054,6 +2041,33 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         mx.linalg.norm(flat["controller.action_value_embeddings"]).item()
     ) == pytest.approx(1.0)
     assert float(mx.linalg.norm(flat["controller.transport_bias"]).item()) == pytest.approx(0.5)
+
+
+def test_gradient_trust_multiplier_survives_saturated_group_clipping() -> None:
+    gradients = {
+        "model": {"layer": {"lora_a": mx.array([30.0, 40.0])}},
+        "controller": {"action_workspace_output": mx.array([0.0, 12.0])},
+    }
+    clipped, global_before, groups = _clip_gradient_groups(
+        gradients,
+        1.0,
+        postclip_group_scales={"scoped_transformer_bridge": 0.1},
+    )
+    flat = dict(tree_flatten(clipped))
+    mx.eval(clipped, global_before, *groups.values())
+
+    assert float(groups["scoped_transformer_bridge"].item()) == pytest.approx(50.0)
+    assert float(mx.linalg.norm(flat["model.layer.lora_a"]).item()) == pytest.approx(0.1)
+    assert float(
+        mx.linalg.norm(flat["controller.action_workspace_output"]).item()
+    ) == pytest.approx(1.0)
+
+    with pytest.raises(ValueError, match=r"inside \[0, 1\]"):
+        _clip_gradient_groups(
+            gradients,
+            1.0,
+            postclip_group_scales={"scoped_transformer_bridge": 1.1},
+        )
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:

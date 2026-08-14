@@ -979,17 +979,8 @@ def _gradient_ownership_group(name: str) -> str:
 def _process_component_gradients(
     gradients: Any,
     component: str,
-    *,
-    transformer_scale: float = 1.0,
 ) -> Any:
     """Prevent one typed-process role from rewriting another role's tissue."""
-
-    if (
-        isinstance(transformer_scale, bool)
-        or not isinstance(transformer_scale, (int, float))
-        or not 0.0 <= float(transformer_scale) <= 1.0
-    ):
-        raise ValueError("process transformer gradient scale must be inside [0, 1]")
 
     allowed = {
         "initializer": {"scoped_transformer_bridge", "typed_state_initializer"},
@@ -1024,11 +1015,7 @@ def _process_component_gradients(
         [
             (
                 name,
-                (
-                    value * float(transformer_scale)
-                    if _gradient_ownership_group(name) == "scoped_transformer_bridge"
-                    else value
-                )
+                value
                 if _gradient_ownership_group(name) in allowed[component]
                 else mx.zeros_like(value),
             )
@@ -1040,8 +1027,10 @@ def _process_component_gradients(
 def _clip_gradient_groups(
     gradients: Any,
     max_norm: float,
+    *,
+    postclip_group_scales: dict[str, float] | None = None,
 ) -> tuple[Any, Any, dict[str, Any]]:
-    """Clip independent mechanisms without letting one starve the others."""
+    """Clip mechanisms independently, then apply intentional trust multipliers."""
 
     if (
         isinstance(max_norm, bool)
@@ -1052,6 +1041,16 @@ def _clip_gradient_groups(
     flattened = tree_flatten(gradients)
     if not flattened:
         raise ValueError("gradient tree must not be empty")
+    requested_scales = dict(postclip_group_scales or {})
+    for group, scale in requested_scales.items():
+        if (
+            not isinstance(group, str)
+            or not group
+            or isinstance(scale, bool)
+            or not isinstance(scale, (int, float))
+            or not 0.0 <= float(scale) <= 1.0
+        ):
+            raise ValueError("post-clip gradient group scales must be inside [0, 1]")
     grouped: dict[str, list[Any]] = {}
     for name, value in flattened:
         grouped.setdefault(_gradient_ownership_group(name), []).append(value)
@@ -1069,7 +1068,9 @@ def _clip_gradient_groups(
         [
             (
                 name,
-                value * scales[_gradient_ownership_group(name)].astype(value.dtype),
+                value
+                * scales[_gradient_ownership_group(name)].astype(value.dtype)
+                * float(requested_scales.get(_gradient_ownership_group(name), 1.0)),
             )
             for name, value in flattened
         ]
@@ -1101,11 +1102,15 @@ def _apply_training_gradients(
         gradients = _process_component_gradients(
             gradients,
             process_component,
-            transformer_scale=process_transformer_gradient_scale,
         )
     gradients, gradient_norm, gradient_group_norms = _clip_gradient_groups(
         gradients,
         max_norm,
+        postclip_group_scales=(
+            {"scoped_transformer_bridge": process_transformer_gradient_scale}
+            if process_component is not None
+            else None
+        ),
     )
     mx.eval(gradient_norm, *gradient_group_norms.values())
     totals["max_preclip_gradient_norm"] = max(
@@ -3336,7 +3341,7 @@ def main() -> int:
         default=1.0,
         help=(
             "relative process-gradient scale applied only to scoped transformer "
-            "adapters before ownership-group clipping"
+            "adapters after ownership-group clipping"
         ),
     )
     parser.add_argument(
