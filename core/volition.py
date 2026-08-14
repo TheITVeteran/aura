@@ -340,6 +340,27 @@ class VolitionEngine:
             receipt_id = getattr(decision, "receipt_id", "")
             if receipt_id:
                 goal["will_receipt"] = receipt_id
+            else:
+                # An approval nobody can look up later is indistinguishable
+                # from no approval at all once the logs roll. The action
+                # still proceeds — the Will DID approve it, and discarding a
+                # real approval over missing bookkeeping would be its own
+                # failure — but the gap is recorded and, more importantly,
+                # carried ON THE GOAL, so anything that later asks "under
+                # what authority did she do this?" gets an answer instead of
+                # an absent key that reads like an unauthorized action.
+                goal["will_receipt"] = ""
+                goal["will_unaudited"] = True
+                _record_volition_degradation(
+                    "volition_action_authorization",
+                    RuntimeError("will approval carried no receipt id"),
+                    action=(
+                        "proceeded with an approved volition action that has "
+                        "no durable receipt"
+                    ),
+                    severity="critical",
+                    extra={"goal": str(goal.get("description") or goal.get("goal") or "")[:160]},
+                )
             return True
         except _VOLITION_RECOVERABLE_ERRORS as exc:
             _record_volition_degradation(

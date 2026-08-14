@@ -235,3 +235,50 @@ def test_a_verified_engine_records_nothing(monkeypatch):
         pass
 
     assert not recorded
+
+
+# ──────── an approval nobody can look up later
+
+
+def test_an_approval_without_a_receipt_is_marked_on_the_goal():
+    """`if receipt_id: goal["will_receipt"] = receipt_id` — and then
+    `return True` regardless.
+
+    An approval carrying no receipt proceeded with the key simply ABSENT,
+    which reads downstream exactly like an action that was never authorized.
+    An approval nobody can look up later is indistinguishable from no
+    approval at all once the logs roll.
+    """
+    source = (ROOT / "core" / "volition.py").read_text("utf-8")
+
+    assert 'goal["will_unaudited"] = True' in source, (
+        "an approved action with no receipt leaves will_receipt absent "
+        "again, so the audit gap is invisible to anything reading the goal"
+    )
+    assert 'goal["will_receipt"] = ""' in source, (
+        "the key should be present and empty rather than missing — a missing "
+        "key and an unaudited approval must not look the same"
+    )
+
+
+def test_the_action_still_proceeds_on_a_real_approval():
+    """The Will DID approve. Discarding a real approval over missing
+    bookkeeping would be its own failure."""
+    import ast
+
+    source = (ROOT / "core" / "volition.py").read_text("utf-8")
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        if 'goal["will_unaudited"] = True' not in rendered:
+            continue
+        # The branch records and marks; it must not return False.
+        assert "return False" not in rendered, (
+            "a missing receipt now suppresses an action the Will approved"
+        )
+        break
+    else:
+        raise AssertionError("the unaudited-approval branch was not found")
