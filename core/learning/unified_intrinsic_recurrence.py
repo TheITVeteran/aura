@@ -63,7 +63,7 @@ from core.learning.recurrent_state_schema import (
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
-PROCESS_TAPE_SCHEMA: Final = "aura.unified_intrinsic.process_tape.v2"
+PROCESS_TAPE_SCHEMA: Final = "aura.unified_intrinsic.process_tape.v3"
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -636,6 +636,53 @@ class UnifiedRecurrentController(nn.Module):
         scale = 0.25 * mx.stop_gradient(_rms(value.astype(mx.float32)))
         return value + (scale * identity[None, None, :]).astype(value.dtype)
 
+    def contextualize_process_tape(
+        self,
+        memory: Any,
+        mask: Any | None = None,
+    ) -> Any:
+        """Compose an ordered trace with causal self-attention.
+
+        Positional identity makes order observable, but direct cross-attention
+        still asks one read to infer every intermediate dependency.  This scan
+        gives each live event a representation of its complete causal prefix.
+        It reuses the answer bridge projections so legacy checkpoints remain
+        loadable without inventing untrained tensors.
+        """
+
+        if (
+            len(memory.shape) != 3
+            or int(memory.shape[-1]) != self.config.hidden_size
+            or int(memory.shape[1]) < 1
+        ):
+            raise ValueError("process tape memory differs from the residual layout")
+        if mask is None:
+            mask = mx.ones(memory.shape[:2], dtype=mx.bool_)
+        if len(mask.shape) != 2 or mask.shape != memory.shape[:2]:
+            raise ValueError("process tape causal mask differs")
+        wide = memory.astype(mx.float32)
+        query = wide @ self.answer_query
+        key = wide @ self.answer_key
+        value = wide @ self.answer_value
+        logits = (
+            mx.einsum("bnr,bmr->bnm", query, key)
+            / math.sqrt(self.config.correction_rank)
+        )
+        count = int(memory.shape[1])
+        indices = mx.arange(count)
+        causal = indices[:, None] >= indices[None, :]
+        allowed = causal[None, :, :] & mask[:, :, None] & mask[:, None, :]
+        logits = mx.where(allowed, logits, mx.array(-1e9, dtype=logits.dtype))
+        attention = mx.softmax(logits, axis=-1)
+        context = mx.einsum("bnm,bmr->bnr", attention, value)
+        delta = context @ self.answer_output
+        memory_rms = _rms(wide)
+        delta_rms = _rms(delta)
+        delta = delta * mx.minimum(1.0, memory_rms / delta_rms)
+        gate = mx.sigmoid(self.answer_gate_logit)
+        contextual = wide + gate * delta
+        return mx.where(mask[:, :, None], contextual, wide).astype(memory.dtype)
+
     def attend_answer_to_state(
         self,
         candidate: Any,
@@ -675,6 +722,8 @@ class UnifiedRecurrentController(nn.Module):
             or process_memory_mask.shape != memory.shape[:2]
         ):
             raise ValueError("answer process-memory mask differs")
+        if process_memory is not None:
+            memory = self.contextualize_process_tape(memory, process_memory_mask)
         query = answer @ self.answer_query
         key = memory @ self.answer_key
         value = memory @ self.answer_value
@@ -1713,12 +1762,13 @@ class UnifiedRecurrentController(nn.Module):
             ),
             "transformer_answer_passes_per_state": 1,
             "state_to_answer_bridge": (
-                "ordered_typed_masked_action_state_process_tape_attention_"
-                "over_frozen_readout"
+                "causally_contextualized_ordered_typed_masked_action_state_"
+                "process_tape_attention_over_frozen_readout"
             ),
             "process_tape": {
                 "schema": PROCESS_TAPE_SCHEMA,
                 "ordering": "bounded_sinusoidal_step_and_entry_kind",
+                "reader": "causal_self_attention_prefix_context",
                 "contents": ["typed_action", "committed_state"],
                 "terminal_stutter_entries_masked": True,
             },

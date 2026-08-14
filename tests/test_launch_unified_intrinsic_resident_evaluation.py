@@ -162,12 +162,13 @@ def _terminal_fixture(
         "identity": {
             "dataset": {"holdout_count": 1},
             "answer_bridge_supervision": {
-                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v3",
+                "schema": "aura.unified_intrinsic.answer_bridge_supervision.v4",
                 "answer_digit_pointer_enabled": False,
                 "generated_history_policy": "full_autonomous_prefix",
                 "process_tape": {
-                    "schema": "aura.unified_intrinsic.process_tape.v2",
+                    "schema": "aura.unified_intrinsic.process_tape.v3",
                     "ordering": "bounded_sinusoidal_step_and_entry_kind",
+                    "reader": "causal_self_attention_prefix_context",
                     "contents": ["typed_action", "committed_state"],
                     "entries_per_live_step": 13,
                     "terminal_stutter_entries_masked": True,

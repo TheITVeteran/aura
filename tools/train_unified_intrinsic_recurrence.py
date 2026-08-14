@@ -2968,7 +2968,7 @@ def main() -> int:
         )
         training_families = sorted({str(task.family) for task in train_tasks})
         answer_bridge_supervision = {
-            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v3",
+            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v4",
             "semantic_cross_entropy_families": training_families,
             "role_place_binding_families": sorted(
                 family for family in training_families if family in pointer_bound_families
@@ -2984,8 +2984,9 @@ def main() -> int:
                 else "grammar_preserving_digit_substitution"
             ),
             "process_tape": {
-                "schema": "aura.unified_intrinsic.process_tape.v2",
+                "schema": "aura.unified_intrinsic.process_tape.v3",
                 "ordering": "bounded_sinusoidal_step_and_entry_kind",
+                "reader": "causal_self_attention_prefix_context",
                 "contents": ["typed_action", "committed_state"],
                 "entries_per_live_step": len(ACTION_SLOT_NAMES) + len(STATE_SLOT_NAMES),
                 "terminal_stutter_entries_masked": True,

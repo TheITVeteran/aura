@@ -204,7 +204,7 @@ def _selected_checkpoint(
             supervision_identity.get("answer_digit_pointer_enabled")
             if isinstance(supervision_identity, dict)
             and supervision_identity.get("schema")
-            == "aura.unified_intrinsic.answer_bridge_supervision.v3"
+            == "aura.unified_intrinsic.answer_bridge_supervision.v4"
             else None
         )
         expected_history_policy = (
@@ -247,8 +247,9 @@ def _selected_checkpoint(
             or not isinstance(process_tape_identity, dict)
             or process_tape_identity
             != {
-                "schema": "aura.unified_intrinsic.process_tape.v2",
+                "schema": "aura.unified_intrinsic.process_tape.v3",
                 "ordering": "bounded_sinusoidal_step_and_entry_kind",
+                "reader": "causal_self_attention_prefix_context",
                 "contents": ["typed_action", "committed_state"],
                 "entries_per_live_step": 13,
                 "terminal_stutter_entries_masked": True,

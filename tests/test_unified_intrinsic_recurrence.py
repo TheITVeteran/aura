@@ -145,12 +145,13 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["transformer_answer_passes_per_state"] == 1
     assert (
         receipt["state_to_answer_bridge"]
-        == "ordered_typed_masked_action_state_process_tape_attention_"
-        "over_frozen_readout"
+        == "causally_contextualized_ordered_typed_masked_action_state_"
+        "process_tape_attention_over_frozen_readout"
     )
     assert receipt["process_tape"] == {
-        "schema": "aura.unified_intrinsic.process_tape.v2",
+        "schema": "aura.unified_intrinsic.process_tape.v3",
         "ordering": "bounded_sinusoidal_step_and_entry_kind",
+        "reader": "causal_self_attention_prefix_context",
         "contents": ["typed_action", "committed_state"],
         "terminal_stutter_entries_masked": True,
     }
@@ -351,6 +352,32 @@ def test_process_tape_attention_distinguishes_noncommutative_order() -> None:
     )
 
     assert not bool(mx.array_equal(forward_answer[:, 8:, :], reversed_answer[:, 8:, :]))
+
+
+def test_process_tape_reader_is_causal_and_masks_terminal_suffix() -> None:
+    controller = _controller()
+    prefix = mx.arange(3 * controller.config.hidden_size).reshape(
+        (1, 3, controller.config.hidden_size)
+    ).astype(mx.float32)
+    first_suffix = mx.ones((1, 2, controller.config.hidden_size), dtype=mx.float32)
+    second_suffix = mx.full(
+        (1, 2, controller.config.hidden_size), 7.0, dtype=mx.float32
+    )
+    first = mx.concatenate([prefix, first_suffix], axis=1)
+    second = mx.concatenate([prefix, second_suffix], axis=1)
+    all_live = mx.ones((1, 5), dtype=mx.bool_)
+    terminal_mask = mx.array([[True, True, True, False, False]])
+
+    first_context = controller.contextualize_process_tape(first, all_live)
+    second_context = controller.contextualize_process_tape(second, all_live)
+    masked_first = controller.contextualize_process_tape(first, terminal_mask)
+    masked_second = controller.contextualize_process_tape(second, terminal_mask)
+
+    assert bool(mx.array_equal(first_context[:, :3, :], second_context[:, :3, :]))
+    assert not bool(mx.array_equal(first_context[:, 3:, :], second_context[:, 3:, :]))
+    assert bool(mx.array_equal(masked_first[:, :3, :], masked_second[:, :3, :]))
+    assert bool(mx.array_equal(masked_first[:, 3:, :], first_suffix))
+    assert bool(mx.array_equal(masked_second[:, 3:, :], second_suffix))
 
 
 def test_process_tape_identity_rejects_invalid_entries() -> None:
