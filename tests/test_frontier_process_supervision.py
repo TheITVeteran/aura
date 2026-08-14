@@ -124,10 +124,16 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     planning = compile_frontier_process_supervision(
         generate_task("long_horizon_planning", seed=51_903, difficulty=2)
     ).program
+    scientific = compile_frontier_process_supervision(
+        generate_task("scientific_inference", seed=51_904, difficulty=2)
+    ).program
 
     novel_targets = action_targets_from_program(novel, novel.state_trace.depth)
     audit_targets = action_targets_from_program(audit, audit.state_trace.depth)
     planning_targets = action_targets_from_program(planning, planning.state_trace.depth)
+    scientific_targets = action_targets_from_program(
+        scientific, scientific.state_trace.depth
+    )
 
     # Traversal carries selection plus value operands, never the teacher's
     # precomputed checksum. Premise audit carries a row plus score operands,
@@ -142,6 +148,10 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
         row[3] == ACTION_NULL and row[5:7] == (ACTION_NULL,) * 2
         for row in planning_targets.values
     )
+    final_science_action = scientific_targets.values[-1]
+    expected_prediction_digits = scientific.state_trace.states[-1][2:4]
+    assert final_science_action[2:4] != expected_prediction_digits
+    assert all(value != ACTION_NULL for value in final_science_action)
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)

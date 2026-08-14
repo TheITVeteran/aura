@@ -44,9 +44,17 @@ _CODING_RE = re.compile(
     r"The two inputs, in order, are (?P<cases>\[\[.*?\]\])\. Return each result",
     re.DOTALL,
 )
-_SCIENCE_LABELS_RE = re.compile(
-    r"baseline values (?P<a>[a-z][a-z0-9_]*)=-?\d+, "
-    r"(?P<b>[a-z][a-z0-9_]*)=-?\d+, (?P<c>[a-z][a-z0-9_]*)=-?\d+\."
+_SCIENCE_RE = re.compile(
+    r"baseline values (?P<a>[a-z][a-z0-9_]*)=(?P<a_value>-?\d+), "
+    r"(?P<b>[a-z][a-z0-9_]*)=(?P<b_value>-?\d+), "
+    r"(?P<c>[a-z][a-z0-9_]*)=(?P<c_value>-?\d+)\. "
+    r"Independent interventions produced these changes relative to baseline: "
+    r"setting [a-z][a-z0-9_]* up by (?P<root_step>\d+) changed "
+    r"[a-z][a-z0-9_]* by \+(?P<root_mediator_change>\d+) and "
+    r"[a-z][a-z0-9_]* by \+(?P<root_downstream_change>\d+);.*?"
+    r"predict the absolute value of [a-z][a-z0-9_]* when "
+    r"[a-z][a-z0-9_]* is set (?P<query_step>\d+) above baseline",
+    re.DOTALL,
 )
 _PLANNING_RE = re.compile(
     r"overall horizon (?P<horizon>\d+)\. Tasks are (?P<tasks>\[\{.*?\}\])\. "
@@ -288,7 +296,7 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
 
 
 def _scientific(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
-    match = _SCIENCE_LABELS_RE.search(prompt)
+    match = _SCIENCE_RE.search(prompt)
     if match is None:
         raise ValueError("frontier scientific evidence is invalid")
     labels = [match.group("a"), match.group("b"), match.group("c")]
@@ -297,13 +305,44 @@ def _scientific(expected: dict[str, Any], prompt: str) -> StructuredTransitionPr
         mediator = labels.index(expected["mediator"])
         downstream = labels.index(expected["downstream"])
         prediction_lo, prediction_hi = _signed_digits(expected["predicted_downstream"])
+        baselines = [
+            int(match.group("a_value")),
+            int(match.group("b_value")),
+            int(match.group("c_value")),
+        ]
+        root_step = int(match.group("root_step"))
+        root_mediator_change = int(match.group("root_mediator_change"))
+        root_downstream_change = int(match.group("root_downstream_change"))
+        query_step = int(match.group("query_step"))
     except (KeyError, TypeError, ValueError):
         raise ValueError("frontier scientific answer is invalid") from None
+    if (
+        root_step < 1
+        or root_mediator_change % root_step
+        or root_mediator_change < 1
+        or root_downstream_change % root_mediator_change
+    ):
+        raise ValueError("frontier scientific public effects are not exact")
+    mediator_gain = root_mediator_change // root_step
+    downstream_gain = root_downstream_change // root_mediator_change
+    downstream_lo, downstream_hi = _digits(baselines[downstream])
+    public_prediction = (
+        baselines[downstream] + query_step * mediator_gain * downstream_gain
+    )
+    if public_prediction != expected["predicted_downstream"]:
+        raise ValueError("frontier scientific public effects differ from verified answer")
     actions = [
-        (0, root, 0, 0, 0),
-        (1, root, mediator, 0, 0),
-        (2, root, mediator, downstream, 0),
-        (3, prediction_lo, prediction_hi, downstream, 0),
+        (0, root, 0, 0, 0, 0),
+        (1, root, mediator, 0, 0, 0),
+        (2, root, mediator, downstream, 0, 0),
+        (
+            3,
+            downstream_lo,
+            downstream_hi,
+            query_step,
+            mediator_gain,
+            downstream_gain,
+        ),
     ]
     role_pair = root * 3 + mediator
     states = [
@@ -317,7 +356,7 @@ def _scientific(expected: dict[str, Any], prompt: str) -> StructuredTransitionPr
         family="frontier_scientific_inference",
         field_names=("pc", "role_pair", "prediction_lo", "prediction_hi", "done"),
         states=states,
-        action_field_names=("stage", "arg0", "arg1", "arg2", "arg3"),
+        action_field_names=("stage", "arg0", "arg1", "arg2", "arg3", "arg4"),
         actions=actions,
     )
 

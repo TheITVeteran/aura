@@ -1768,9 +1768,20 @@ class UnifiedRecurrentController(nn.Module):
                 value0,
             ),
         )
+        downstream_base = arg1 + PROCESS_RADIX * arg2
+        inferred_prediction = downstream_base + arg3 * arg4 * arg5
+        inferred_prediction_encoded = inferred_prediction * 2
         value0 = mx.where(is_infer, inferred_role, value0)
-        value1 = mx.where(is_infer & (arg0 == 3), arg1, value1)
-        value2 = mx.where(is_infer & (arg0 == 3), arg2, value2)
+        value1 = mx.where(
+            is_infer & (arg0 == 3),
+            inferred_prediction_encoded % PROCESS_RADIX,
+            value1,
+        )
+        value2 = mx.where(
+            is_infer & (arg0 == 3),
+            inferred_prediction_encoded // PROCESS_RADIX,
+            value2,
+        )
 
         is_schedule = opcode == OP_FRONTIER_SCHEDULE
         reward = state[:, 2] + PROCESS_RADIX * state[:, 3]

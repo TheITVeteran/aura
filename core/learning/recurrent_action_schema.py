@@ -145,9 +145,10 @@ def _canonical_instruction(
         "arg1",
         "arg2",
         "arg3",
+        "arg4",
     ):
         opcode = OP_FRONTIER_INFER
-        arguments[:5] = action
+        arguments[:] = action
     elif family == "frontier_long_horizon_planning" and field_names == (
         "task_index",
         "duration",
