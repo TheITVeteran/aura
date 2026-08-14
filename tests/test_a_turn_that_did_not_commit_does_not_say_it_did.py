@@ -24,6 +24,7 @@ Around that sat four more of the same shape:
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -974,3 +975,116 @@ def test_the_reasoning_layer_follows_a_router_replacement():
     assert "self._reasoning is None or self._reasoning_router is not router" in source
     assert "with self._reasoning_lock:" in source
     assert "async def _raw_generate(p, _router=router, **kw):" in source
+
+
+# ─────────────────── recovery cannot revert work it did not author
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_is_refused_when_another_turn_has_committed():
+    """The rollback fired on a free-text reason with no version and no
+    precondition, so a failed turn could revert cognitive state a concurrent
+    turn had just committed."""
+    from types import SimpleNamespace
+
+    from core.state.state_repository import StateRepository
+
+    repo = StateRepository.__new__(StateRepository)
+    # `lock` is a lazy property backed by _lock.
+    repo._lock = asyncio.Lock()
+    repo._current = SimpleNamespace(version=12)
+
+    result = await repo.rollback("recovery: timeout", expected_version=7)
+
+    # Refused: the repository moved past the version the caller authored.
+    assert result is repo._current
+    assert result.version == 12
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_without_a_precondition_still_works():
+    """Callers that legitimately have no version to assert are unaffected."""
+    from types import SimpleNamespace
+
+    from core.state.state_repository import StateRepository
+
+    repo = StateRepository.__new__(StateRepository)
+    repo._lock = asyncio.Lock()
+    repo._current = SimpleNamespace(version=3)
+
+    async def _history(limit=2):
+        return []
+
+    repo.get_history = _history
+
+    # Insufficient history returns current; the point is that it was ATTEMPTED
+    # rather than refused by the precondition.
+    assert await repo.rollback("recovery: crash") is repo._current
+
+
+def test_recovery_passes_the_version_this_turn_authored():
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert source.count('authored_version=int(getattr(state, "version", 0) or 0),') == 2
+    assert "expected_version=authored_version," in source
+
+
+# ─────────────────── an unverified reflex is not certainty
+
+
+def test_a_reflex_answer_is_not_assigned_certainty():
+    """A reflex is a pattern match against the objective. 1.0 was the highest
+    confidence this engine can express, assigned to the answer with the least
+    evidence behind it."""
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert 'reasoning=[f"Reactive recovery via reflex matrix ({reason})"],' not in source
+    assert '"reflex_response": True, "verified": False' in source
+
+
+# ─────────────────── a reply that says it logged the turn logs the turn
+
+
+def test_a_deferred_recovery_writes_the_record_it_claims():
+    """The reply says "I logged this turn". Nothing wrote a record — a
+    sentence about bookkeeping standing in for the bookkeeping."""
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    engine = CognitiveEngine()
+    engine._record_recovery_deferral("what is 2+2?", "user", "timeout", "lock_busy")
+
+    deferrals = engine.recovery_deferrals()
+    assert len(deferrals) == 1
+    assert deferrals[0]["kind"] == "lock_busy"
+    assert deferrals[0]["reason"] == "timeout"
+    assert "2+2" in deferrals[0]["objective_preview"]
+
+
+def test_the_deferral_preview_is_scrubbed():
+    from core.brain.cognitive_engine import CognitiveEngine
+
+    engine = CognitiveEngine()
+    engine._record_recovery_deferral(
+        "mail bryan@example.com about it", "user", "timeout", "recursion_guard"
+    )
+
+    assert "bryan@example.com" not in engine.recovery_deferrals()[0]["objective_preview"]
+
+
+def test_both_deferral_paths_record():
+    import inspect
+
+    import core.brain.cognitive_engine as engine_mod
+
+    source = inspect.getsource(engine_mod)
+
+    assert source.count("self._record_recovery_deferral(") == 2
+    assert source.count('"recovery_deferral_recorded": True') == 2

@@ -1805,10 +1805,29 @@ class StateRepository:
             logger.debug("StateRepository persistence probe skipped: %s", _e)
         return False
 
-    async def rollback(self, reason: str = "Unknown") -> AuraState | None:
-        """Rollback to the last stable state in the log."""
+    async def rollback(
+        self, reason: str = "Unknown", *, expected_version: int | None = None
+    ) -> AuraState | None:
+        """Rollback to the last stable state in the log.
+
+        ``expected_version`` is a compare-and-swap precondition: the caller
+        says which version it believes is current, and a rollback is refused
+        when the repository has moved past it. Without it a failed turn could
+        revert a state some OTHER turn had committed in the meantime — the
+        caller had no way to prove it authored what it was undoing.
+        """
         async with self.lock:
             logger.warning("🚨 [STATE] Initiating Rollback. Reason: %s", reason)
+            if expected_version is not None and self._current is not None:
+                current_version = int(getattr(self._current, "version", 0) or 0)
+                if current_version != int(expected_version):
+                    logger.error(
+                        "🛑 [STATE] Rollback refused: current version %d is not the "
+                        "caller's expected %d; another turn has committed since.",
+                        current_version,
+                        int(expected_version),
+                    )
+                    return self._current
             history = await self.get_history(limit=2)
             if len(history) < 2:
                 logger.error("🛑 [STATE] Rollback failed: Insufficient history.")

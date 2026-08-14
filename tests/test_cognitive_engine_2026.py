@@ -34,9 +34,14 @@ class RecoveryRepositoryProbe:
         self.rollback_started = rollback_started
         self.release_rollback = release_rollback
         self.rollback_reasons = []
+        self.rollback_versions = []
 
-    async def rollback(self, reason):
+    async def rollback(self, reason, *, expected_version=None):
+        # expected_version is the compare-and-swap precondition: recovery says
+        # which version it authored, and the repository refuses to revert work
+        # a concurrent turn committed since.
         self.rollback_reasons.append(reason)
+        self.rollback_versions.append(expected_version)
         self.rollback_started.set()
         await self.release_rollback.wait()
 

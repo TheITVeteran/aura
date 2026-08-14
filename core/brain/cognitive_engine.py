@@ -2887,6 +2887,9 @@ class CognitiveEngine:
                     origin,
                     "timeout",
                     context=context,
+                    # The version THIS turn derived. A rollback that cannot
+                    # match it is undoing somebody else's work.
+                    authored_version=int(getattr(state, "version", 0) or 0),
                 )
             except (sqlite3.Error, *_COGNITIVE_ENGINE_RECOVERABLE_ERRORS) as e:
                 # This caught sqlite3.Error and OSError only, so the failures a
@@ -2929,6 +2932,7 @@ class CognitiveEngine:
                     origin,
                     f"crash: {e}",
                     context=context,
+                    authored_version=int(getattr(state, "version", 0) or 0),
                 )
             finally:
                 # Closed here rather than after the loop so a tick that timed
@@ -4724,6 +4728,33 @@ class CognitiveEngine:
             },
         )
 
+    def _record_recovery_deferral(
+        self, objective: Any, origin: str, reason: str, kind: str
+    ) -> None:
+        """Write the record the deferral reply says exists."""
+        receipt = {
+            "kind": str(kind),
+            "reason": str(reason),
+            "origin": str(origin or ""),
+            "objective_preview": self._log_safe_objective(objective, limit=120),
+            "at": time.time(),
+        }
+        deferrals = getattr(self, "_recovery_deferrals", None)
+        if deferrals is None:
+            deferrals = deque(maxlen=64)
+            self._recovery_deferrals = deferrals
+        deferrals.append(receipt)
+        record_degradation(
+            "cognitive_engine",
+            RuntimeError(f"reactive_recovery_deferred:{kind}"),
+            severity="warning",
+            action="deferred a reactive recovery and recorded the turn",
+        )
+
+    def recovery_deferrals(self) -> list[dict[str, Any]]:
+        """Turns that were told they had been logged."""
+        return [dict(entry) for entry in (getattr(self, "_recovery_deferrals", None) or ())]
+
     async def _reactive_recovery(
         self,
         objective: str,
@@ -4732,6 +4763,7 @@ class CognitiveEngine:
         reason: str,
         *,
         context: dict[str, Any] | None = None,
+        authored_version: int | None = None,
     ) -> Thought:
         """
         Emergency reactive response when the main cognitive loop fails.
@@ -4748,22 +4780,31 @@ class CognitiveEngine:
         # Only use the mutex to guard the flag flip; long-running recovery work
         # must happen outside the lock so watchdogs don't see a false deadlock.
         if not await self._recovery_lock.acquire_robust(timeout=1.0):
+            # The reply says the turn was logged, so log it. It claimed a
+            # record that nothing wrote — a sentence about bookkeeping standing
+            # in for the bookkeeping.
+            self._record_recovery_deferral(objective, origin, reason, "lock_busy")
             return Thought(
                 id=str(uuid.uuid4()),
                 content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a second recovery fragment.",
                 mode=ThinkingMode.FAST,
                 confidence=0.2,
                 reasoning=["Recovery lock busy"],
+                metadata={"recovery_deferral_recorded": True},
             )
 
         try:
             if getattr(self, "_recovery_in_progress", False):
+                self._record_recovery_deferral(
+                    objective, origin, reason, "recursion_guard"
+                )
                 return Thought(
                     id=str(uuid.uuid4()),
                     content="Reactive recovery is still gathering a stable answer; I logged this turn instead of emitting a duplicate recovery fragment.",
                     mode=ThinkingMode.FAST,
                     confidence=0.2,
                     reasoning=["Recovery recursion guard triggered"],
+                    metadata={"recovery_deferral_recorded": True},
                 )
             self._recovery_in_progress = True
         finally:
@@ -4774,12 +4815,20 @@ class CognitiveEngine:
             logger.warning("⚡ [COGNITION] Initiating Reactive Recovery Phase. Reason: %s", reason)
 
             # 1. Rollback state to last stable version (with timeout + guard)
+            #
+            # Only if THIS turn authored what is being reverted. The rollback
+            # used to fire on a free-text reason alone, with no version, no
+            # precondition and no proof of authorship — so a failed turn could
+            # revert cognitive state a concurrent turn had just committed.
             try:
                 async with asyncio.timeout(5.0):
                     if self.state_repository is not None:
                         # StateRepository is the canonical rollback owner and
                         # creates the state-mutation receipt around persistence.
-                        await self.state_repository.rollback(f"recovery: {reason}")
+                        await self.state_repository.rollback(
+                            f"recovery: {reason}",
+                            expected_version=authored_version,
+                        )
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_err:
                 record_degradation(
                     "cognitive_engine",
@@ -4811,8 +4860,17 @@ class CognitiveEngine:
                     id=str(uuid.uuid4()),
                     content=reflex,
                     mode=ThinkingMode.FAST,
-                    confidence=1.0,
-                    reasoning=[f"Reactive recovery via reflex matrix ({reason})"],
+                    # A reflex is a pattern match against the objective. It is
+                    # useful and it is unverified — nothing checked that this
+                    # answer is right for this turn — and 1.0 was the highest
+                    # confidence this engine can express, assigned to the one
+                    # answer with the least evidence behind it.
+                    confidence=0.5,
+                    reasoning=[
+                        f"Reactive recovery via reflex matrix ({reason})",
+                        "Pattern-matched reflex; no verification ran on this answer.",
+                    ],
+                    metadata={"reflex_response": True, "verified": False},
                 )
 
             structured = self._structured_evaluation_thought(

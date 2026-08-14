@@ -374,10 +374,11 @@ async def test_cognitive_engine_reactive_recovery_delegates_rollback_governance_
     captured = {}
 
     class _Repo:
-        async def rollback(self, reason):
+        async def rollback(self, reason, *, expected_version=None):
             token = get_active_governance()
             captured["reason"] = reason
             captured["token"] = token
+            captured["expected_version"] = expected_version
 
     class _Router:
         async def think(self, **_kwargs):
