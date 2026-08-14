@@ -866,6 +866,91 @@ def unified_intrinsic_training_loss(
     }
 
 
+def unified_process_training_loss(
+    model: Any,
+    tokens: Any,
+    controller: UnifiedRecurrentController,
+    plan: RecurrentDepthPlan,
+    *,
+    transition_trace: Any,
+    transition_program: Any,
+    state_teacher_forcing_probability: float,
+    state_weight: float = 1.0,
+) -> tuple[Any, dict[str, Any]]:
+    """Train the autonomous typed process without constructing answer graphs.
+
+    State acquisition needs the public-prefix transformer parser and the typed
+    transition controller. It does not need teacher-forced answer tokens, one
+    coda decode per recurrent step, or zero-weight shallower-depth objectives.
+    Keeping those graphs made the 1.5B process lane exceed the host's 48 GB
+    intervention ceiling despite gradient checkpointing.
+    """
+
+    if transition_trace is None or transition_program is None:
+        raise ValueError("process training requires exact state and action supervision")
+    if (
+        isinstance(state_weight, bool)
+        or not isinstance(state_weight, (int, float))
+        or not 0.0 < float(state_weight) <= 10.0
+    ):
+        raise ValueError("process state weight must be inside (0, 10]")
+    targets = state_targets_from_trace(transition_trace, plan.iterations)
+    action_targets = action_targets_from_program(transition_program, plan.iterations)
+    initial_state_logits: list[Any] = []
+    action_logits: list[Any] = []
+    state_logits: list[Any] = []
+    recurrent_states: list[Any]
+    _final, recurrent_states, _telemetry = unified_recurrent_hidden_states(
+        model,
+        tokens,
+        plan,
+        controller,
+        soft_memory_writes=True,
+        state_slot_start=int(tokens.shape[-1]),
+        state_logit_trajectory=state_logits,
+        action_logit_trajectory=action_logits,
+        initial_state_logit_trajectory=initial_state_logits,
+        state_teacher_values=targets.values,
+        action_teacher_values=action_targets.values,
+        initial_state_teacher_values=targets.initial_values,
+        state_teacher_forcing_probability=state_teacher_forcing_probability,
+        process_only=True,
+    )
+    if len(initial_state_logits) != 1:
+        raise RuntimeError("typed process emitted no initial-state decision")
+    state_loss, state_accuracy, state_step_accuracy = structured_state_loss(
+        controller,
+        recurrent_states,
+        targets,
+        public_token_count=int(tokens.shape[-1]),
+        state_slot_start=int(tokens.shape[-1]),
+        state_logits=state_logits,
+    )
+    initial_loss, initial_accuracy = structured_initial_state_loss(
+        initial_state_logits[0],
+        targets,
+    )
+    action_loss, action_accuracy, action_step_accuracy = structured_action_loss(
+        action_logits,
+        action_targets,
+    )
+    process_loss = (state_loss + initial_loss + action_loss) / 3.0
+    return float(state_weight) * process_loss, {
+        "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
+        "objective": "prompt_only_typed_process",
+        "depth": plan.iterations,
+        "state_accuracy": state_accuracy,
+        "initial_state_accuracy": initial_accuracy,
+        "action_accuracy": action_accuracy,
+        "state_step_accuracy": list(state_step_accuracy),
+        "action_step_accuracy": list(action_step_accuracy),
+        "teacher_forcing_probability": state_teacher_forcing_probability,
+        "answer_tokens_exposed": False,
+        "answer_or_coda_graph_constructed": False,
+        "total": float((float(state_weight) * process_loss).item()),
+    }
+
+
 __all__ = [
     "UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA",
     "UnifiedIntrinsicTrainingSpec",
@@ -879,4 +964,5 @@ __all__ = [
     "unified_answer_and_recurrent_trajectory",
     "unified_answer_trajectory",
     "unified_intrinsic_training_loss",
+    "unified_process_training_loss",
 ]

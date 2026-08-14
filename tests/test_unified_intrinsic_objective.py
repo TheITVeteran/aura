@@ -29,6 +29,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_answer_and_recurrent_trajectory,
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
+    unified_process_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
@@ -322,6 +323,66 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
     assert commitment["private_values_exposed"] is False
     assert "values" not in commitment
     assert commitment["action"]["private_values_exposed"] is False
+
+
+def test_process_objective_uses_public_prompt_without_answer_or_coda_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.learning.unified_intrinsic_recurrence as recurrence
+
+    model = _model()
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    layer_calls: list[int] = []
+    actual_run = recurrence._run
+
+    def tracked_run(layers, hidden, caches=None):
+        materialized = list(layers)
+        layer_calls.append(len(materialized))
+        return actual_run(materialized, hidden, caches)
+
+    monkeypatch.setattr(recurrence, "_run", tracked_run)
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_process_training_loss(
+            model,
+            TOKENS,
+            candidate,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            state_teacher_forcing_probability=1.0,
+        )[0]
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+    assert float(loss.item()) > 0.0
+    assert float(mx.max(mx.abs(flat["state_transition_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["action_output"]))) > 0.0
+    _loss, receipt = unified_process_training_loss(
+        model,
+        TOKENS,
+        controller,
+        _spec().plan_at(3),
+        transition_trace=trace,
+        transition_program=program,
+        state_teacher_forcing_probability=1.0,
+    )
+    assert receipt["objective"] == "prompt_only_typed_process"
+    assert receipt["answer_tokens_exposed"] is False
+    assert receipt["answer_or_coda_graph_constructed"] is False
+    assert layer_calls == [2, 2, 2, 2]
 
 
 def test_initial_state_loss_ignores_inactive_padding_slots() -> None:

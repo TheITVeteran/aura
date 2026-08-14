@@ -1930,6 +1930,7 @@ def unified_recurrent_hidden_states(
     state_teacher_forcing_probability: float = 0.0,
     typed_action_lesion: bool = False,
     process_tape_lesion: bool = False,
+    process_only: bool = False,
     caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
@@ -1941,6 +1942,7 @@ def unified_recurrent_hidden_states(
         or type(soft_memory_writes) is not bool
         or type(typed_action_lesion) is not bool
         or type(process_tape_lesion) is not bool
+        or type(process_only) is not bool
     ):
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
@@ -1982,6 +1984,18 @@ def unified_recurrent_hidden_states(
         raise ValueError("typed action lesion cannot accompany an action teacher")
     if typed_action_lesion and state_slot_start is None:
         raise ValueError("typed action lesion requires typed state slots")
+    if process_only and state_slot_start is None:
+        raise ValueError("process-only recurrence requires typed state slots")
+    if process_only and any(
+        value is not None
+        for value in (
+            decode_state_trajectory,
+            answer_role_logit_trajectory,
+            answer_place_logit_trajectory,
+            answer_binding_feature_trajectory,
+        )
+    ):
+        raise ValueError("process-only recurrence cannot emit answer trajectories")
     if state_teacher_values is not None and len(state_teacher_values) < plan.iterations:
         raise ValueError("state teacher roll-in is shorter than the recurrence plan")
     if action_teacher_values is not None and len(action_teacher_values) < plan.iterations:
@@ -2232,30 +2246,35 @@ def unified_recurrent_hidden_states(
                     )
                 if state_probability_trajectory is not None:
                     state_probability_trajectory.append(state_probabilities)
-                # State recurrence is cheap and explicit.  The resident
-                # transformer is used once per candidate state as the shared
-                # semantic answer bridge, never as the state transition itself.
-                candidate = _run(window, hidden)
-                candidate = controller.correction(candidate, iteration)
-                candidate = controller.attend_answer_to_state(
-                    candidate,
-                    hidden,
-                    state_slot_start=state_slot_start,
-                    state_probabilities=state_probabilities,
-                    process_memory=(
-                        mx.concatenate(process_tape, axis=1)
-                        if process_tape
-                        else None
-                    ),
-                    process_memory_mask=(
-                        mx.concatenate(process_tape_masks, axis=1)
-                        if process_tape_masks
-                        else None
-                    ),
-                    role_logit_trajectory=answer_role_logit_trajectory,
-                    place_logit_trajectory=answer_place_logit_trajectory,
-                    binding_feature_trajectory=answer_binding_feature_trajectory,
-                )
+                # Process acquisition and answer emission are distinct graphs.
+                # The typed transition depends on the prefix parser and prior
+                # registers above; the candidate window/coda exists only to
+                # emit language. Retaining it during process-only training used
+                # tens of gigabytes while contributing no non-zero objective.
+                if process_only:
+                    candidate = hidden
+                else:
+                    candidate = _run(window, hidden)
+                    candidate = controller.correction(candidate, iteration)
+                    candidate = controller.attend_answer_to_state(
+                        candidate,
+                        hidden,
+                        state_slot_start=state_slot_start,
+                        state_probabilities=state_probabilities,
+                        process_memory=(
+                            mx.concatenate(process_tape, axis=1)
+                            if process_tape
+                            else None
+                        ),
+                        process_memory_mask=(
+                            mx.concatenate(process_tape_masks, axis=1)
+                            if process_tape_masks
+                            else None
+                        ),
+                        role_logit_trajectory=answer_role_logit_trajectory,
+                        place_logit_trajectory=answer_place_logit_trajectory,
+                        binding_feature_trajectory=answer_binding_feature_trajectory,
+                    )
                 if prior_terminal_mask is not None:
                     # A completed program stutters semantically as well as in
                     # its typed registers. Re-running the transformer window
@@ -2373,12 +2392,15 @@ def unified_recurrent_hidden_states(
             break
 
     final_source = last_decode_state if last_decode_state is not None else hidden
-    final = _run(
-        layers[plan.coda_start :],
-        final_source,
-        caches["coda"] if caches else None,
-    )
-    final = inner.norm(final)
+    if process_only:
+        final = final_source
+    else:
+        final = _run(
+            layers[plan.coda_start :],
+            final_source,
+            caches["coda"] if caches else None,
+        )
+        final = inner.norm(final)
     retention = None
     residuals: tuple[float, ...] = ()
     if memory_layout is not None and trajectory:

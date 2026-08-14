@@ -64,6 +64,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_state_loss,
     unified_answer_and_recurrent_trajectory,
     unified_intrinsic_training_loss,
+    unified_process_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     PROCESS_READER_PARAMETER_NAMES,
@@ -3937,7 +3938,30 @@ def main() -> int:
                                 ),
                             )[0]
 
-                        if phase == "recurrence":
+                        if phase == "state_transition":
+
+                            def process_objective(
+                                candidate: UnifiedTrainingBundle,
+                                objective_prompt: Any,
+                                transition_trace: Any = task.transition_trace,
+                                transition_program: Any = task.transition_program,
+                            ) -> Any:
+                                return unified_process_training_loss(
+                                    candidate.model,
+                                    objective_prompt,
+                                    candidate.controller,
+                                    state_spec.plan_at(max(state_spec.train_depths)),
+                                    transition_trace=transition_trace,
+                                    transition_program=transition_program,
+                                    state_teacher_forcing_probability=1.0,
+                                    state_weight=state_spec.state_weight,
+                                )[0]
+
+                            loss, gradients = nn.value_and_grad(
+                                bundle,
+                                process_objective,
+                            )(bundle, prompt)
+                        elif phase == "recurrence":
                             loss, gradients = _streamed_recurrent_objective_gradients(
                                 bundle,
                                 prompt,
