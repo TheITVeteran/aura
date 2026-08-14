@@ -683,11 +683,19 @@ async def test_cognitive_engine_desktop_quick_reply_includes_recent_context(monk
                 "User: The live desktop lane lost context.\n"
                 "Aura: I should preserve bounded recent exchanges through CognitiveEngine."
             ),
+            # Stamped as the chat route produces them. These become user and
+            # ASSISTANT messages, so an unattested entry would be an assistant
+            # turn Aura never took, quoted back to her as her own prior words.
             "recent_completed_exchanges": [
-                {
-                    "user": "The live desktop lane lost context.",
-                    "aura": "I should preserve bounded recent exchanges through CognitiveEngine.",
-                }
+                stamp_runtime_payload(
+                    {
+                        "user": "The live desktop lane lost context.",
+                        "aura": (
+                            "I should preserve bounded recent exchanges "
+                            "through CognitiveEngine."
+                        ),
+                    }
+                )
             ],
             "cognitive_engine_required": True,
             "desktop_cognitive_engine_required": True,

@@ -926,6 +926,23 @@ def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, An
     return generation_controls
 
 
+#: Reported once per shape: a caller that always passes unattested history
+#: would otherwise fill the trail.
+_UNATTESTED_EXCHANGE_SEEN: set[str] = set()
+
+
+def _note_unattested_exchange(entry: Any) -> None:
+    shape = ",".join(sorted(str(key) for key in entry)) if isinstance(entry, dict) else "non_dict"
+    if shape in _UNATTESTED_EXCHANGE_SEEN:
+        return
+    _UNATTESTED_EXCHANGE_SEEN.add(shape)
+    logger.warning(
+        "🔏 Dropped a conversation exchange with no runtime stamp (keys: %s). "
+        "Its producer should call injected_blocks.stamp_runtime_payload().",
+        shape,
+    )
+
+
 def _desktop_history_messages_from_context(
     context: dict[str, Any],
     *,
@@ -935,9 +952,19 @@ def _desktop_history_messages_from_context(
     if not isinstance(exchanges, (list, tuple)):
         return []
 
+    from core.utils.injected_blocks import is_stamped_runtime_payload
+
     messages: list[dict[str, str]] = []
     for entry in list(exchanges)[-max(1, int(max_pairs)) :]:
         if not isinstance(entry, dict):
+            continue
+        # These become user and assistant MESSAGES. An entry this runtime did
+        # not produce would become an assistant turn Aura never took, quoted
+        # back to her as her own prior words — and she would answer as if she
+        # had said it. The stamp is per entry, so a forged one mixed into a
+        # real list is dropped on its own.
+        if not is_stamped_runtime_payload(entry):
+            _note_unattested_exchange(entry)
             continue
         user_text = _compact_text(entry.get("user"), limit=420)
         aura_text = _compact_text(entry.get("aura"), limit=520)
@@ -1404,6 +1431,17 @@ class CognitiveEngine:
     #: they were bounded there and concatenated raw here.
     _STYLE_CONTRACT_LIMIT = 1_400
     _MIND_CONTRACT_LIMIT = 900
+
+    @staticmethod
+    def _bounded_request_int(raw: Any, *, default: int, low: int, high: int) -> int:
+        """An integer from caller context, or the default. Never a raise."""
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return default
+        if value != value or value in (float("inf"), float("-inf")):
+            return default
+        return max(low, min(high, int(value)))
 
     @staticmethod
     def _log_safe_objective(objective: Any, limit: int = 50) -> str:
@@ -3692,7 +3730,13 @@ class CognitiveEngine:
         container = get_container()
         router = container.get("llm_router", default=None)
 
-        max_tokens = int(context.get("max_tokens") or 768)
+        # int() on caller input, outside the guarded router call below: a
+        # string or a NaN raised TypeError/ValueError here and took the turn
+        # down before any bounded failure thought could be produced. A bad
+        # request is a bad request, not a crash.
+        max_tokens = self._bounded_request_int(
+            context.get("max_tokens"), default=768, low=1, high=32_768
+        )
         advice = context.get("spiking_active_inference")
         imagination_frame = context.get("imagination_workspace")
         bicameral_frame = context.get("bicameral_advisory")
@@ -4897,6 +4941,24 @@ class CognitiveEngine:
         if self.stopped:
             raise RuntimeError(f"cognitive_engine_stopped:{operation}")
 
+    @staticmethod
+    def _structured_floor_receipt(fast_path: bool) -> dict[str, Any]:
+        """Say that this answer skipped the pipeline it is standing in for.
+
+        On proof, eval, evaluation, benchmark and test origins the structured
+        floor runs BEFORE spine handling, augmentors, the thinking loop, phase
+        execution and the state commit. The answer is legitimate; what it is
+        not is evidence that the modular cognitive cycle ran. A benchmark that
+        passes on a floor and reads its result as a full-cycle result is
+        measuring the floor, so the result says which it was.
+        """
+        return {
+            "pipeline_executed": False,
+            "structured_floor": True,
+            "structured_floor_fast_path": bool(fast_path),
+            "measures_full_cognitive_cycle": False,
+        }
+
     def _structured_evaluation_thought(
         self,
         objective: str,
@@ -4919,6 +4981,11 @@ class CognitiveEngine:
 
                     direct = deterministic_user_facing_floor(objective)
                     if direct:
+                        floor_metadata = self._live_mind_structured_floor_metadata(
+                            context,
+                            source="deterministic_user_facing_floor",
+                        )
+                        floor_metadata.update(self._structured_floor_receipt(fast_path))
                         thought = Thought(
                             id=str(uuid.uuid4()),
                             content=direct,
@@ -4927,11 +4994,9 @@ class CognitiveEngine:
                             reasoning=[
                                 "Deterministic bounded-answer floor selected before model generation.",
                                 "Response computed from the prompt shape; no fixture keys or benchmark ids used.",
+                                "The modular phase pipeline did not run for this answer.",
                             ],
-                            metadata=self._live_mind_structured_floor_metadata(
-                                context,
-                                source="deterministic_user_facing_floor",
-                            ),
+                            metadata=floor_metadata,
                         )
                         self.thoughts.append(thought)
                         return thought
@@ -4939,6 +5004,11 @@ class CognitiveEngine:
             if not fast_path and response.kind not in {"safety_refusal"}:
                 return None
 
+            floor_metadata = self._live_mind_structured_floor_metadata(
+                context,
+                source=f"structured_evaluation:{response.kind}",
+            )
+            floor_metadata.update(self._structured_floor_receipt(fast_path))
             thought = Thought(
                 id=str(uuid.uuid4()),
                 content=response.content,
@@ -4947,11 +5017,9 @@ class CognitiveEngine:
                 reasoning=[
                     f"Structured runtime evaluation floor selected: {response.kind}.",
                     "Response derived from current prompt shape; no fixture keys or benchmark ids used.",
+                    "The modular phase pipeline did not run for this answer.",
                 ],
-                metadata=self._live_mind_structured_floor_metadata(
-                    context,
-                    source=f"structured_evaluation:{response.kind}",
-                ),
+                metadata=floor_metadata,
             )
             self.thoughts.append(thought)
             return thought

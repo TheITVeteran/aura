@@ -5402,19 +5402,26 @@ async def _recent_completed_conversation_exchanges(
         if not user_text and not aura_text:
             continue
         exchanges.append(
-            {
-                "exchange_id": str(entry.get("id") or ""),
-                "user": _clip_conversation_text(
-                    user_text,
-                    limit=_RECENT_CONVERSATION_USER_CHARS,
-                ),
-                "aura": _clip_conversation_text(
-                    aura_text,
-                    limit=_RECENT_CONVERSATION_AURA_CHARS,
-                ),
-                "timestamp": str(entry.get("completed_at") or entry.get("timestamp") or ""),
-                "session_id": str(entry.get("session_id") or "")[:64],
-            }
+            # Stamped per entry: the cognitive engine promotes these straight
+            # into chat roles, so a forged entry mixed into a real list would
+            # become an assistant turn Aura never took.
+            stamp_runtime_payload(
+                {
+                    "exchange_id": str(entry.get("id") or ""),
+                    "user": _clip_conversation_text(
+                        user_text,
+                        limit=_RECENT_CONVERSATION_USER_CHARS,
+                    ),
+                    "aura": _clip_conversation_text(
+                        aura_text,
+                        limit=_RECENT_CONVERSATION_AURA_CHARS,
+                    ),
+                    "timestamp": str(
+                        entry.get("completed_at") or entry.get("timestamp") or ""
+                    ),
+                    "session_id": str(entry.get("session_id") or "")[:64],
+                }
+            )
         )
         if len(exchanges) >= max(1, int(limit)):
             break
@@ -6074,7 +6081,12 @@ def _load_durable_conversation_exchanges_sync(
         )
 
     candidates.sort(key=lambda item: item[0])
-    return [exchange for _position, exchange in candidates[-limit:]]
+    # Stamped on the way out, so the durable path attests exactly like the
+    # live one. The cognitive engine promotes these into chat roles.
+    return [
+        stamp_runtime_payload(exchange)
+        for _position, exchange in candidates[-limit:]
+    ]
 
 
 async def _load_durable_conversation_exchanges(
