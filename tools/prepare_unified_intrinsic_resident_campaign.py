@@ -255,6 +255,8 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "seed": 2026081401,
             "init_seed": 2026081402,
             "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
             "max_minutes": 60.0,
         }
     if profile == "canary":

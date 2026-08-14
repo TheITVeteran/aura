@@ -250,6 +250,8 @@ def test_process_canary_trains_scoped_tissue_on_autonomous_frontier_process() ->
     assert training["max_steps"] == 42
     assert training["state_teacher_forcing_probability"] == 1.0
     assert training["state_teacher_forcing_final_probability"] == 0.0
+    assert training["memory_limit_gb"] == 24.0
+    assert training["wired_limit_gb"] == 28.0
     assert arguments[arguments.index("--task-source") + 1] == "frontier_process"
     assert arguments[arguments.index("--window-tissue-mode") + 1] == "scoped_lora"
 
