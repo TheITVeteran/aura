@@ -26,6 +26,9 @@ import mlx.nn as nn  # noqa: E402
 import mlx.optimizers as optim  # noqa: E402
 from mlx.utils import tree_flatten, tree_map, tree_unflatten  # noqa: E402
 
+from core.learning.frontier_process_supervision import (  # noqa: E402
+    frontier_process_task_battery,
+)
 from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
     ACTION_SLOT_NAMES,
@@ -101,6 +104,7 @@ TRAINING_SOURCE_FILES = (
     "core/brain/llm/latent_cortex/recurrence_adapter.py",
     "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py",
     "core/learning/depth_conditioned_lora.py",
+    "core/learning/frontier_process_supervision.py",
     "core/learning/intrinsic_recurrence.py",
     "core/learning/protected_memory.py",
     "core/learning/recurrence_curriculum.py",
@@ -1208,15 +1212,22 @@ def _recurrent_training_task(
     tokenizer: Any,
     bridge: str,
     recurrence_index: int,
+    *,
+    cover_all_cells: bool = False,
 ) -> Any:
-    """Choose max-depth recurrence examples in deterministic memory-cost order."""
+    """Choose recurrence examples in deterministic memory-cost order.
+
+    The historical closed curriculum emphasizes its maximum-depth cells. Broad
+    process training must cover every family/depth cell because its domains have
+    intentionally different natural program lengths.
+    """
 
     if type(recurrence_index) is not int or recurrence_index < 0 or not tasks:
         raise ValueError("recurrent training task schedule is invalid")
     max_depth = max(int(task.depth) for task in tasks)
     ranked: list[tuple[int, str, str, Any]] = []
     for task in tasks:
-        if int(task.depth) != max_depth:
+        if not cover_all_cells and int(task.depth) != max_depth:
             continue
         prompt, answer = encode_example(tokenizer, task, bridge)
         ranked.append(
@@ -2254,6 +2265,22 @@ def main() -> int:
     parser.add_argument("--heldout-depths", default="8,16")
     parser.add_argument("--families", default="khop,modular,register_trace")
     parser.add_argument(
+        "--task-source",
+        choices=("curriculum", "frontier_process"),
+        default="curriculum",
+        help="select the closed recurrence curriculum or verified broad process tasks",
+    )
+    parser.add_argument(
+        "--frontier-difficulties",
+        default="1,2,3",
+        help="comma-separated frontier difficulty cells when --task-source=frontier_process",
+    )
+    parser.add_argument(
+        "--frontier-registry-version",
+        default="2026.08.06.1",
+        help="versioned frontier generator registry used for broad process supervision",
+    )
+    parser.add_argument(
         "--task-depth",
         type=int,
         help="legacy single task depth; overrides --task-depths when supplied",
@@ -2606,12 +2633,8 @@ def main() -> int:
         if args.task_depth is not None
         else tuple(int(value) for value in args.task_depths.split(","))
     )
-    if (
-        not task_depths
-        or any(depth < 1 for depth in task_depths)
-        or max(task_depths) > max(spec.train_depths)
-    ):
-        raise ValueError("task depths must be positive and inside the trained recurrence horizon")
+    if not task_depths or any(depth < 1 for depth in task_depths):
+        raise ValueError("task depths must be positive")
     families = tuple(
         value.strip() for value in args.families.split(",") if value.strip()
     )
@@ -2626,17 +2649,64 @@ def main() -> int:
     ensure_private_directory(out_dir)
     if args.tokenized_dataset is not None and args.dataset is None:
         raise RuntimeError("tokenized dataset requires a frozen source dataset")
+    frontier_difficulties = tuple(
+        int(value) for value in args.frontier_difficulties.split(",") if value
+    )
+    if args.task_source == "frontier_process" and args.task_depth is not None:
+        raise ValueError("frontier process tasks do not accept legacy --task-depth")
+    if args.task_source == "frontier_process" and (
+        not frontier_difficulties
+        or any(value not in (1, 2, 3) for value in frontier_difficulties)
+        or len(set(frontier_difficulties)) != len(frontier_difficulties)
+    ):
+        raise ValueError("frontier process difficulties must be unique values in {1,2,3}")
+    expected_task_families = (
+        {f"frontier_{domain}" for domain in families}
+        if args.task_source == "frontier_process"
+        else set(families)
+    )
+    expected_train_count = (
+        len(families) * len(frontier_difficulties) * args.per_cell
+        if args.task_source == "frontier_process"
+        else len(families) * len(task_depths) * args.per_cell
+    )
+    expected_holdout_count = (
+        len(families) * len(frontier_difficulties) * args.holdout_per_cell
+        if args.task_source == "frontier_process"
+        else len(families) * len(task_depths) * args.holdout_per_cell
+    )
     if args.dataset is not None:
         dataset_path = args.dataset.expanduser().resolve(strict=True)
         train_tasks, holdout = _load_frozen_dataset(dataset_path)
         if (
-            {task.family for task in train_tasks + holdout} != set(families)
-            or {task.depth for task in train_tasks + holdout} != set(task_depths)
-            or len(train_tasks) != len(families) * len(task_depths) * args.per_cell
-            or len(holdout)
-            != len(families) * len(task_depths) * args.holdout_per_cell
+            {task.family for task in train_tasks + holdout} != expected_task_families
+            or len(train_tasks) != expected_train_count
+            or len(holdout) != expected_holdout_count
         ):
             raise RuntimeError("unified recurrence frozen dataset differs from CLI")
+        if args.task_source == "curriculum" and (
+            {task.depth for task in train_tasks + holdout} != set(task_depths)
+        ):
+            raise RuntimeError("unified recurrence frozen task depths differ from CLI")
+    elif args.task_source == "frontier_process":
+        train_tasks = frontier_process_task_battery(
+            families,
+            frontier_difficulties,
+            args.per_cell,
+            seed=args.seed,
+            registry_version=args.frontier_registry_version,
+        )
+        holdout = frontier_process_task_battery(
+            families,
+            frontier_difficulties,
+            args.holdout_per_cell,
+            seed=args.seed + 9_973,
+            registry_version=args.frontier_registry_version,
+            excluded_prompts={task.prompt for task in train_tasks},
+        )
+        random.Random(args.seed).shuffle(train_tasks)
+        train_prompts = {task.prompt for task in train_tasks}
+        holdout = [task for task in holdout if task.prompt not in train_prompts]
     else:
         train_tasks = curriculum.task_battery(
             families,
@@ -2655,6 +2725,22 @@ def main() -> int:
         holdout = [task for task in holdout if task.prompt not in train_prompts]
     if not holdout:
         raise RuntimeError("unified recurrence holdout is empty")
+    observed_task_depths = tuple(
+        sorted({int(task.depth) for task in train_tasks + holdout})
+    )
+    frontier_depth_mismatch = args.task_source == "frontier_process" and any(
+        depth not in spec.train_depths for depth in observed_task_depths
+    )
+    curriculum_depth_mismatch = args.task_source == "curriculum" and (
+        max(observed_task_depths) > max(spec.train_depths)
+    )
+    if frontier_depth_mismatch or curriculum_depth_mismatch:
+        raise ValueError(
+            "task depths must all be explicitly present in --train-depths: "
+            + ",".join(map(str, observed_task_depths))
+        )
+    if args.task_source == "frontier_process":
+        task_depths = observed_task_depths
     missing_traces = [
         task.task_id
         for task in train_tasks + holdout
@@ -2789,6 +2875,9 @@ def main() -> int:
             "window_geometry": window_geometry,
             "families": list(families),
             "task_depths": list(task_depths),
+            "task_source": args.task_source,
+            "frontier_difficulties": list(frontier_difficulties),
+            "frontier_registry_version": args.frontier_registry_version,
             "per_cell": args.per_cell,
             "holdout_per_cell": args.holdout_per_cell,
             "seed": args.seed,
@@ -2965,6 +3054,7 @@ def main() -> int:
                         tokenizer,
                         bridge,
                         step - recurrent_start,
+                        cover_all_cells=args.task_source == "frontier_process",
                     )
                 else:
                     task = train_tasks[step % len(train_tasks)]

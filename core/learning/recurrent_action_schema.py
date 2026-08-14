@@ -29,6 +29,13 @@ OP_BOOL_AND: Final = 5
 OP_BOOL_OR: Final = 6
 OP_BOOL_XOR: Final = 7
 OP_REGISTER_AFFINE: Final = 8
+OP_FRONTIER_TRAVERSE: Final = 9
+OP_FRONTIER_ENUMERATE: Final = 10
+OP_FRONTIER_SIMULATE: Final = 11
+OP_FRONTIER_INFER: Final = 12
+OP_FRONTIER_SCHEDULE: Final = 13
+OP_FRONTIER_CALIBRATE: Final = 14
+OP_FRONTIER_AUDIT: Final = 15
 
 _OPCODE_LABELS: Final = {
     OP_COPY_VALUE: "copy value",
@@ -40,6 +47,13 @@ _OPCODE_LABELS: Final = {
     OP_BOOL_OR: "boolean or",
     OP_BOOL_XOR: "boolean xor",
     OP_REGISTER_AFFINE: "affine register update",
+    OP_FRONTIER_TRAVERSE: "select the next stable traversal item",
+    OP_FRONTIER_ENUMERATE: "advance exact constrained enumeration",
+    OP_FRONTIER_SIMULATE: "apply one stateful program event",
+    OP_FRONTIER_INFER: "advance one causal inference stage",
+    OP_FRONTIER_SCHEDULE: "commit one feasible schedule action",
+    OP_FRONTIER_CALIBRATE: "advance one exact calibration stage",
+    OP_FRONTIER_AUDIT: "audit one premise-bearing evidence row",
 }
 
 
@@ -91,6 +105,73 @@ def _canonical_instruction(
         "modulus",
     ):
         opcode = OP_REGISTER_AFFINE
+        arguments[:] = action
+    elif family == "frontier_novel_algorithms" and field_names == (
+        "selected_index",
+        "value_lo",
+        "value_hi",
+        "checksum_lo",
+        "checksum_hi",
+    ):
+        opcode = OP_FRONTIER_TRAVERSE
+        arguments[:5] = action
+    elif family == "frontier_mathematics" and field_names == (
+        "input_index",
+        "value_lo",
+        "value_hi",
+        "valid_added_lo",
+        "valid_added_hi",
+        "witness_member",
+    ):
+        opcode = OP_FRONTIER_ENUMERATE
+        arguments[:] = action
+    elif family == "frontier_coding" and field_names == (
+        "case_index",
+        "name_index",
+        "signed_delta",
+        "pressure",
+        "active_count",
+        "case_terminal",
+    ):
+        opcode = OP_FRONTIER_SIMULATE
+        arguments[:] = action
+    elif family == "frontier_scientific_inference" and field_names == (
+        "stage",
+        "arg0",
+        "arg1",
+        "arg2",
+        "arg3",
+    ):
+        opcode = OP_FRONTIER_INFER
+        arguments[:5] = action
+    elif family == "frontier_long_horizon_planning" and field_names == (
+        "task_index",
+        "duration",
+        "deadline",
+        "reward",
+        "dependency_code",
+    ):
+        opcode = OP_FRONTIER_SCHEDULE
+        arguments[:5] = action
+    elif family == "frontier_calibration" and field_names == (
+        "stage",
+        "numerator_lo",
+        "numerator_hi",
+        "denominator_lo",
+        "denominator_hi",
+        "decision_code",
+    ):
+        opcode = OP_FRONTIER_CALIBRATE
+        arguments[:] = action
+    elif family == "frontier_misleading_premise" and field_names == (
+        "project_index",
+        "impact",
+        "reliability",
+        "cost",
+        "score_lo",
+        "score_hi",
+    ):
+        opcode = OP_FRONTIER_AUDIT
         arguments[:] = action
     else:
         raise ValueError("structured action has no canonical micro-instruction")
@@ -229,6 +310,13 @@ __all__ = [
     "OP_COPY_VALUE",
     "OP_MUL_MOD",
     "OP_REGISTER_AFFINE",
+    "OP_FRONTIER_AUDIT",
+    "OP_FRONTIER_CALIBRATE",
+    "OP_FRONTIER_ENUMERATE",
+    "OP_FRONTIER_INFER",
+    "OP_FRONTIER_SCHEDULE",
+    "OP_FRONTIER_SIMULATE",
+    "OP_FRONTIER_TRAVERSE",
     "OP_SUB_MOD",
     "RECURRENT_ACTION_SCHEMA",
     "RecurrentActionTargets",

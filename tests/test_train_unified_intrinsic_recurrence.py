@@ -331,6 +331,7 @@ def test_rollin_report_is_an_immutable_historical_snapshot() -> None:
 
 def test_campaign_identity_binds_curriculum_and_state_schema_sources() -> None:
     assert "core/learning/recurrence_curriculum.py" in TRAINING_SOURCE_FILES
+    assert "core/learning/frontier_process_supervision.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_state_schema.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_literal_grounding.py" in TRAINING_SOURCE_FILES
     assert "core/learning/recurrent_opcode_grounding.py" in TRAINING_SOURCE_FILES
@@ -617,6 +618,41 @@ def test_recurrent_schedule_uses_max_depth_in_memory_cost_order(
     ]
 
     assert scheduled == ["small", "medium", "large", "small"]
+
+
+def test_broad_recurrent_schedule_covers_every_natural_process_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tasks = [
+        type(
+            "Task",
+            (),
+            {"family": family, "task_id": task_id, "depth": depth},
+        )()
+        for family, task_id, depth in (
+            ("frontier_calibration", "calibration", 3),
+            ("frontier_scientific_inference", "science", 4),
+            ("frontier_coding", "coding", 12),
+        )
+    ]
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda _tokenizer, task, _bridge: (
+            mx.zeros((1, task.depth), dtype=mx.int32),
+            mx.zeros((1, 1), dtype=mx.int32),
+        ),
+    )
+    scheduled = [
+        _recurrent_training_task(
+            tasks,
+            object(),
+            "",
+            index,
+            cover_all_cells=True,
+        ).task_id
+        for index in range(3)
+    ]
+    assert scheduled == ["calibration", "science", "coding"]
 
 
 def test_cached_answer_binding_loss_trains_without_model_execution() -> None:

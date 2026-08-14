@@ -16,7 +16,6 @@ import math
 import re
 from dataclasses import dataclass
 from fractions import Fraction
-
 from typing import Any
 
 from core.brain.llm.latent_cortex.typed_action_compiler import (
@@ -93,9 +92,10 @@ _PLANNING_RE = re.compile(
     r"time 0, and may skip tasks\. A selected task may start only after every required "
     r"task has completed\. It earns its reward only if completion is no later than its "
     r"own deadline and the overall horizon (?P<horizon>\d+)\. Tasks are "
-    r"(?P<tasks>\[\{.*?\}\])\. Maximize total reward; then minimize makespan\. Break "
-    r"any remaining tie by selecting the alphabetically earliest sequence of task "
-    r"labels\. Return the selected order, reward, and makespan\.",
+    r"(?P<tasks>\[\{.*?\}\])\. Maximize total reward; then minimize makespan\. "
+    r"(?:Break any remaining tie by selecting the alphabetically earliest sequence "
+    r"of task labels|then choose the lexicographically smallest task-name sequence)\. "
+    r"Return the selected order, reward, and makespan\.",
     re.DOTALL,
 )
 _BAYES_RE = re.compile(

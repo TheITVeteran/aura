@@ -48903,3 +48903,42 @@ Evidence is recorded in
 The next implementation gate moves verified intermediate state/action credit
 into the recurrent transition path and holds the final answer out as a
 consequence; another output-only hyperparameter campaign is not admissible.
+
+## Checkpoint 2026-08-13-394: Broad Tasks Now Teach Process, Not Only Output
+
+CP393 rejected a task-disjoint output map even with complete held-out token
+support, so CP394 moves the teaching object into the recurrent controller that
+already passed typed teacher-removed and resident-32B transfer gates. All seven
+frontier domains now compile into private, verifier-checked state/action traces:
+stable traversal, constrained enumeration, stateful code simulation, causal
+inference, dependency scheduling, exact calibration and premise audit. State
+values use bounded symbolic coordinates and base-31 digits; actions use seven
+new semantic micro-instructions in the existing protected action vocabulary.
+
+The model-visible contract contains only the original public prompt, a static
+schema and `runtime_teacher_available=false`. Final answers, private states,
+actions, task identifiers and per-task commitments are absent. Commitments
+remain out-of-band evidence. The current and contamination-safe planning
+registries are both accepted after repairing a parser/generator wording drift;
+504 generated objective-program cases independently solved and regraded exactly
+across the two registries.
+
+This is operational training infrastructure rather than a test-only compiler.
+`train_unified_intrinsic_recurrence.py` now has an explicit
+`frontier_process` task source, binds task source, difficulty cells and registry
+version into exact campaign identity, creates prompt-disjoint train/holdout
+cohorts with bounded duplicate rejection, round-trips private programs through
+the mode-`0400` source dataset, and schedules every natural family/depth cell
+instead of silently training only the longest trace. A verified prior controller
+may still bootstrap a new broad dataset; exact resume remains bound to the full
+new campaign identity.
+
+Focused compiler, trainer, state/action and dataset contracts pass `78/78`;
+canonical smoke passes `104/104`; repository compilation and Ruff pass. This
+checkpoint proves that broad verified process supervision reaches the real
+trainer without answer leakage. It does not prove that the 1.5B or resident 32B
+learns a fresh broad behavioral gain, authorize fusion or establish a `WOW
+Signal`. The next bounded action is a source-bound, task-disjoint 1.5B canary
+bootstrapped from the proven typed controller. Treatment must beat its frozen
+parent and initialization-matched control after teacher removal before any new
+resident-32B allocation.
