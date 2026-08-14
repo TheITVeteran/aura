@@ -107,6 +107,22 @@ def shadow_load_receipt_errors(value: Any) -> list[str]:
             or value.get("model_identity_strength") != "config_behavior_hash_and_weight_extent"
         ):
             errors.append("unified_recurrent_shadow_domain_invalid")
+    elif configured and str(value.get("reason") or "").startswith("incompatible:"):
+        # Configured, and explicitly DECLINED because the package does not match
+        # this resident model. That is a disposition, not a missing receipt.
+        #
+        # LIVE, 2026-08-13: the worker refused to start at all —
+        #   Worker init failed: configured_unified_recurrent_shadow_not_loaded
+        #   Crash-loop breaker tripped (trip 1): lane backing off 30s
+        #   critical:inference_gate ... conversation blocked
+        # — because a shadow built against a different binding was correctly
+        # rejected, and "configured but not loaded" was the only way to say so.
+        #
+        # The integrity property this branch protects is that a configured
+        # shadow cannot go missing SILENTLY. A decline that names its reason is
+        # not silent, and the shadow runs in shadow_only mode with
+        # serving_authority False, so nothing downstream is relying on it.
+        pass
     elif configured:
         errors.append("configured_unified_recurrent_shadow_not_loaded")
     elif (
