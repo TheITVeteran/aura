@@ -28,6 +28,94 @@ class UnifiedCheckpointError(RuntimeError):
     """An authoritative checkpoint generation is absent or inconsistent."""
 
 
+_BOOTSTRAP_TOPOLOGY_FIELDS: Final = (
+    "bridge",
+    "window_tissue_mode",
+    "lora_rank",
+    "controller_rank",
+    "state_codebook_sha256",
+    "literal_observation_contract",
+    "opcode_observation_contract",
+    "answer_emission_contract",
+    "depth_basis_size",
+    "lora_targets",
+    "readout_sha256",
+)
+
+
+def _model_tensor_identity(value: Any) -> dict[str, Any] | None:
+    """Drop path aliases while retaining the immutable checkpoint identity."""
+
+    if not isinstance(value, dict):
+        return None
+    weights = value.get("weights")
+    if not isinstance(weights, list) or not weights:
+        return None
+    normalized: list[dict[str, Any]] = []
+    for row in weights:
+        if not isinstance(row, dict):
+            return None
+        size = row.get("size", row.get("size_bytes"))
+        if (
+            not isinstance(row.get("name"), str)
+            or not isinstance(row.get("sha256"), str)
+            or type(size) is not int
+            or size < 1
+        ):
+            return None
+        normalized.append(
+            {
+                "name": row["name"],
+                "sha256": row["sha256"],
+                "size": size,
+            }
+        )
+    return {
+        "config_sha256": value.get("config_sha256"),
+        "weights": sorted(normalized, key=lambda row: row["name"]),
+    }
+
+
+def _recurrent_window_identity(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "prelude_end": value.get("prelude_end"),
+        "coda_start": value.get("coda_start"),
+    }
+
+
+def bootstrap_topology_mismatches(
+    parent_identity: Any,
+    child_identity: Any,
+) -> tuple[str, ...]:
+    """Compare tissue topology while permitting a deliberate new curriculum.
+
+    Dataset, task family, objective weights, natural trace depths, canonical
+    path aliases, and optimizer history belong to the new campaign. The model
+    tensors, recurrent window, controller schema, tokenizer-grounded contracts,
+    and frozen readout must remain identical.
+    """
+
+    if not isinstance(parent_identity, dict) or not isinstance(child_identity, dict):
+        return ("identity",)
+    mismatches = [
+        field
+        for field in _BOOTSTRAP_TOPOLOGY_FIELDS
+        if canonical_sha256(parent_identity.get(field))
+        != canonical_sha256(child_identity.get(field))
+    ]
+    if canonical_sha256(_model_tensor_identity(parent_identity.get("model"))) != (
+        canonical_sha256(_model_tensor_identity(child_identity.get("model")))
+    ):
+        mismatches.append("model_tensor_identity")
+    if canonical_sha256(_recurrent_window_identity(parent_identity.get("spec"))) != (
+        canonical_sha256(_recurrent_window_identity(child_identity.get("spec")))
+    ):
+        mismatches.append("recurrent_window")
+    return tuple(mismatches)
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedUnifiedCheckpoint:
     receipt: dict[str, Any]

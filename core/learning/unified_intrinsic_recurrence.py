@@ -1687,13 +1687,18 @@ def unified_recurrent_hidden_states(
     action_teacher_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    typed_action_lesion: bool = False,
     caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
 
     if not isinstance(controller, UnifiedRecurrentController):
         raise TypeError("unified recurrence controller is invalid")
-    if type(adaptive_halt) is not bool or type(soft_memory_writes) is not bool:
+    if (
+        type(adaptive_halt) is not bool
+        or type(soft_memory_writes) is not bool
+        or type(typed_action_lesion) is not bool
+    ):
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
         raise ValueError("minimum iterations exceed the recurrence plan")
@@ -1730,6 +1735,10 @@ def unified_recurrent_hidden_states(
         raise ValueError("initial state teacher requires typed state slots")
     if action_teacher_values is not None and state_slot_start is None:
         raise ValueError("action teacher requires typed state slots")
+    if typed_action_lesion and action_teacher_values is not None:
+        raise ValueError("typed action lesion cannot accompany an action teacher")
+    if typed_action_lesion and state_slot_start is None:
+        raise ValueError("typed action lesion requires typed state slots")
     if state_teacher_values is not None and len(state_teacher_values) < plan.iterations:
         raise ValueError("state teacher roll-in is shorter than the recurrence plan")
     if action_teacher_values is not None and len(action_teacher_values) < plan.iterations:
@@ -1855,6 +1864,12 @@ def unified_recurrent_hidden_states(
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
                 )
+                if typed_action_lesion:
+                    action_probabilities = controller.exact_probabilities(
+                        (ACTION_NULL,) * (controller.config.action_slots - 1) + (0,),
+                        slots=controller.config.action_slots,
+                        cardinality=controller.config.action_cardinality,
+                    )
                 if (
                     action_teacher_values is not None
                     and state_teacher_forcing_probability > 0.0

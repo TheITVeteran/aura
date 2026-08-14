@@ -156,6 +156,32 @@ def test_final_only_evaluation_preserves_terminal_answer_loss() -> None:
     )
 
 
+def test_typed_semantic_objective_can_disable_legacy_digit_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("legacy digit pointer must be absent")
+
+    monkeypatch.setattr(
+        UnifiedRecurrentController,
+        "apply_answer_digit_pointer",
+        fail_if_called,
+    )
+    _recurrent, hidden, losses, _states = unified_answer_and_recurrent_trajectory(
+        _model(),
+        TOKENS,
+        ANSWERS,
+        _spec().plan_at(3),
+        _controller(literal_digit_token_ids=tuple(range(10))),
+        use_state_slots=True,
+        answer_digit_pointer_enabled=False,
+        final_answer_only=True,
+    )
+
+    assert len(hidden) == len(losses) == 1
+    assert float(losses[0].item()) > 0.0
+
+
 def test_student_rollin_changes_history_without_changing_labels() -> None:
     model = _model()
     controller = _controller()

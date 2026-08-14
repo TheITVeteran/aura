@@ -70,6 +70,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
 )
 from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     UnifiedCheckpointError,
+    bootstrap_topology_mismatches,
     resolve_checkpoint_generation,
 )
 from tools.unified_intrinsic_preload_barrier import verify_release  # noqa: E402
@@ -496,35 +497,7 @@ def _bootstrap_initial_controller(
     ):
         raise RuntimeError("unified checkpoint bootstrap commitment differs")
 
-    compatibility_fields = (
-        "model",
-        "runtime",
-        "tokenizer",
-        "spec",
-        "window_geometry",
-        "families",
-        "task_depths",
-        "init_seed",
-        "bridge",
-        "window_tissue_mode",
-        "lora_rank",
-        "controller_rank",
-        "state_weight",
-        "stutter_weight",
-        "state_codebook_sha256",
-        "state_codebook_grounding",
-        "literal_observation_contract",
-        "opcode_observation_contract",
-        "answer_emission_contract",
-        "depth_basis_size",
-        "lora_targets",
-        "readout_sha256",
-    )
-    mismatches = [
-        field
-        for field in compatibility_fields
-        if _canonical_sha256(parent_identity.get(field)) != _canonical_sha256(identity.get(field))
-    ]
+    mismatches = list(bootstrap_topology_mismatches(parent_identity, identity))
     if mismatches:
         raise RuntimeError("unified checkpoint bootstrap topology differs: " + ",".join(mismatches))
 
@@ -538,8 +511,20 @@ def _bootstrap_initial_controller(
         for name, value in tensors.items()
         if name.startswith("bundle.")
     }
-    if set(trainable) != set(_trainable(parent_bundle)):
+    expected = _trainable(parent_bundle)
+    if set(trainable) != set(expected):
         raise RuntimeError("unified checkpoint bootstrap tensor inventory differs")
+    incompatible_tensors = sorted(
+        name
+        for name, value in trainable.items()
+        if tuple(value.shape) != tuple(expected[name].shape)
+        or str(value.dtype) != str(expected[name].dtype)
+    )
+    if incompatible_tensors:
+        raise RuntimeError(
+            "unified checkpoint bootstrap tensor topology differs: "
+            + ",".join(incompatible_tensors)
+        )
     parent_bundle.update(tree_unflatten(list(trainable.items())))
     mx.eval(parent_bundle.parameters())
     expected_sha256 = identity.get("initial_controller_sha256")

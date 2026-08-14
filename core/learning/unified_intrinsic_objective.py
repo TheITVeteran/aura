@@ -194,6 +194,7 @@ def unified_answer_and_recurrent_trajectory(
     answer_role_logit_trajectory: list[Any] | None = None,
     answer_place_logit_trajectory: list[Any] | None = None,
     answer_binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
+    answer_digit_pointer_enabled: bool = True,
     final_answer_only: bool = False,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any]]:
     """Decode every recurrent state through one frozen coda and readout.
@@ -205,6 +206,8 @@ def unified_answer_and_recurrent_trajectory(
 
     if int(answer_tokens.shape[-1]) < 1:
         raise ValueError("answer tokens must not be empty")
+    if type(answer_digit_pointer_enabled) is not bool:
+        raise TypeError("answer digit pointer flag must be boolean")
     decoder_inputs = (
         answer_tokens if decoder_input_tokens is None else decoder_input_tokens
     )
@@ -295,11 +298,25 @@ def unified_answer_and_recurrent_trajectory(
                 hidden,
                 answer_tokens,
                 answer_start,
-                controller=controller if use_state_slots else None,
-                role_logits=role_logits[index] if use_state_slots else None,
-                place_logits=place_logits[index] if use_state_slots else None,
+                controller=(
+                    controller
+                    if use_state_slots and answer_digit_pointer_enabled
+                    else None
+                ),
+                role_logits=(
+                    role_logits[index]
+                    if use_state_slots and answer_digit_pointer_enabled
+                    else None
+                ),
+                place_logits=(
+                    place_logits[index]
+                    if use_state_slots and answer_digit_pointer_enabled
+                    else None
+                ),
                 state_probabilities=(
-                    state_probabilities[index] if use_state_slots else None
+                    state_probabilities[index]
+                    if use_state_slots and answer_digit_pointer_enabled
+                    else None
                 ),
             )
         )
@@ -644,6 +661,7 @@ def unified_intrinsic_training_loss(
     transition_trace: Any | None = None,
     transition_program: Any | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    answer_digit_pointer_enabled: bool = True,
     objective_depth: int | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Train semantics at shallow depths while keeping readout immutable.
@@ -709,6 +727,7 @@ def unified_intrinsic_training_loss(
                     if depth_targets is not None
                     else 0.0
                 ),
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
                 initial_state_logit_trajectory=initial_state_logits,
                 action_logit_trajectory=action_logits,
             )

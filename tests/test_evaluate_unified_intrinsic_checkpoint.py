@@ -130,30 +130,28 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
     weights = bootstrap_output / "parent.safetensors"
     weights.write_bytes(b"parent-controller")
     compatibility = {
-        field: f"value-{field}"
-        for field in (
-            "model",
-            "runtime",
-            "tokenizer",
-            "spec",
-            "window_geometry",
-            "families",
-            "task_depths",
-            "init_seed",
-            "bridge",
-            "lora_rank",
-            "controller_rank",
-            "state_weight",
-            "stutter_weight",
-            "state_codebook_sha256",
-            "state_codebook_grounding",
-            "literal_observation_contract",
-            "opcode_observation_contract",
-            "answer_emission_contract",
-            "depth_basis_size",
-            "lora_targets",
-            "readout_sha256",
-        )
+        "model": {
+            "canonical_path": "/old/alias",
+            "config_sha256": "config-sha",
+            "weights": [
+                {
+                    "name": "model.safetensors",
+                    "sha256": "weights-sha",
+                    "size": 10,
+                }
+            ],
+        },
+        "spec": {"prelude_end": 7, "coda_start": 21, "state_weight": 2.0},
+        "bridge": "assistant_answer",
+        "lora_rank": 8,
+        "controller_rank": 64,
+        "state_codebook_sha256": "state-sha",
+        "literal_observation_contract": {"contract_sha256": "literal-sha"},
+        "opcode_observation_contract": {"contract_sha256": "opcode-sha"},
+        "answer_emission_contract": {"contract_sha256": "answer-sha"},
+        "depth_basis_size": 4,
+        "lora_targets": ["o_proj", "v_proj"],
+        "readout_sha256": "readout-sha",
     }
     compatibility["window_tissue_mode"] = "controller_only"
     parent_identity_body = dict(compatibility)
@@ -172,6 +170,10 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
     }
     identity = {
         **compatibility,
+        "model": {**compatibility["model"], "canonical_path": "/new/alias"},
+        "spec": {**compatibility["spec"], "state_weight": 9.0},
+        "families": ["frontier_mathematics"],
+        "task_depths": [7],
         "initial_controller_sha256": "controller-sha",
         "bootstrap": {
             "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
@@ -182,6 +184,8 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
             "parent_identity_sha256": parent_identity["identity_sha256"],
         },
     }
+    parent_value = SimpleNamespace(shape=(1,), dtype="float32")
+    child_value = SimpleNamespace(shape=(1,), dtype="float32")
 
     class FakeController:
         def __init__(self, _config) -> None:
@@ -195,7 +199,7 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
             self.controller = controller
 
         def update(self, values) -> None:
-            assert values == {"controller.x": "parent-value"}
+            assert values == {"controller.x": parent_value}
             self.controller.loaded = True
 
         def parameters(self):
@@ -215,7 +219,7 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
     monkeypatch.setattr(
         evaluator,
         "_trainable",
-        lambda _bundle: {"controller.x": "random-value"},
+        lambda _bundle: {"controller.x": child_value},
     )
     monkeypatch.setattr(
         evaluator,
@@ -225,7 +229,7 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
     monkeypatch.setattr(
         evaluator.mx,
         "load",
-        lambda _path: {"bundle.controller.x": "parent-value"},
+        lambda _path: {"bundle.controller.x": parent_value},
     )
     monkeypatch.setattr(evaluator.mx, "eval", lambda *_args: None)
     layout = evaluator.EvaluationLayout(

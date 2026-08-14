@@ -150,6 +150,52 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
 
 
+def test_typed_action_lesion_removes_selected_process_channel() -> None:
+    model = _model()
+    controller = _controller()
+    controller.action_bias = mx.full((8, 33), -100.0)
+    for slot, value in enumerate((9, 1, 2, 3, 4, 5, 6, 0)):
+        controller.action_bias = controller.action_bias.at[slot, value].add(200.0)
+    normal_states: list[object] = []
+    lesioned_states: list[object] = []
+    unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=3),
+        controller,
+        state_slot_start=4,
+        state_probability_trajectory=normal_states,
+    )
+    unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=3),
+        controller,
+        state_slot_start=4,
+        state_probability_trajectory=lesioned_states,
+        typed_action_lesion=True,
+    )
+
+    assert len(normal_states) == len(lesioned_states) == 3
+    assert any(
+        not bool(mx.array_equal(normal, lesioned))
+        for normal, lesioned in zip(normal_states, lesioned_states, strict=True)
+    )
+
+
+def test_typed_action_lesion_rejects_teacher_contamination() -> None:
+    with pytest.raises(ValueError, match="cannot accompany an action teacher"):
+        unified_recurrent_hidden_states(
+            _model(),
+            TOKENS,
+            RecurrentDepthPlan(2, 6, iterations=1),
+            _controller(),
+            state_slot_start=4,
+            typed_action_lesion=True,
+            action_teacher_values=[(0,) * 8],
+        )
+
+
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
     controller = _controller()
     candidate = mx.zeros((1, 12, 64), dtype=mx.float32)

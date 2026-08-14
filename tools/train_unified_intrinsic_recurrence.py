@@ -86,6 +86,7 @@ from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     CHECKPOINT_POINTER_SCHEMA,
     TRAINING_SCHEMA,
     UnifiedCheckpointError,
+    bootstrap_topology_mismatches,
     resolve_checkpoint_generation,
 )
 from tools.unified_intrinsic_preload_barrier import verify_release  # noqa: E402
@@ -930,6 +931,7 @@ def _streamed_recurrent_objective_gradients(
     transition_program: Any,
     state_teacher_forcing_probability: float,
     envelope: Any,
+    answer_digit_pointer_enabled: bool = True,
 ) -> tuple[Any, Any]:
     """Differentiate the exact recurrence objective one depth graph at a time."""
 
@@ -955,6 +957,7 @@ def _streamed_recurrent_objective_gradients(
                 transition_trace=transition_trace,
                 transition_program=transition_program,
                 state_teacher_forcing_probability=state_teacher_forcing_probability,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
                 objective_depth=objective_depth,
             )[0]
 
@@ -1284,6 +1287,7 @@ def _generate_student_rollin(
     *,
     eos_token_id: int | None,
     answer_emission_contract: RecurrentAnswerEmissionContract | None = None,
+    answer_digit_pointer_enabled: bool = True,
     state_slot_start: int | None = None,
 ) -> Any:
     """Greedily materialize a fixed-length deep-policy decoder history."""
@@ -1305,6 +1309,7 @@ def _generate_student_rollin(
                 bundle.controller,
                 state_slot_start=state_slot_start,
                 answer_emission_contract=answer_emission_contract,
+                answer_digit_pointer_enabled=answer_digit_pointer_enabled,
             )
             token = int(mx.argmax(logits[0, -1]).item())
             stopped = eos_token_id is not None and token == eos_token_id
@@ -1917,71 +1922,9 @@ def _bootstrap_bundle_from_checkpoint(
     parent_identity = receipt.get("identity")
     if not isinstance(parent_identity, dict):
         raise RuntimeError("unified recurrence bootstrap identity is unavailable")
-    def model_tensor_identity(value: Any) -> dict[str, Any] | None:
-        if not isinstance(value, dict):
-            return None
-        weights = value.get("weights")
-        if not isinstance(weights, list) or not weights:
-            return None
-        normalized = []
-        for row in weights:
-            if not isinstance(row, dict):
-                return None
-            size = row.get("size", row.get("size_bytes"))
-            if (
-                not isinstance(row.get("name"), str)
-                or not isinstance(row.get("sha256"), str)
-                or type(size) is not int
-                or size < 1
-            ):
-                return None
-            normalized.append(
-                {
-                    "name": row["name"],
-                    "sha256": row["sha256"],
-                    "size": size,
-                }
-            )
-        return {
-            "config_sha256": value.get("config_sha256"),
-            "weights": sorted(normalized, key=lambda row: row["name"]),
-        }
-
-    def recurrent_window(value: Any) -> dict[str, Any] | None:
-        if not isinstance(value, dict):
-            return None
-        return {
-            "prelude_end": value.get("prelude_end"),
-            "coda_start": value.get("coda_start"),
-        }
-
-    compatibility_fields = (
-        "bridge",
-        "window_tissue_mode",
-        "lora_rank",
-        "controller_rank",
-        "state_codebook_sha256",
-        "literal_observation_contract",
-        "opcode_observation_contract",
-        "answer_emission_contract",
-        "depth_basis_size",
-        "lora_targets",
-        "readout_sha256",
+    mismatches = list(
+        bootstrap_topology_mismatches(parent_identity, expected_identity)
     )
-    mismatches = [
-        name
-        for name in compatibility_fields
-        if _canonical_sha256(parent_identity.get(name))
-        != _canonical_sha256(expected_identity.get(name))
-    ]
-    if _canonical_sha256(model_tensor_identity(parent_identity.get("model"))) != (
-        _canonical_sha256(model_tensor_identity(expected_identity.get("model")))
-    ):
-        mismatches.append("model_tensor_identity")
-    if _canonical_sha256(recurrent_window(parent_identity.get("spec"))) != (
-        _canonical_sha256(recurrent_window(expected_identity.get("spec")))
-    ):
-        mismatches.append("recurrent_window")
     if mismatches:
         raise RuntimeError(
             "unified recurrence bootstrap topology differs: " + ",".join(mismatches)
@@ -2047,6 +1990,9 @@ def _evaluate_depth(
             use_state_slots=(getattr(task, "transition_trace", None) is not None),
             initial_state_logit_trajectory=initial_state_logits,
             action_logit_trajectory=action_logits,
+            answer_digit_pointer_enabled=(
+                not str(getattr(task, "family", "")).startswith("frontier_")
+            ),
             # Evaluation consumes only the final answer loss. Decoding every
             # recurrent intermediate through the resident 32B coda retains a
             # depth-sized family of lazy Metal graphs; T16 alone can cross the
@@ -3171,6 +3117,9 @@ def main() -> int:
                                 spec.plan_at(semantic_depth),
                                 eos_token_id=tokenizer.eos_token_id,
                                 answer_emission_contract=answer_emission_contract,
+                                answer_digit_pointer_enabled=(
+                                    args.task_source != "frontier_process"
+                                ),
                                 state_slot_start=int(prompt.shape[-1]),
                             )
                             effective, selected = _deterministic_student_mix(
@@ -3265,6 +3214,9 @@ def main() -> int:
                                 spec.plan_at(max(spec.train_depths)),
                                 eos_token_id=tokenizer.eos_token_id,
                                 answer_emission_contract=answer_emission_contract,
+                                answer_digit_pointer_enabled=(
+                                    args.task_source != "frontier_process"
+                                ),
                                 state_slot_start=int(prompt.shape[-1]),
                             )
                             effective, selected = _deterministic_student_mix(
@@ -3315,6 +3267,9 @@ def main() -> int:
                                 state_teacher_forcing_probability=(
                                     state_teacher_forcing_probability
                                 ),
+                                answer_digit_pointer_enabled=(
+                                    args.task_source != "frontier_process"
+                                ),
                             )[0]
 
                         if phase == "recurrence":
@@ -3329,6 +3284,9 @@ def main() -> int:
                                 transition_program=task.transition_program,
                                 state_teacher_forcing_probability=(
                                     state_teacher_probability
+                                ),
+                                answer_digit_pointer_enabled=(
+                                    args.task_source != "frontier_process"
                                 ),
                                 envelope=envelope,
                             )

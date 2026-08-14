@@ -49011,3 +49011,34 @@ recovery and topology-safe cross-dataset initialization. It does not prove
 broad adaptation, task-disjoint gain, resident-32B improvement, fusion,
 frontier performance or `WOW Signal`. Next is the bounded 1.5B broad-process
 adaptation and frozen parent/treatment/lesion comparison.
+
+## Checkpoint 2026-08-13-397: Broad Process Reaches Semantic Decoding
+
+CP397 closes two contract drifts that would have invalidated the next canary.
+Training accepted a new-dataset child initialized from CP232, but evaluation
+still required the parent's dataset, family, objective, runtime and canonical
+path metadata to match. Training and evaluation now use one shared bootstrap
+topology rule: immutable model tensor/config hashes, recurrent window,
+controller schema, tokenizer-grounded contracts and frozen readout must match;
+new campaign data and optimization identity may differ. Evaluation also checks
+every inherited tensor name, shape and dtype before reconstructing the exact
+parent arm.
+
+The broad typed objective was also still applying the closed curriculum's
+digit-only answer pointer to all semantic targets. That pointer is correct for
+the old integer JSON families but is the wrong readout for frontier JSON and
+text responses. Frontier training and student roll-in now retain typed
+state/action recurrence while decoding through the frozen model's ordinary
+semantic head with the digit pointer disabled. Legacy campaigns retain their
+prior default. A new inference-only typed-action lesion replaces the selected
+instruction with an unrecognized null instruction after equal neural compute,
+removing executable microcode without changing controller weights, recurrence
+depth or decoder budget.
+
+Focused checkpoint, objective, trainer and recurrence contracts pass `95/95`;
+canonical smoke passes `104/104`; Ruff and compilation pass. This proves the
+broad process can be trained and evaluated through the same semantic channel,
+and that its active action path can be causally lesioned. It does not prove a
+fresh behavioral gain, resident-32B improvement, fusion, frontier performance
+or `WOW Signal`. Next is the source-bound 1.5B adaptation followed by a frozen
+base/CP232-parent/treatment/action-lesion canary.
