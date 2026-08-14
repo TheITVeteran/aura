@@ -373,8 +373,22 @@ class PermissionRiskModel:
             if re.search(pattern, combined, re.IGNORECASE):
                 return level, reason
 
-        # Default: LOW for unknown actions
-        return RiskLevel.LOW, "No matching risk pattern"
+        # An action no rule recognises is UNKNOWN, and unknown is not low.
+        #
+        # `_RISK_RULES` is a list of things somebody thought of, so "nothing
+        # matched" is a fact about the LIST. Returning LOW made that fact
+        # mean "auto-approved, logged" — so every capability added after this
+        # list was last extended, and every phrasing nobody anticipated, was
+        # approved without confirmation precisely because it was unfamiliar.
+        # The rules cover deletion, payment and credentials by WORD; an
+        # action that performs one of those under a name not on the list got
+        # the most permissive verdict available.
+        #
+        # MEDIUM rather than HIGH: it is still auto-approved in trusted mode,
+        # so ordinary unrecognised work is not blocked, but it is logged
+        # prominently and it participates in the rapid-action escalation
+        # above instead of bypassing it.
+        return RiskLevel.MEDIUM, "No matching risk pattern — unrecognised action, treated as unknown risk"
 
     # ------------------------------------------------------------------
     # Permission check

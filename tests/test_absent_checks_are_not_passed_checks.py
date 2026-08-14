@@ -408,3 +408,98 @@ def test_the_health_probe_runs_no_inference():
 
     for spender in ("generate", "await ", "load_model"):
         assert spender not in body, f"check_health reaches for {spender}"
+
+
+# ─────────────── a misread step is not a decision to stop reasoning
+
+
+def test_an_unknown_action_label_is_recorded_as_a_parse_failure():
+    """`Action: SEARCH_TEH_WEB` — one typo — used to become FINAL_ANSWER
+    silently, ending the loop and serving `params` as the answer. For an
+    intended tool call those params are the tool's JSON arguments."""
+    from core.brain.react_loop import ActionType, ReActResponseParser
+
+    _thought, action = ReActResponseParser().parse(
+        'Thought: I should search\nAction: SEARCH_TEH_WEB\nActionInput: {"query": "weather"}'
+    )
+
+    assert action.action_type is ActionType.FINAL_ANSWER
+    assert action.parse_failure.startswith("unknown_action_label"), (
+        "a misread action label is indistinguishable from a decision to stop"
+    )
+
+
+def test_a_real_final_answer_carries_no_parse_failure():
+    """The fix must not make every conclusion look like a failure."""
+    from core.brain.react_loop import ActionType, ReActResponseParser
+
+    _thought, action = ReActResponseParser().parse(
+        'Thought: done\nAction: FINAL_ANSWER\nActionInput: {"text": "it is 42"}'
+    )
+
+    assert action.action_type is ActionType.FINAL_ANSWER
+    assert action.parse_failure == ""
+    assert action.params["text"] == "it is 42"
+
+
+def test_an_answer_without_the_scaffold_is_read_but_marked():
+    """A model that simply answers is common and this is the right reading —
+    it is still a reading rather than a stated decision."""
+    from core.brain.react_loop import ReActResponseParser
+
+    _thought, action = ReActResponseParser().parse("The answer is 42.")
+
+    assert action.params["text"] == "The answer is 42."
+    assert action.parse_failure == "no_action_block"
+
+
+def test_parameter_json_is_never_served_as_the_answer():
+    """The loop falls back to the model's own text when the label was
+    unreadable, rather than handing a person a parameter dict."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "brain" / "react_loop.py"
+    ).read_text("utf-8")
+
+    assert 'if action.parse_failure.startswith("unknown_action_label"):' in source
+    assert "trace.final_answer = raw_output" in source
+
+
+# ──────────────── an action no rule recognises is not a low-risk action
+
+
+def test_an_unrecognised_capability_is_not_auto_approved():
+    """`_RISK_RULES` is a list of things somebody thought of, so "nothing
+    matched" is a fact about the LIST. Returning LOW made that fact mean
+    "auto-approved, logged" — so every capability added after the list was
+    last extended was approved precisely because it was unfamiliar."""
+    from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
+
+    model = PermissionRiskModel()
+    level, reason = model.classify_risk("frobnicate_the_widget", "some target")
+
+    assert level > RiskLevel.LOW, (
+        f"an action no rule recognises classified as {level!r}, which is "
+        "auto-approved"
+    )
+    assert "unrecognised" in reason.lower() or "unknown" in reason.lower()
+
+
+def test_a_recognised_low_risk_action_is_still_low():
+    """The fix must not make ordinary work require confirmation."""
+    from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
+
+    model = PermissionRiskModel()
+    level, _reason = model.classify_risk("read screen", "")
+
+    assert level == RiskLevel.LOW
+
+
+def test_a_recognised_dangerous_action_is_still_dangerous():
+    from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
+
+    model = PermissionRiskModel()
+    level, _reason = model.classify_risk("delete file", "/tmp/x")
+
+    assert level >= RiskLevel.HIGH

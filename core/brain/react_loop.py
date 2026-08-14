@@ -114,6 +114,10 @@ class Action:
     tool_name: str | None = None
     params: dict[str, Any] = field(default_factory=dict)
     raw_output: str = ""                   # LLM's raw action specification
+    #: Set when the step could not be parsed and FINAL_ANSWER is a fallback
+    #: rather than the model's decision. Carries the reason so the loop can
+    #: tell a conclusion from a failure to read one.
+    parse_failure: str = ""
 
 
 @dataclass
@@ -801,18 +805,30 @@ class ReActResponseParser:
             thought = Thought(content=thought_match.group(1).strip())
 
         if not action_match:
-            # No action found — treat as final answer
+            # No Action block at all. A model that simply answered without
+            # the scaffold is common and this is the right reading, but it
+            # is still a reading rather than a stated decision — recorded so
+            # a trace can tell the two apart.
             return thought, Action(
                 action_type=ActionType.FINAL_ANSWER,
                 params={"text": llm_output.strip()},
-                raw_output=llm_output
+                raw_output=llm_output,
+                parse_failure="no_action_block",
             )
 
         action_str = action_match.group(1).strip().upper()
+        parse_failure = ""
         try:
             action_type = ActionType[action_str]
         except KeyError:
+            # An action label that is not in the enum is a MISREAD step, not
+            # a decision to stop. Silently mapping it to FINAL_ANSWER ended
+            # the loop and served `params` as the answer — and for an
+            # intended TOOL_CALL those params are the tool's JSON arguments,
+            # so a single typo in the label turned a tool invocation into a
+            # user-facing reply made of parameter JSON.
             action_type = ActionType.FINAL_ANSWER
+            parse_failure = f"unknown_action_label:{action_str[:40]}"
 
         params = {}
         if input_match:
@@ -826,7 +842,8 @@ class ReActResponseParser:
         return thought, Action(
             action_type=action_type,
             params=params,
-            raw_output=llm_output
+            raw_output=llm_output,
+            parse_failure=parse_failure
         )
 
 
@@ -1082,8 +1099,27 @@ class ReActLoop:
 
                     # Check for final answer or request help
                     if action.action_type in (ActionType.FINAL_ANSWER, ActionType.REQUEST_HELP):
-                        trace.final_answer = action.params.get("text", raw_output)
-                        trace.terminated_reason = action.action_type.value
+                        if action.parse_failure.startswith("unknown_action_label"):
+                            # `params` here is whatever ActionInput carried —
+                            # for an intended tool call, its JSON arguments.
+                            # Falling back to raw_output keeps the model's own
+                            # text as the answer instead of serving a
+                            # parameter dict to a person.
+                            trace.final_answer = raw_output
+                            record_degradation(
+                                "react_loop",
+                                RuntimeError(action.parse_failure),
+                                severity="warning",
+                                action="terminated a ReAct trace on an unparseable action label",
+                                extra={"step": step_num},
+                            )
+                        else:
+                            trace.final_answer = action.params.get("text", raw_output)
+                        trace.terminated_reason = (
+                            f"{action.action_type.value}:{action.parse_failure}"
+                            if action.parse_failure
+                            else action.action_type.value
+                        )
 
                         step = ReActStep(
                             step_number=step_num,
