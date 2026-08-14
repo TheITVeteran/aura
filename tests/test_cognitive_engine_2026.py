@@ -4,6 +4,7 @@ Updated to match the modular-phase facade API.
 """
 
 import pytest
+from types import SimpleNamespace
 import asyncio
 
 from core.brain.cognitive_engine import CognitiveEngine
@@ -120,10 +121,59 @@ async def test_engine_think_no_response(engine):
 
 @pytest.mark.asyncio
 async def test_engine_health_check(engine):
+    """An engine that never ran setup has no phases, and says so.
+
+    This asserted "healthy" against an engine with zero phases and no
+    repository — the status was a constant, so the assertion held whatever the
+    engine was.
+    """
     health = await engine.check_health()
-    assert health["status"] == "healthy"
+
+    assert health["status"] == "unhealthy"
+    assert "no_phases_instantiated" in health["reasons"]
     assert health["modular"] is True
-    assert "phases_count" in health
+    assert health["phases_count"] == 0
+    assert health["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_fully_built_pipeline_is_healthy(engine, monkeypatch):
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.instantiate_legacy_runtime_phases",
+        lambda _kernel, include_executive_closure=False: [("probe", PhaseProbe())],
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.legacy_runtime_phase_specs",
+        lambda include_executive_closure=False: (object(),),
+    )
+    engine.setup()
+    engine.state_repository = SimpleNamespace()
+
+    health = await engine.check_health()
+
+    assert health["status"] == "healthy"
+    assert health["reasons"] == []
+    assert health["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_partial_pipeline_is_degraded_not_healthy(engine, monkeypatch):
+    """Half a cognitive spectrum is not a full one."""
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.instantiate_legacy_runtime_phases",
+        lambda _kernel, include_executive_closure=False: [("probe", PhaseProbe())],
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.legacy_runtime_phase_specs",
+        lambda include_executive_closure=False: (object(), object(), object()),
+    )
+    engine.setup()
+    engine.state_repository = SimpleNamespace()
+
+    health = await engine.check_health()
+
+    assert health["status"] == "degraded"
+    assert any(r.startswith("incomplete_pipeline:") for r in health["reasons"])
 
 @pytest.mark.asyncio
 async def test_reactive_recovery_does_not_hold_lock_while_rollback_runs(engine):

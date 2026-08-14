@@ -19,7 +19,10 @@ from core.goals.objective_lifecycle import (
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
-from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
+from core.runtime.pipeline_blueprint import (
+    instantiate_legacy_runtime_phases,
+    legacy_runtime_phase_specs,
+)
 from core.runtime.service_registry import get_runtime_service
 from core.runtime.turn_outcome import (
     TurnOutcome,
@@ -1162,12 +1165,18 @@ class CognitiveEngine:
         return self.state_repository is None and len(self._phases) == 0
 
     def is_ready(self) -> bool:
-        """Synchronous liveness probe for user-facing cognition."""
+        """Synchronous liveness probe for user-facing cognition.
+
+        ``lobotomized`` is an AND — no repository AND no phases — so an engine
+        with a repository and ZERO phases was ready. There is no cognition
+        without phases; that is the whole pipeline.
+        """
         return (
             callable(getattr(self, "think", None))
             and isinstance(self.thoughts, deque)
             and getattr(self, "_recovery_lock", None) is not None
             and not self.lobotomized
+            and bool(self._phases)
         )
 
     def setup(self, registry=None, router=None, event_bus=None):
@@ -1184,7 +1193,20 @@ class CognitiveEngine:
         self._phases = [phase for _, phase in phase_entries]
 
         # ISSUE-97: AuraPipeline Awareness
-        required_phases = len(phase_entries)
+        #
+        # required_phases used to be len(phase_entries) — the length of the
+        # very list that populated _phases — so the comparison below was
+        # `len(x) != len(x)` and could never fire, including when both were
+        # zero. The DECLARED spectrum is what the blueprint says it is.
+        required_phases = len(
+            legacy_runtime_phase_specs(include_executive_closure=False)
+        )
+        self._pipeline_receipt = {
+            "declared_phases": required_phases,
+            "instantiated_phases": len(self._phases),
+            "complete": len(self._phases) == required_phases and required_phases > 0,
+            "at": time.time(),
+        }
         if len(self._phases) != required_phases:
             logger.warning(
                 "⚠️ AuraPipeline: Incomplete cognitive pipeline (%d/%d phases).",
@@ -1203,13 +1225,42 @@ class CognitiveEngine:
         self.setup()
         logger.info("⚡ CognitiveEngine active.")
 
+    def pipeline_receipt(self) -> dict[str, Any]:
+        """What setup() built, against what the blueprint declares."""
+        return dict(getattr(self, "_pipeline_receipt", {}) or {})
+
     async def check_health(self) -> dict[str, Any]:
-        """Health check."""
+        """Health from evidence, not from being callable.
+
+        This returned ``"healthy"`` unconditionally — a zero-phase engine with
+        no repository reported a full cognitive spectrum, and every consumer of
+        this health believed it.
+        """
+        receipt = self.pipeline_receipt()
+        declared = int(receipt.get("declared_phases", 0) or 0)
+        built = len(self._phases)
+        reasons: list[str] = []
+        if not built:
+            reasons.append("no_phases_instantiated")
+        elif declared and built != declared:
+            reasons.append(f"incomplete_pipeline:{built}/{declared}")
+        if self.state_repository is None:
+            reasons.append("no_state_repository")
+        if self._stopped:
+            reasons.append("engine_stopped")
+        status = "healthy"
+        if not built or self._stopped:
+            status = "unhealthy"
+        elif reasons:
+            status = "degraded"
         return {
-            "status": "healthy",
+            "status": status,
+            "reasons": reasons,
             "modular": True,
-            "phases_count": len(self._phases),
+            "phases_count": built,
+            "declared_phases_count": declared,
             "augmentors_count": len(self._augmentors),
+            "ready": self.is_ready(),
         }
 
     def register_augmentor(self, augmentor: Any):
