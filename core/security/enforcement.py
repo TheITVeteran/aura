@@ -149,6 +149,27 @@ class Quarantine:
             logger.debug("Quarantine failed for %s: %s", path, exc)
             return None
 
+def _data_volume_percent(psutil_module: object) -> float:
+    """Percent used of the volume holding Aura's state, not of "/".
+
+    Falls back to "/" only when the state root cannot be resolved, because a
+    reading from the wrong mount is worse than a slightly stale one.
+    """
+    try:
+        from core.runtime.state_ownership import state_root
+
+        target = str(state_root())
+    except (ImportError, RuntimeError, OSError, ValueError):
+        target = "/"
+    try:
+        return float(psutil_module.disk_usage(target).percent)
+    except (OSError, ValueError, AttributeError):
+        try:
+            return float(psutil_module.disk_usage("/").percent)
+        except (OSError, ValueError, AttributeError):
+            return 0.0
+
+
 
 class ResourceMonitor:
     """psutil-backed sampling that feeds the exhaustion detector when the host is under strain."""
@@ -170,7 +191,20 @@ class ResourceMonitor:
             return {
                 "cpu": float(psutil.cpu_percent(interval=0.0)),
                 "mem": float(psutil.virtual_memory().percent),
-                "disk": float(psutil.disk_usage("/").percent),
+                # The volume Aura WRITES to, named explicitly.
+                #
+                # This asked for "/" and got the right answer by luck: on macOS
+                # "/" is a sealed read-only volume sharing an APFS container
+                # with /System/Volumes/Data, and what it reports depends on
+                # which of the two the reading resolves to. Raw psutil returns
+                # 2.2% for "/" here while the data volume is at 72% — a monitor
+                # reading that would stay quiet however full the data got.
+                #
+                # The 2026-08-13 "disk at 99%" alarms were CORRECT; the disk
+                # really was full. This does not fix a false reading. It stops
+                # the alarm depending on which mount "/" happens to resolve to,
+                # and points it at the volume state_root() actually lives on.
+                "disk": float(_data_volume_percent(psutil)),
                 "procs": float(len(psutil.pids())),
             }
         except process_errors as exc:
