@@ -453,6 +453,9 @@ def test_bootstrap_action_literal_binding_is_exact_and_rejects_active_output() -
         "controller.action_literal_binding_output": mx.zeros(
             (8, 6), dtype=mx.float32
         ),
+        "controller.action_literal_binding_family_output": mx.zeros(
+            (7, 8, 6), dtype=mx.float32
+        ),
     }
     migrated, receipt = _merge_bootstrap_action_literal_binding_extension(parent, child)
     assert receipt is not None
@@ -471,10 +474,34 @@ def test_bootstrap_action_literal_binding_is_exact_and_rejects_active_output() -
 
     active = {
         **child,
-        "controller.action_literal_binding_output": mx.ones((8, 6)),
+        "controller.action_literal_binding_family_output": mx.ones((7, 8, 6)),
     }
     with pytest.raises(RuntimeError, match="binding is not a no-op"):
         _merge_bootstrap_action_literal_binding_extension(parent, active)
+
+    active_global = {
+        **child,
+        "controller.action_literal_binding_output": mx.ones((8, 6)),
+    }
+    with pytest.raises(RuntimeError, match="binding is not a no-op"):
+        _merge_bootstrap_action_literal_binding_extension(parent, active_global)
+
+    legacy_parent = {
+        key: value
+        for key, value in child.items()
+        if key != "controller.action_literal_binding_family_output"
+    }
+    legacy_parent["controller.action_literal_binding_output"] = mx.ones((8, 6))
+    migrated_legacy, legacy_receipt = (
+        _merge_bootstrap_action_literal_binding_extension(legacy_parent, child)
+    )
+    assert legacy_receipt is not None
+    assert bool(
+        mx.array_equal(
+            migrated_legacy["controller.action_literal_binding_output"],
+            legacy_parent["controller.action_literal_binding_output"],
+        )
+    )
 
 
 def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:

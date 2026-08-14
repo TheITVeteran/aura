@@ -255,6 +255,87 @@ def test_action_literal_binding_gradient_reaches_zero_output_attachment() -> Non
     assert float(mx.max(mx.abs(gradients["action_literal_binding_output"]))) > 0.0
 
 
+def test_action_literal_binding_selects_transforms_by_public_family() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.repeat(
+        mx.random.normal((1, 3, 64), key=mx.random.key(908)),
+        2,
+        axis=0,
+    )
+    hidden = mx.repeat(
+        mx.random.normal((1, 10, 64), key=mx.random.key(909)),
+        2,
+        axis=0,
+    )
+    tokens = mx.array([[100, 12, 19], [101, 12, 19]])
+    baseline = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        token_ids=tokens,
+    )
+    controller.action_literal_binding_family_output = (
+        controller.action_literal_binding_family_output.at[0, 1, 0].add(1.0)
+    )
+    active = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        token_ids=tokens,
+    )
+    mx.eval(baseline, active)
+
+    assert not bool(mx.array_equal(active[0, 1], baseline[0, 1]))
+    assert bool(mx.array_equal(active[1], baseline[1]))
+
+
+def test_action_literal_binding_family_gradient_is_route_isolated() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.random.normal((1, 3, 64), key=mx.random.key(910))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(911))
+
+    def objective(candidate: UnifiedRecurrentController):
+        logits = candidate.action_logits(
+            evidence,
+            hidden,
+            state_slot_start=3,
+            step=0,
+            token_ids=mx.array([[100, 12, 19]]),
+        )
+        return -mx.mean(nn.log_softmax(logits, axis=-1)[:, 1, 2])
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    family_gradient = gradients["action_literal_binding_family_output"]
+    mx.eval(loss, family_gradient)
+
+    assert float(mx.max(mx.abs(family_gradient[0]))) > 0.0
+    assert bool(mx.all(family_gradient[1:] == 0))
+
+
 def test_public_family_experts_attach_as_exact_noop_and_route_independently() -> None:
     patterns = tuple(
         (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))

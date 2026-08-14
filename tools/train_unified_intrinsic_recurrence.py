@@ -3190,14 +3190,15 @@ def _merge_bootstrap_action_literal_binding_extension(
     missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
-    if missing != expected:
+    family_output_name = "controller.action_literal_binding_family_output"
+    if missing not in (expected, {family_output_name}):
         raise RuntimeError(
             "unified recurrence bootstrap action-literal-binding inventory differs: "
             + ",".join(sorted(missing))
         )
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
-    for name in sorted(expected):
+    for name in sorted(missing):
         if name not in child_values:
             raise RuntimeError(
                 "unified recurrence bootstrap action-literal-binding source differs"
@@ -3209,14 +3210,19 @@ def _merge_bootstrap_action_literal_binding_extension(
             "dtype": str(value.dtype),
             "sha256": _tensor_sha256(value),
         }
-    output_name = "controller.action_literal_binding_output"
-    if bool(mx.any(migrated[output_name] != 0)):
+    output_names = {
+        "controller.action_literal_binding_output",
+        family_output_name,
+    } & missing
+    if any(bool(mx.any(migrated[name] != 0)) for name in output_names):
         raise RuntimeError(
             "unified recurrence bootstrap action literal binding is not a no-op"
         )
     return migrated, {
-        "schema": "aura.unified_intrinsic.action_literal_binding_extension.v1",
-        "migration_rule": "parent_exact_plus_zero_output_public_literal_binding",
+        "schema": "aura.unified_intrinsic.action_literal_binding_extension.v2",
+        "migration_rule": (
+            "parent_exact_plus_zero_output_public_family_conditioned_literal_binding"
+        ),
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
         "private_transition_program_visible": False,

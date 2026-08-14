@@ -114,6 +114,7 @@ ACTION_LITERAL_BINDING_PARAMETER_NAMES: Final = (
     "action_literal_binding_query",
     "action_literal_binding_key",
     "action_literal_binding_output",
+    "action_literal_binding_family_output",
 )
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
     "identity",
@@ -736,6 +737,14 @@ class UnifiedRecurrentController(nn.Module):
         )
         self.action_literal_binding_output = mx.zeros(
             (config.action_slots, len(ACTION_LITERAL_BINDING_TRANSFORMS)),
+            dtype=mx.float32,
+        )
+        self.action_literal_binding_family_output = mx.zeros(
+            (
+                FRONTIER_ACTION_EXPERT_COUNT,
+                config.action_slots,
+                len(ACTION_LITERAL_BINDING_TRANSFORMS),
+            ),
             dtype=mx.float32,
         )
         self.literal_value_embeddings = (
@@ -2201,10 +2210,43 @@ class UnifiedRecurrentController(nn.Module):
             pointer_logits,
             mx.zeros_like(pointer_logits),
         )
-        return base_logits + mx.einsum(
-            "at,batc->bac",
-            self.action_literal_binding_output,
-            pointer_logits,
+        binding_weights = mx.broadcast_to(
+            self.action_literal_binding_output[None, :, :],
+            (
+                int(base_logits.shape[0]),
+                self.config.action_slots,
+                len(ACTION_LITERAL_BINDING_TRANSFORMS),
+            ),
+        )
+        routes = self._frontier_family_routes(token_ids)
+        if routes is not None:
+            binding_weights = binding_weights + mx.einsum(
+                "be,eat->bat",
+                routes,
+                self.action_literal_binding_family_output,
+            )
+        return base_logits + mx.einsum("bat,batc->bac", binding_weights, pointer_logits)
+
+    def _frontier_family_routes(self, token_ids: Any | None) -> Any | None:
+        """Return exact public family routes, or no route when unavailable."""
+
+        if token_ids is None or not self.config.frontier_family_token_patterns:
+            return None
+        contract = FrontierFamilyObservationContract(
+            self.config.frontier_family_token_patterns
+        )
+        opcodes, recognized = contract.observe(token_ids.tolist())
+        return mx.array(
+            [
+                [
+                    1.0
+                    if known and opcode == OP_FRONTIER_TRAVERSE + expert
+                    else 0.0
+                    for expert in range(FRONTIER_ACTION_EXPERT_COUNT)
+                ]
+                for opcode, known in zip(opcodes, recognized, strict=True)
+            ],
+            dtype=mx.float32,
         )
 
     def _family_action_logits(
@@ -2225,22 +2267,9 @@ class UnifiedRecurrentController(nn.Module):
             or not self.config.frontier_family_token_patterns
         ):
             return base_logits
-        contract = FrontierFamilyObservationContract(
-            self.config.frontier_family_token_patterns
-        )
-        opcodes, recognized = contract.observe(token_ids.tolist())
-        routes = mx.array(
-            [
-                [
-                    1.0
-                    if known and opcode == OP_FRONTIER_TRAVERSE + expert
-                    else 0.0
-                    for expert in range(FRONTIER_ACTION_EXPERT_COUNT)
-                ]
-                for opcode, known in zip(opcodes, recognized, strict=True)
-            ],
-            dtype=mx.float32,
-        )
+        routes = self._frontier_family_routes(token_ids)
+        if routes is None:
+            return base_logits
         expert_logits = mx.einsum(
             "baw,eawc->beac",
             workspace.astype(mx.float32),
@@ -2555,6 +2584,7 @@ class UnifiedRecurrentController(nn.Module):
             "action_literal_binding": {
                 "source": "ordered_public_prompt_literals",
                 "transforms": list(ACTION_LITERAL_BINDING_TRANSFORMS),
+                "transform_selection": "public_family_conditioned",
                 "semantic_role_inferred": True,
                 "private_transition_program_visible": False,
                 "parent_attachment": "exact_zero_output_noop",
