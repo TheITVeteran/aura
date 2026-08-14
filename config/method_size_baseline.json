@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 76,
-  "total_lines": 70484,
+  "total_lines": 70488,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -59,8 +59,8 @@
       "returns": 3
     },
     "core/brain/llm/latent_cortex/fast_weight_learning.py::validate_fast_weight_learning_receipt": {
-      "lines": 567,
-      "complexity": 273,
+      "lines": 570,
+      "complexity": 274,
       "returns": 1
     },
     "core/brain/llm/latent_cortex/frontier_certification.py::verify_frontier_gain_bundle": {
@@ -94,7 +94,7 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/types.py::CortexConfig.validate": {
-      "lines": 584,
+      "lines": 585,
       "complexity": 262,
       "returns": 3
     },
