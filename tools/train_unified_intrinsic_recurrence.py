@@ -713,6 +713,45 @@ def _optimization_phase(
     return "recurrence"
 
 
+def _phase_schedule(
+    *,
+    semantic_warmup_steps: int,
+    state_warmup_steps: int,
+    answer_bridge_steps: int,
+    max_steps: int,
+    bootstrap_output_dir: Path | None,
+) -> dict[str, Any]:
+    """Validate and bind a full campaign or a bootstrap-only bridge adaptation."""
+
+    values = (
+        semantic_warmup_steps,
+        state_warmup_steps,
+        answer_bridge_steps,
+        max_steps,
+    )
+    if any(type(value) is not int or value < 0 for value in values) or max_steps < 1:
+        raise ValueError("optimization phase steps must be non-negative integers")
+    warmup_steps = semantic_warmup_steps + state_warmup_steps + answer_bridge_steps
+    recurrence_steps = max_steps - warmup_steps
+    if recurrence_steps < 0:
+        raise ValueError("optimization phases exceed maximum steps")
+    bridge_only = recurrence_steps == 0
+    if bridge_only and (answer_bridge_steps < 1 or bootstrap_output_dir is None):
+        raise ValueError(
+            "zero-recurrence training requires a bootstrapped answer-bridge campaign"
+        )
+    return {
+        "schema": "aura.unified_intrinsic.phase_schedule.v1",
+        "mode": "bootstrap_answer_bridge_only" if bridge_only else "recurrent_training",
+        "semantic_anchor_steps": semantic_warmup_steps,
+        "state_transition_steps": state_warmup_steps,
+        "answer_bridge_steps": answer_bridge_steps,
+        "recurrence_steps": recurrence_steps,
+        "max_steps": max_steps,
+        "bootstrap_required": bridge_only,
+    }
+
+
 def _semantic_execution_depth(
     task_depth: int,
     spec: UnifiedIntrinsicTrainingSpec,
@@ -2513,16 +2552,13 @@ def main() -> int:
         raise ValueError("resume modes are mutually exclusive")
     if args.bootstrap_output_dir is not None and args.resume:
         raise ValueError("bootstrap cannot accompany an unconditional local resume")
-    if not (
-        0 <= args.semantic_warmup_steps < args.max_steps
-        and args.state_warmup_steps >= 0
-        and args.answer_bridge_steps >= 0
-        and args.semantic_warmup_steps
-        + args.state_warmup_steps
-        + args.answer_bridge_steps
-        < args.max_steps
-    ):
-        raise ValueError("warmup phases must leave at least one recurrent step")
+    phase_schedule = _phase_schedule(
+        semantic_warmup_steps=args.semantic_warmup_steps,
+        state_warmup_steps=args.state_warmup_steps,
+        answer_bridge_steps=args.answer_bridge_steps,
+        max_steps=args.max_steps,
+        bootstrap_output_dir=args.bootstrap_output_dir,
+    )
     rollin_final_probability = (
         args.student_rollin_probability
         if args.student_rollin_final_probability is None
@@ -2964,6 +3000,7 @@ def main() -> int:
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "max_steps": args.max_steps,
+            "phase_schedule": phase_schedule,
             "answer_bridge_rollin_probability": (
                 args.answer_bridge_rollin_probability
             ),
@@ -3585,6 +3622,7 @@ def main() -> int:
             },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),
             "answer_bridge_admission": answer_bridge_admission,
+            "phase_schedule": phase_schedule,
             "verdict": _training_verdict(
                 complete=step >= args.max_steps,
                 answer_bridge_admission=answer_bridge_admission,

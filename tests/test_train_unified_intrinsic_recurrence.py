@@ -62,6 +62,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
+    _phase_schedule,
     _phase_gradients,
     _recurrent_training_task,
     _residual_hidden_size,
@@ -394,6 +395,44 @@ def test_training_verdict_never_promotes_an_incomplete_invocation() -> None:
         )
         == "heldout_depth_gain"
     )
+
+
+def test_phase_schedule_allows_only_bootstrapped_bridge_only_adaptation(tmp_path) -> None:
+    bootstrap = tmp_path / "parent"
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=0,
+        answer_bridge_steps=84,
+        max_steps=84,
+        bootstrap_output_dir=bootstrap,
+    )
+
+    assert schedule == {
+        "schema": "aura.unified_intrinsic.phase_schedule.v1",
+        "mode": "bootstrap_answer_bridge_only",
+        "semantic_anchor_steps": 0,
+        "state_transition_steps": 0,
+        "answer_bridge_steps": 84,
+        "recurrence_steps": 0,
+        "max_steps": 84,
+        "bootstrap_required": True,
+    }
+    with pytest.raises(ValueError, match="bootstrapped answer-bridge"):
+        _phase_schedule(
+            semantic_warmup_steps=0,
+            state_warmup_steps=0,
+            answer_bridge_steps=84,
+            max_steps=84,
+            bootstrap_output_dir=None,
+        )
+    with pytest.raises(ValueError, match="exceed maximum"):
+        _phase_schedule(
+            semantic_warmup_steps=0,
+            state_warmup_steps=1,
+            answer_bridge_steps=84,
+            max_steps=84,
+            bootstrap_output_dir=bootstrap,
+        )
 
 
 def test_rollin_telemetry_round_trips_and_rejects_invalid_state() -> None:
