@@ -61,6 +61,11 @@ _PLANNING_RE = re.compile(
     r"Maximize total reward",
     re.DOTALL,
 )
+_CALIBRATION_RE = re.compile(
+    r"Before evidence E, hypothesis H has probability (?P<prior>\d+/\d+)\. "
+    r"The likelihood of E is (?P<likelihood_h>\d+/\d+) if H is true and "
+    r"(?P<likelihood_not_h>\d+/\d+) if H is false\."
+)
 _PREMISE_RE = re.compile(
     r"The data are (?P<rows>\[\{.*?\}\])\. The claim says project "
     r"(?P<claim>[A-Z][A-Z0-9_]*) has the highest score",
@@ -400,37 +405,58 @@ def _planning(expected: dict[str, Any], prompt: str) -> StructuredTransitionProg
     )
 
 
-def _calibration(expected: dict[str, Any], _prompt: str) -> StructuredTransitionProgram:
+def _calibration(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
     try:
         posterior = Fraction(expected["posterior"])
         choice = 1 if expected["choice"] == "H" else 0
         band = ("below_50", "50_to_69", "70_to_89", "90_to_100").index(expected["confidence_band"])
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         raise ValueError("frontier calibration evidence is invalid") from None
+    match = _CALIBRATION_RE.search(prompt)
+    if match is None:
+        raise ValueError("frontier calibration public evidence is invalid")
+    try:
+        prior = Fraction(match.group("prior"))
+        likelihood_h = Fraction(match.group("likelihood_h"))
+        likelihood_not_h = Fraction(match.group("likelihood_not_h"))
+        public_posterior = (likelihood_h * prior) / (
+            likelihood_h * prior + likelihood_not_h * (1 - prior)
+        )
+    except (ValueError, ZeroDivisionError):
+        raise ValueError("frontier calibration public evidence is invalid") from None
+    if public_posterior != posterior:
+        raise ValueError("frontier calibration public evidence differs from verified answer")
     num_lo, num_hi = _digits(posterior.numerator)
     den_lo, den_hi = _digits(posterior.denominator)
     actions = [
-        (0, num_lo, num_hi, den_lo, den_hi, 0),
-        (1, num_lo, num_hi, den_lo, den_hi, choice),
-        (2, num_lo, num_hi, den_lo, den_hi, band),
+        (
+            prior.numerator,
+            prior.denominator,
+            likelihood_h.numerator,
+            likelihood_h.denominator,
+            likelihood_not_h.numerator,
+            likelihood_not_h.denominator,
+        ),
+        (0, 0, 0, 0, 0, 0),
+        (0, 0, 0, 0, 0, 0),
     ]
     states = [
         (0, 0, 0, 0, 0),
-        (1, num_lo, den_lo, 0, 0),
-        (2, num_lo, den_lo, choice + 1, 0),
-        (3, num_lo, den_lo, band + 1, 1),
+        (1, num_lo, num_hi, 0, 0),
+        (2, den_lo, den_hi, choice + 1, 0),
+        (3, den_lo, den_hi, band + 1, 1),
     ]
     return _program(
         family="frontier_calibration",
-        field_names=("pc", "numerator_lo", "denominator_lo", "decision", "done"),
+        field_names=("pc", "value_lo", "value_hi", "decision", "done"),
         states=states,
         action_field_names=(
-            "stage",
-            "numerator_lo",
-            "numerator_hi",
-            "denominator_lo",
-            "denominator_hi",
-            "decision_code",
+            "prior_numerator",
+            "prior_denominator",
+            "likelihood_h_numerator",
+            "likelihood_h_denominator",
+            "likelihood_not_h_numerator",
+            "likelihood_not_h_denominator",
         ),
         actions=actions,
     )

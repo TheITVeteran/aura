@@ -133,6 +133,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     coding = compile_frontier_process_supervision(
         generate_task("coding", seed=51_905, difficulty=2)
     ).program
+    calibration = compile_frontier_process_supervision(
+        generate_task("calibration", seed=51_906, difficulty=2)
+    ).program
 
     novel_targets = action_targets_from_program(novel, novel.state_trace.depth)
     audit_targets = action_targets_from_program(audit, audit.state_trace.depth)
@@ -141,6 +144,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
         scientific, scientific.state_trace.depth
     )
     coding_targets = action_targets_from_program(coding, coding.state_trace.depth)
+    calibration_targets = action_targets_from_program(
+        calibration, calibration.state_trace.depth
+    )
 
     # Traversal carries selection plus value operands, never the teacher's
     # precomputed checksum. Premise audit carries a row plus score operands,
@@ -160,6 +166,11 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     assert final_science_action[2:4] != expected_prediction_digits
     assert all(value != ACTION_NULL for value in final_science_action)
     assert all(row[4:7] == (ACTION_NULL,) * 3 for row in coding_targets.values)
+    assert all(value != ACTION_NULL for value in calibration_targets.values[0])
+    assert all(
+        row[1:7] == (ACTION_NULL,) * 6
+        for row in calibration_targets.values[1:]
+    )
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)

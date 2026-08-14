@@ -167,15 +167,16 @@ def _canonical_instruction(
         arguments[1] = action[1]
         arguments[3] = action[3]
     elif family == "frontier_calibration" and field_names == (
-        "stage",
-        "numerator_lo",
-        "numerator_hi",
-        "denominator_lo",
-        "denominator_hi",
-        "decision_code",
+        "prior_numerator",
+        "prior_denominator",
+        "likelihood_h_numerator",
+        "likelihood_h_denominator",
+        "likelihood_not_h_numerator",
+        "likelihood_not_h_denominator",
     ):
         opcode = OP_FRONTIER_CALIBRATE
-        arguments[:] = action
+        if step == 0:
+            arguments[:] = action
     elif family == "frontier_misleading_premise" and field_names == (
         "winner_index",
         "impact",

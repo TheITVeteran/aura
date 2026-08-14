@@ -1769,7 +1769,7 @@ class UnifiedRecurrentController(nn.Module):
         if action_probability_history is not None:
             history = mx.stack(
                 [
-                    mx.argmax(item, axis=-1).astype(mx.int32)
+                    mx.argmax(mx.stop_gradient(item), axis=-1).astype(mx.int32)
                     for item in action_probability_history
                 ],
                 axis=1,
@@ -1832,13 +1832,70 @@ class UnifiedRecurrentController(nn.Module):
         value2 = mx.where(is_schedule, next_reward // PROCESS_RADIX, value2)
 
         is_calibrate = opcode == OP_FRONTIER_CALIBRATE
-        value0 = mx.where(is_calibrate, arg1, value0)
-        value1 = mx.where(is_calibrate, arg3, value1)
-        value2 = mx.where(
-            is_calibrate,
-            mx.where(arg0 == 0, 0, arg5 + 1),
-            value2,
-        )
+        if action_probability_history is not None:
+            calibration_input = mx.argmax(
+                mx.stop_gradient(action_probability_history[0]), axis=-1
+            ).astype(mx.int32)
+            prior_num = calibration_input[:, 1]
+            prior_den = calibration_input[:, 2]
+            likelihood_h_num = calibration_input[:, 3]
+            likelihood_h_den = calibration_input[:, 4]
+            likelihood_not_h_num = calibration_input[:, 5]
+            likelihood_not_h_den = calibration_input[:, 6]
+            posterior_num = likelihood_h_num * prior_num * likelihood_not_h_den
+            posterior_den = posterior_num + (
+                likelihood_not_h_num
+                * (prior_den - prior_num)
+                * likelihood_h_den
+            )
+            divisor_left = posterior_num
+            divisor_right = posterior_den
+            for _ in range(12):
+                remainder = divisor_left % mx.maximum(divisor_right, 1)
+                next_left = mx.where(divisor_right == 0, divisor_left, divisor_right)
+                next_right = mx.where(divisor_right == 0, 0, remainder)
+                divisor_left, divisor_right = next_left, next_right
+            divisor = mx.maximum(divisor_left, 1)
+            reduced_num = posterior_num // divisor
+            reduced_den = posterior_den // divisor
+            choose_h = (2 * reduced_num) >= reduced_den
+            percentage = (100 * reduced_num) // mx.maximum(reduced_den, 1)
+            confidence_band = mx.where(
+                percentage < 50,
+                0,
+                mx.where(percentage < 70, 1, mx.where(percentage < 90, 2, 3)),
+            )
+            calibration_step = state[:, 0]
+            value0 = mx.where(
+                is_calibrate & (calibration_step == 0),
+                reduced_num % PROCESS_RADIX,
+                value0,
+            )
+            value1 = mx.where(
+                is_calibrate & (calibration_step == 0),
+                reduced_num // PROCESS_RADIX,
+                value1,
+            )
+            value0 = mx.where(
+                is_calibrate & (calibration_step >= 1),
+                reduced_den % PROCESS_RADIX,
+                value0,
+            )
+            value1 = mx.where(
+                is_calibrate & (calibration_step >= 1),
+                reduced_den // PROCESS_RADIX,
+                value1,
+            )
+            value2 = mx.where(
+                is_calibrate & (calibration_step == 1),
+                choose_h.astype(mx.int32) + 1,
+                value2,
+            )
+            value2 = mx.where(
+                is_calibrate & (calibration_step >= 2),
+                confidence_band.astype(mx.int32) + 1,
+                value2,
+            )
 
         is_audit = opcode == OP_FRONTIER_AUDIT
         encoded_score = value1 + PROCESS_RADIX * value2
