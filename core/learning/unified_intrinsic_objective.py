@@ -915,6 +915,7 @@ def unified_process_training_loss(
         initial_state_teacher_values=targets.initial_values,
         state_teacher_forcing_probability=state_teacher_forcing_probability,
         process_only=True,
+        detach_problem_evidence=False,
     )
     if len(initial_state_logits) != 1:
         raise RuntimeError("typed process emitted no initial-state decision")
@@ -947,6 +948,7 @@ def unified_process_training_loss(
         "teacher_forcing_probability": state_teacher_forcing_probability,
         "answer_tokens_exposed": False,
         "answer_or_coda_graph_constructed": False,
+        "problem_evidence_gradient": "scoped_transformer_enabled",
         "total": float((float(state_weight) * process_loss).item()),
     }
 

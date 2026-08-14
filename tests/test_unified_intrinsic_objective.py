@@ -382,7 +382,61 @@ def test_process_objective_uses_public_prompt_without_answer_or_coda_graph(
     assert receipt["objective"] == "prompt_only_typed_process"
     assert receipt["answer_tokens_exposed"] is False
     assert receipt["answer_or_coda_graph_constructed"] is False
+    assert receipt["problem_evidence_gradient"] == "scoped_transformer_enabled"
     assert layer_calls == [2, 2, 2, 2]
+
+
+def test_process_objective_reaches_scoped_transformer_tissue() -> None:
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
+    from tools.train_unified_intrinsic_recurrence import _configure_window_tissue
+
+    model = _model()
+    _configure_window_tissue(
+        model,
+        _spec(),
+        mode="scoped_lora",
+        rank=2,
+        targets=("o_proj",),
+        depth_basis_size=2,
+    )
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+
+    def objective(candidate: Model):
+        with recurrence_adapter_scope(start=None, stop=None):
+            return unified_process_training_loss(
+                candidate,
+                TOKENS,
+                controller,
+                _spec().plan_at(3),
+                transition_trace=trace,
+                transition_program=program,
+                state_teacher_forcing_probability=1.0,
+            )[0]
+
+    loss, gradients = nn.value_and_grad(model, objective)(model)
+    flat = dict(tree_flatten(gradients))
+    adapter_gradients = [
+        value
+        for name, value in flat.items()
+        if name.endswith((".lora_a", ".lora_b"))
+        and "continuous_depth_" not in name
+    ]
+    mx.eval(loss, gradients)
+    assert adapter_gradients
+    assert any(float(mx.max(mx.abs(value))) > 0.0 for value in adapter_gradients)
 
 
 def test_initial_state_loss_ignores_inactive_padding_slots() -> None:

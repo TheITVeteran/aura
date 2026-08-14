@@ -1931,6 +1931,7 @@ def unified_recurrent_hidden_states(
     typed_action_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
+    detach_problem_evidence: bool = True,
     caches: dict[str, Any] | None = None,
 ) -> tuple[Any, list[Any], UnifiedRecurrenceTelemetry]:
     """Run all Level-3 control mechanisms on one transformer trajectory."""
@@ -1943,6 +1944,7 @@ def unified_recurrent_hidden_states(
         or type(typed_action_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
+        or type(detach_problem_evidence) is not bool
     ):
         raise TypeError("unified recurrence mode flags must be bools")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
@@ -2047,11 +2049,14 @@ def unified_recurrent_hidden_states(
     if state_slot_start is not None:
         # Prefix-only execution is causally identical to the same positions in
         # the complete sequence, but cannot expose teacher-forced answer tokens.
-        # Detaching gives the state machine a stable deep evidence surface.
+        # Inference detaches this evidence by default. Governed process
+        # acquisition may differentiate it so the scoped transformer tissue,
+        # rather than only its downstream categorical controller, can learn to
+        # parse the public problem statement.
         with recurrent_iteration(0):
-            problem_evidence = mx.stop_gradient(
-                _run(window, anchor[:, :state_slot_start, :])
-            )
+            problem_evidence = _run(window, anchor[:, :state_slot_start, :])
+        if detach_problem_evidence:
+            problem_evidence = mx.stop_gradient(problem_evidence)
         problem_evidence = controller.ground_literal_evidence(
             problem_evidence,
             tokens[:, :state_slot_start],
