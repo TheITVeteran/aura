@@ -24,13 +24,52 @@ call from memory paths that must not pull cognition in behind them.
 from __future__ import annotations
 
 import re
+import uuid
 from typing import Any
 
 __all__ = [
+    "GROUNDING_STAMP",
     "INJECTED_BANNERS",
     "contains_injected_block",
+    "is_stamped_grounding",
+    "stamp_grounding",
     "strip_injected_blocks",
 ]
+
+#: Proof that the RUNTIME produced a grounding message, not a caller.
+#:
+#: Grounding used to be recognised by its text: a system message counted as
+#: tool or skill evidence because it contained "[TOOL RESULT:" or carried a
+#: metadata type string. Both are caller-controlled, so anything that could
+#: put a system message into the payload could dress arbitrary text as
+#: evidence and inherit the position and compaction protection real evidence
+#: gets. A per-process nonce cannot be guessed by a caller and cannot leak
+#: between runs, which is exactly the property the marker never had.
+GROUNDING_STAMP = f"aura-grounding-{uuid.uuid4().hex}"
+
+_STAMP_KEY = "aura_grounding_stamp"
+
+
+def stamp_grounding(message: dict) -> dict:
+    """Mark a message as runtime-produced grounding. Mutates and returns it."""
+    if not isinstance(message, dict):
+        return message
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        message["metadata"] = metadata
+    metadata[_STAMP_KEY] = GROUNDING_STAMP
+    return message
+
+
+def is_stamped_grounding(message: Any) -> bool:
+    """Whether THIS process produced this grounding message."""
+    if not isinstance(message, dict):
+        return False
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    return metadata.get(_STAMP_KEY) == GROUNDING_STAMP
 
 #: The banners a turn attaches. Each is either a fenced block with a matching
 #: ``[END …]`` line, or a single labelled section that runs to the end.

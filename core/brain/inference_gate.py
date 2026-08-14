@@ -7402,6 +7402,31 @@ class InferenceGate:
         self._living_mind_receipt = receipt
         return rendered
 
+    @staticmethod
+    def _prompt_state_snapshot(state: Any) -> Any:
+        """A state the assembler may read without reaching the repository.
+
+        Deep-copy where it is affordable, and fall back to the previous
+        shallow-plus-cognition shape when something in the graph refuses to
+        copy — a live lock, a socket, a weakref. Falling back is recorded,
+        because "we snapshot before assembly" would otherwise be true on most
+        turns and silently false on the ones where it matters.
+        """
+        try:
+            return copy.deepcopy(state)
+        except (TypeError, ValueError, RecursionError, AttributeError) as exc:
+            _record_inference_degradation(
+                exc,
+                action="assembled the prompt from a partial state snapshot",
+                extra={"snapshot": "shallow_with_cognition"},
+            )
+            partial = copy.copy(state)
+            try:
+                partial.cognition = copy.deepcopy(state.cognition)
+            except (TypeError, ValueError, RecursionError, AttributeError):
+                pass
+            return partial
+
     def _build_messages(
         self, prompt: str, system_prompt: str, history: list[dict]
     ) -> list[dict[str, str]]:
@@ -7430,9 +7455,15 @@ class InferenceGate:
                 from core.brain.llm.context_assembler import ContextAssembler
 
                 # Assemble from a derived prompt snapshot. Generation must not
-                # erase or replace the repository's canonical working memory.
-                payload_state = copy.copy(state)
-                payload_state.cognition = copy.deepcopy(state.cognition)
+                # erase or replace the repository's canonical state.
+                #
+                # copy.copy is SHALLOW: only cognition was deep-copied, so
+                # affect, motivation, memory and soma stayed the very objects
+                # the repository holds. The comment promised the canonical
+                # state would not be altered while handing the assembler live
+                # references to most of it, and a context path that mutates one
+                # of them writes through to the runtime.
+                payload_state = self._prompt_state_snapshot(state)
                 if hasattr(payload_state.cognition, "working_memory"):
                     canonical_history = list(
                         getattr(state.cognition, "working_memory", []) or []
@@ -7477,17 +7508,54 @@ class InferenceGate:
                 "🧠 ContextAssembler.build_messages() unavailable (%s), using manual build", e
             )
 
-        # Fallback: Manual construction with system_prompt + history
-        messages = [{"role": "system", "content": system_prompt}]
+        return self._manual_messages(prompt, system_prompt, history)
 
-        for msg in history[-10:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if content and role in ("user", "assistant"):
-                messages.append({"role": role, "content": content})
+    def _manual_messages(
+        self, prompt: str, system_prompt: str, history: list[dict] | None
+    ) -> list[dict[str, str]]:
+        """The message list when ContextAssembler could not build one.
 
-        if not history or history[-1].get("content") != prompt:
-            messages.append({"role": "user", "content": prompt})
+        Two defects lived here. It called ``msg.get`` on every recent history
+        item, so one string or None in working memory raised OUTSIDE the
+        protected try above and took down the turn that this fallback exists to
+        rescue. And it kept only the system prompt and ten user/assistant
+        turns, dropping the grounding system messages — tool receipts, fetched
+        pages, skill results — that the answer may depend on. Losing the rich
+        cognitive stack is unavoidable when the assembler is down; losing the
+        evidence gathered for THIS turn is not.
+        """
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": str(system_prompt or "")}
+        ]
+
+        recent = [item for item in (history or []) if isinstance(item, dict)]
+        # Grounding first, in the order it was gathered, then dialogue. Both
+        # are bounded; the token fit at dispatch is the real ceiling.
+        grounding = [
+            {"role": "system", "content": str(item.get("content", "") or "")}
+            for item in recent
+            if self._is_grounding_system_message(item)
+            and str(item.get("content", "") or "").strip()
+        ]
+        dialogue: list[dict[str, str]] = []
+        for item in recent[-10:]:
+            role = str(item.get("role", "user") or "user").strip().lower()
+            # "aura" is her own role name in working memory and was silently
+            # dropped here, so her half of the conversation vanished.
+            if role == "aura":
+                role = "assistant"
+            content = str(item.get("content", "") or "")
+            if content and role in {"user", "assistant"}:
+                dialogue.append({"role": role, "content": content})
+
+        messages.extend(grounding[-6:])
+        messages.extend(dialogue)
+
+        last_content = ""
+        if recent:
+            last_content = str(recent[-1].get("content", "") or "")
+        if last_content != str(prompt or ""):
+            messages.append({"role": "user", "content": str(prompt or "")})
 
         return messages
 
@@ -7673,9 +7741,13 @@ class InferenceGate:
         The first primary attempt gets Aura's normal rich context. If it returns
         an empty, malformed, or too-thin user-facing draft, reusing the same
         payload and prompt cache tends to reproduce the same bad generation.
-        This repair lane keeps only recent dialogue plus the current user turn,
-        pins a simple foreground contract, and lets Cortex answer without the
-        full internal telemetry stack.
+        This repair lane drops the full internal telemetry stack, which is the
+        point: that stack is what the first attempt drowned in. It used to drop
+        the turn's EVIDENCE with it — tool receipts, fetched pages, skill
+        results — and then invite an answer about tools and agency from a
+        prompt with no record of what was actually run. That is the shape that
+        produces a confident answer about an action nobody can show happened.
+        Telemetry goes; grounding stays.
         """
         current_user = cls._current_user_text_from_messages(prompt, messages)
         system = (
@@ -7690,9 +7762,15 @@ class InferenceGate:
         )
         retry_messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         dialogue_tail: list[dict[str, str]] = []
+        grounding: list[dict[str, str]] = []
         if isinstance(messages, list):
             for msg in messages:
                 if not isinstance(msg, dict):
+                    continue
+                if cls._is_grounding_system_message(msg):
+                    content = cls._trim_retry_message_content(msg.get("content"), 2000)
+                    if content:
+                        grounding.append({"role": "system", "content": content})
                     continue
                 role = str(msg.get("role", "") or "").strip().lower()
                 if role not in {"user", "assistant"}:
@@ -7700,6 +7778,10 @@ class InferenceGate:
                 content = cls._trim_retry_message_content(msg.get("content"))
                 if content:
                     dialogue_tail.append({"role": role, "content": content})
+        # Evidence first so it is behind the dialogue and immediately before
+        # the question, which is where the grounding path already puts it.
+        if grounding:
+            retry_messages.extend(grounding[-3:])
         if dialogue_tail:
             retry_messages.extend(dialogue_tail[-5:])
         if not retry_messages or retry_messages[-1].get("role") != "user":
@@ -7710,16 +7792,34 @@ class InferenceGate:
 
     @staticmethod
     def _is_grounding_system_message(message: Any) -> bool:
+        """Whether this system message is evidence this runtime gathered.
+
+        Grounding gets privileged treatment: it survives compaction and is
+        placed immediately before the newest user turn. What decided it was
+        caller-controlled text — a "[TOOL RESULT:" substring or a metadata
+        type string — so anything that could put a system message into the
+        payload could dress arbitrary content as evidence and inherit that
+        treatment.
+
+        A per-process stamp is the proof a marker never was. Unstamped
+        messages that look like grounding are still accepted, because the
+        producers are being migrated and dropping real evidence would be the
+        worse failure — but each one is recorded, once per shape, so the
+        remaining unstamped producers are findable rather than assumed.
+        """
         if not isinstance(message, dict):
             return False
         role = str(message.get("role", "") or "").strip().lower()
         if role != "system":
             return False
 
-        metadata = message.get("metadata", {}) or {}
-        if str(metadata.get("type", "") or "").strip().lower() in {"skill_result", "tool_result"}:
+        from core.utils.injected_blocks import is_stamped_grounding
+
+        if is_stamped_grounding(message):
             return True
 
+        metadata = message.get("metadata", {}) or {}
+        declared_type = str(metadata.get("type", "") or "").strip().lower()
         content = str(message.get("content", "") or "")
         markers = (
             "[FETCHED PAGE CONTENT]",
@@ -7729,7 +7829,40 @@ class InferenceGate:
             "[SKILL RESULT:",
             "[TOOL RESULT:",
         )
-        return any(marker in content for marker in markers)
+        matched = declared_type in {"skill_result", "tool_result"} or any(
+            marker in content for marker in markers
+        )
+        if matched:
+            InferenceGate._note_unstamped_grounding(declared_type or "text_marker")
+        return matched
+
+    #: Shapes already reported, so one unstamped producer does not flood the
+    #: degradation trail on every turn.
+    _unstamped_grounding_seen: set[str] = set()
+
+    @staticmethod
+    def _note_unstamped_grounding(shape: str) -> None:
+        """Name an unstamped producer once, without faulting the subsystem.
+
+        inference_gate is on the fail-closed list, so a recorded degradation
+        here becomes a CRITICAL service fault — and an unmigrated producer is
+        expected during the migration, not a service failure. Logged once per
+        shape and counted, so the remaining producers are findable through
+        unstamped_grounding_shapes() rather than through an incident.
+        """
+        if shape in InferenceGate._unstamped_grounding_seen:
+            return
+        InferenceGate._unstamped_grounding_seen.add(shape)
+        logger.warning(
+            "🔏 Grounding accepted without a runtime stamp (%s). Its producer "
+            "should call injected_blocks.stamp_grounding().",
+            shape,
+        )
+
+    @staticmethod
+    def unstamped_grounding_shapes() -> list[str]:
+        """Grounding shapes accepted this process without a runtime stamp."""
+        return sorted(InferenceGate._unstamped_grounding_seen)
 
     @staticmethod
     def _foreground_prompt_context_window() -> int:
@@ -7954,9 +8087,16 @@ class InferenceGate:
         )
         sections: list[str] = []
         for header in important_headers:
-            start = content.find(header)
+            # At a LINE START only. Searching anywhere in the text meant a
+            # header written INSIDE a sentence — in user-derived memory, a
+            # fetched page, a tool result — promoted whatever followed it into
+            # the excerpt that survives every budget trim. A real header is
+            # always at the start of its line.
+            start = 0 if content.startswith(header) else content.find("\n" + header)
             if start < 0:
                 continue
+            if start:
+                start += 1
             if header.startswith("["):
                 end_marker = "[END " + header.strip("[]") + "]"
                 next_header = content.find(end_marker, start + len(header))
@@ -11567,7 +11707,13 @@ class InferenceGate:
                                         int(retry_morpho_kwargs.get("repetition_context_size", 64) or 64),
                                         96,
                                     ),
+                                    # The runtime TELEMETRY payload is what the
+                                    # first attempt drowned in, so it is
+                                    # skipped. The turn's evidence is not: it
+                                    # travels in the repair messages built
+                                    # above, which now carry grounding.
                                     "skip_runtime_payload": True,
+                                    "repair_retains_grounding": True,
                                 }
                             )
                             retry_temperature = min(

@@ -32,6 +32,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from core.utils.injected_blocks import stamp_grounding
 from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.reasoning_amplifier_flags import reasoning_amplifier_v2_enabled
 from core.container import ServiceContainer
@@ -5102,15 +5103,19 @@ class UnitaryResponsePhase(Phase):
                     # Inject fetched content into working memory as a grounded context message
                     fetched_block = "\n\n---\n\n".join(fetched_content_parts)
                     new_state.cognition.working_memory.append(
-                        {
-                            "role": "system",
-                            "content": f"[FETCHED PAGE CONTENT]\n{fetched_block}",
-                            "metadata": {
-                                "type": "skill_result",
-                                "skill": "sovereign_browser",
-                                "ok": True,
-                            },
-                        }
+                        # Stamped, so the inference gate can tell evidence THIS
+                        # runtime gathered from text that merely looks like it.
+                        stamp_grounding(
+                            {
+                                "role": "system",
+                                "content": f"[FETCHED PAGE CONTENT]\n{fetched_block}",
+                                "metadata": {
+                                    "type": "skill_result",
+                                    "skill": "sovereign_browser",
+                                    "ok": True,
+                                },
+                            }
+                        )
                     )
                     # Also inject as a skill modifier so the LLM system prompt can reference it
                     new_state.response_modifiers["last_skill_run"] = "sovereign_browser"
@@ -7292,17 +7297,20 @@ class UnitaryResponsePhase(Phase):
                             new_state.response_modifiers["last_skill_ok"] = hit.get("ok", False)
                             if hit.get("ok"):
                                 new_state.cognition.working_memory.append(
-                                    {
-                                        "role": "system",
-                                        "content": hit.get(
-                                            "summary", f"{hit.get('skill')} completed."
-                                        ),
-                                        "metadata": {
-                                            "type": "skill_result",
-                                            "skill": hit.get("skill"),
-                                            "ok": True,
-                                        },
-                                    }
+                                    stamp_grounding(
+                                        {
+                                            "role": "system",
+                                            "content": hit.get(
+                                                "summary",
+                                                f"{hit.get('skill')} completed.",
+                                            ),
+                                            "metadata": {
+                                                "type": "skill_result",
+                                                "skill": hit.get("skill"),
+                                                "ok": True,
+                                            },
+                                        }
+                                    )
                                 )
             except _RESPONSE_RECOVERABLE_ERRORS as g_err:
                 _record_response_degradation(g_err, "UnitaryResponse: action grounding failed: %s")

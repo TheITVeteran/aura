@@ -7,6 +7,7 @@ import re
 import time
 from typing import Any
 
+from core.utils.injected_blocks import stamp_grounding
 from core.brain.generation_provenance import attributed_text, generation_metadata_of
 from core.brain.live_mind_contract import (
     append_text_mutation,
@@ -505,21 +506,28 @@ class ResponseGenerationPhase(BasePhase):
             "query": query[:240],
         }
         state.cognition.working_memory.append(
-            {
-                "role": "system",
-                "content": self._render_skill_result_block(
-                    skill_name=skill_name,
-                    payload=payload,
-                ),
-                "metadata": {
-                    "type": "skill_result",
-                    "skill": skill_name,
-                    "ok": ok,
-                    "query": query[:240],
-                    "turn_marker": state.response_modifiers.get("evidence_turn_marker"),
-                },
-                "timestamp": time.time(),
-            }
+            # Stamped: the inference gate gives grounding privileged placement
+            # and compaction protection, and a caller-controlled marker is not
+            # proof that this runtime gathered it.
+            stamp_grounding(
+                {
+                    "role": "system",
+                    "content": self._render_skill_result_block(
+                        skill_name=skill_name,
+                        payload=payload,
+                    ),
+                    "metadata": {
+                        "type": "skill_result",
+                        "skill": skill_name,
+                        "ok": ok,
+                        "query": query[:240],
+                        "turn_marker": state.response_modifiers.get(
+                            "evidence_turn_marker"
+                        ),
+                    },
+                    "timestamp": time.time(),
+                }
+            )
         )
         try:
             state.cognition.trim_working_memory()
