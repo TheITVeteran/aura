@@ -66,6 +66,8 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    PROCESS_READER_PARAMETER_NAMES,
+    PROCESS_TAPE_SCHEMA,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
     unified_recurrent_hidden_states,
@@ -785,7 +787,9 @@ def _phase_gradients(gradients: Any, phase: str) -> Any:
             and "continuous_depth_" not in name
             and (name.endswith(".lora_a") or name.endswith(".lora_b"))
         )
-        neural_answer_bridge = name.startswith("controller.answer_")
+        neural_answer_bridge = name.startswith(
+            ("controller.answer_", "controller.process_reader_")
+        )
         if phase == "semantic_anchor":
             keep = shared_adapter
         elif phase == "answer_bridge":
@@ -827,6 +831,7 @@ def _gradient_ownership_group(name: str) -> str:
         return "scoped_transformer_bridge"
     if name.startswith(
         (
+            "controller.process_reader_",
             "controller.answer_query",
             "controller.answer_key",
             "controller.answer_value",
@@ -1985,10 +1990,14 @@ def _bootstrap_bundle_from_checkpoint(
         for name, value in tensors.items()
         if name.startswith("bundle.")
     }
-    expected = set(_trainable(bundle))
-    if set(bundle_values) != expected:
-        raise RuntimeError("unified recurrence bootstrap tensor inventory differs")
     child_values = _trainable(bundle)
+    expected = set(child_values)
+    unexpected_tensors = sorted(set(bundle_values) - expected)
+    if unexpected_tensors:
+        raise RuntimeError(
+            "unified recurrence bootstrap tensor inventory differs: "
+            + ",".join(unexpected_tensors)
+        )
     incompatible_tensors = sorted(
         name
         for name, value in bundle_values.items()
@@ -2000,6 +2009,10 @@ def _bootstrap_bundle_from_checkpoint(
             "unified recurrence bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
+    bundle_values, reader_extension = _merge_bootstrap_process_reader_extension(
+        bundle_values,
+        child_values,
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -2007,6 +2020,8 @@ def _bootstrap_bundle_from_checkpoint(
         parent_identity=parent_identity,
         child_identity=expected_identity,
     )
+    if set(bundle_values) != expected:
+        raise RuntimeError("unified recurrence bootstrap tensor inventory differs")
     bundle.update(tree_unflatten(list(bundle_values.items())))
     mx.eval(bundle.parameters())
     result = {
@@ -2025,6 +2040,8 @@ def _bootstrap_bundle_from_checkpoint(
     }
     if codebook_extension is not None:
         result["semantic_codebook_extension"] = codebook_extension
+    if reader_extension is not None:
+        result["process_reader_extension"] = reader_extension
     return result
 
 
@@ -2032,6 +2049,42 @@ def _tensor_sha256(value: Any) -> str:
     materialized = value.astype(mx.float32)
     mx.eval(materialized)
     return hashlib.sha256(bytes(memoryview(materialized))).hexdigest()
+
+
+def _merge_bootstrap_process_reader_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Add only the independently initialized causal-reader parameter family."""
+
+    expected = {
+        f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES
+    }
+    missing = set(child_values) - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap tensor inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        value = child_values[name]
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    return migrated, {
+        "schema": "aura.unified_intrinsic.process_reader_extension.v1",
+        "migration_rule": "parent_exact_plus_deterministic_new_reader_tensors",
+        "parent_tensor_inventory_preserved": True,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
 
 
 def _merge_bootstrap_codebook_extension(
@@ -2967,8 +3020,9 @@ def main() -> int:
             family for family, _marker in answer_emission_contract.family_markers
         )
         training_families = sorted({str(task.family) for task in train_tasks})
+        hidden_size = _residual_hidden_size(model)
         answer_bridge_supervision = {
-            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v4",
+            "schema": "aura.unified_intrinsic.answer_bridge_supervision.v5",
             "semantic_cross_entropy_families": training_families,
             "role_place_binding_families": sorted(
                 family for family in training_families if family in pointer_bound_families
@@ -2984,11 +3038,19 @@ def main() -> int:
                 else "grammar_preserving_digit_substitution"
             ),
             "process_tape": {
-                "schema": "aura.unified_intrinsic.process_tape.v3",
-                "ordering": "bounded_sinusoidal_step_and_entry_kind",
-                "reader": "causal_self_attention_prefix_context",
-                "contents": ["typed_action", "committed_state"],
-                "entries_per_live_step": len(ACTION_SLOT_NAMES) + len(STATE_SLOT_NAMES),
+                "schema": PROCESS_TAPE_SCHEMA,
+                "ordering": "bounded_sinusoidal_step_and_transition_role",
+                "reader": "two_independent_rank_expanded_causal_prefix_blocks",
+                "reader_rank": min(hidden_size, 4 * args.controller_rank),
+                "contents": [
+                    "pre_state",
+                    "typed_action",
+                    "post_state",
+                    "state_delta",
+                ],
+                "entries_per_live_step": (
+                    len(ACTION_SLOT_NAMES) + 3 * len(STATE_SLOT_NAMES)
+                ),
                 "terminal_stutter_entries_masked": True,
                 "private_answer_exposed": False,
             },
@@ -3001,7 +3063,6 @@ def main() -> int:
             targets=targets,
             depth_basis_size=args.depth_basis_size,
         )
-        hidden_size = _residual_hidden_size(model)
         controller = UnifiedRecurrentController(
             UnifiedRecurrenceConfig(
                 hidden_size=hidden_size,

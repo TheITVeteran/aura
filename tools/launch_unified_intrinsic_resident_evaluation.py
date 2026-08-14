@@ -204,12 +204,22 @@ def _selected_checkpoint(
             supervision_identity.get("answer_digit_pointer_enabled")
             if isinstance(supervision_identity, dict)
             and supervision_identity.get("schema")
-            == "aura.unified_intrinsic.answer_bridge_supervision.v4"
+            == "aura.unified_intrinsic.answer_bridge_supervision.v5"
             else None
         )
         expected_history_policy = (
             supervision_identity.get("generated_history_policy")
             if isinstance(supervision_identity, dict)
+            else None
+        )
+        controller_rank = (
+            training_identity.get("controller_rank")
+            if isinstance(training_identity, dict)
+            else None
+        )
+        expected_reader_rank = (
+            4 * controller_rank
+            if type(controller_rank) is int and controller_rank > 0
             else None
         )
         process_tape_identity = (
@@ -247,11 +257,17 @@ def _selected_checkpoint(
             or not isinstance(process_tape_identity, dict)
             or process_tape_identity
             != {
-                "schema": "aura.unified_intrinsic.process_tape.v3",
-                "ordering": "bounded_sinusoidal_step_and_entry_kind",
-                "reader": "causal_self_attention_prefix_context",
-                "contents": ["typed_action", "committed_state"],
-                "entries_per_live_step": 13,
+                "schema": "aura.unified_intrinsic.process_tape.v4",
+                "ordering": "bounded_sinusoidal_step_and_transition_role",
+                "reader": "two_independent_rank_expanded_causal_prefix_blocks",
+                "reader_rank": expected_reader_rank,
+                "contents": [
+                    "pre_state",
+                    "typed_action",
+                    "post_state",
+                    "state_delta",
+                ],
+                "entries_per_live_step": 23,
                 "terminal_stutter_entries_masked": True,
                 "private_answer_exposed": False,
             }

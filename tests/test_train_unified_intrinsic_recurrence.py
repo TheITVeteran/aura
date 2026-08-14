@@ -30,6 +30,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    PROCESS_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
@@ -59,11 +60,12 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_frozen_dataset,
     _load_latest_checkpoint,
     _merge_bootstrap_codebook_extension,
+    _merge_bootstrap_process_reader_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
-    _phase_schedule,
     _phase_gradients,
+    _phase_schedule,
     _recurrent_training_task,
     _residual_hidden_size,
     _resolve_recurrent_window,
@@ -175,6 +177,36 @@ def test_bootstrap_codebook_extension_rejects_any_other_topology_drift() -> None
             parent_identity={"state_codebook_sha256": "parent"},
             child_identity={"state_codebook_sha256": "child"},
         )
+
+
+def test_bootstrap_process_reader_extension_adds_only_new_reader_tensors() -> None:
+    parent = {"controller.answer_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in PROCESS_READER_PARAMETER_NAMES
+        },
+    }
+
+    migrated, receipt = _merge_bootstrap_process_reader_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["parent_tensor_inventory_preserved"] is True
+    assert migrated["controller.answer_output"] is parent["controller.answer_output"]
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_process_reader_extension_rejects_partial_inventory() -> None:
+    parent = {"controller.answer_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        "controller.process_reader_1_query": mx.ones((3, 2), dtype=mx.float32),
+    }
+
+    with pytest.raises(RuntimeError, match="tensor inventory differs"):
+        _merge_bootstrap_process_reader_extension(parent, child)
 
 
 def _model() -> Model:
@@ -1151,6 +1183,7 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
         },
         "controller": {
             "answer_output": mx.ones((2, 2)),
+            "process_reader_1_output": mx.ones((2, 2)),
             "transport_bias": mx.ones(()),
         },
     }
@@ -1161,18 +1194,22 @@ def test_phase_partition_preserves_shared_t1_and_trains_depth_bridge() -> None:
     assert bool(mx.all(semantic["model.layer.lora_a"] == 1))
     assert bool(mx.all(semantic["model.layer.continuous_depth_b.0"] == 0))
     assert bool(mx.all(semantic["controller.answer_output"] == 0))
+    assert bool(mx.all(semantic["controller.process_reader_1_output"] == 0))
     assert bool(mx.all(semantic["controller.transport_bias"] == 0))
     assert bool(mx.all(answer_bridge["model.layer.lora_a"] == 0))
     assert bool(mx.all(answer_bridge["model.layer.continuous_depth_b.0"] == 0))
     assert bool(mx.all(answer_bridge["controller.answer_output"] == 1))
+    assert bool(mx.all(answer_bridge["controller.process_reader_1_output"] == 1))
     assert bool(mx.all(answer_bridge["controller.transport_bias"] == 0))
     assert bool(mx.all(state["model.layer.lora_a"] == 0))
     assert bool(mx.all(state["model.layer.continuous_depth_b.0"] == 1))
     assert bool(mx.all(state["controller.answer_output"] == 0))
+    assert bool(mx.all(state["controller.process_reader_1_output"] == 0))
     assert bool(mx.all(state["controller.transport_bias"] == 1))
     assert bool(mx.all(recurrent["model.layer.lora_a"] == 0))
     assert bool(mx.all(recurrent["model.layer.continuous_depth_b.0"] == 1))
     assert bool(mx.all(recurrent["controller.answer_output"] == 0))
+    assert bool(mx.all(recurrent["controller.process_reader_1_output"] == 0))
     assert bool(mx.all(recurrent["controller.transport_bias"] == 1))
     assert _optimization_phase(39, 40) == "semantic_anchor"
     assert _optimization_phase(40, 40) == "recurrence"
@@ -1480,6 +1517,70 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
             wrong_shape,
             expected_identity=compatibility,
         )
+
+
+def test_bootstrap_extends_legacy_parent_with_exact_process_reader(
+    tmp_path: Path,
+) -> None:
+    parent, _wiring = _bundle()
+    for name in PROCESS_READER_PARAMETER_NAMES:
+        delattr(parent.controller, name)
+    parent_values = {name: value + 0 for name, value in _trainable(parent).items()}
+    optimizer = optim.Adam(learning_rate=0.01)
+    optimizer.init(parent.trainable_parameters())
+    compatibility = {
+        name: f"value-{name}"
+        for name in (
+            "bridge",
+            "window_tissue_mode",
+            "lora_rank",
+            "controller_rank",
+            "state_codebook_sha256",
+            "literal_observation_contract",
+            "opcode_observation_contract",
+            "answer_emission_contract",
+            "depth_basis_size",
+            "lora_targets",
+            "readout_sha256",
+        )
+    }
+    compatibility["model"] = {
+        "config_sha256": "c" * 64,
+        "weights": [{"name": "model.safetensors", "sha256": "d" * 64, "size": 8}],
+    }
+    compatibility["spec"] = {"prelude_end": 2, "coda_start": 4}
+    identity = {
+        "schema": "test",
+        **compatibility,
+    }
+    identity["identity_sha256"] = _canonical_sha256(identity)
+    _save_checkpoint(
+        tmp_path,
+        parent,
+        optimizer,
+        step=41,
+        history=[],
+        identity=identity,
+    )
+    child, _child_wiring = _bundle()
+
+    receipt = _bootstrap_bundle_from_checkpoint(
+        tmp_path,
+        "checkpoint_latest",
+        child,
+        expected_identity=compatibility,
+    )
+
+    imported = _trainable(child)
+    assert all(
+        bool(mx.array_equal(imported[name], value))
+        for name, value in parent_values.items()
+    )
+    extension = receipt["process_reader_extension"]
+    assert extension["parent_tensor_inventory_preserved"] is True
+    assert set(extension["new_tensor_names"]) == {
+        f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES
+    }
 
 
 def test_optional_resume_starts_fresh_only_when_no_checkpoint_exists(

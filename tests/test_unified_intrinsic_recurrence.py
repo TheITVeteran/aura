@@ -149,10 +149,16 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
         "process_tape_attention_over_frozen_readout"
     )
     assert receipt["process_tape"] == {
-        "schema": "aura.unified_intrinsic.process_tape.v3",
-        "ordering": "bounded_sinusoidal_step_and_entry_kind",
-        "reader": "causal_self_attention_prefix_context",
-        "contents": ["typed_action", "committed_state"],
+        "schema": "aura.unified_intrinsic.process_tape.v4",
+        "ordering": "bounded_sinusoidal_step_and_transition_role",
+        "reader": "two_independent_rank_expanded_causal_prefix_blocks",
+        "reader_rank": 32,
+        "contents": [
+            "pre_state",
+            "typed_action",
+            "post_state",
+            "state_delta",
+        ],
         "terminal_stutter_entries_masked": True,
     }
     assert receipt["terminal_decode_semantics"] == "first_terminal_state_preserved"
@@ -291,7 +297,9 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
         process_tape_lesion=True,
     )
 
-    entries_per_step = controller.config.action_slots + controller.config.state_slots
+    entries_per_step = (
+        controller.config.action_slots + 3 * controller.config.state_slots
+    )
     assert intact.process_tape_entries == entries_per_step * plan.iterations
     assert intact.process_tape_active_entries == intact.process_tape_entries
     assert lesioned.process_tape_entries == 0
@@ -304,10 +312,16 @@ def test_process_tape_identity_preserves_step_and_entry_kind() -> None:
     value = mx.ones((1, 3, controller.config.hidden_size), dtype=mx.float32)
 
     action_zero = controller.encode_process_tape_entry(value, step=0, kind="action")
-    state_zero = controller.encode_process_tape_entry(value, step=0, kind="state")
+    state_zero = controller.encode_process_tape_entry(
+        value, step=0, kind="state_post"
+    )
+    delta_zero = controller.encode_process_tape_entry(
+        value, step=0, kind="state_delta"
+    )
     action_one = controller.encode_process_tape_entry(value, step=1, kind="action")
 
     assert not bool(mx.array_equal(action_zero, state_zero))
+    assert not bool(mx.array_equal(state_zero, delta_zero))
     assert not bool(mx.array_equal(action_zero, action_one))
     assert not bool(mx.array_equal(state_zero, action_one))
 
@@ -322,15 +336,15 @@ def test_process_tape_attention_distinguishes_noncommutative_order() -> None:
     second = mx.full((1, 5, controller.config.hidden_size), 2.0)
     forward = mx.concatenate(
         [
-            controller.encode_process_tape_entry(first, step=0, kind="state"),
-            controller.encode_process_tape_entry(second, step=1, kind="state"),
+            controller.encode_process_tape_entry(first, step=0, kind="state_post"),
+            controller.encode_process_tape_entry(second, step=1, kind="state_post"),
         ],
         axis=1,
     )
     reversed_order = mx.concatenate(
         [
-            controller.encode_process_tape_entry(second, step=0, kind="state"),
-            controller.encode_process_tape_entry(first, step=1, kind="state"),
+            controller.encode_process_tape_entry(second, step=0, kind="state_post"),
+            controller.encode_process_tape_entry(first, step=1, kind="state_post"),
         ],
         axis=1,
     )
@@ -386,10 +400,12 @@ def test_process_tape_identity_rejects_invalid_entries() -> None:
 
     with pytest.raises(ValueError, match="non-negative"):
         controller.encode_process_tape_entry(value, step=-1, kind="action")
-    with pytest.raises(ValueError, match="action or state"):
+    with pytest.raises(ValueError, match="transition schema"):
         controller.encode_process_tape_entry(value, step=0, kind="unknown")
     with pytest.raises(ValueError, match="residual layout"):
-        controller.encode_process_tape_entry(value[..., :-1], step=0, kind="state")
+        controller.encode_process_tape_entry(
+            value[..., :-1], step=0, kind="state_post"
+        )
 
 
 def test_answer_digit_place_reads_the_selected_terminal_register() -> None:

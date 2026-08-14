@@ -63,7 +63,19 @@ from core.learning.recurrent_state_schema import (
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
-PROCESS_TAPE_SCHEMA: Final = "aura.unified_intrinsic.process_tape.v3"
+PROCESS_TAPE_SCHEMA: Final = "aura.unified_intrinsic.process_tape.v4"
+PROCESS_READER_PARAMETER_NAMES: Final = (
+    "process_reader_1_query",
+    "process_reader_1_key",
+    "process_reader_1_value",
+    "process_reader_1_output",
+    "process_reader_1_gate_logit",
+    "process_reader_2_query",
+    "process_reader_2_key",
+    "process_reader_2_value",
+    "process_reader_2_output",
+    "process_reader_2_gate_logit",
+)
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -234,6 +246,19 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed),
             num=27,
+        )
+        (
+            key_process_reader_1_query,
+            key_process_reader_1_key,
+            key_process_reader_1_value,
+            key_process_reader_1_output,
+            key_process_reader_2_query,
+            key_process_reader_2_key,
+            key_process_reader_2_value,
+            key_process_reader_2_output,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x50524F43),
+            num=8,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -472,6 +497,69 @@ class UnifiedRecurrentController(nn.Module):
             ).astype(mx.float32)
             / math.sqrt(config.correction_rank)
         )
+        # Causal process composition and answer extraction are distinct roles.
+        # Sharing these projections made one objective erase progress on the
+        # other during CP411. This small reader is independently trainable and
+        # migrates into proven parent tissue under an exact inventory receipt.
+        process_reader_rank = min(config.hidden_size, 4 * config.correction_rank)
+        self.process_reader_1_query = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_1_query,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_1_key = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_1_key,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_1_value = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_1_value,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_1_output = (
+            mx.random.normal(
+                (process_reader_rank, config.hidden_size),
+                key=key_process_reader_1_output,
+            ).astype(mx.float32)
+            / math.sqrt(process_reader_rank)
+        )
+        self.process_reader_1_gate_logit = mx.array(-2.0, dtype=mx.float32)
+        self.process_reader_2_query = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_2_query,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_2_key = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_2_key,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_2_value = (
+            mx.random.normal(
+                (config.hidden_size, process_reader_rank),
+                key=key_process_reader_2_value,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.process_reader_2_output = (
+            mx.random.normal(
+                (process_reader_rank, config.hidden_size),
+                key=key_process_reader_2_output,
+            ).astype(mx.float32)
+            / math.sqrt(process_reader_rank)
+        )
+        self.process_reader_2_gate_logit = mx.array(-2.0, dtype=mx.float32)
         self.answer_gate_query = mx.zeros(
             (config.hidden_size, 1), dtype=mx.float32
         )
@@ -617,24 +705,31 @@ class UnifiedRecurrentController(nn.Module):
 
         if type(step) is not int or step < 0:
             raise ValueError("process tape step must be a non-negative integer")
-        if kind not in {"action", "state"}:
-            raise ValueError("process tape kind must be action or state")
+        kind_offsets = {
+            "state_pre": 0,
+            "action": 1,
+            "state_post": 2,
+            "state_delta": 3,
+        }
+        if kind not in kind_offsets:
+            raise ValueError("process tape kind differs from the transition schema")
         if len(value.shape) != 3 or int(value.shape[-1]) != self.config.hidden_size:
             raise ValueError("process tape entry differs from the residual layout")
         # Content-only attention treats execution history as a set. Encode the
         # ordinal and event type so non-commutative traces remain distinguishable.
-        ordinal = float(2 * step + (0 if kind == "action" else 1) + 1)
+        ordinal = float(4 * step + kind_offsets[kind] + 1)
         dimensions = mx.arange(self.config.hidden_size, dtype=mx.float32)
         pairs = mx.floor(dimensions / 2.0)
         frequencies = mx.exp(
             -math.log(10_000.0)
             * (2.0 * pairs / float(self.config.hidden_size))
         )
-        angles = ordinal * frequencies
+        slot_offsets = mx.arange(int(value.shape[1]), dtype=mx.float32) + 1.0
+        angles = (ordinal + 0.125 * slot_offsets[:, None]) * frequencies[None, :]
         even = (mx.arange(self.config.hidden_size) % 2) == 0
         identity = mx.where(even, mx.sin(angles), mx.cos(angles))
         scale = 0.25 * mx.stop_gradient(_rms(value.astype(mx.float32)))
-        return value + (scale * identity[None, None, :]).astype(value.dtype)
+        return value + (scale * identity[None, :, :]).astype(value.dtype)
 
     def contextualize_process_tape(
         self,
@@ -646,8 +741,11 @@ class UnifiedRecurrentController(nn.Module):
         Positional identity makes order observable, but direct cross-attention
         still asks one read to infer every intermediate dependency.  This scan
         gives each live event a representation of its complete causal prefix.
-        It reuses the answer bridge projections so legacy checkpoints remain
-        loadable without inventing untrained tensors.
+        Its projections are independent from answer extraction: process
+        composition and answer selection otherwise send competing gradients
+        through the same parameters. Two independent causal blocks let later
+        events compose already-contextualized transitions without adding a
+        parallel answer model.
         """
 
         if (
@@ -660,28 +758,49 @@ class UnifiedRecurrentController(nn.Module):
             mask = mx.ones(memory.shape[:2], dtype=mx.bool_)
         if len(mask.shape) != 2 or mask.shape != memory.shape[:2]:
             raise ValueError("process tape causal mask differs")
-        wide = memory.astype(mx.float32)
-        query = wide @ self.answer_query
-        key = wide @ self.answer_key
-        value = wide @ self.answer_value
-        logits = (
-            mx.einsum("bnr,bmr->bnm", query, key)
-            / math.sqrt(self.config.correction_rank)
-        )
+        contextual = memory.astype(mx.float32)
         count = int(memory.shape[1])
         indices = mx.arange(count)
         causal = indices[:, None] >= indices[None, :]
         allowed = causal[None, :, :] & mask[:, :, None] & mask[:, None, :]
-        logits = mx.where(allowed, logits, mx.array(-1e9, dtype=logits.dtype))
-        attention = mx.softmax(logits, axis=-1)
-        context = mx.einsum("bnm,bmr->bnr", attention, value)
-        delta = context @ self.answer_output
-        memory_rms = _rms(wide)
-        delta_rms = _rms(delta)
-        delta = delta * mx.minimum(1.0, memory_rms / delta_rms)
-        gate = mx.sigmoid(self.answer_gate_logit)
-        contextual = wide + gate * delta
-        return mx.where(mask[:, :, None], contextual, wide).astype(memory.dtype)
+        layers = (
+            (
+                self.process_reader_1_query,
+                self.process_reader_1_key,
+                self.process_reader_1_value,
+                self.process_reader_1_output,
+                self.process_reader_1_gate_logit,
+            ),
+            (
+                self.process_reader_2_query,
+                self.process_reader_2_key,
+                self.process_reader_2_value,
+                self.process_reader_2_output,
+                self.process_reader_2_gate_logit,
+            ),
+        )
+        for reader_query, reader_key, reader_value, reader_output, gate_logit in layers:
+            normalized = contextual / _rms(contextual)
+            query = normalized @ reader_query
+            key = normalized @ reader_key
+            value = normalized @ reader_value
+            logits = (
+                mx.einsum("bnr,bmr->bnm", query, key)
+                / math.sqrt(int(reader_query.shape[-1]))
+            )
+            logits = mx.where(allowed, logits, mx.array(-1e9, dtype=logits.dtype))
+            attention = mx.softmax(logits, axis=-1)
+            context = mx.einsum("bnm,bmr->bnr", attention, value)
+            delta = context @ reader_output
+            contextual_rms = _rms(contextual)
+            delta_rms = _rms(delta)
+            delta = delta * mx.minimum(1.0, contextual_rms / delta_rms)
+            contextual = mx.where(
+                mask[:, :, None],
+                contextual + mx.sigmoid(gate_logit) * delta,
+                contextual,
+            )
+        return contextual.astype(memory.dtype)
 
     def attend_answer_to_state(
         self,
@@ -1684,6 +1803,7 @@ class UnifiedRecurrentController(nn.Module):
             "answer_key",
             "answer_value",
             "answer_output",
+            *PROCESS_READER_PARAMETER_NAMES,
             "answer_gate_query",
             "answer_gate_logit",
             "answer_role_projection",
@@ -1767,9 +1887,17 @@ class UnifiedRecurrentController(nn.Module):
             ),
             "process_tape": {
                 "schema": PROCESS_TAPE_SCHEMA,
-                "ordering": "bounded_sinusoidal_step_and_entry_kind",
-                "reader": "causal_self_attention_prefix_context",
-                "contents": ["typed_action", "committed_state"],
+                "ordering": "bounded_sinusoidal_step_and_transition_role",
+                "reader": "two_independent_rank_expanded_causal_prefix_blocks",
+                "reader_rank": min(
+                    self.config.hidden_size, 4 * self.config.correction_rank
+                ),
+                "contents": [
+                    "pre_state",
+                    "typed_action",
+                    "post_state",
+                    "state_delta",
+                ],
                 "terminal_stutter_entries_masked": True,
             },
             "parameter_sha256": self.parameter_sha256(),
@@ -2042,17 +2170,31 @@ def unified_recurrent_hidden_states(
                     else ~prior_terminal_mask
                 )
                 if not process_tape_lesion:
+                    pre_state = recurrent_input[
+                        :, state_slot_start:state_stop, :
+                    ]
+                    post_state = hidden[:, state_slot_start:state_stop, :]
                     process_tape.extend(
                         (
+                            controller.encode_process_tape_entry(
+                                pre_state,
+                                step=iteration,
+                                kind="state_pre",
+                            ),
                             controller.encode_process_tape_entry(
                                 action_state,
                                 step=iteration,
                                 kind="action",
                             ),
                             controller.encode_process_tape_entry(
-                                hidden[:, state_slot_start:state_stop, :],
+                                post_state,
                                 step=iteration,
-                                kind="state",
+                                kind="state_post",
+                            ),
+                            controller.encode_process_tape_entry(
+                                post_state - pre_state,
+                                step=iteration,
+                                kind="state_delta",
                             ),
                         )
                     )
@@ -2062,7 +2204,21 @@ def unified_recurrent_hidden_states(
                                 active[:, None],
                                 (
                                     int(hidden.shape[0]),
+                                    controller.config.state_slots,
+                                ),
+                            ),
+                            mx.broadcast_to(
+                                active[:, None],
+                                (
+                                    int(hidden.shape[0]),
                                     controller.config.action_slots,
+                                ),
+                            ),
+                            mx.broadcast_to(
+                                active[:, None],
+                                (
+                                    int(hidden.shape[0]),
+                                    controller.config.state_slots,
                                 ),
                             ),
                             mx.broadcast_to(
