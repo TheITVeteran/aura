@@ -12,8 +12,32 @@ from core.runtime.errors import get_degradation_tracker
 from core.skills.computer_use import ComputerUseSkill
 
 
+@pytest.fixture
+def screen_capture_allowed(monkeypatch):
+    """Pin the privacy gate so these tests measure result shaping, not the host.
+
+    `inspect_screen` and `read_screen_text` both ask
+    `evaluate_screen_capture_admission_async` first, and that answer depends on
+    what is actually in the foreground of the machine running the suite. Left
+    unpinned, these eight tests went green or red on whichever window happened
+    to be frontmost — and, run together with other files, on whether some
+    earlier test had already patched the gate. A test that measures the host is
+    not measuring what its name says.
+
+    The refusal path has its own test below, so pinning here removes an
+    order dependence rather than coverage.
+    """
+    from core.security import screen_capture_policy as policy
+
+    async def _allow():
+        return policy.ScreenCaptureAdmission(allowed=True, context_known=True)
+
+    monkeypatch.setattr(policy, "evaluate_screen_capture_admission_async", _allow)
+    return _allow
+
+
 @pytest.mark.asyncio
-async def test_computer_use_inspect_screen_returns_structured_perception(monkeypatch):
+async def test_computer_use_inspect_screen_returns_structured_perception(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -64,7 +88,7 @@ async def test_computer_use_inspect_screen_returns_structured_perception(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permission_block(monkeypatch):
+async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permission_block(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_denial(capability, *permission_names):
@@ -97,7 +121,7 @@ async def test_computer_use_inspect_screen_falls_back_to_window_tree_on_permissi
 
 
 @pytest.mark.asyncio
-async def test_computer_use_inspect_screen_uses_ocr_before_tree_on_permission_block(monkeypatch, tmp_path):
+async def test_computer_use_inspect_screen_uses_ocr_before_tree_on_permission_block(screen_capture_allowed, monkeypatch, tmp_path):
     skill = ComputerUseSkill()
 
     async def controlled_permission_denial(capability, *permission_names):
@@ -144,7 +168,7 @@ async def test_computer_use_inspect_screen_uses_ocr_before_tree_on_permission_bl
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_uses_structured_perception(monkeypatch):
+async def test_computer_use_read_screen_text_uses_structured_perception(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -199,7 +223,7 @@ async def test_computer_use_read_screen_text_uses_structured_perception(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_can_return_limited_window_context(monkeypatch):
+async def test_computer_use_read_screen_text_can_return_limited_window_context(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -241,7 +265,7 @@ async def test_computer_use_read_screen_text_can_return_limited_window_context(m
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_fallback_on_permission_block(monkeypatch):
+async def test_computer_use_read_screen_text_fallback_on_permission_block(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_denial(capability, *permission_names):
@@ -273,7 +297,7 @@ async def test_computer_use_read_screen_text_fallback_on_permission_block(monkey
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_uses_ocr_before_tree_on_permission_block(monkeypatch, tmp_path):
+async def test_computer_use_read_screen_text_uses_ocr_before_tree_on_permission_block(screen_capture_allowed, monkeypatch, tmp_path):
     skill = ComputerUseSkill()
 
     async def controlled_permission_denial(capability, *permission_names):
@@ -466,7 +490,7 @@ async def test_computer_use_direct_execution_records_welfare_transaction(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_computer_use_read_screen_text_fallback_on_unavailable(monkeypatch):
+async def test_computer_use_read_screen_text_fallback_on_unavailable(screen_capture_allowed, monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -2660,3 +2684,46 @@ async def test_system_control_unavailable_adapter_fails_closed(monkeypatch):
     )
     assert result["ok"] is False
     assert "unavailable" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["inspect_screen", "read_screen_text"])
+async def test_a_refused_screen_capture_returns_the_refusal_not_a_reading(
+    monkeypatch, action
+):
+    """The privacy gate is what the pinned fixture above stops depending on the
+    host for, so the refusal it produces needs a test of its own — and this one
+    controls the answer instead of hoping the machine gives it."""
+    from core.security import screen_capture_policy as policy
+
+    async def _refuse():
+        return policy.ScreenCaptureAdmission(
+            allowed=False,
+            reason=policy.ScreenCaptureDenial.PRIVATE_FOREGROUND,
+            context_known=True,
+        )
+
+    monkeypatch.setattr(policy, "evaluate_screen_capture_admission_async", _refuse)
+
+    skill = ComputerUseSkill()
+
+    async def controlled_permission_pass(capability, *permission_names):
+        return None
+
+    monkeypatch.setattr(skill, "_require_permissions", controlled_permission_pass)
+
+    def _must_not_capture():
+        raise AssertionError("a refused capture still read the screen")
+
+    monkeypatch.setattr(
+        "core.perception.screen_perception.get_screen_perception", _must_not_capture
+    )
+
+    result = await skill.execute({"action": action, "target": ""}, {})
+
+    assert result["ok"] is False
+    assert result["status"] == "screen_capture_refused"
+    assert result["text"] == ""
+    # The reason reaches the caller; the private window title does not.
+    assert result["capture_admission"]["reason"] == "private_foreground"
+    assert "foreground is private" in result["error"]

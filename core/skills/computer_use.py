@@ -2974,6 +2974,11 @@ end tell
                         "ok": False,
                         "status": "screen_capture_refused",
                         "error": admission.public_error,
+                        # Every other return from this action carries "text";
+                        # the refusal did not, so a caller reading the reading
+                        # got a KeyError from inspect_screen and an empty
+                        # string from read_screen_text for the same refusal.
+                        "text": "",
                         "capture_admission": admission.to_receipt(),
                     }
                 blocked = await self._require_permissions(

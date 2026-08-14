@@ -31,6 +31,13 @@ from pathlib import Path
 from typing import Any
 
 from core.brain.live_mind_contract import append_text_mutation
+from core.brain.living_mind_context import (
+    PRIORITY_COLOUR,
+    PRIORITY_GATING,
+    TRUST_LEARNED,
+    LivingMindContext,
+    estimate_context_tokens,
+)
 from core.brain.llm.chat_format import format_chatml_messages
 from core.brain.llm.model_registry import (
     BRAINSTEM_ENDPOINT,
@@ -433,6 +440,12 @@ def _reflex_model_status(raw_path: str) -> tuple[str, str]:
         return "model_unreadable", "not_readable"
     return "available", "file_readable"
 
+
+#: Foreground prompt budget when nothing better is readable. Below the floor
+#: the compactor strips the system prompt; above the registry's ceiling the
+#: serving runtime silently truncates whatever we sent.
+_FOREGROUND_CONTEXT_WINDOW_DEFAULT = 16384
+_FOREGROUND_CONTEXT_WINDOW_FLOOR = 4096
 
 _INFERENCE_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -964,6 +977,11 @@ class InferenceGate:
         # report a recent success it never produced. Consumers derive ages
         # from _constructed_wall_at when this is unset.
         self._last_successful_generation_at: float = 0.0
+        #: Last living-mind assembly's receipt; read via
+        #: living_mind_context_receipt().
+        self._living_mind_receipt: Any = None
+        #: Last dispatch's token-fit outcome; read via prompt_fit_receipt().
+        self._prompt_fit_receipt: dict[str, Any] = {}
         #: Filled by every tier-health sweep; read via tier_health_receipt().
         self._tier_health_receipt: dict[str, Any] = {}
         self._constructed_wall_at: float = time.time()
@@ -3321,13 +3339,15 @@ class InferenceGate:
             )
 
             observations = get_model_lane_controller().owner_observations()
-        except Exception:  # noqa: BLE001 - never let a probe break a turn
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            # Never let a probe break a turn — and never let it widen into a
+            # catch that would swallow a programming error too.
             return False
         if not observations:
             return False
         try:
             mine = str(ProcessIdentity.current().pid)
-        except Exception:  # noqa: BLE001
+        except _INFERENCE_RECOVERABLE_ERRORS:
             mine = ""
         for observation in observations:
             owner_id = str(getattr(observation, "owner_id", "") or "")
@@ -5789,8 +5809,85 @@ class InferenceGate:
         first = lines[0]
         return first[:200]
 
-    async def _build_living_mind_context(self, prompt: str, origin: str) -> str:
-        """Inject live self-model state so speech is driven by current mind."""
+    #: One budget for assembling live context, whichever shape it takes.
+    #: Only the FULL assembly was ever bounded; the compact builder — including
+    #: the one used as the full builder's timeout fallback — was awaited bare,
+    #: so a slow personality, phenomenology, goal or opinion service ate the
+    #: generation budget with nothing to stop it. Both are bounded now, and the
+    #: fallback gets what is left rather than a fresh full budget.
+    _LIVE_CONTEXT_ASSEMBLY_TIMEOUT_S = 5.0
+
+    async def _assemble_live_context(self, prompt: str, origin: str, *, full: bool) -> str:
+        """Build live context under one deadline, falling back never past it."""
+        started = time.monotonic()
+        if full:
+            try:
+                return await asyncio.wait_for(
+                    self._build_living_mind_context(prompt, origin),
+                    timeout=self._LIVE_CONTEXT_ASSEMBLY_TIMEOUT_S,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "⚠️ [STABILITY] Full live context assembly exceeded %.0fs; "
+                    "using compact live context without downgrading the turn.",
+                    self._LIVE_CONTEXT_ASSEMBLY_TIMEOUT_S,
+                )
+        remaining = self._LIVE_CONTEXT_ASSEMBLY_TIMEOUT_S - (time.monotonic() - started)
+        if remaining <= 0.0:
+            # The full attempt spent the whole budget. A compact attempt now
+            # would spend it twice, which is what the deadline exists to stop.
+            _record_inference_degradation(
+                TimeoutError("live context assembly budget exhausted"),
+                action="sent the turn without live context after assembly used its whole budget",
+            )
+            return ""
+        try:
+            return await asyncio.wait_for(
+                self._build_compact_living_mind_context(prompt, origin),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            _record_inference_degradation(
+                TimeoutError("compact live context assembly timed out"),
+                action="sent the turn without live context after compact assembly timed out",
+            )
+            return ""
+
+    def _living_mind_token_budget(self, prompt: str, explicit: int | None) -> int:
+        """How much of the context window living-mind scaffold may occupy.
+
+        Derived, not chosen. The window is what the serving runtime will
+        actually take; the answer budget is what this same turn's compute
+        profile already decided it needs; the person's own words are not
+        negotiable. What is left over is the scaffold's.
+
+        A caller that has already done this arithmetic passes it in.
+        """
+        if explicit is not None:
+            return max(0, int(explicit))
+        window = self._foreground_prompt_context_window()
+        _floor, answer_tokens, _loops = self._foreground_compute_profile(str(prompt or ""))
+        user_tokens = estimate_context_tokens(str(prompt or ""))
+        return max(0, window - int(answer_tokens) - user_tokens)
+
+    def living_mind_context_receipt(self) -> dict[str, Any]:
+        """What the last living-mind assembly included, omitted, and shed.
+
+        A turn that reports on her own state can read this and know a mood
+        block was MISSING rather than neutral.
+        """
+        receipt = getattr(self, "_living_mind_receipt", None)
+        return receipt.as_dict() if receipt is not None else {}
+
+    async def _build_living_mind_context(
+        self, prompt: str, origin: str, *, token_budget: int | None = None
+    ) -> str:
+        """Inject live self-model state so speech is driven by current mind.
+
+        The assembled text is bounded and receipted — see
+        :meth:`living_mind_context_receipt` for what reached the prompt and
+        what did not.
+        """
 
         async def _resolve(value):
             if inspect.isawaitable(value):
@@ -5802,7 +5899,9 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS:
             return ""
 
-        segments: list[str] = []
+        segments = LivingMindContext(
+            token_budget=self._living_mind_token_budget(prompt, token_budget)
+        )
 
         try:
             repo = ServiceContainer.get("state_repository", default=None)
@@ -5851,8 +5950,9 @@ class InferenceGate:
                 if memory_pressure is not None
                 else "- Memory pressure: unavailable"
             )
-            segments.append("\n".join(physiology_lines))
+            segments.add("physiology", "\n".join(physiology_lines))
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("physiology", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -5887,8 +5987,9 @@ class InferenceGate:
                     lines.append(f"- Safe to self-report: {safe_to_self_report}")
                 if unity_repair and getattr(unity_repair, "steps", None):
                     lines.append(f"- Repair bias: {str(unity_repair.steps[0])[:180]}")
-                segments.append("\n".join(lines))
+                segments.add("unity", "\n".join(lines), priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("unity", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -5906,8 +6007,9 @@ class InferenceGate:
                 if self_report and hasattr(self_report, "generate_state_report"):
                     report = await _resolve(self_report.generate_state_report())
                     if report:
-                        segments.append(f"## GROUNDED SELF-REPORT\n{report}")
+                        segments.add("self_report", f"## GROUNDED SELF-REPORT\n{report}", priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("self_report", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -5923,18 +6025,17 @@ class InferenceGate:
                 mood = emo.get("mood", "neutral")
                 tone = emo.get("tone", "balanced")
                 dominant = ", ".join(list(emo.get("dominant_emotions", []))[:4]) or "none"
-                segments.append(
-                    "## LIVE PERSONALITY DRIVE\n"
+                segments.add("personality", "## LIVE PERSONALITY DRIVE\n"
                     f"- Mood: {mood}\n"
                     f"- Tone: {tone}\n"
-                    f"- Dominant emotions: {dominant}"
-                )
+                    f"- Dominant emotions: {dominant}")
                 sovereign = await _resolve(
                     getattr(personality, "get_sovereign_context", lambda: "")()
                 )
                 if sovereign:
-                    segments.append(str(sovereign).strip()[:400])
+                    segments.add("personality", str(sovereign).strip()[:400])
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("personality", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -5951,8 +6052,9 @@ class InferenceGate:
                     fragment = getattr(experiencer, "phenomenal_context_string", "")
                 if fragment:
                     grounded_fragment = _grounded_state_signal_text(fragment, limit=500)
-                    segments.append(f"## FUNCTIONAL STATE SIGNALS\n{grounded_fragment}")
+                    segments.add("phenomenology", f"## FUNCTIONAL STATE SIGNALS\n{grounded_fragment}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("phenomenology", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -5971,15 +6073,17 @@ class InferenceGate:
                 opinion_context = await _resolve(opinion_engine.get_context_injection(topic_hint))
                 held_position = str(opinion_context or "").strip()[:400]
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("opinion", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
             )
             logger.debug("Opinion injection unavailable: %s", exc)
         if held_position or self._origin_is_user_facing(origin):
-            segments.append(
+            segments.add(
+                "opinion",
                 f"## {'HELD POSITIONS' if held_position else 'HOLDING A VIEW'}\n"
-                f"{standing_disposition(held_position)}"
+                f"{standing_disposition(held_position)}",
             )
 
         try:
@@ -5991,8 +6095,9 @@ class InferenceGate:
                         topic=self._topic_hint_from_prompt(prompt),
                     )
                     if check and getattr(check, "injection", ""):
-                        segments.append(f"## SPIRITUAL SPINE\n{check.injection}")
+                        segments.add("spine", f"## SPIRITUAL SPINE\n{check.injection}", priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("spine", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6006,8 +6111,9 @@ class InferenceGate:
             _hsv = get_heartstone_values()
             _hsv_block = _hsv.to_context_block()
             if _hsv_block:
-                segments.append(_hsv_block)
+                segments.add("heartstone_values", _hsv_block, priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("heartstone_values", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6024,8 +6130,9 @@ class InferenceGate:
             if arch_idx and arch_idx._index:
                 overview = arch_idx.get_overview()
                 if overview:
-                    segments.append(overview[:800])
+                    segments.add("architecture_overview", overview[:800])
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("architecture_overview", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6039,7 +6146,7 @@ class InferenceGate:
             _pneuma = get_pneuma()
             _pneuma_block = _pneuma.get_context_block()
             if _pneuma_block:
-                segments.append(_pneuma_block)
+                segments.add("pneuma", _pneuma_block)
             # Push the current prompt into the belief flow as UNTRUSTED
             # observation — raw user text is not verified evidence, so it
             # gets a capped weight and an attributable provenance tag.
@@ -6047,6 +6154,7 @@ class InferenceGate:
                 prompt[:300], weight=0.2, source="user_prompt", trusted=False
             )
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("pneuma", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6060,8 +6168,9 @@ class InferenceGate:
             _mhaf = get_mhaf()
             _mhaf_block = _mhaf.get_context_block()
             if _mhaf_block:
-                segments.append(_mhaf_block)
+                segments.add("mhaf", _mhaf_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("mhaf", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6076,8 +6185,9 @@ class InferenceGate:
             _neo.collect_state()
             lex_block = _neo.get_lexicon_block()
             if lex_block:
-                segments.append(lex_block)
+                segments.add("neologisms", lex_block, priority=PRIORITY_COLOUR)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("neologisms", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6124,8 +6234,9 @@ class InferenceGate:
             )
             _crsm_block = _crsm.get_context_block()
             if _crsm_block:
-                segments.append(_crsm_block)
+                segments.add("crsm", _crsm_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("crsm", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6148,8 +6259,9 @@ class InferenceGate:
             )
             _hot_block = _hot.get_context_block()
             if _hot_block:
-                segments.append(_hot_block)
+                segments.add("higher_order_thought", _hot_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("higher_order_thought", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6170,8 +6282,9 @@ class InferenceGate:
             )
             _hg_block = _hg.get_context_block()
             if _hg_block:
-                segments.append(_hg_block)
+                segments.add("hedonic_gradient", _hg_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("hedonic_gradient", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6184,8 +6297,9 @@ class InferenceGate:
             if goal_engine and hasattr(goal_engine, "get_context_block"):
                 goal_block = goal_engine.get_context_block(limit=5)
                 if goal_block:
-                    segments.append(goal_block)
+                    segments.add("goals", goal_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("goals", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6199,8 +6313,9 @@ class InferenceGate:
             _hp = get_hierarchical_planner()
             _hp_block = _hp.get_context_block()
             if _hp_block:
-                segments.append(_hp_block)
+                segments.add("hierarchical_plan", _hp_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("hierarchical_plan", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6214,8 +6329,9 @@ class InferenceGate:
             _ce = get_commitment_engine()
             _ce_block = _ce.get_context_block()
             if _ce_block:
-                segments.append(_ce_block)
+                segments.add("commitments", _ce_block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("commitments", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6229,8 +6345,9 @@ class InferenceGate:
             _cx = get_curiosity_explorer()
             _cx_block = _cx.get_context_block()
             if _cx_block:
-                segments.append(_cx_block)
+                segments.add("curiosity", _cx_block, priority=PRIORITY_COLOUR)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("curiosity", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6245,8 +6362,9 @@ class InferenceGate:
             _circ_eng.update()
             _circ_block = _circ_eng.get_context_block()
             if _circ_block:
-                segments.append(_circ_block)
+                segments.add("circadian", _circ_block, priority=PRIORITY_COLOUR)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("circadian", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6260,8 +6378,9 @@ class InferenceGate:
             _ec = get_experience_consolidator()
             _ec_block = _ec.get_context_block()
             if _ec_block:
-                segments.append(_ec_block)
+                segments.add("experience_consolidation", _ec_block, priority=PRIORITY_COLOUR)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("experience_consolidation", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6275,7 +6394,7 @@ class InferenceGate:
             _lora_bridge = get_crsm_lora_bridge()
             _lora_block = _lora_bridge.get_context_block()
             if _lora_block:
-                segments.append(_lora_block)
+                segments.add("crsm_lora_bridge", _lora_block)
             # Pre-inference capture: record current state before thinking
             from core.consciousness.crsm import get_crsm as _get_crsm2
 
@@ -6294,6 +6413,7 @@ class InferenceGate:
                 ),
             )
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("crsm_lora_bridge", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6311,8 +6431,9 @@ class InferenceGate:
             if homeostasis and hasattr(homeostasis, "get_context_block"):
                 _block = homeostasis.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("homeostasis", _block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("homeostasis", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6325,8 +6446,9 @@ class InferenceGate:
             if fe_engine and hasattr(fe_engine, "get_context_block"):
                 _block = fe_engine.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("free_energy", _block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("free_energy", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6339,8 +6461,9 @@ class InferenceGate:
             if attention and hasattr(attention, "get_context_block"):
                 _block = attention.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("attention_schema", _block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("attention_schema", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6353,8 +6476,9 @@ class InferenceGate:
             if credit and hasattr(credit, "get_context_block"):
                 _block = credit.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("credit_assignment", _block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("credit_assignment", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6367,8 +6491,9 @@ class InferenceGate:
             if tom and hasattr(tom, "get_context_block"):
                 _block = tom.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("theory_of_mind", _block, trust=TRUST_LEARNED)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("theory_of_mind", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6382,8 +6507,9 @@ class InferenceGate:
                 topic = self._topic_hint_from_prompt(prompt)
                 _block = world_model.get_context_block(topic_hint=topic)
                 if _block:
-                    segments.append(_block)
+                    segments.add("world_model", _block, trust=TRUST_LEARNED)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("world_model", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6396,8 +6522,9 @@ class InferenceGate:
             if temporal:
                 narrative = await _resolve(temporal.get_narrative())
                 if narrative and len(str(narrative)) > 30:
-                    segments.append(f"## TEMPORAL CONTINUITY\n{str(narrative)[:200]}")
+                    segments.add("temporal_continuity", f"## TEMPORAL CONTINUITY\n{str(narrative)[:200]}", priority=PRIORITY_COLOUR)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("temporal_continuity", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
@@ -6410,17 +6537,22 @@ class InferenceGate:
             if predictive and hasattr(predictive, "get_context_block"):
                 _block = predictive.get_context_block()
                 if _block:
-                    segments.append(_block)
+                    segments.add("predictive_engine", _block)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("predictive_engine", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable living-mind context signal and continued prompt assembly",
             )
             logger.debug("PredictiveEngine injection unavailable: %s", exc)
 
-        return "\n\n".join(segment for segment in segments if segment)
+        rendered, receipt = segments.render()
+        self._living_mind_receipt = receipt
+        return rendered
 
-    async def _build_compact_living_mind_context(self, prompt: str, origin: str) -> str:
+    async def _build_compact_living_mind_context(
+        self, prompt: str, origin: str, *, token_budget: int | None = None
+    ) -> str:
         """Minimal live context for fast foreground conversation turns."""
 
         async def _resolve(value):
@@ -6433,7 +6565,9 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS:
             return ""
 
-        segments: list[str] = []
+        segments = LivingMindContext(
+            token_budget=self._living_mind_token_budget(prompt, token_budget)
+        )
 
         try:
             personality = ServiceContainer.get("personality_engine", default=None)
@@ -6443,8 +6577,9 @@ class InferenceGate:
                 emo = await _resolve(personality.get_emotional_context_for_response())
                 mood = str(emo.get("mood", "neutral") or "neutral")
                 tone = str(emo.get("tone", "balanced") or "balanced")
-                segments.append(f"## LIVE TONE\nMood: {mood}\nTone: {tone}")
+                segments.add("personality", f"## LIVE TONE\nMood: {mood}\nTone: {tone}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("personality", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
@@ -6462,8 +6597,9 @@ class InferenceGate:
                 if unity_report and getattr(unity_report, "top_causes", None):
                     name, weight, _text = list(unity_report.top_causes)[0]
                     parts.append(f"Top cause: {str(name).replace('_', ' ')}={float(weight):.2f}")
-                segments.append(f"## UNITY\n{' | '.join(parts)}")
+                segments.add("unity", f"## UNITY\n{' | '.join(parts)}", priority=PRIORITY_GATING)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("unity", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
@@ -6480,8 +6616,9 @@ class InferenceGate:
                     fragment = getattr(experiencer, "phenomenal_context_string", "")
                 if fragment:
                     compact_fragment = _grounded_state_signal_text(fragment, limit=180)
-                    segments.append(f"## FUNCTIONAL STATE SIGNALS\n{compact_fragment}")
+                    segments.add("phenomenology", f"## FUNCTIONAL STATE SIGNALS\n{compact_fragment}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("phenomenology", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
@@ -6494,8 +6631,9 @@ class InferenceGate:
                 goal_block = str(goal_engine.get_context_block(limit=3) or "").strip()
                 if goal_block:
                     compact_goal = " ".join(goal_block.split())
-                    segments.append(f"## GOALS\n{compact_goal[:260]}")
+                    segments.add("goals", f"## GOALS\n{compact_goal[:260]}")
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("goals", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
@@ -6510,18 +6648,22 @@ class InferenceGate:
                 opinion_context = await _resolve(opinion_engine.get_context_injection(topic_hint))
                 compact_opinion = " ".join(str(opinion_context or "").split())[:220]
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            segments.omit("opinion", exc)
             _record_inference_degradation(
                 exc,
                 action="omitted unavailable compact living-mind signal and continued prompt assembly",
             )
             logger.debug("Compact opinion injection unavailable: %s", exc)
         if compact_opinion or self._origin_is_user_facing(origin):
-            segments.append(
+            segments.add(
+                "opinion",
                 f"## {'HELD POSITION' if compact_opinion else 'HOLDING A VIEW'}\n"
-                f"{standing_disposition(compact_opinion, compact=True)}"
+                f"{standing_disposition(compact_opinion, compact=True)}",
             )
 
-        return "\n\n".join(segment for segment in segments if segment)
+        rendered, receipt = segments.render()
+        self._living_mind_receipt = receipt
+        return rendered
 
     def _build_messages(
         self, prompt: str, system_prompt: str, history: list[dict]
@@ -6761,20 +6903,45 @@ class InferenceGate:
         latency spikes.
         """
         try:
+            from core.brain.llm.model_registry import (
+                PRIMARY_ENDPOINT,
+                bounded_context_window,
+                get_lane_context_window,
+            )
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # Without the registry there is no ceiling to check an operator
+            # value against, so the operator value is not usable: fall back to
+            # the built-in default rather than trusting an unbounded number.
+            _record_inference_degradation(
+                exc,
+                action="used the default foreground context window because the "
+                "model registry could not bound the configured one",
+            )
+            return _FOREGROUND_CONTEXT_WINDOW_DEFAULT
+
+        try:
             # [STABILITY v59] Raised default from 8192 → 16384.  The 8k
             # context triggered hyper-aggressive prompt compaction that
             # stripped system prompts, personality context, and conversation
             # history — the model was getting ~5k chars total on desktop,
             # producing thin, generic responses compared to server mode.
-            runtime_window = max(4096, int(_FLAG_CORTEX_CTX.value() or 16384))
+            #
+            # bounded_context_window is the registry's own ceiling. The clamp
+            # here used to be max(4096, ...) with nothing above it, so an
+            # AURA_CORTEX_CTX typo flowed straight into the prompt budget this
+            # method exists to enforce.
+            runtime_window = max(
+                _FOREGROUND_CONTEXT_WINDOW_FLOOR,
+                bounded_context_window(
+                    _FLAG_CORTEX_CTX.value() or _FOREGROUND_CONTEXT_WINDOW_DEFAULT
+                ),
+            )
         except _INFERENCE_RECOVERABLE_ERRORS:
-            runtime_window = 16384
+            runtime_window = _FOREGROUND_CONTEXT_WINDOW_DEFAULT
 
         try:
-            from core.brain.llm.model_registry import PRIMARY_ENDPOINT, get_lane_context_window
-
             registry_window = int(get_lane_context_window(PRIMARY_ENDPOINT) or runtime_window)
-            return max(4096, min(runtime_window, registry_window))
+            return max(_FOREGROUND_CONTEXT_WINDOW_FLOOR, min(runtime_window, registry_window))
         except _INFERENCE_RECOVERABLE_ERRORS:
             return runtime_window
 
@@ -7193,6 +7360,131 @@ class InferenceGate:
             tail = max(1, remaining - head)
             return f"{clean[:head].rstrip()}{marker}{clean[-tail:].lstrip()}"
         return clean[: limit - 1].rstrip() + "…"
+
+    #: Where a system block gets its middle removed. Same convention the
+    #: per-message compactor uses, so a trimmed prompt reads the same wherever
+    #: the trim happened.
+    _PROMPT_FIT_MARKER = "\n…[middle omitted to fit the serving context window]…\n"
+
+    def prompt_fit_receipt(self) -> dict[str, Any]:
+        """What the last dispatch had to trim to fit the context window."""
+        return copy.deepcopy(getattr(self, "_prompt_fit_receipt", {}))
+
+    def _fit_prompt_to_window(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        *,
+        answer_tokens: int,
+        origin: str | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Last word on prompt size, denominated in tokens.
+
+        Everything upstream budgets in CHARACTERS — profile limits, scaffold
+        ratios, truncation — while the thing being budgeted is a context window
+        measured in TOKENS. Four characters per token is roughly right for
+        English prose and wrong for code, punctuation-dense text and non-Latin
+        scripts, always in the direction that overflows. And prebuilt message
+        payloads skipped the compactor entirely on several routes: the total
+        was logged and never checked against anything.
+
+        The person's own words are never trimmed here. System scaffold is,
+        largest first, because the scaffold is what grew.
+        """
+        window = self._foreground_prompt_context_window()
+        reserve = max(0, int(answer_tokens))
+        allowed = window - reserve
+        receipt: dict[str, Any] = {
+            "window": window,
+            "reserved_for_answer": reserve,
+            "allowed": allowed,
+            "trimmed": [],
+            "origin": str(origin or ""),
+        }
+
+        def _cost(text: Any) -> int:
+            return estimate_context_tokens(str(text or ""))
+
+        def _total() -> int:
+            return _cost(system_prompt) + sum(
+                _cost(message.get("content")) for message in messages
+            )
+
+        total = _total()
+        receipt["tokens_before"] = total
+        if allowed <= 0 or total <= allowed:
+            receipt["tokens_after"] = total
+            receipt["fits"] = total <= allowed
+            self._prompt_fit_receipt = receipt
+            return system_prompt, messages
+
+        # Trim system scaffold, largest first. Index -1 stands for the
+        # separately-passed system_prompt, which the client merges into
+        # messages[0] and which is therefore part of the same prefill.
+        trimmable: list[tuple[int, int]] = []
+        if system_prompt:
+            trimmable.append((-1, _cost(system_prompt)))
+        for index, message in enumerate(messages):
+            if str(message.get("role", "")).strip().lower() != "system":
+                continue
+            trimmable.append((index, _cost(message.get("content"))))
+        trimmable.sort(key=lambda entry: entry[1], reverse=True)
+
+        for index, cost in trimmable:
+            overflow = _total() - allowed
+            if overflow <= 0:
+                break
+            keep_tokens = max(0, cost - overflow)
+            text = str(
+                system_prompt if index < 0 else messages[index].get("content", "") or ""
+            )
+            if not text:
+                continue
+            # Tokens back to characters using this text's own measured ratio,
+            # not a global assumption: a block of dense code and a block of
+            # prose do not convert at the same rate.
+            chars_per_token = len(text) / max(1, cost)
+            keep_chars = int(keep_tokens * chars_per_token)
+            marker = self._PROMPT_FIT_MARKER
+            if keep_chars <= len(marker) + 2:
+                trimmed = ""
+            else:
+                room = keep_chars - len(marker)
+                head = max(1, room * 2 // 3)
+                tail = max(1, room - head)
+                trimmed = f"{text[:head].rstrip()}{marker}{text[-tail:].lstrip()}"
+            if index < 0:
+                system_prompt = trimmed
+            else:
+                messages[index] = {**messages[index], "content": trimmed}
+            receipt["trimmed"].append(
+                {
+                    "index": index,
+                    "tokens_before": cost,
+                    "tokens_after": _cost(trimmed),
+                }
+            )
+
+        total = _total()
+        receipt["tokens_after"] = total
+        receipt["fits"] = total <= allowed
+        if not receipt["fits"]:
+            # Everything trimmable has been trimmed and it still does not fit,
+            # which means the person's own words plus the answer budget exceed
+            # the window. The serving runtime will truncate from one end and
+            # answer a question it only partly received; say so rather than
+            # letting it happen quietly.
+            _record_inference_degradation(
+                RuntimeError(
+                    f"prompt does not fit the serving context window: "
+                    f"{total} tokens against {allowed} allowed"
+                ),
+                action="dispatched an over-window prompt the serving runtime will truncate",
+                severity="error",
+                extra=receipt,
+            )
+        self._prompt_fit_receipt = receipt
+        return system_prompt, messages
 
     #: What the grounding may spend on a turn that is not budget-constrained.
     #: Generous on purpose: every profile except the contract lane already has
@@ -9312,55 +9604,26 @@ class InferenceGate:
                     )
                 )
                 if needs_full_live_context:
-                    try:
-                        living_mind_context = await asyncio.wait_for(
-                            self._build_living_mind_context(
-                                initial_visible_user_prompt,
-                                origin,
-                            ),
-                            timeout=5.0,
-                        )
-                    except TimeoutError:
-                        logger.warning(
-                            "⚠️ [STABILITY] Full live self-context assembly exceeded 5s; "
-                            "using compact living context without downgrading the turn."
-                        )
-                        living_mind_context = await self._build_compact_living_mind_context(
-                            visible_user_prompt,
-                            origin,
-                        )
+                    living_mind_context = await self._assemble_live_context(
+                        initial_visible_user_prompt, origin, full=True
+                    )
                 else:
-                    living_mind_context = await self._build_compact_living_mind_context(
-                        visible_user_prompt,
-                        origin,
+                    living_mind_context = await self._assemble_live_context(
+                        visible_user_prompt, origin, full=False
                     )
         elif use_compact_foreground_context:
             system_prompt = self._build_compact_system_prompt(brief)
-            living_mind_context = await self._build_compact_living_mind_context(
-                visible_user_prompt,
-                origin,
+            living_mind_context = await self._assemble_live_context(
+                visible_user_prompt, origin, full=False
             )
         else:
             system_prompt = self._build_system_prompt(brief)
-            # [STABILITY v50] Hard 5s timeout on full context assembly.
-            # The 20+ consciousness subsystems queried here can individually
-            # hang due to lock contention or slow I/O. When that happens,
-            # fall back to the compact (4-subsystem) version so generation
-            # budget is never consumed by context assembly.
-            try:
-                living_mind_context = await asyncio.wait_for(
-                    self._build_living_mind_context(visible_user_prompt, origin),
-                    timeout=5.0,
-                )
-            except TimeoutError:
-                logger.warning(
-                    "⚠️ [STABILITY] Full living mind context assembly exceeded 5s budget. "
-                    "Falling back to compact context to preserve generation headroom."
-                )
-                living_mind_context = await self._build_compact_living_mind_context(
-                    visible_user_prompt,
-                    origin,
-                )
+            # [STABILITY v50] The 20+ consciousness subsystems queried here can
+            # individually hang on lock contention or slow I/O. One deadline
+            # covers the full assembly AND the compact fallback.
+            living_mind_context = await self._assemble_live_context(
+                visible_user_prompt, origin, full=True
+            )
         if living_mind_context:
             system_prompt = f"{system_prompt}\n\n{living_mind_context}"
         prompt_contract_block = self._prompt_contract_block(context)
@@ -9674,6 +9937,16 @@ class InferenceGate:
             system_prompt = "\n\n".join(
                 [str(system_prompt or ""), *volatile_grounding_blocks]
             ).strip()
+        # Last word on size, in the unit the window is actually measured in.
+        # Every budget above this line is in characters; this one is in tokens
+        # and it applies to every route, including prebuilt message payloads
+        # that skip the per-message compactor entirely.
+        system_prompt, messages = self._fit_prompt_to_window(
+            system_prompt,
+            list(messages or []),
+            answer_tokens=int(max_tokens or 0),
+            origin=origin,
+        )
         prompt_chars = sum(
             len(str(msg.get("content", ""))) for msg in (messages or ())
         )

@@ -307,8 +307,24 @@ _MAX_CONTEXT_WINDOW = 262144
 _DEFAULT_CONTEXT_WINDOW = 32768
 
 
-def _bounded_context_window(value: int) -> int:
-    return max(_MIN_CONTEXT_WINDOW, min(int(value), _MAX_CONTEXT_WINDOW))
+def bounded_context_window(value: Any) -> int:
+    """Clamp any claimed context window into the range this runtime will serve.
+
+    Public because the registry is the only place that gets to say what a
+    legal context window is. Callers that read an operator override — the
+    inference gate's foreground budget, for one — were clamping the minimum
+    and leaving the maximum open, so an environment typo could hand a prompt
+    budget of a billion tokens to the compactor.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = _DEFAULT_CONTEXT_WINDOW
+    return max(_MIN_CONTEXT_WINDOW, min(number, _MAX_CONTEXT_WINDOW))
+
+
+#: Retained name for the registry's own internal call sites.
+_bounded_context_window = bounded_context_window
 
 
 def _safe_positive_int(value: Any) -> int:
