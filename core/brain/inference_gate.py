@@ -1593,6 +1593,10 @@ class InferenceGate:
             return None, f"ungraded:{grade.value}"
         return grade.rank / top, f"graded:{grade.value}"
 
+    def last_plasticity_reward(self) -> dict[str, Any]:
+        """What the last weight update was rewarded on, and where it came from."""
+        return copy.deepcopy(getattr(self, "_last_plasticity_reward", {}))
+
     def last_credit_basis(self) -> str:
         """Why the last response did or did not receive credit."""
         return str(getattr(self, "_last_credit_basis", "") or "")
@@ -6424,6 +6428,58 @@ class InferenceGate:
                 e,
             )
 
+    #: State the identity prompt is built FROM. ContextAssembler reads far
+    #: more than the six fields the old key covered — personality, goals,
+    #: beliefs, memory, governance, permissions — so a change in any of them
+    #: left the cached prompt describing a state that had moved on, for up to
+    #: a minute of live conversation. Fingerprinting the assembler's own output
+    #: would defeat the cache (you must build it to hash it), so the key is
+    #: the ASSEMBLER'S declared inputs plus a coarse content digest of the
+    #: state graph.
+    _IDENTITY_CACHE_FIELDS = (
+        "version",
+        "updated_at",
+    )
+
+    @classmethod
+    def _identity_prompt_cache_key(cls, state: Any) -> tuple[Any, ...] | None:
+        """A key that changes whenever the prompt would.
+
+        Best effort by construction: anything unhashable or unreadable makes
+        this return None, and a None key means "do not reuse", which is the
+        safe direction — a rebuilt prompt costs milliseconds and a stale one
+        describes the wrong mind.
+        """
+        try:
+            parts: list[Any] = [id(state)]
+            for field in cls._IDENTITY_CACHE_FIELDS:
+                parts.append(repr(getattr(state, field, None)))
+            # The sections the assembler actually reads. A digest, so a long
+            # working memory does not make the key enormous, and content-based
+            # so an in-place mutation that leaves `version` untouched still
+            # invalidates.
+            digest = hashlib.sha256()
+            for section in (
+                "cognition",
+                "affect",
+                "motivation",
+                "soma",
+                "identity",
+                "governance",
+                "permissions",
+            ):
+                value = getattr(state, section, None)
+                if value is None:
+                    digest.update(b"\x00")
+                    continue
+                snapshot = getattr(value, "__dict__", None)
+                digest.update(repr(sorted(snapshot.items()) if isinstance(snapshot, dict) else value).encode("utf-8", "ignore"))
+            parts.append(digest.hexdigest())
+            return tuple(parts)
+        except (AttributeError, TypeError, ValueError, RecursionError) as exc:
+            logger.debug("Identity prompt cache key unavailable: %s", exc)
+            return None
+
     def _build_system_prompt(self, brief: str = "") -> str:
         """Build Aura's full identity system prompt.
 
@@ -6446,16 +6502,7 @@ class InferenceGate:
                 else None
             )
             if state is not None:
-                cognition = getattr(state, "cognition", None)
-                affect = getattr(state, "affect", None)
-                state_key = (
-                    id(state),
-                    int(getattr(state, "version", 0) or 0),
-                    float(getattr(state, "updated_at", 0.0) or 0.0),
-                    str(getattr(cognition, "current_objective", "") or ""),
-                    round(float(getattr(affect, "valence", 0.0) or 0.0), 3),
-                    round(float(getattr(affect, "arousal", 0.0) or 0.0), 3),
-                )
+                state_key = self._identity_prompt_cache_key(state)
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             _record_inference_degradation(
                 exc,
@@ -11164,7 +11211,17 @@ class InferenceGate:
                         max_results=3,
                     )
                     if arch_excerpt:
+                        # Both places, on purpose. On the ordinary path this
+                        # system_prompt becomes messages[0]; on the PREBUILT
+                        # path messages already exist and this variable is
+                        # merged at the client boundary, which is a contract
+                        # one layer away from here. Adding it to the volatile
+                        # blocks as well means the excerpt travels with the
+                        # turn whichever path assembled it, and the token fit
+                        # at dispatch counts it once either way.
                         system_prompt = f"{system_prompt}\n\n{arch_excerpt}"
+                        if provided_messages is not None:
+                            volatile_grounding_blocks.append(str(arch_excerpt))
             except _INFERENCE_RECOVERABLE_ERRORS as _ae:
                 record_degradation(
                     "inference_gate",
@@ -12858,17 +12915,29 @@ class InferenceGate:
             _skipped_stages.append("world_model")
             logger.debug("Suppressed Exception in world model feedback: %s", _exc)
 
-        # ── Synaptic Plasticity: Post-inference weight update ─────────────
-        # This is where true online learning happens. The reward signal from
-        # hedonic gradient + CRSM surprise modulates the Hebbian update.
+        # ── Synaptic Plasticity: Post-inference Hebbian update ────────────
+        #
+        # The reward is her own hedonic score plus her own CRSM surprise. That
+        # is a closed loop: the thing being rewarded and the thing giving the
+        # reward are the same system, so it can learn to feel good about an
+        # answer without the answer being any good. The comment used to call
+        # this "true online learning", which named the ambition, not the
+        # mechanism.
+        #
+        # Two changes make it honest rather than removing it. Missing signals
+        # no longer default to 0.0 — a subsystem that could not report is
+        # UNKNOWN, and an update with no reward evidence does not run at all,
+        # because a Hebbian step on a fabricated zero is still a step. And when
+        # the turn ledger holds an external verdict, that outranks the internal
+        # feeling: it is the only signal here that came from outside her.
         try:
             _plasticity = ServiceContainer.get("synaptic_plasticity", default=None)
             if _plasticity is not None:
-                _hg_score = 0.0
-                _surprise = 0.0
+                _hg_score: float | None = None
+                _surprise: float | None = None
                 try:
                     from core.consciousness.hedonic_gradient import get_hedonic_gradient
-                    _hg_score = get_hedonic_gradient().score
+                    _hg_score = _finite(get_hedonic_gradient().score)
                 except _INFERENCE_RECOVERABLE_ERRORS as _hedonic_exc:
                     _record_inference_degradation(
                         _hedonic_exc,
@@ -12881,7 +12950,7 @@ class InferenceGate:
                 try:
                     from core.consciousness.crsm import get_crsm
                     _crsm = get_crsm()
-                    _surprise = getattr(_crsm, "surprise", 0.0)
+                    _surprise = _finite(getattr(_crsm, "surprise", None))
                 except _INFERENCE_RECOVERABLE_ERRORS as _crsm_exc:
                     _record_inference_degradation(
                         _crsm_exc,
@@ -12891,11 +12960,33 @@ class InferenceGate:
                         "SynapticPlasticity post-inference CRSM surprise unavailable: %s",
                         _crsm_exc,
                     )
-                _plasticity.post_inference_learn(
-                    response_text=response_text,
-                    hedonic_after=_hg_score,
-                    surprise=_surprise,
-                )
+                _external, _basis = self._response_credit_outcome()
+                if _hg_score is None and _surprise is None and _external is None:
+                    # No reward evidence of any kind. Defaulting both to 0.0
+                    # and updating anyway taught the weights from a number
+                    # nobody produced.
+                    _skipped_stages.append("synaptic_plasticity")
+                    logger.debug(
+                        "Synaptic plasticity update skipped: no reward evidence "
+                        "(hedonic and surprise unavailable, turn %s).",
+                        _basis,
+                    )
+                else:
+                    _plasticity.post_inference_learn(
+                        response_text=response_text,
+                        # An external verdict outranks the internal feeling.
+                        hedonic_after=(
+                            _external if _external is not None else (_hg_score or 0.0)
+                        ),
+                        surprise=_surprise or 0.0,
+                    )
+                    self._last_plasticity_reward = {
+                        "external_grade": _external,
+                        "grade_basis": _basis,
+                        "hedonic": _hg_score,
+                        "surprise": _surprise,
+                        "at": time.time(),
+                    }
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
@@ -13055,10 +13146,35 @@ class InferenceGate:
             )
         result = await self.generate(prompt, context=context, timeout=timeout)
         if isinstance(result, str) and result.strip():
-            # Close bidirectional causal loop after each inference
-            self._post_inference_update(result)
+            # Close the bidirectional causal loop AFTER the answer is on its
+            # way, not in front of it.
+            #
+            # _post_inference_update is synchronous and touches nine
+            # subsystems — CRSM, HOT, the hedonic gradient, credit assignment,
+            # homeostasis, the world model, synaptic plasticity, temporal
+            # continuity. Run inline here it sat between the model finishing
+            # and this function returning, so every one of those hooks was
+            # added to the person's wait, on the event loop, blocking every
+            # other turn in flight. None of it changes the answer.
+            await self._schedule_post_inference_update(result)
             return result
         return None
+
+    async def _schedule_post_inference_update(self, response_text: str) -> None:
+        """Run the post-inference hooks off the response path.
+
+        A thread, not a task: the hooks are synchronous and CPU/IO-bound, so a
+        task would still occupy the loop. Awaited only far enough to hand it
+        over, and failures are recorded rather than raised — the response has
+        already been produced and no bookkeeping is worth taking it back.
+        """
+        try:
+            await asyncio.to_thread(self._post_inference_update, response_text)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="continued after the post-inference update failed off the response path",
+            )
 
     def liveness_state(self) -> str:
         """Name what "alive" is standing on, rather than collapsing it to a bool.

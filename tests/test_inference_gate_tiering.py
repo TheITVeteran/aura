@@ -135,13 +135,43 @@ def test_system_prompt_cache_tracks_live_state_revision(monkeypatch):
     gate = InferenceGate()
 
     first = gate._build_system_prompt()
+    first_key = gate._identity_prompt_state_key
     state.cognition.current_objective = "second objective"
     second = gate._build_system_prompt()
+    second_key = gate._identity_prompt_state_key
 
     assert first
     assert second
-    assert gate._identity_prompt_state_key is not None
-    assert gate._identity_prompt_state_key[3] == "second objective"
+    assert first_key is not None
+    assert second_key is not None
+    # The contract is that the key CHANGES when the state the prompt is built
+    # from changes — not that a particular field sits at a particular index.
+    # Asserting the position pinned the old six-field tuple, which is what let
+    # personality, goals, beliefs, memory and permissions change without
+    # invalidating the cache.
+    assert second_key != first_key
+
+
+def test_the_identity_cache_key_covers_more_than_objective_and_affect(monkeypatch):
+    """Every section ContextAssembler reads has to invalidate the cache."""
+    state = AuraState.default()
+
+    baseline = InferenceGate._identity_prompt_cache_key(state)
+    assert baseline is not None
+
+    state.motivation.__dict__["_cache_probe"] = "changed"
+    assert InferenceGate._identity_prompt_cache_key(state) != baseline
+
+
+def test_an_unreadable_state_yields_no_cache_key():
+    """No key means do not reuse, which is the safe direction: a rebuilt
+    prompt costs milliseconds and a stale one describes the wrong mind."""
+
+    class _Hostile:
+        def __getattr__(self, name):
+            raise TypeError("unreadable")
+
+    assert InferenceGate._identity_prompt_cache_key(_Hostile()) is None
 
 
 class CallProbe:

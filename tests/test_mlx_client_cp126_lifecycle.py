@@ -2030,7 +2030,10 @@ class TestReadyMeansRespondingNotMerelyAlive:
         marker = source.index("ready_check_worker_silent")
         window = source[marker : marker + 1200]
         assert "reboot_worker" not in window
-        assert "_kill_and_join_blocking" in window
+        # _release_worker_process wraps _kill_and_join_blocking: same inline
+        # teardown, plus it keeps the handle when exit cannot be proven so a
+        # survivor stays tracked instead of orphaned.
+        assert "_release_worker_process" in window
 
     def test_an_unregistered_worker_is_reaped_not_served(self):
         """CP126 3a00ef69: an untracked 20GB child outlives its runtime."""

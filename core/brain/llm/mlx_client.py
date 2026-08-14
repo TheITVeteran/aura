@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures as cfutures
 import contextlib
 import copy
+import functools
 import fcntl
 import gc
 import hashlib
@@ -6615,7 +6616,7 @@ class MLXLocalClient:
             )
             _note_lane_worker_death(self, "lane_state_stale_reset")
             self._process = None
-            self._kill_and_join_blocking(process)
+            self._release_worker_process(process, reason="lane_state_stale_reset")
         self._warmup_in_flight = False
         self._set_lane_state("cold")
 
@@ -6663,6 +6664,48 @@ class MLXLocalClient:
             source=f"mlx_lane:{getattr(self, '_lane_state', 'unknown')}",
         )
         return classify_worker(evidence)
+
+    def _release_worker_process(self, process: Any, *, reason: str) -> bool:
+        """Kill, PROVE it exited, and only then stop tracking it.
+
+        Six callers used to discard this result: they killed, set
+        ``_process = None`` and replaced the IPC queues in the next breath. A
+        process that ignored or delayed termination became an orphan nothing
+        was holding a handle to — still on the accelerator, invisible to every
+        liveness probe, while a replacement was already being scheduled.
+
+        A survivor stays in ``_surviving_workers`` so it is still countable and
+        still reapable. Returns whether exit was proven.
+        """
+        if process is None:
+            return True
+        proven = self._kill_and_join_blocking(process)
+        if not proven:
+            survivors = getattr(self, "_surviving_workers", None)
+            if survivors is None:
+                survivors = []
+                self._surviving_workers = survivors
+            survivors.append(process)
+            logger.error(
+                "🧟 [MLX] Worker pid=%s survived kill during %s; keeping the handle "
+                "so it stays tracked instead of orphaned.",
+                getattr(process, "pid", "?"),
+                reason,
+            )
+        return proven
+
+    def surviving_worker_count(self) -> int:
+        """Workers this client killed that did not prove they exited."""
+        survivors = getattr(self, "_surviving_workers", None) or []
+        alive = []
+        for process in survivors:
+            try:
+                if process.is_alive():
+                    alive.append(process)
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+                alive.append(process)
+        self._surviving_workers = alive
+        return len(alive)
 
     def _kill_and_join_blocking(self, p: mp.Process) -> bool:
         """Kill and join a worker, PROVING termination. Returns True when dead.
@@ -9823,7 +9866,9 @@ class MLXLocalClient:
 
             process, self._process = self._process, None
             if process is not None:
-                await asyncio.to_thread(self._kill_and_join_blocking, process)
+                await asyncio.to_thread(
+                    self._release_worker_process, process, reason="model_lane_fence_lost"
+                )
             from core.runtime.model_lane_control import unregister_model_lane_owner_adapter
 
             unregister_model_lane_owner_adapter(owner_id)
@@ -11422,10 +11467,15 @@ class MLXLocalClient:
                 if self._init_future is not None:
                     _cancel_shared_future(self._init_future)
                     self._init_future = None
+                _doomed, self._process = self._process, None
                 await asyncio.get_running_loop().run_in_executor(
-                    None, self._kill_and_join_blocking, self._process
+                    None,
+                    functools.partial(
+                        self._release_worker_process,
+                        _doomed,
+                        reason="ready_check_worker_silent",
+                    ),
                 )
-                self._process = None
                 self._reset_worker_scoped_state()
                 self._replace_ipc_queues()
 
@@ -11465,10 +11515,15 @@ class MLXLocalClient:
                         )
                         logger.debug("Suppressed stale-handshake future-set: %s", _exc)
                     self._init_future = None
+                    _doomed, self._process = self._process, None
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._kill_and_join_blocking, self._process
+                        None,
+                        functools.partial(
+                            self._release_worker_process,
+                            _doomed,
+                            reason="stale_handshake",
+                        ),
                     )
-                    self._process = None
                     self._init_done = False
                     self._last_heartbeat = 0.0
                     self._last_progress_at = 0.0
@@ -11491,10 +11546,15 @@ class MLXLocalClient:
                         os.path.basename(self.model_path),
                     )
                     self._set_lane_state("recovering", "missing_init_lifecycle")
+                    _doomed, self._process = self._process, None
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._kill_and_join_blocking, self._process
+                        None,
+                        functools.partial(
+                            self._release_worker_process,
+                            _doomed,
+                            reason="missing_init_lifecycle",
+                        ),
                     )
-                    self._process = None
                     self._init_done = False
                     self._last_heartbeat = 0.0
                     self._last_progress_at = 0.0
@@ -11882,10 +11942,15 @@ class MLXLocalClient:
                     logger.error("🛑 [MLX] Init handshake TIMED OUT. Force killing process.")
                     self._set_lane_state("failed", "init_timeout")
                     if self._process:
+                        _doomed, self._process = self._process, None
                         await asyncio.get_running_loop().run_in_executor(
-                            None, self._kill_and_join_blocking, self._process
+                            None,
+                            functools.partial(
+                                self._release_worker_process,
+                                _doomed,
+                                reason="init_handshake_timeout",
+                            ),
                         )
-                        self._process = None
                     self._init_future = None
                     raise
             return False

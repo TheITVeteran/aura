@@ -241,3 +241,66 @@ def test_the_gate_tells_homeostasis_which_lane_answered():
         )
         return
     raise AssertionError("the homeostasis success hook was not found")
+
+
+# ─────────────────── the weight update needs evidence to learn from
+
+
+def test_a_missing_reward_signal_is_unknown_not_zero():
+    """Defaulting both signals to 0.0 and updating anyway taught the weights
+    from a number nobody produced."""
+    import inspect
+
+    import core.brain.inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+
+    assert "_hg_score: float | None = None" in source
+    assert "_surprise: float | None = None" in source
+    assert "_hg_score = _finite(get_hedonic_gradient().score)" in source
+
+
+def test_no_reward_evidence_means_no_weight_update():
+    import inspect
+
+    import core.brain.inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+
+    assert (
+        "if _hg_score is None and _surprise is None and _external is None:" in source
+    )
+    assert 'Synaptic plasticity update skipped: no reward evidence' in source
+
+
+def test_an_external_verdict_outranks_the_internal_feeling():
+    """Her own hedonic score rewarding her own answer is a closed loop; a
+    verdict from the turn ledger is the one signal that came from outside."""
+    import inspect
+
+    import core.brain.inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+
+    assert "_external if _external is not None else (_hg_score or 0.0)" in source
+
+
+def test_the_true_online_learning_claim_is_gone():
+    import inspect
+
+    import core.brain.inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+
+    assert "This is where true online learning happens" not in source
+
+
+def test_the_reward_basis_is_recorded():
+    import inspect
+
+    import core.brain.inference_gate as gate_mod
+
+    source = inspect.getsource(gate_mod)
+
+    assert "def last_plasticity_reward(" in source
+    assert '"grade_basis": _basis' in source
