@@ -2169,6 +2169,7 @@ def _restore_rollin_totals(training_state: dict[str, Any]) -> dict[str, Any]:
     if component is not None and component not in {
         "initializer",
         "action",
+        "action_workspace",
         "transition",
         "joint",
     }:

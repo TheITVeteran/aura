@@ -771,12 +771,18 @@ def test_rollin_telemetry_round_trips_and_rejects_invalid_state() -> None:
     totals["examples"] = 7
     totals["max_preclip_gradient_norm"] = 2.5
     totals["max_preclip_gradient_norms"] = {"recurrent_controller": 2.5}
+    totals["last_process_component"] = "action_workspace"
     restored = _restore_rollin_totals({"rollin_totals": totals})
     assert restored == totals
     assert restored is not totals
     assert restored["max_preclip_gradient_norms"] is not totals["max_preclip_gradient_norms"]
     totals["last_probability"] = float("nan")
     with pytest.raises(RuntimeError, match="probability differs"):
+        _restore_rollin_totals({"rollin_totals": totals})
+
+    totals["last_probability"] = None
+    totals["last_process_component"] = "unregistered_component"
+    with pytest.raises(RuntimeError, match="process component differs"):
         _restore_rollin_totals({"rollin_totals": totals})
 
 
