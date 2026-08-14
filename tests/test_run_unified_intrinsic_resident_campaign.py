@@ -77,7 +77,11 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     training = _profile_training(profile)
     campaign_id = f"unit-{profile}"
     bootstrap = None
-    bootstrap_profiles = {"process_action_canary", "recovery"}
+    bootstrap_profiles = {
+        "process_action_canary",
+        "process_family_acquisition",
+        "recovery",
+    }
     if profile in bootstrap_profiles:
         bootstrap_output = _private(inputs / "bootstrap-output")
         body_without_sha = {
@@ -125,11 +129,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
             "tokenized_dataset": str(tokenized),
             "detached_attempts": str(attempts),
             "heartbeat_key": str(key),
-            **(
-                {"bootstrap_output": bootstrap["output"]}
-                if bootstrap is not None
-                else {}
-            ),
+            **({"bootstrap_output": bootstrap["output"]} if bootstrap is not None else {}),
         },
         "heartbeat_key_sha256": hashlib.sha256(b"k" * 32).hexdigest(),
         "training": training,
@@ -211,9 +211,7 @@ def test_trainer_command_targets_resident_model_and_pid_scoped_guards(
     assert "--exclusive-model-lane" in command
     assert command[command.index("--out-dir") + 1] == raw["paths"]["training_output"]
     assert command[command.index("--dataset") + 1] == raw["paths"]["dataset"]
-    assert command[command.index("--tokenized-dataset") + 1] == (
-        raw["paths"]["tokenized_dataset"]
-    )
+    assert command[command.index("--tokenized-dataset") + 1] == (raw["paths"]["tokenized_dataset"])
     assert "{pid}" in command[command.index("--resource-stage-path") + 1]
     assert "{pid}" in command[command.index("--preload-ready-path") + 1]
     assert "{pid}" in command[command.index("--preload-release-path") + 1]
@@ -269,9 +267,42 @@ def test_process_action_canary_trains_only_new_workspace_from_parent() -> None:
     assert training["state_learning_rate"] == 0.0005
     assert training["eval_every"] == 28
     assert training["checkpoint_every"] == 14
-    assert arguments[arguments.index("--process-curriculum") + 1] == (
-        "action_workspace"
+    assert arguments[arguments.index("--process-curriculum") + 1] == ("action_workspace")
+
+
+def test_process_family_acquisition_cooptimizes_eight_distinct_examples() -> None:
+    training = _profile_training("process_family_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["per_cell"] == 8
+    assert training["holdout_per_cell"] == 3
+    assert training["process_family_batch_size"] == 2
+    assert training["state_warmup_steps"] == training["max_steps"] == 224
+    assert training["eval_every"] == training["checkpoint_every"] == 28
+    assert arguments[arguments.index("--process-family-batch-size") + 1] == "2"
+
+
+def test_process_family_acquisition_signed_config_is_controller_admitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _raw = _config(tmp_path, profile="process_family_acquisition")
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt={
+                "step": 73,
+                "checkpoint_sha256": "c" * 64,
+                "receipt_sha256": "d" * 64,
+                "identity": {"identity_sha256": "e" * 64},
+            }
+        ),
     )
+
+    loaded = controller._load_config(path)
+
+    assert loaded["profile"] == "process_family_acquisition"
 
 
 def test_process_action_config_binds_parent_and_one_step_launch(
@@ -296,9 +327,7 @@ def test_process_action_config_binds_parent_and_one_step_launch(
     config = controller._load_config(path)
     command = controller._trainer_command(path, config, invocation_steps=1)
 
-    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"][
-        "bootstrap_output"
-    ]
+    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"]["bootstrap_output"]
     assert command[-2:] == ["--max-invocation-steps", "1"]
     assert controller._planned_invocation_steps(config, {"step": 0}) == 1
 
@@ -336,9 +365,7 @@ def test_recovery_config_binds_parent_checkpoint_and_trainer_command(
     command = controller._trainer_command(path, config, invocation_steps=1)
 
     assert "--resume-if-available" in command
-    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"][
-        "bootstrap_output"
-    ]
+    assert command[command.index("--bootstrap-output-dir") + 1] == raw["paths"]["bootstrap_output"]
     assert command[command.index("--bootstrap-stem") + 1] == "checkpoint_latest"
     assert command[-2:] == ["--max-invocation-steps", "1"]
     assert controller._planned_invocation_steps(config, {"step": 0}) == 1

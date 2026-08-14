@@ -771,9 +771,7 @@ def _process_training_policy(
     stage_progress = (stage_index + 1) / stage_steps
     teacher_probability = 1.0
     if component == "joint":
-        teacher_probability = (
-            0.0 if stage_steps == 1 else 1.0 - stage_index / (stage_steps - 1)
-        )
+        teacher_probability = 0.0 if stage_steps == 1 else 1.0 - stage_index / (stage_steps - 1)
     return {
         "component": component,
         "teacher_forcing_probability": teacher_probability,
@@ -912,9 +910,7 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
 def _gradient_ownership_group(name: str) -> str:
     if name.startswith("model."):
         return "scoped_transformer_bridge"
-    if name.startswith("controller.initial_state_") or name == (
-        "controller.state_slot_embeddings"
-    ):
+    if name.startswith("controller.initial_state_") or name == ("controller.state_slot_embeddings"):
         return "typed_state_initializer"
     if name.startswith(
         (
@@ -1412,6 +1408,64 @@ def _recurrent_training_task(
         )
     ranked.sort(key=lambda row: row[:3])
     return ranked[recurrence_index % len(ranked)][-1]
+
+
+def _process_family_training_batch(
+    tasks: list[Any],
+    update_index: int,
+    batch_size: int,
+) -> tuple[Any, ...]:
+    """Return a deterministic same-family cohort for one optimizer update.
+
+    A family-specific head must fit several distinct programs at once. Applying
+    one update per example allowed the last of two prototypes to overwrite its
+    sibling. Cohort gradients make agreement across instances the optimization
+    unit while retaining exact per-example execution traces.
+    """
+
+    if (
+        type(update_index) is not int
+        or update_index < 0
+        or type(batch_size) is not int
+        or batch_size < 1
+        or not tasks
+    ):
+        raise ValueError("process family batch schedule is invalid")
+    by_family: dict[str, list[Any]] = {}
+    for task in tasks:
+        by_family.setdefault(str(task.family), []).append(task)
+    families = sorted(by_family)
+    if any(len(items) < batch_size for items in by_family.values()):
+        raise ValueError("process family batch exceeds an available family")
+    family = families[update_index % len(families)]
+    items = sorted(by_family[family], key=lambda item: str(item.task_id))
+    family_update = update_index // len(families)
+    start = (family_update * batch_size) % len(items)
+    return tuple(items[(start + offset) % len(items)] for offset in range(batch_size))
+
+
+def _mean_gradient_trees(samples: list[Any]) -> Any:
+    """Average compatible materialized gradient trees without hidden weighting."""
+
+    if not samples:
+        raise ValueError("gradient cohort is empty")
+    flattened = [tree_flatten(sample) for sample in samples]
+    signature = [(name, tuple(value.shape)) for name, value in flattened[0]]
+    if any(
+        [(name, tuple(value.shape)) for name, value in candidate] != signature
+        for candidate in flattened[1:]
+    ):
+        raise ValueError("gradient cohort parameter topology differs")
+    count = float(len(flattened))
+    return tree_unflatten(
+        [
+            (
+                name,
+                sum(candidate[index][1] for candidate in flattened) / count,
+            )
+            for index, (name, _value) in enumerate(flattened[0])
+        ]
+    )
 
 
 def _cached_answer_binding_features(
@@ -2581,11 +2635,9 @@ def _bootstrap_bundle_from_checkpoint(
         bundle_values,
         child_values,
     )
-    bundle_values, action_workspace_extension = (
-        _merge_bootstrap_action_workspace_extension(
-            bundle_values,
-            child_values,
-        )
+    bundle_values, action_workspace_extension = _merge_bootstrap_action_workspace_extension(
+        bundle_values,
+        child_values,
     )
     bundle_values, causal_action_extension = _merge_bootstrap_causal_action_extension(
         bundle_values,
@@ -2662,9 +2714,7 @@ def _merge_bootstrap_initial_state_extension(
         "controller.initial_state_value": "controller.state_transition_value",
         "controller.initial_state_output": "controller.state_transition_output",
         "controller.initial_state_bias": "controller.state_transition_bias",
-        "controller.initial_state_literal_copy_logit": (
-            "controller.state_literal_copy_logit"
-        ),
+        "controller.initial_state_literal_copy_logit": ("controller.state_literal_copy_logit"),
     }
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
@@ -2750,9 +2800,7 @@ def _merge_bootstrap_action_workspace_extension(
     tensor_receipts: dict[str, dict[str, Any]] = {}
     for name in sorted(expected):
         if name not in child_values:
-            raise RuntimeError(
-                "unified recurrence bootstrap action-workspace source differs"
-            )
+            raise RuntimeError("unified recurrence bootstrap action-workspace source differs")
         value = child_values[name]
         migrated[name] = value
         tensor_receipts[name] = {
@@ -2762,9 +2810,7 @@ def _merge_bootstrap_action_workspace_extension(
         }
     output_name = "controller.action_workspace_output"
     if bool(mx.any(migrated[output_name] != 0)):
-        raise RuntimeError(
-            "unified recurrence bootstrap action workspace is not a no-op"
-        )
+        raise RuntimeError("unified recurrence bootstrap action workspace is not a no-op")
     return migrated, {
         "schema": "aura.unified_intrinsic.action_workspace_extension.v1",
         "migration_rule": "parent_exact_plus_zero_output_recurrent_action_workspace",
@@ -2794,9 +2840,7 @@ def _merge_bootstrap_causal_action_extension(
     tensor_receipts: dict[str, dict[str, Any]] = {}
     for name in sorted(expected):
         if name not in child_values:
-            raise RuntimeError(
-                "unified recurrence bootstrap causal-action source differs"
-            )
+            raise RuntimeError("unified recurrence bootstrap causal-action source differs")
         value = child_values[name]
         migrated[name] = value
         tensor_receipts[name] = {
@@ -2806,9 +2850,7 @@ def _merge_bootstrap_causal_action_extension(
         }
     output_name = "controller.action_causal_output"
     if bool(mx.any(migrated[output_name] != 0)):
-        raise RuntimeError(
-            "unified recurrence bootstrap causal action decoder is not a no-op"
-        )
+        raise RuntimeError("unified recurrence bootstrap causal action decoder is not a no-op")
     return migrated, {
         "schema": "aura.unified_intrinsic.causal_action_extension.v1",
         "migration_rule": "parent_exact_plus_zero_output_autoregressive_action_decoder",
@@ -2840,14 +2882,10 @@ def _merge_bootstrap_family_action_extension(
     tensor_receipts: dict[str, dict[str, Any]] = {}
     for name in sorted(expected):
         if name not in child_values:
-            raise RuntimeError(
-                "unified recurrence bootstrap family-action source differs"
-            )
+            raise RuntimeError("unified recurrence bootstrap family-action source differs")
         value = child_values[name]
         if bool(mx.any(value != 0)):
-            raise RuntimeError(
-                "unified recurrence bootstrap family action experts are not a no-op"
-            )
+            raise RuntimeError("unified recurrence bootstrap family action experts are not a no-op")
         migrated[name] = value
         tensor_receipts[name] = {
             "shape": list(value.shape),
@@ -3233,6 +3271,15 @@ def main() -> int:
         help="typed-process acquisition policy during the state-transition phase",
     )
     parser.add_argument(
+        "--process-family-batch-size",
+        type=int,
+        default=1,
+        help=(
+            "same-family examples whose independently computed process gradients "
+            "are averaged before one optimizer update"
+        ),
+    )
+    parser.add_argument(
         "--answer-bridge-steps",
         type=int,
         default=0,
@@ -3379,12 +3426,9 @@ def main() -> int:
         process_bootstrap=args.process_curriculum == "action_workspace",
     )
     if args.process_curriculum == "factorized" and (
-        args.task_source != "frontier_process"
-        or args.state_warmup_steps < 8
+        args.task_source != "frontier_process" or args.state_warmup_steps < 8
     ):
-        raise ValueError(
-            "factorized process curriculum requires frontier process acquisition"
-        )
+        raise ValueError("factorized process curriculum requires frontier process acquisition")
     if args.process_curriculum == "action_workspace" and (
         args.task_source != "frontier_process"
         or args.state_warmup_steps != args.max_steps
@@ -3392,6 +3436,12 @@ def main() -> int:
     ):
         raise ValueError(
             "action-workspace curriculum requires bootstrapped frontier process acquisition"
+        )
+    if args.process_family_batch_size < 1 or (
+        args.process_family_batch_size > 1 and args.process_curriculum != "action_workspace"
+    ):
+        raise ValueError(
+            "process family batching requires a positive action-workspace acquisition batch"
         )
     answer_bridge_autonomous_tail_steps = (
         min(8, args.answer_bridge_steps)
@@ -3870,6 +3920,7 @@ def main() -> int:
             "semantic_warmup_steps": args.semantic_warmup_steps,
             "state_warmup_steps": args.state_warmup_steps,
             "process_curriculum": args.process_curriculum,
+            "process_family_batch_size": args.process_family_batch_size,
             "answer_bridge_steps": args.answer_bridge_steps,
             "answer_bridge_inner_steps": args.answer_bridge_inner_steps,
             "answer_bridge_autonomous_tail_steps": (answer_bridge_autonomous_tail_steps),
@@ -4068,6 +4119,14 @@ def main() -> int:
                     )
                 else:
                     task = train_tasks[step % len(train_tasks)]
+                process_family_batch = (task,)
+                if phase == "state_transition" and args.process_family_batch_size > 1:
+                    process_family_batch = _process_family_training_batch(
+                        train_tasks,
+                        step,
+                        args.process_family_batch_size,
+                    )
+                    task = process_family_batch[0]
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     update_applied = False
@@ -4279,9 +4338,7 @@ def main() -> int:
                             state_teacher_probability = process_policy[
                                 "teacher_forcing_probability"
                             ]
-                            rollin_totals["last_process_component"] = process_policy[
-                                "component"
-                            ]
+                            rollin_totals["last_process_component"] = process_policy["component"]
                             rollin_totals["last_process_stage_progress"] = process_policy[
                                 "stage_progress"
                             ]
@@ -4370,31 +4427,48 @@ def main() -> int:
                             )[0]
 
                         if phase == "state_transition":
+                            cohort_losses: list[Any] = []
+                            cohort_gradients: list[Any] = []
+                            for cohort_task in process_family_batch:
+                                cohort_prompt, _cohort_answer = encode_example(
+                                    tokenizer,
+                                    cohort_task,
+                                    bridge,
+                                )
 
-                            def process_objective(
-                                candidate: UnifiedTrainingBundle,
-                                objective_prompt: Any,
-                                transition_trace: Any = task.transition_trace,
-                                transition_program: Any = task.transition_program,
-                                component: str = process_policy["component"],
-                                teacher_probability: float = state_teacher_probability,
-                            ) -> Any:
-                                return unified_process_training_loss(
-                                    candidate.model,
-                                    objective_prompt,
-                                    candidate.controller,
-                                    state_spec.plan_at(max(state_spec.train_depths)),
-                                    transition_trace=transition_trace,
-                                    transition_program=transition_program,
-                                    state_teacher_forcing_probability=teacher_probability,
-                                    state_weight=state_spec.state_weight,
-                                    component=component,
-                                )[0]
+                                def process_objective(
+                                    candidate: UnifiedTrainingBundle,
+                                    objective_prompt: Any,
+                                    transition_trace: Any = cohort_task.transition_trace,
+                                    transition_program: Any = cohort_task.transition_program,
+                                    component: str = process_policy["component"],
+                                    teacher_probability: float = state_teacher_probability,
+                                ) -> Any:
+                                    return unified_process_training_loss(
+                                        candidate.model,
+                                        objective_prompt,
+                                        candidate.controller,
+                                        state_spec.plan_at(max(state_spec.train_depths)),
+                                        transition_trace=transition_trace,
+                                        transition_program=transition_program,
+                                        state_teacher_forcing_probability=teacher_probability,
+                                        state_weight=state_spec.state_weight,
+                                        component=component,
+                                    )[0]
 
-                            loss, gradients = nn.value_and_grad(
-                                bundle,
-                                process_objective,
-                            )(bundle, prompt)
+                                cohort_loss, cohort_gradient = nn.value_and_grad(
+                                    bundle,
+                                    process_objective,
+                                )(bundle, cohort_prompt)
+                                cohort_gradient = tree_map(mx.stop_gradient, cohort_gradient)
+                                mx.eval(
+                                    cohort_loss,
+                                    *[value for _name, value in tree_flatten(cohort_gradient)],
+                                )
+                                cohort_losses.append(mx.stop_gradient(cohort_loss))
+                                cohort_gradients.append(cohort_gradient)
+                            loss = mx.mean(mx.stack(cohort_losses))
+                            gradients = _mean_gradient_trees(cohort_gradients)
                         elif phase == "recurrence":
                             loss, gradients = _streamed_recurrent_objective_gradients(
                                 bundle,
@@ -4431,9 +4505,7 @@ def main() -> int:
                             totals=rollin_totals,
                             loss=loss,
                             process_component=(
-                                process_policy["component"]
-                                if process_policy is not None
-                                else None
+                                process_policy["component"] if process_policy is not None else None
                             ),
                         )
                 step += 1

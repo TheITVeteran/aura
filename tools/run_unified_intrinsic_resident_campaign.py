@@ -118,8 +118,10 @@ def _document(value: Any) -> bytes:
 
 
 def _is_sha(value: Any) -> bool:
-    return isinstance(value, str) and len(value) == 64 and all(
-        character in "0123456789abcdef" for character in value
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
     )
 
 
@@ -165,11 +167,12 @@ def _read_canonical(
             details={"path": str(path)},
         ) from exc
     raw = b"".join(chunks)
-    if (
-        len(raw) != before.st_size
-        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-    ):
+    if len(raw) != before.st_size or (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
         _fail("artifact_changed_while_read", path=str(path))
     try:
         decoded = json.loads(raw.decode("ascii"))
@@ -276,20 +279,21 @@ def _load_config(path: Path) -> dict[str, Any]:
         set(config) not in allowed_keys
         or config.get("schema") != CONFIG_SCHEMA
         or config.get("config_sha256") != canonical_sha256(body)
-        or config.get("profile") not in {
+        or config.get("profile")
+        not in {
             "canary",
             "full",
             "process_action_canary",
             "process_canary",
+            "process_family_acquisition",
             "recovery",
         }
         or not isinstance(config.get("campaign_id"), str)
     ):
         _fail("campaign_config_invalid")
     expected_training = _profile_training(str(config["profile"]))
-    if (
-        config.get("training") != expected_training
-        or config.get("training_args") != _training_cli(expected_training)
+    if config.get("training") != expected_training or config.get("training_args") != _training_cli(
+        expected_training
     ):
         _fail("campaign_training_profile_drift")
     paths = config.get("paths")
@@ -303,7 +307,11 @@ def _load_config(path: Path) -> dict[str, Any]:
         "detached_attempts",
         "heartbeat_key",
     }
-    bootstrap_profiles = {"process_action_canary", "recovery"}
+    bootstrap_profiles = {
+        "process_action_canary",
+        "process_family_acquisition",
+        "recovery",
+    }
     expected_path_keys = (
         base_path_keys | {"bootstrap_output"}
         if config["profile"] in bootstrap_profiles
@@ -376,21 +384,16 @@ def _load_config(path: Path) -> dict[str, Any]:
                 required=True,
             )
         except (OSError, UnifiedCheckpointError, ValueError) as exc:
-            raise UnifiedResidentControllerError(
-                "campaign_bootstrap_checkpoint_invalid"
-            ) from exc
+            raise UnifiedResidentControllerError("campaign_bootstrap_checkpoint_invalid") from exc
         if selected is None:  # pragma: no cover - required=True is authoritative
             _fail("campaign_bootstrap_checkpoint_unavailable")
         parent_identity = selected.receipt.get("identity")
         if (
             selected.receipt.get("step") != bootstrap["parent_step"]
-            or selected.receipt.get("checkpoint_sha256")
-            != bootstrap["parent_checkpoint_sha256"]
-            or selected.receipt.get("receipt_sha256")
-            != bootstrap["parent_receipt_sha256"]
+            or selected.receipt.get("checkpoint_sha256") != bootstrap["parent_checkpoint_sha256"]
+            or selected.receipt.get("receipt_sha256") != bootstrap["parent_receipt_sha256"]
             or not isinstance(parent_identity, dict)
-            or parent_identity.get("identity_sha256")
-            != bootstrap["parent_identity_sha256"]
+            or parent_identity.get("identity_sha256") != bootstrap["parent_identity_sha256"]
         ):
             _fail("campaign_bootstrap_checkpoint_drift")
     elif bootstrap is not None:
@@ -663,9 +666,7 @@ def _inspect_status(config: Mapping[str, Any]) -> dict[str, Any]:
         "schema": "aura.unified_intrinsic.controller_inspection.v1",
         "authenticated_status": status,
         "controller_liveness": liveness,
-        "effective_state": (
-            status["state"] if terminal or liveness == "alive" else "stale"
-        ),
+        "effective_state": (status["state"] if terminal or liveness == "alive" else "stale"),
         "claims_supported": (
             ["authenticated_terminal_controller_status"]
             if terminal
@@ -731,11 +732,7 @@ def _launch_contract(
     }
     behavior = config["runtime"].get("behavior_environment")
     if isinstance(behavior, dict):
-        variables = {
-            name: value
-            for name, value in behavior.items()
-            if isinstance(value, str)
-        }
+        variables = {name: value for name, value in behavior.items() if isinstance(value, str)}
         if variables:
             payload["EnvironmentVariables"] = variables
     plist = plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
@@ -770,9 +767,7 @@ def _verified_launch_intent(config: Mapping[str, Any]) -> dict[str, Any]:
     try:
         descriptor = os.open(
             plist_path,
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         try:
             before = os.fstat(descriptor)
@@ -867,9 +862,7 @@ def _checkpoint_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
     receipt = resolved.receipt
     identity = receipt.get("identity")
     model_identity = identity.get("model") if isinstance(identity, dict) else None
-    campaign_binding = (
-        identity.get("campaign_binding") if isinstance(identity, dict) else None
-    )
+    campaign_binding = identity.get("campaign_binding") if isinstance(identity, dict) else None
     if (
         not isinstance(identity, dict)
         or identity.get("dataset") != config["dataset"]
@@ -889,16 +882,12 @@ def _checkpoint_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
             summary = {"binding": "ignored_non_authoritative", "reason": exc.code}
         else:
             body = {
-                key: value
-                for key, value in training_receipt.items()
-                if key != "receipt_sha256"
+                key: value for key, value in training_receipt.items() if key != "receipt_sha256"
             }
             bound = (
                 training_receipt.get("receipt_sha256") == canonical_sha256(body)
                 and training_receipt.get("steps") == receipt.get("step")
-                and training_receipt.get("latest_checkpoint", {}).get(
-                    "checkpoint_sha256"
-                )
+                and training_receipt.get("latest_checkpoint", {}).get("checkpoint_sha256")
                 == receipt.get("checkpoint_sha256")
             )
             summary = {
@@ -993,7 +982,11 @@ def _trainer_command(
         str(config["config_sha256"]),
         *[str(value) for value in config["training_args"]],
     ]
-    if config["profile"] in {"process_action_canary", "recovery"}:
+    if config["profile"] in {
+        "process_action_canary",
+        "process_family_acquisition",
+        "recovery",
+    }:
         bootstrap = config["bootstrap"]
         command.extend(
             (
@@ -1145,8 +1138,7 @@ def _stable_last_ring_entry(
     raw = b"".join(chunks)
     if (
         remaining
-        or
-        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
         or before.st_uid != os.geteuid()
         or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
         != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
@@ -1434,9 +1426,7 @@ def _target_is_live(evidence: Mapping[str, Any]) -> bool:
     pid = int(evidence.get("target_pid") or 0)
     token = str(evidence.get("target_start_token") or "")
     return (
-        pid > 1
-        and bool(token)
-        and detached._identity_state(pid, token) == "alive"  # noqa: SLF001
+        pid > 1 and bool(token) and detached._identity_state(pid, token) == "alive"  # noqa: SLF001
     )
 
 
@@ -1544,8 +1534,7 @@ def _monitor_attempt(
         stale = (
             isinstance(heartbeat_at, (int, float))
             and not isinstance(heartbeat_at, bool)
-            and time.time() - float(heartbeat_at)
-            > float(config["watchdog"]["heartbeat_stale_s"])
+            and time.time() - float(heartbeat_at) > float(config["watchdog"]["heartbeat_stale_s"])
         ) or (
             time.monotonic() - heartbeat_progress_at
             > float(config["watchdog"]["heartbeat_stale_s"])
@@ -1573,9 +1562,7 @@ def _reservation_path(run_dir: Path) -> Path:
 
 def _result_path(config: Mapping[str, Any], attempt: int) -> Path:
     return (
-        Path(config["paths"]["campaign_root"])
-        / "attempt-results"
-        / f"attempt-{attempt:04d}.json"
+        Path(config["paths"]["campaign_root"]) / "attempt-results" / f"attempt-{attempt:04d}.json"
     )
 
 
@@ -1654,9 +1641,7 @@ def _load_reservation(
     attempt: int,
 ) -> dict[str, Any]:
     reservation = _read_canonical(_reservation_path(run_dir))
-    body = {
-        key: value for key, value in reservation.items() if key != "reservation_sha256"
-    }
+    body = {key: value for key, value in reservation.items() if key != "reservation_sha256"}
     if (
         reservation.get("schema") != ATTEMPT_RESERVATION_SCHEMA
         or reservation.get("campaign_id") != config["campaign_id"]
@@ -1808,9 +1793,7 @@ def run_controller(config_path: Path, *, launchd_supervised: bool) -> dict[str, 
             _publish_status(config, "validating", {"launchd": launchd})
             package = verify_package(config)
             max_attempts = int(config["watchdog"]["max_attempts"])
-            max_no_progress = int(
-                config["watchdog"]["max_consecutive_no_progress"]
-            )
+            max_no_progress = int(config["watchdog"]["max_consecutive_no_progress"])
             for attempt in range(1, max_attempts + 1):
                 checkpoint = _checkpoint_snapshot(config)
                 if checkpoint["complete"]:

@@ -68,6 +68,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_frozen_dataset,
     _load_latest_checkpoint,
     _masked_process_decisions,
+    _mean_gradient_trees,
     _merge_bootstrap_action_workspace_extension,
     _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
@@ -80,6 +81,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _phase_gradients,
     _phase_schedule,
     _process_component_gradients,
+    _process_family_training_batch,
     _process_training_policy,
     _recurrent_training_task,
     _residual_hidden_size,
@@ -256,9 +258,7 @@ def test_bootstrap_action_workspace_rejects_partial_or_active_extension() -> Non
     }
     partial_parent = {
         "controller.action_output": child["controller.action_output"],
-        "controller.action_workspace_seed": child[
-            "controller.action_workspace_seed"
-        ],
+        "controller.action_workspace_seed": child["controller.action_workspace_seed"],
     }
     with pytest.raises(RuntimeError, match="action-workspace inventory differs"):
         _merge_bootstrap_action_workspace_extension(partial_parent, child)
@@ -350,10 +350,7 @@ def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() ->
     }
     child = {
         **parent,
-        **{
-            f"controller.{name}": mx.zeros((2, 2))
-            for name in INITIAL_STATE_PARAMETER_NAMES
-        },
+        **{f"controller.{name}": mx.zeros((2, 2)) for name in INITIAL_STATE_PARAMETER_NAMES},
     }
 
     migrated, receipt = _merge_bootstrap_initial_state_extension(parent, child)
@@ -701,9 +698,7 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
     for step, (component, teacher_probability) in expected.items():
         policy = _process_training_policy(step, 280, "factorized")
         assert policy["component"] == component
-        assert policy["teacher_forcing_probability"] == pytest.approx(
-            teacher_probability
-        )
+        assert policy["teacher_forcing_probability"] == pytest.approx(teacher_probability)
         assert 0.0 < policy["stage_progress"] <= 1.0
 
     assert _process_training_policy(4, 8, "joint") == {
@@ -753,12 +748,8 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
         },
     }
     for component, live_names in expected.items():
-        masked = dict(
-            tree_flatten(_process_component_gradients(gradients, component))
-        )
-        assert {
-            name for name, value in masked.items() if bool(mx.any(value != 0))
-        } == live_names
+        masked = dict(tree_flatten(_process_component_gradients(gradients, component)))
+        assert {name for name, value in masked.items() if bool(mx.any(value != 0))} == live_names
 
 
 def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:
@@ -1225,6 +1216,39 @@ def test_broad_recurrent_schedule_covers_every_natural_process_depth(
         for index in range(3)
     ]
     assert scheduled == ["calibration", "science", "coding"]
+
+
+def test_process_family_training_batch_cooptimizes_siblings_before_repetition() -> None:
+    tasks = [
+        type(
+            "Task",
+            (),
+            {"family": family, "task_id": f"{family}-{index}"},
+        )()
+        for family in ("frontier_coding", "frontier_mathematics")
+        for index in range(4)
+    ]
+
+    batches = [_process_family_training_batch(tasks, update, 2) for update in range(4)]
+
+    assert [[task.task_id for task in batch] for batch in batches] == [
+        ["frontier_coding-0", "frontier_coding-1"],
+        ["frontier_mathematics-0", "frontier_mathematics-1"],
+        ["frontier_coding-2", "frontier_coding-3"],
+        ["frontier_mathematics-2", "frontier_mathematics-3"],
+    ]
+    assert all(len({task.family for task in batch}) == 1 for batch in batches)
+
+
+def test_mean_gradient_trees_is_equal_weight_and_topology_bound() -> None:
+    first = {"controller": {"weight": mx.array([1.0, 3.0])}}
+    second = {"controller": {"weight": mx.array([3.0, 7.0])}}
+
+    averaged = _mean_gradient_trees([first, second])
+
+    assert averaged["controller"]["weight"].tolist() == [2.0, 5.0]
+    with pytest.raises(ValueError, match="topology"):
+        _mean_gradient_trees([first, {"controller": {"bias": mx.array([1.0])}}])
 
 
 def test_cached_answer_binding_loss_trains_without_model_execution() -> None:

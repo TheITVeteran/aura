@@ -61,7 +61,14 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
 PREPARATION_SCHEMA: Final = "aura.unified_intrinsic.resident_preparation.v1"
 CONFIG_SCHEMA: Final = "aura.unified_intrinsic.resident_campaign.v1"
 PROFILES: Final = frozenset(
-    {"canary", "full", "process_action_canary", "process_canary", "recovery"}
+    {
+        "canary",
+        "full",
+        "process_action_canary",
+        "process_canary",
+        "process_family_acquisition",
+        "recovery",
+    }
 )
 DEFAULT_MODEL: Final = Path(
     "/Users/bryan/.aura/live-source/training/fused-model/"
@@ -108,9 +115,7 @@ def _write_once(path: Path, payload: bytes, *, mode: int = 0o400) -> None:
         finally:
             os.close(descriptor)
     except OSError as exc:
-        raise UnifiedResidentPreparationError(
-            f"immutable_artifact_unreadable:{path.name}"
-        ) from exc
+        raise UnifiedResidentPreparationError(f"immutable_artifact_unreadable:{path.name}") from exc
     observed = b"".join(chunks)
     if (
         not stat.S_ISREG(before.st_mode)
@@ -216,6 +221,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "state_teacher_forcing_probability": 0.0,
         "state_teacher_forcing_final_probability": 0.0,
         "process_curriculum": "joint",
+        "process_family_batch_size": 1,
         "max_gradient_norm": 0.5,
         "checkpoint_every": 1,
         "checkpoint_group": 4,
@@ -228,14 +234,25 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "cache_limit_gb": 2.0,
         "wired_limit_gb": 48.0,
     }
-    if profile in {"process_action_canary", "process_canary"}:
+    if profile in {
+        "process_action_canary",
+        "process_canary",
+        "process_family_acquisition",
+    }:
         families = (
             "novel_algorithms,mathematics,coding,scientific_inference,"
             "long_horizon_planning,calibration,misleading_premise"
         )
-        training_examples = 14
-        action_only = profile == "process_action_canary"
-        process_steps = training_examples * (8 if action_only else 20)
+        acquisition = profile == "process_family_acquisition"
+        per_cell = 8 if acquisition else 2
+        family_batch_size = 2 if acquisition else 1
+        training_examples = 7 * per_cell
+        action_only = profile != "process_canary"
+        process_steps = (
+            7 * (per_cell // family_batch_size) * 8
+            if acquisition
+            else training_examples * (8 if action_only else 20)
+        )
         return {
             **common,
             "window_tissue_mode": "scoped_lora",
@@ -244,29 +261,28 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "task_depths": "3,4,5,6,8,10",
             "train_depths": "1,3,4,5,6,8,10",
             "heldout_depths": "12,16",
-            "per_cell": 2,
-            "holdout_per_cell": 1,
+            "per_cell": per_cell,
+            "holdout_per_cell": 3 if acquisition else 1,
             "max_steps": process_steps,
             "semantic_warmup_steps": 0,
             "state_warmup_steps": process_steps,
-            "process_curriculum": (
-                "action_workspace" if action_only else "factorized"
-            ),
+            "process_curriculum": ("action_workspace" if action_only else "factorized"),
+            "process_family_batch_size": family_batch_size,
             "answer_bridge_steps": 0,
             "answer_bridge_inner_steps": 1,
             "student_rollin_probability": 0.0,
             "student_rollin_final_probability": 0.5,
             "state_teacher_forcing_probability": 1.0,
             "state_teacher_forcing_final_probability": 0.0,
-            "eval_every": training_examples * (2 if action_only else 5),
-            "checkpoint_every": training_examples,
+            "eval_every": 28 if acquisition else training_examples * (2 if action_only else 5),
+            "checkpoint_every": 28 if acquisition else training_examples,
             "state_learning_rate": 0.0005 if action_only else 0.00005,
             "seed": 2026081401,
             "init_seed": 2026081402,
             "memory_fraction": 0.35,
             "memory_limit_gb": 24.0,
             "wired_limit_gb": 28.0,
-            "max_minutes": 60.0,
+            "max_minutes": 90.0 if acquisition else 60.0,
         }
     if profile == "canary":
         # Two examples per cell twice reached 8/9 exact resident admission but
@@ -276,9 +292,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         canary_per_cell = 4
         family_count = len(str(common["families"]).split(","))
         task_depth_count = len(str(common["task_depths"]).split(","))
-        canary_bridge_steps = (
-            family_count * task_depth_count * canary_per_cell
-        )
+        canary_bridge_steps = family_count * task_depth_count * canary_per_cell
         return {
             **common,
             "per_cell": canary_per_cell,
@@ -353,18 +367,13 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "answer_bridge_learning_rate": "--answer-bridge-learning-rate",
         "answer_bridge_inner_steps": "--answer-bridge-inner-steps",
         "answer_bridge_rollin_probability": "--answer-bridge-rollin-probability",
-        "answer_bridge_rollin_final_probability": (
-            "--answer-bridge-rollin-final-probability"
-        ),
+        "answer_bridge_rollin_final_probability": ("--answer-bridge-rollin-final-probability"),
         "student_rollin_probability": "--student-rollin-probability",
         "student_rollin_final_probability": "--student-rollin-final-probability",
-        "state_teacher_forcing_probability": (
-            "--state-teacher-forcing-probability"
-        ),
-        "state_teacher_forcing_final_probability": (
-            "--state-teacher-forcing-final-probability"
-        ),
+        "state_teacher_forcing_probability": ("--state-teacher-forcing-probability"),
+        "state_teacher_forcing_final_probability": ("--state-teacher-forcing-final-probability"),
         "process_curriculum": "--process-curriculum",
+        "process_family_batch_size": "--process-family-batch-size",
         "max_gradient_norm": "--max-gradient-norm",
         "max_steps": "--max-steps",
         "semantic_warmup_steps": "--semantic-warmup-steps",
@@ -471,7 +480,11 @@ def _freeze_campaign(
     _private_directory(root / "training-output")
     detached_attempts = _private_directory(root / "detached-attempts")
     del detached_attempts
-    bootstrap_profiles = {"process_action_canary", "recovery"}
+    bootstrap_profiles = {
+        "process_action_canary",
+        "process_family_acquisition",
+        "recovery",
+    }
     if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
         _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
     bootstrap = (
@@ -484,13 +497,10 @@ def _freeze_campaign(
         else None
     )
     families = tuple(str(training["families"]).split(","))
-    task_depths = tuple(
-        int(value) for value in str(training["task_depths"]).split(",")
-    )
+    task_depths = tuple(int(value) for value in str(training["task_depths"]).split(","))
     if training["task_source"] == "frontier_process":
         difficulties = tuple(
-            int(value)
-            for value in str(training["frontier_difficulties"]).split(",")
+            int(value) for value in str(training["frontier_difficulties"]).split(",")
         )
         train_tasks = frontier_process_task_battery(
             families,
@@ -585,7 +595,13 @@ def _freeze_campaign(
             "heartbeat_stale_s": 180.0,
             "attempt_timeout_s": (
                 5.0 * 3600.0
-                if profile in {"canary", "process_action_canary", "process_canary"}
+                if profile
+                in {
+                    "canary",
+                    "process_action_canary",
+                    "process_canary",
+                    "process_family_acquisition",
+                }
                 else 14.0 * 3600.0
                 if profile == "recovery"
                 else 54.0 * 3600.0
@@ -622,9 +638,7 @@ def _freeze_campaign(
         "runtime_identity_sha256": environment["identity_sha256"],
         "dataset_identity_sha256": dataset_identity["identity_sha256"],
         "tokenizer_identity_sha256": tokenizer_identity["identity_sha256"],
-        "tokenized_dataset_identity_sha256": tokenized_dataset_identity[
-            "identity_sha256"
-        ],
+        "tokenized_dataset_identity_sha256": tokenized_dataset_identity["identity_sha256"],
         "training_arguments_sha256": canonical_sha256(training_args),
         "claims_supported": [
             "source_model_runtime_and_exact_tokenized_dataset_frozen_before_launch"
@@ -705,9 +719,7 @@ def _create_capsule_and_freeze(args: argparse.Namespace) -> dict[str, Any]:
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise UnifiedResidentPreparationError(
-            "capsule_preparation_receipt_invalid"
-        ) from exc
+        raise UnifiedResidentPreparationError("capsule_preparation_receipt_invalid") from exc
     return payload
 
 
@@ -754,8 +766,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     except Exception as exc:  # noqa: BLE001 - stable CLI failure boundary
         print(
-            f"prepare_unified_intrinsic_resident_campaign: "
-            f"{type(exc).__name__}: {exc}",
+            f"prepare_unified_intrinsic_resident_campaign: {type(exc).__name__}: {exc}",
             file=sys.stderr,
             flush=True,
         )
