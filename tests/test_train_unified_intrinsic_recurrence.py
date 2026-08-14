@@ -76,6 +76,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_family_action_extension,
     _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
+    _merge_bootstrap_scoped_lora_target_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
@@ -292,6 +293,63 @@ def test_bootstrap_action_workspace_extension_is_exact_and_audited() -> None:
     assert migrated["controller.action_output"] is parent["controller.action_output"]
     assert set(migrated) == set(child)
     assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_scoped_lora_query_extension_is_exact_and_audited() -> None:
+    parent = {
+        "model.model.layers.7.self_attn.o_proj.lora_a": mx.ones((3, 2)),
+        "model.model.layers.7.self_attn.o_proj.lora_b": mx.zeros((2, 3)),
+    }
+    child = {
+        **parent,
+        "model.model.layers.7.self_attn.q_proj.lora_a": mx.ones((3, 2)),
+        "model.model.layers.7.self_attn.q_proj.lora_b": mx.zeros((2, 3)),
+        "model.model.layers.7.self_attn.q_proj.continuous_depth_a.0": mx.ones((3, 2)),
+        "model.model.layers.7.self_attn.q_proj.continuous_depth_b.0": mx.zeros((2, 3)),
+    }
+
+    migrated, receipt, remaining = _merge_bootstrap_scoped_lora_target_extension(
+        parent,
+        child,
+        parent_identity={"lora_targets": ["o_proj", "v_proj"]},
+        child_identity={"lora_targets": ["q_proj", "o_proj", "v_proj"]},
+        mismatches=["lora_targets"],
+    )
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["added_targets"] == ["q_proj"]
+    assert set(migrated) == set(child)
+    assert remaining == []
+
+
+def test_bootstrap_scoped_lora_query_extension_rejects_active_or_broad_change() -> None:
+    parent = {
+        "model.model.layers.7.self_attn.o_proj.lora_a": mx.ones((3, 2)),
+        "model.model.layers.7.self_attn.o_proj.lora_b": mx.zeros((2, 3)),
+    }
+    active = {
+        **parent,
+        "model.model.layers.7.self_attn.q_proj.lora_a": mx.ones((3, 2)),
+        "model.model.layers.7.self_attn.q_proj.lora_b": mx.ones((2, 3)),
+    }
+    with pytest.raises(RuntimeError, match="LoRA target is not a no-op"):
+        _merge_bootstrap_scoped_lora_target_extension(
+            parent,
+            active,
+            parent_identity={"lora_targets": ["o_proj", "v_proj"]},
+            child_identity={"lora_targets": ["q_proj", "o_proj", "v_proj"]},
+            mismatches=["lora_targets"],
+        )
+
+    with pytest.raises(RuntimeError, match="LoRA targets differ"):
+        _merge_bootstrap_scoped_lora_target_extension(
+            parent,
+            active,
+            parent_identity={"lora_targets": ["o_proj", "v_proj"]},
+            child_identity={"lora_targets": ["q_proj", "k_proj", "o_proj", "v_proj"]},
+            mismatches=["lora_targets"],
+        )
 
 
 def test_bootstrap_action_workspace_rejects_partial_or_active_extension() -> None:

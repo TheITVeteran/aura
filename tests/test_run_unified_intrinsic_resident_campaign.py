@@ -291,7 +291,8 @@ def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
     assert training["holdout_per_cell"] == 3
     assert training["process_family_batch_size"] == 7
     assert training["process_family_batch_mode"] == "balanced_families"
-    assert training["process_transformer_gradient_scale"] == pytest.approx(0.1)
+    assert training["lora_targets"] == "q_proj,o_proj,v_proj"
+    assert training["process_transformer_gradient_scale"] == pytest.approx(1.0)
     assert training["state_warmup_steps"] == training["max_steps"] == 64
     assert training["eval_every"] == training["checkpoint_every"] == 8
     assert arguments[arguments.index("--process-family-batch-mode") + 1] == ("balanced_families")

@@ -2712,6 +2712,15 @@ def _bootstrap_bundle_from_checkpoint(
             "unified recurrence bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
+    bundle_values, scoped_lora_extension, mismatches = (
+        _merge_bootstrap_scoped_lora_target_extension(
+            bundle_values,
+            child_values,
+            parent_identity=parent_identity,
+            child_identity=expected_identity,
+            mismatches=mismatches,
+        )
+    )
     bundle_values, initial_state_extension = _merge_bootstrap_initial_state_extension(
         bundle_values,
         child_values,
@@ -2763,6 +2772,8 @@ def _bootstrap_bundle_from_checkpoint(
     }
     if codebook_extension is not None:
         result["semantic_codebook_extension"] = codebook_extension
+    if scoped_lora_extension is not None:
+        result["scoped_lora_target_extension"] = scoped_lora_extension
     if numeric_observation_extension is not None:
         result["numeric_observation_extension"] = numeric_observation_extension
     if initial_state_extension is not None:
@@ -2782,6 +2793,71 @@ def _tensor_sha256(value: Any) -> str:
     materialized = value.astype(mx.float32)
     mx.eval(materialized)
     return hashlib.sha256(bytes(memoryview(materialized))).hexdigest()
+
+
+def _merge_bootstrap_scoped_lora_target_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+    *,
+    parent_identity: dict[str, Any],
+    child_identity: dict[str, Any],
+    mismatches: list[str],
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[str]]:
+    """Add a projection family only when every new path is an exact no-op."""
+
+    if "lora_targets" not in mismatches:
+        return dict(parent_values), None, list(mismatches)
+    parent_targets = parent_identity.get("lora_targets")
+    child_targets = child_identity.get("lora_targets")
+    if (
+        not isinstance(parent_targets, list)
+        or not isinstance(child_targets, list)
+        or len(parent_targets) != len(set(parent_targets))
+        or len(child_targets) != len(set(child_targets))
+        or not set(parent_targets) < set(child_targets)
+        or set(child_targets) - set(parent_targets) != {"q_proj"}
+    ):
+        raise RuntimeError("unified recurrence bootstrap LoRA targets differ")
+    parent_model = {name for name in parent_values if name.startswith("model.")}
+    child_model = {name for name in child_values if name.startswith("model.")}
+    new_names = child_model - parent_model
+    if (
+        not new_names
+        or parent_model - child_model
+        or any(".self_attn.q_proj." not in name for name in new_names)
+    ):
+        raise RuntimeError("unified recurrence bootstrap LoRA target inventory differs")
+    inactive_names = {
+        name
+        for name in new_names
+        if name.endswith(".lora_b") or ".continuous_depth_b." in name
+    }
+    if not inactive_names or any(bool(mx.any(child_values[name] != 0)) for name in inactive_names):
+        raise RuntimeError("unified recurrence bootstrap LoRA target is not a no-op")
+
+    migrated = dict(parent_values)
+    tensors: dict[str, dict[str, Any]] = {}
+    for name in sorted(new_names):
+        value = child_values[name]
+        migrated[name] = value
+        tensors[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+            "zero_initialized": name in inactive_names,
+        }
+    remaining = [field for field in mismatches if field != "lora_targets"]
+    return migrated, {
+        "schema": "aura.unified_intrinsic.scoped_lora_target_extension.v1",
+        "migration_rule": "parent_exact_plus_zero_output_query_projection",
+        "parent_targets": list(parent_targets),
+        "child_targets": list(child_targets),
+        "added_targets": ["q_proj"],
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "new_tensor_names": sorted(new_names),
+        "tensors": tensors,
+    }, remaining
 
 
 def _bootstrap_numeric_observation_extension(

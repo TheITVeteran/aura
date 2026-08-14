@@ -267,6 +267,11 @@ def _profile_training(profile: str) -> dict[str, Any]:
         return {
             **common,
             "window_tissue_mode": "scoped_lora",
+            "lora_targets": (
+                "q_proj,o_proj,v_proj"
+                if neural_acquisition
+                else common["lora_targets"]
+            ),
             "task_source": "frontier_process",
             "families": families,
             "task_depths": "3,4,5,6,8,10",
@@ -280,7 +285,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "process_curriculum": ("action_workspace" if action_only else "factorized"),
             "process_family_batch_size": family_batch_size,
             "process_family_batch_mode": family_batch_mode,
-            "process_transformer_gradient_scale": 0.1 if neural_acquisition else 0.0,
+            "process_transformer_gradient_scale": 1.0 if neural_acquisition else 0.0,
             "answer_bridge_steps": 0,
             "answer_bridge_inner_steps": 1,
             "student_rollin_probability": 0.0,
