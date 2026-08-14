@@ -38,6 +38,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     TRAINING_SOURCE_FILES,
     UnifiedTrainingBundle,
     _answer_binding_loss,
+    _answer_bridge_process_preflight,
     _answer_bridge_task,
     _answer_bridge_teacher_policy,
     _answer_role_place_targets,
@@ -455,6 +456,88 @@ def test_phase_schedule_allows_only_bootstrapped_bridge_only_adaptation(tmp_path
             answer_bridge_steps=84,
             max_steps=84,
             bootstrap_output_dir=bootstrap,
+        )
+
+
+def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=0,
+        answer_bridge_steps=84,
+        max_steps=84,
+        bootstrap_output_dir=tmp_path / "parent",
+    )
+    diagnostic_body = {
+        "schema": "aura.unified_intrinsic.answer_bridge_diagnostic.v1",
+        "tasks": 7,
+        "autonomous_process_exact": 6,
+        "oracle_exact": 7,
+        "autonomous_exact": 6,
+        "sham_exact": 0,
+        "diagnosis": "recurrent_process_limited",
+    }
+    diagnostic = {
+        **diagnostic_body,
+        "diagnostic_sha256": _canonical_sha256(diagnostic_body),
+    }
+
+    refused = _answer_bridge_process_preflight(
+        diagnostic,
+        identity_sha256="b" * 64,
+        phase_schedule=schedule,
+        start_step=0,
+    )
+
+    assert refused["admitted"] is False
+    assert refused["optimizer_steps_executed"] == 0
+    assert refused["reason"] == "autonomous_process_not_exact_train_process_before_bridge"
+    diagnostic_body["autonomous_process_exact"] = 7
+    diagnostic = {
+        **diagnostic_body,
+        "diagnostic_sha256": _canonical_sha256(diagnostic_body),
+    }
+    admitted = _answer_bridge_process_preflight(
+        diagnostic,
+        identity_sha256="b" * 64,
+        phase_schedule=schedule,
+        start_step=0,
+    )
+    assert admitted["admitted"] is True
+    assert admitted["reason"] == "autonomous_process_exact"
+
+
+def test_bridge_process_preflight_rejects_non_bridge_schedule() -> None:
+    with pytest.raises(ValueError, match="bridge-only schedule"):
+        _answer_bridge_process_preflight(
+            {
+                "tasks": 1,
+                "autonomous_process_exact": 1,
+                "diagnostic_sha256": "a" * 64,
+            },
+            identity_sha256="b" * 64,
+            phase_schedule={"mode": "recurrent_training"},
+            start_step=0,
+        )
+
+
+def test_bridge_process_preflight_rejects_resealed_diagnostic(tmp_path) -> None:
+    schedule = _phase_schedule(
+        semantic_warmup_steps=0,
+        state_warmup_steps=0,
+        answer_bridge_steps=1,
+        max_steps=1,
+        bootstrap_output_dir=tmp_path / "parent",
+    )
+    with pytest.raises(ValueError, match="diagnostic was resealed"):
+        _answer_bridge_process_preflight(
+            {
+                "tasks": 1,
+                "autonomous_process_exact": 1,
+                "diagnostic_sha256": "a" * 64,
+            },
+            identity_sha256="b" * 64,
+            phase_schedule=schedule,
+            start_step=0,
         )
 
 

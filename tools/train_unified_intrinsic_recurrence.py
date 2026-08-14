@@ -1656,6 +1656,62 @@ def _evaluate_answer_bridge_diagnostic(
     return {**body, "diagnostic_sha256": _canonical_sha256(body)}
 
 
+def _answer_bridge_process_preflight(
+    diagnostic: dict[str, Any],
+    *,
+    identity_sha256: str,
+    phase_schedule: dict[str, Any],
+    start_step: int,
+) -> dict[str, Any]:
+    """Refuse bridge-only optimization until its autonomous process is exact."""
+
+    if phase_schedule.get("mode") != "bootstrap_answer_bridge_only":
+        raise ValueError("answer bridge process preflight requires a bridge-only schedule")
+    tasks = diagnostic.get("tasks")
+    process_exact = diagnostic.get("autonomous_process_exact")
+    diagnostic_sha256 = diagnostic.get("diagnostic_sha256")
+    diagnostic_body = {
+        key: value for key, value in diagnostic.items() if key != "diagnostic_sha256"
+    }
+    if (
+        type(tasks) is not int
+        or tasks < 1
+        or type(process_exact) is not int
+        or not 0 <= process_exact <= tasks
+        or not isinstance(diagnostic_sha256, str)
+        or len(diagnostic_sha256) != 64
+        or not isinstance(identity_sha256, str)
+        or len(identity_sha256) != 64
+        or type(start_step) is not int
+        or start_step < 0
+    ):
+        raise ValueError("answer bridge process preflight evidence is invalid")
+    if _canonical_sha256(diagnostic_body) != diagnostic_sha256:
+        raise ValueError("answer bridge process preflight diagnostic was resealed")
+    admitted = process_exact == tasks
+    body = {
+        "schema": "aura.unified_intrinsic.answer_bridge_process_preflight.v1",
+        "identity_sha256": identity_sha256,
+        "phase_schedule_sha256": _canonical_sha256(phase_schedule),
+        "start_step": start_step,
+        "tasks": tasks,
+        "autonomous_process_exact": process_exact,
+        "oracle_exact": diagnostic.get("oracle_exact"),
+        "autonomous_answer_exact": diagnostic.get("autonomous_exact"),
+        "sham_exact": diagnostic.get("sham_exact"),
+        "diagnosis": diagnostic.get("diagnosis"),
+        "diagnostic_sha256": diagnostic_sha256,
+        "admitted": admitted,
+        "reason": (
+            "autonomous_process_exact"
+            if admitted
+            else "autonomous_process_not_exact_train_process_before_bridge"
+        ),
+        "optimizer_steps_executed": 0,
+    }
+    return {**body, "receipt_sha256": _canonical_sha256(body)}
+
+
 def _evaluate_answer_bridge_admission(
     bundle: UnifiedTrainingBundle,
     tokenizer: Any,
@@ -3467,6 +3523,31 @@ def main() -> int:
                 steady_lethal_mb=float(args.resource_steady_lethal_mb),
                 timeout_s=float(args.resource_guard_timeout_s),
             )
+        if phase_schedule["mode"] == "bootstrap_answer_bridge_only":
+            bridge_preflight_diagnostic = _evaluate_answer_bridge_diagnostic(
+                bundle,
+                tokenizer,
+                holdout,
+                spec,
+                bridge,
+                answer_emission_contract,
+                answer_digit_pointer_enabled=(args.task_source != "frontier_process"),
+            )
+            bridge_process_preflight = _answer_bridge_process_preflight(
+                bridge_preflight_diagnostic,
+                identity_sha256=identity["identity_sha256"],
+                phase_schedule=phase_schedule,
+                start_step=step,
+            )
+            _atomic_canonical_json(
+                out_dir / "answer_bridge_process_preflight.json",
+                {
+                    **bridge_process_preflight,
+                    "diagnostic": bridge_preflight_diagnostic,
+                },
+            )
+            if not bridge_process_preflight["admitted"]:
+                raise RuntimeError(bridge_process_preflight["reason"])
         print(
             f"[unified] step={step} trainable={sum(v.size for v in _trainable(bundle).values()):,} "
             f"readout={readout_sha256[:12]}",
