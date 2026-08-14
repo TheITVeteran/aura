@@ -70,7 +70,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind as _FlagKind
 from core.runtime.flags import declare as _declare_flag
 from core.runtime.flags import env_str
-from core.runtime.lockdep import LockRank, checked_lock
+from core.runtime.lockdep import LockRank, checked_async_lock, checked_lock
 from core.runtime.process_identity import assert_owned, capture_identity
 from core.runtime.proof_policy import (
     is_proof_evaluation_purpose,
@@ -462,6 +462,12 @@ _FOREGROUND_CONTEXT_WINDOW_FLOOR = 4096
 #: cognitive engine writes it — before it may move temperature or the token
 #: budget. A dict that appears only in the caller's context is a caller
 #: steering the sampler, which is what "not caller authority" excludes.
+#: Mesh outcomes that may be served before trust recognition runs. An
+#: acknowledgement reveals nothing and a resource hold is a refusal; a
+#: self-report describes her internal state to a party this path has not yet
+#: identified, so it goes through the governed lane instead.
+_MESH_PRE_TRUST_RATIONALES = frozenset({"acknowledgement", "resource_hold"})
+
 _SAMPLING_BIAS_KEYS = (
     "sampling_bias",
     "imagination_sampling_bias",
@@ -1022,6 +1028,8 @@ class InferenceGate:
         self._abandoned_cortex_loads: list[Any] = []
         #: Last shed paid for by a promotion inferred from prompt text.
         self._last_heuristic_shed_at: float = 0.0
+        #: Warmup deferrals by cause; read via warmup_deferral_receipt().
+        self._warmup_deferral_counts: dict[str, Any] = {}
         #: Guards the status-triggered recovery cooldown stamp.
         self._status_recovery_lock = checked_lock(
             "inference_gate.status_recovery_cooldown", rank=LockRank.LEAF
@@ -1467,6 +1475,18 @@ class InferenceGate:
             return False
         self._last_heuristic_shed_at = now
         return True
+
+    @staticmethod
+    def _bounded_affect(raw: Any, *, low: float, high: float) -> float | None:
+        """An affect axis inside its declared range, or None if unusable.
+
+        None is the point: it lets the caller tell a MEASURED value from the
+        default it would otherwise be indistinguishable from.
+        """
+        value = _finite(raw)
+        if value is None:
+            return None
+        return max(low, min(high, value))
 
     @staticmethod
     def _modulator_factor(raw: Any, *, source: str, low: float, high: float) -> float:
@@ -2369,12 +2389,47 @@ class InferenceGate:
         return None
 
     def _log_cortex_warmup_deferral(self, reason: str, *, context: str) -> None:
+        # COUNT every deferral, log a coalesced sample.
+        #
+        # A deferral is the ladder deciding not to load a tier, which is
+        # designed backpressure and not a fault — recording it as a degradation
+        # on this fail-closed subsystem escalates it to CRITICAL, and the
+        # 2026-07-18 soak produced 52 of those from healthy deferrals. But a
+        # runtime that cannot warm its primary lane IS something health should
+        # be able to see, and a coalesced log line is not evidence. The counter
+        # is the durable half; it reaches the conversation status snapshot.
+        counters = getattr(self, "_warmup_deferral_counts", None)
+        if counters is None:
+            counters = {}
+            self._warmup_deferral_counts = counters
+        key = f"{context}:{reason}"
+        entry = counters.get(key)
+        if entry is None:
+            entry = {"count": 0, "first_at": time.time(), "last_at": 0.0}
+            counters[key] = entry
+        entry["count"] += 1
+        entry["last_at"] = time.time()
+
         now = time.monotonic()
         last_log = getattr(self, "_last_cortex_warmup_deferral_log_at", 0.0)
         if (now - last_log) < 30.0:
             return
         self._last_cortex_warmup_deferral_log_at = now
-        logger.warning("⏸️ Cortex %s warmup deferred to protect RAM: %s", context, reason)
+        logger.warning(
+            "⏸️ Cortex %s warmup deferred to protect RAM: %s (%d so far)",
+            context,
+            reason,
+            entry["count"],
+        )
+
+    def warmup_deferral_receipt(self) -> dict[str, Any]:
+        """Every warmup deferral this process has taken, by cause.
+
+        Deliberately not degradation records — see above — but durable, so a
+        primary lane that has been refused a hundred times is a number
+        somebody can find rather than a log line that scrolled.
+        """
+        return copy.deepcopy(getattr(self, "_warmup_deferral_counts", {}) or {})
 
     # Admission/backoff outcomes are the ladder DECIDING not to load a tier
     # right now — the designed backpressure that lets a lower rung serve the
@@ -3258,6 +3313,12 @@ class InferenceGate:
             "last_failure_reason": self._init_error or "",
             "conversation_ready": False,
             "cortex_recovery_attempts": getattr(self, "_cortex_recovery_attempts", 0),
+            # Durable evidence that the primary lane could not be warmed, and
+            # why. A deferral is not a fault, but a runtime full of them is not
+            # a healthy one either, and this is where health can see it.
+            "warmup_deferrals": copy.deepcopy(
+                getattr(self, "_warmup_deferral_counts", {}) or {}
+            ),
             # When no generation has ever succeeded, the honest age is
             # "at least since the gate was constructed" — never zero.
             "has_generated_successfully": bool(
@@ -6252,7 +6313,10 @@ class InferenceGate:
         """
         init_lock = getattr(self, "_init_lock", None)
         if init_lock is None:
-            init_lock = asyncio.Lock()
+            # checked_async_lock, not asyncio.Lock: lockdep only sees the locks
+            # it wraps, and boot is exactly where an ABBA deadlock costs a
+            # whole runtime rather than a turn.
+            init_lock = checked_async_lock("inference_gate.initialize", rank=LockRank.LEAF)
             self._init_lock = init_lock
         async with init_lock:
             if self._initialized:
@@ -6260,7 +6324,25 @@ class InferenceGate:
                 return
             await self._initialize_locked()
 
+    def initialization_receipt(self) -> dict[str, Any]:
+        """What boot actually achieved, as opposed to what it attempted.
+
+        ``_initialized`` means setup RAN. It is True after a deferred or
+        RAM-guarded boot, where no generation lane exists yet, and after an
+        eager boot whose warmup did not complete. Anything that needs "can this
+        serve a turn" wants :meth:`is_inference_ready`; this says which of the
+        three boots happened and whether Cortex came up.
+        """
+        return copy.deepcopy(getattr(self, "_initialization_receipt", {}))
+
     async def _initialize_locked(self):
+        receipt: dict[str, Any] = {
+            "mode": "unknown",
+            "cortex_ready": False,
+            "reason": "",
+            "at": time.time(),
+        }
+        self._initialization_receipt = receipt
         try:
             from core.brain.llm.mlx_client import get_mlx_client
             from core.brain.llm.model_registry import ACTIVE_MODEL, get_runtime_model_path
@@ -6283,10 +6365,13 @@ class InferenceGate:
                     ready, lane, incomplete_reason = self._confirmed_cortex_warmup(
                         warmup_result
                     )
+                    receipt["mode"] = "eager_warmup"
+                    receipt["cortex_ready"] = bool(ready)
                     if ready:
                         self._extend_startup_quiet_window(5.0)
                         logger.info("✅ InferenceGate ONLINE (Cortex fully warmed).")
                     else:
+                        receipt["reason"] = str(incomplete_reason or "warmup_incomplete")
                         logger.warning(
                             "⚠️ InferenceGate ONLINE with Cortex warmup incomplete "
                             "(state=%s, reason=%s). Will retry on foreground demand.",
@@ -6294,6 +6379,8 @@ class InferenceGate:
                             incomplete_reason,
                         )
                 except _INFERENCE_RECOVERABLE_ERRORS as warmup_err:
+                    receipt["mode"] = "eager_warmup"
+                    receipt["reason"] = f"warmup_error:{type(warmup_err).__name__}"
                     _record_inference_degradation(
                         warmup_err,
                         action="continued initialization with degraded warmup path",
@@ -6304,10 +6391,14 @@ class InferenceGate:
             elif self._boot_should_schedule_deferred_prewarm():
                 deferred_delay = 45.0 if self._desktop_safe_boot_enabled() else 12.0
                 self._schedule_background_cortex_prewarm(delay=deferred_delay)
+                receipt["mode"] = "deferred_prewarm"
+                receipt["reason"] = "warmup_deferred_until_post_boot"
                 logger.info(
                     "⏸️ InferenceGate ONLINE (32B warmup deferred until post-boot memory settles)."
                 )
             else:
+                receipt["mode"] = "ram_admitted"
+                receipt["reason"] = "warmup_requires_ram_admission"
                 logger.info(
                     "🛡️ InferenceGate ONLINE (desktop resource guard: 32B warmup is RAM-admitted)."
                 )
@@ -6327,6 +6418,7 @@ class InferenceGate:
             )
             self._init_error = str(e)
             self._initialized = False
+            receipt["reason"] = f"init_error:{type(e).__name__}"
             logger.error(
                 "❌ InferenceGate init failed: %s. Gate remains unhealthy until explicit recovery succeeds.",
                 e,
@@ -6920,31 +7012,83 @@ class InferenceGate:
             logger.debug("NeologismEngine injection unavailable: %s", exc)
 
         # ── Continuous Recurrent Self-Model (CRSM) ───────────────────────────
-        # Shared affect state helper — pulled once, used by CRSM, HOT, Hedonic
+        # Shared affect state — pulled once, fed to CRSM, HOT and Hedonic.
+        #
+        # Every value here comes off another subsystem, and each read used to
+        # be a bare float() with an assumed scale: valence and arousal from a
+        # PRIVATE `_sample_raw_axes`, curiosity and energy divided by 100 on
+        # the assumption they are percentages, with no check of type, range or
+        # finiteness. A subsystem returning 0..1 instead of 0..100 silently
+        # became 0.005, and a NaN propagated into CRSM, the hedonic gradient
+        # and the higher-order thought engine at once. A partial failure also
+        # left a mix of observed and default values that nothing could tell
+        # apart afterwards.
         _shared_valence, _shared_arousal, _shared_curiosity, _shared_energy = 0.0, 0.5, 0.5, 0.7
+        _affect_observed: dict[str, bool] = {
+            "valence": False,
+            "arousal": False,
+            "curiosity": False,
+            "energy": False,
+        }
         try:
             from core.container import ServiceContainer
 
             # valence + arousal from AffectiveCircumplex (authoritative source)
             _circ = ServiceContainer.get("affective_circumplex", default=None)
-            if _circ and hasattr(_circ, "_sample_raw_axes"):
-                _shared_valence, _shared_arousal = _circ._sample_raw_axes()
-            elif _circ and hasattr(_circ, "get_llm_params"):
+            if _circ and hasattr(_circ, "get_llm_params"):
+                # The PUBLIC reader first. _sample_raw_axes is private, and
+                # reaching past a public accessor into a subsystem's internals
+                # is how a rename becomes an outage.
                 _cp = _circ.get_llm_params()
-                _shared_valence = float(_cp.get("valence", 0.0))
-                _shared_arousal = float(_cp.get("arousal", 0.5))
-            # curiosity + energy from liquid_state (percentages → 0.0-1.0)
+                if isinstance(_cp, dict):
+                    _v = self._bounded_affect(_cp.get("valence"), low=-1.0, high=1.0)
+                    _a = self._bounded_affect(_cp.get("arousal"), low=0.0, high=1.0)
+                    if _v is not None:
+                        _shared_valence, _affect_observed["valence"] = _v, True
+                    if _a is not None:
+                        _shared_arousal, _affect_observed["arousal"] = _a, True
+            if (
+                not _affect_observed["valence"]
+                and _circ
+                and hasattr(_circ, "_sample_raw_axes")
+            ):
+                _raw = _circ._sample_raw_axes()
+                if isinstance(_raw, (tuple, list)) and len(_raw) == 2:
+                    _v = self._bounded_affect(_raw[0], low=-1.0, high=1.0)
+                    _a = self._bounded_affect(_raw[1], low=0.0, high=1.0)
+                    if _v is not None:
+                        _shared_valence, _affect_observed["valence"] = _v, True
+                    if _a is not None:
+                        _shared_arousal, _affect_observed["arousal"] = _a, True
+            # curiosity + energy from liquid_state, reported as percentages
             _ls = ServiceContainer.get("liquid_state", default=None)
             if _ls and hasattr(_ls, "get_status"):
                 _lsd = _ls.get_status()
-                _shared_curiosity = float(_lsd.get("curiosity", 50)) / 100.0
-                _shared_energy = float(_lsd.get("energy", 70)) / 100.0
+                if isinstance(_lsd, dict):
+                    _c = self._bounded_affect(_lsd.get("curiosity"), low=0.0, high=100.0)
+                    _e = self._bounded_affect(_lsd.get("energy"), low=0.0, high=100.0)
+                    if _c is not None:
+                        _shared_curiosity, _affect_observed["curiosity"] = _c / 100.0, True
+                    if _e is not None:
+                        _shared_energy, _affect_observed["energy"] = _e / 100.0, True
         except _INFERENCE_RECOVERABLE_ERRORS as _exc:
             _record_inference_degradation(
                 _exc,
-                action="omitted unavailable living-mind context signal and continued prompt assembly",
+                action="used default affect axes after the affect snapshot failed",
+                extra={"observed": dict(_affect_observed)},
             )
-            logger.debug("Suppressed Exception: %s", _exc)
+            logger.debug("Affect snapshot unavailable: %s", _exc)
+        if not all(_affect_observed.values()):
+            # Which axes are real and which are the constructor's defaults.
+            # Without this, "valence 0.0" means either "measured neutral" or
+            # "nothing answered", and three subsystems consume it as the first.
+            segments.omit(
+                "affect_axes",
+                "defaults used for: "
+                + ", ".join(
+                    name for name, seen in _affect_observed.items() if not seen
+                ),
+            )
 
         try:
             from core.consciousness.crsm import get_crsm
@@ -8946,22 +9090,48 @@ class InferenceGate:
                 )
                 if mesh_decision.handled:
                     context["mesh_cognition"] = mesh_decision.as_dict()
-                    self._record_client_generation_metadata(
-                        None,
-                        label="MeshCognition",
-                        success=bool(str(mesh_decision.response or "").strip()),
-                        text=str(mesh_decision.response or ""),
-                        requested_max_tokens=output_contract.semantic_token_cap,
-                        output_contract=output_contract_payload,
+                    # This return happens BEFORE trust recognition, admission
+                    # and routing policy, all of which live further down. For
+                    # an acknowledgement or a resource hold that is fine —
+                    # neither reveals anything and neither spends a lane. A
+                    # SELF-REPORT is different: it describes her internal state
+                    # to whoever asked, and who asked is not yet known. Those
+                    # fall through to the full path, which recognizes trust
+                    # first and can still answer.
+                    if str(mesh_decision.rationale or "") in _MESH_PRE_TRUST_RATIONALES:
+                        self._record_client_generation_metadata(
+                            None,
+                            label="MeshCognition",
+                            success=bool(str(mesh_decision.response or "").strip()),
+                            text=str(mesh_decision.response or ""),
+                            requested_max_tokens=output_contract.semantic_token_cap,
+                            output_contract=output_contract_payload,
+                        )
+                        self._record_user_generation_endpoint("MeshCognition")
+                        return self._stabilize_user_facing_text(
+                            mesh_decision.response,
+                            initial_visible_user_prompt,
+                            is_user_facing=True,
+                        )
+                    context["mesh_deferred_for_trust"] = str(
+                        mesh_decision.rationale or "unknown"
                     )
-                    self._record_user_generation_endpoint("MeshCognition")
-                    return self._stabilize_user_facing_text(
-                        mesh_decision.response,
-                        initial_visible_user_prompt,
-                        is_user_facing=True,
+                    logger.info(
+                        "🕸️ Mesh handled the turn as %s; deferring to the governed "
+                        "path so trust is recognized before self-report leaves.",
+                        mesh_decision.rationale,
                     )
             except _INFERENCE_RECOVERABLE_ERRORS as _mesh_exc:  # pragma: no cover - defensive
-                logger.debug("Mesh-only path declined: %s", _mesh_exc)
+                # A raised exception is not the same as `handled=False`. The
+                # first is a broken organism path, the second is the design
+                # working. Calling both "declined" in a debug line left an
+                # operator no way to tell them apart.
+                context["mesh_cognition_error"] = f"{type(_mesh_exc).__name__}: {_mesh_exc}"[:240]
+                _record_inference_degradation(
+                    _mesh_exc,
+                    action="fell through to the LLM path after the mesh cognition path raised",
+                    extra={"origin": str(origin or "")},
+                )
 
         health_probe = bool(context.get("health_probe", False)) or purpose == "proof_model_lane_probe"
         proof_evaluation_contract = proof_evaluation_contract or (
