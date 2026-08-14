@@ -151,8 +151,14 @@ RULES: list[Rule] = [
 ]
 
 
+#: A `backticked span` is a code reference, not prose. Blanking it (rather than
+#: deleting it) keeps every column offset stable so reported line numbers stay
+#: true. Without this the rules page trips its own examples.
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+
 def prose_lines(text: str) -> list[tuple[int, str]]:
-    """Lines that are prose: no code fences, tables, indented blocks, or links-only."""
+    """Lines that are prose: no code fences, tables, indented blocks, or code spans."""
     out: list[tuple[int, str]] = []
     fence = False
     for i, line in enumerate(text.splitlines(), 1):
@@ -164,7 +170,7 @@ def prose_lines(text: str) -> list[tuple[int, str]]:
             continue
         if stripped.startswith(("|", ">", "#")) or line.startswith(("    ", "\t")):
             continue
-        out.append((i, line))
+        out.append((i, INLINE_CODE.sub(lambda m: " " * len(m.group(0)), line)))
     return out
 
 
