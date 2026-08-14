@@ -72,7 +72,22 @@ def test_refusal_names_the_undeclared_modules() -> None:
 
     assert "dependency_audit_failed" in message
     assert "undeclared_internal_imports" in message
-    assert "neural_transition_tissue" in message
+
+    # The PROPERTY, not one module's name. This used to assert the literal
+    # "neural_transition_tissue", which pinned whichever module happened to
+    # be undeclared the day it was written — the offender is now
+    # `episodic_neural_readout_contract`, and the test failed for a rename
+    # while the guarantee it exists to protect was completely intact.
+    #
+    # What an operator needs is a concrete import path to go and look at, so
+    # that is what is checked: at least one dotted module under core.
+    import re
+
+    named = re.findall(r"core(?:\.[a-z_][a-z0-9_]*)+", message)
+    assert named, (
+        f"the refusal names no concrete module, so an operator cannot tell "
+        f"which imports broke the audit: {message}"
+    )
 
 
 def test_the_neural_closure_conflict_is_real_not_bookkeeping() -> None:

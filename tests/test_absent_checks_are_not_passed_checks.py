@@ -602,3 +602,102 @@ async def test_a_measured_low_confidence_state_still_does_not_train():
     trainer.state_repo = _Repo()
 
     assert await trainer.collect_training_data() == []
+
+
+# ──────── "nothing to check" and "could not check" are different facts
+
+
+def test_a_broken_verifier_is_unverifiable_not_merely_unchecked():
+    """`checked=False` conflated two cases with opposite consequences.
+
+    "This candidate contains no code" is benign and should not stop an
+    admission. "There is code and the sandbox is down" should. Both were
+    `ok=True, checked=False`.
+    """
+    from core.brain.verifiers.base import VerificationResult
+
+    nothing_to_check = VerificationResult(domain="code", ok=True, checked=False)
+    sandbox_down = VerificationResult(
+        domain="code", ok=True, checked=False, infrastructure_failed=True
+    )
+
+    assert nothing_to_check.verdict == "UNCHECKED"
+    assert sandbox_down.verdict == "UNVERIFIABLE"
+    assert nothing_to_check.verification_was_possible is True
+    assert sandbox_down.verification_was_possible is False
+
+
+def test_infrastructure_failure_propagates_through_the_aggregate():
+    """One broken engine must not be averaged away by working ones."""
+    from core.brain.verifiers.base import VerificationResult, combine_results
+
+    combined = combine_results(
+        "code",
+        [
+            VerificationResult(domain="code", ok=True, checked=True),
+            VerificationResult(
+                domain="code", ok=True, checked=False, infrastructure_failed=True
+            ),
+        ],
+    )
+
+    assert combined.infrastructure_failed is True
+    assert combined.verdict == "UNVERIFIABLE"
+
+
+def test_the_code_engine_marks_a_missing_verifier_as_infrastructure_failure():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "brain"
+        / "verifiers"
+        / "code_engine.py"
+    ).read_text("utf-8")
+
+    assert "infrastructure_failed=True" in source, (
+        "an unloadable CodeVerifier is still indistinguishable from a "
+        "candidate that contained no code"
+    )
+
+
+def test_the_state_is_on_the_receipt():
+    from core.brain.verifiers.base import VerificationResult
+
+    payload = VerificationResult(
+        domain="d", ok=True, checked=False, infrastructure_failed=True
+    ).to_dict()
+
+    assert payload["verdict"] == "UNVERIFIABLE"
+    assert payload["infrastructure_failed"] is True
+
+
+def test_no_gate_reads_verification_ok_without_asking_whether_it_checked():
+    """The structural guard, so the NEXT one is caught.
+
+    `ok` is True when nothing was checked — deliberate, so rankers can read
+    "no provable failure was found". A caller that gates on `.ok` alone
+    treats "we did not look" as "we looked and it was fine". Two were doing
+    exactly that: `proof_obligations` reached PROVED, and introspection
+    rendered "Verifier: pass".
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "core"
+    # A gate is a conditional on a verifier result. Ranking and reporting
+    # reads of `.ok` are legitimate and are not matched here.
+    gate = re.compile(r"\bif\s+[a-z_]*verif[a-z_]*\.ok\b")
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        if "__pycache__" in str(path):
+            continue
+        for line_no, line in enumerate(path.read_text("utf-8", errors="ignore").splitlines(), 1):
+            if gate.search(line) and "checked" not in line and "conclusively" not in line:
+                offenders.append(f"{path.relative_to(root.parent)}:{line_no}")
+
+    assert not offenders, (
+        f"these gate on a verifier's `ok` without asking whether it checked "
+        f"anything: {offenders}. Use `conclusively_ok`."
+    )

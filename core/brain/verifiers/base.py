@@ -23,6 +23,12 @@ class VerificationResult:
     engine: str = ""
     issues: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+    #: True when verification was IMPOSSIBLE rather than unnecessary — the
+    #: sandbox was down, an engine would not import, the infrastructure
+    #: failed. `checked=False` alone conflates that with the benign case
+    #: ("this candidate contains no code"), and only one of the two should
+    #: stop an admission.
+    infrastructure_failed: bool = False
     detail: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -40,9 +46,22 @@ class VerificationResult:
         Three states, so the unchecked one has to be handled rather than
         collapsed into the passing one.
         """
+        if self.infrastructure_failed:
+            return "UNVERIFIABLE"
         if not self.checked:
             return "UNCHECKED"
         return "PASSED" if self.ok else "FAILED"
+
+    @property
+    def verification_was_possible(self) -> bool:
+        """False when the checking machinery itself failed.
+
+        A gate that admits on "nothing was checked" is often right — most
+        candidates contain no code to verify. Admitting because the verifier
+        could not RUN is a different decision, and it was indistinguishable
+        from the first.
+        """
+        return not self.infrastructure_failed
 
     @property
     def conclusively_ok(self) -> bool:
@@ -58,6 +77,7 @@ class VerificationResult:
             "ok": self.ok,
             "checked": self.checked,
             "verdict": self.verdict,
+            "infrastructure_failed": self.infrastructure_failed,
             "score": round(float(self.score), 3),
             "engine": self.engine,
             "issues": self.issues[:8],
@@ -106,6 +126,7 @@ def combine_results(
         evidence.extend(r.evidence)
         if r.engine:
             engines.append(r.engine)
+    infrastructure_failed = any(r.infrastructure_failed for r in results)
     ok = all(r.ok for r in checked) if checked else True
     if checked and weights:
         wsum = sum(max(0.0, float(weights.get(r.engine or "?", 1.0))) for r in checked)
@@ -120,6 +141,7 @@ def combine_results(
         domain=domain,
         ok=ok,
         checked=bool(checked),
+        infrastructure_failed=infrastructure_failed,
         score=round(score, 4),
         engine="+".join(engines),
         issues=issues[:12],

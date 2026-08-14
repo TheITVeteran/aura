@@ -96,6 +96,7 @@ class CodeTruthEngine:
     async def verify(self, candidate: str, *, context: dict[str, Any] | None = None) -> VerificationResult:
         blocks = extract_code_blocks(candidate)
         if not blocks:
+            # Nothing to verify — benign, and NOT an infrastructure failure.
             return VerificationResult(domain="code", ok=True, checked=False, engine=self.name)
 
         issues: list[str] = []
@@ -105,7 +106,16 @@ class CodeTruthEngine:
             from core.resilience.code_verifier import CodeVerifier
         except (ImportError, RuntimeError) as exc:  # pragma: no cover - import guard
             record_degradation("code_truth_engine", exc)
-            return VerificationResult(domain="code", ok=True, checked=False, engine=self.name)
+            # There IS code here and the verifier could not load. That is
+            # unverifiable, not unnecessary — the distinction a gate needs.
+            return VerificationResult(
+                domain="code",
+                ok=True,
+                checked=False,
+                engine=self.name,
+                infrastructure_failed=True,
+                issues=[f"code_verifier_unavailable:{type(exc).__name__}"],
+            )
 
         executed_ok = 0
         unverified_claims = 0
