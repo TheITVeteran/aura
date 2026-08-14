@@ -278,6 +278,18 @@ def test_bootstrap_initial_controller_loads_exact_committed_parent(
         lambda _path: {"bundle.controller.x": parent_value},
     )
     monkeypatch.setattr(evaluator.mx, "eval", lambda *_args: None)
+    for name in (
+        "_merge_bootstrap_initial_state_extension",
+        "_merge_bootstrap_process_reader_extension",
+        "_merge_bootstrap_action_workspace_extension",
+        "_merge_bootstrap_causal_action_extension",
+        "_merge_bootstrap_family_action_extension",
+    ):
+        monkeypatch.setattr(
+            evaluator,
+            name,
+            lambda parent, _child: (dict(parent), None),
+        )
     layout = evaluator.EvaluationLayout(
         checkpoint_dir=tmp_path,
         dataset_path=tmp_path / "dataset.json",

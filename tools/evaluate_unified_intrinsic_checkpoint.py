@@ -66,7 +66,12 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _canonical_sha256,
     _configure_window_tissue,
     _ground_state_value_embeddings,
+    _merge_bootstrap_action_workspace_extension,
+    _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
+    _merge_bootstrap_family_action_extension,
+    _merge_bootstrap_initial_state_extension,
+    _merge_bootstrap_process_reader_extension,
     _model_identity,
     _runtime_identity,
     _trainable,
@@ -498,8 +503,6 @@ def _bootstrap_initial_controller(
         or bootstrap.get("schema") != "aura.unified_intrinsic.bootstrap_tissue.v1"
     ):
         raise RuntimeError("unified checkpoint bootstrap identity differs")
-    if identity.get("window_tissue_mode") != "controller_only":
-        raise RuntimeError("matched bootstrap reconstruction supports controller-only tissue")
     if layout.bootstrap_output_dir is None:
         raise RuntimeError("unified checkpoint bootstrap output is unavailable")
     stem = bootstrap.get("stem")
@@ -566,8 +569,12 @@ def _bootstrap_initial_controller(
         if name.startswith("bundle.")
     }
     expected = _trainable(parent_bundle)
-    if set(trainable) != set(expected):
-        raise RuntimeError("unified checkpoint bootstrap tensor inventory differs")
+    unexpected = sorted(set(trainable) - set(expected))
+    if unexpected:
+        raise RuntimeError(
+            "unified checkpoint bootstrap tensor inventory differs: "
+            + ",".join(unexpected)
+        )
     incompatible_tensors = sorted(
         name
         for name, value in trainable.items()
@@ -579,15 +586,47 @@ def _bootstrap_initial_controller(
             "unified checkpoint bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
-    trainable, observed_extension = _merge_bootstrap_codebook_extension(
+    trainable, initial_state_extension = _merge_bootstrap_initial_state_extension(
+        trainable,
+        expected,
+    )
+    trainable, reader_extension = _merge_bootstrap_process_reader_extension(
+        trainable,
+        expected,
+    )
+    trainable, action_workspace_extension = (
+        _merge_bootstrap_action_workspace_extension(trainable, expected)
+    )
+    trainable, causal_action_extension = _merge_bootstrap_causal_action_extension(
+        trainable,
+        expected,
+    )
+    trainable, family_action_extension = _merge_bootstrap_family_action_extension(
+        trainable,
+        expected,
+    )
+    trainable, codebook_extension = _merge_bootstrap_codebook_extension(
         trainable,
         expected,
         mismatches=mismatches,
         parent_identity=parent_identity,
         child_identity=identity,
     )
-    if observed_extension != bootstrap.get("semantic_codebook_extension"):
-        raise RuntimeError("unified checkpoint bootstrap semantic extension differs")
+    observed_extensions = {
+        "initial_state_extension": initial_state_extension,
+        "process_reader_extension": reader_extension,
+        "action_workspace_extension": action_workspace_extension,
+        "causal_action_extension": causal_action_extension,
+        "family_action_extension": family_action_extension,
+        "semantic_codebook_extension": codebook_extension,
+    }
+    for name, observed in observed_extensions.items():
+        if observed != bootstrap.get(name):
+            raise RuntimeError(
+                f"unified checkpoint bootstrap {name.replace('_', ' ')} differs"
+            )
+    if set(trainable) != set(expected):
+        raise RuntimeError("unified checkpoint bootstrap tensor inventory differs")
     parent_bundle.update(tree_unflatten(list(trainable.items())))
     mx.eval(parent_bundle.parameters())
     expected_sha256 = identity.get("initial_controller_sha256")
