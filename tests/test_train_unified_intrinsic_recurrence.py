@@ -30,6 +30,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    ACTION_LITERAL_BINDING_PARAMETER_NAMES,
     ACTION_WORKSPACE_PARAMETER_NAMES,
     CAUSAL_ACTION_PARAMETER_NAMES,
     FAMILY_ACTION_PARAMETER_NAMES,
@@ -71,6 +72,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _masked_process_decisions,
     _mean_gradient_trees,
     _merge_bootstrap_action_workspace_extension,
+    _merge_bootstrap_action_literal_binding_extension,
     _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
     _merge_bootstrap_family_action_extension,
@@ -437,6 +439,42 @@ def test_bootstrap_family_action_extension_is_exact_and_rejects_active_output() 
     }
     with pytest.raises(RuntimeError, match="experts are not a no-op"):
         _merge_bootstrap_family_action_extension(parent, active)
+
+
+def test_bootstrap_action_literal_binding_is_exact_and_rejects_active_output() -> None:
+    parent = {"controller.action_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in ACTION_LITERAL_BINDING_PARAMETER_NAMES
+            if name != "action_literal_binding_output"
+        },
+        "controller.action_literal_binding_output": mx.zeros(
+            (8, 6), dtype=mx.float32
+        ),
+    }
+    migrated, receipt = _merge_bootstrap_action_literal_binding_extension(parent, child)
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["private_transition_program_visible"] is False
+    assert set(migrated) == set(child)
+
+    partial = {
+        **parent,
+        "controller.action_literal_binding_query": child[
+            "controller.action_literal_binding_query"
+        ],
+    }
+    with pytest.raises(RuntimeError, match="action-literal-binding inventory differs"):
+        _merge_bootstrap_action_literal_binding_extension(partial, child)
+
+    active = {
+        **child,
+        "controller.action_literal_binding_output": mx.ones((8, 6)),
+    }
+    with pytest.raises(RuntimeError, match="binding is not a no-op"):
+        _merge_bootstrap_action_literal_binding_extension(parent, active)
 
 
 def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:

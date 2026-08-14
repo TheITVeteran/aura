@@ -68,6 +68,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_process_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    ACTION_LITERAL_BINDING_PARAMETER_NAMES,
     ACTION_WORKSPACE_PARAMETER_NAMES,
     CAUSAL_ACTION_PARAMETER_NAMES,
     FAMILY_ACTION_PARAMETER_NAMES,
@@ -1054,6 +1055,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.action_workspace_",
             "controller.action_causal_",
             "controller.action_family_",
+            "controller.action_literal_binding_",
         )
     ):
         return "typed_action_workspace"
@@ -2800,6 +2802,12 @@ def _bootstrap_bundle_from_checkpoint(
         bundle_values,
         child_values,
     )
+    bundle_values, action_literal_binding_extension = (
+        _merge_bootstrap_action_literal_binding_extension(
+            bundle_values,
+            child_values,
+        )
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -2845,6 +2853,8 @@ def _bootstrap_bundle_from_checkpoint(
         result["causal_action_extension"] = causal_action_extension
     if family_action_extension is not None:
         result["family_action_extension"] = family_action_extension
+    if action_literal_binding_extension is not None:
+        result["action_literal_binding_extension"] = action_literal_binding_extension
     return result
 
 
@@ -3160,6 +3170,53 @@ def _merge_bootstrap_family_action_extension(
     return migrated, {
         "schema": "aura.unified_intrinsic.family_action_extension.v1",
         "migration_rule": "parent_exact_plus_zero_output_public_family_experts",
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "private_transition_program_visible": False,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
+def _merge_bootstrap_action_literal_binding_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach public-literal binding as an exact no-op over parent logits."""
+
+    expected = {
+        f"controller.{name}" for name in ACTION_LITERAL_BINDING_PARAMETER_NAMES
+    }
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap action-literal-binding inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap action-literal-binding source differs"
+            )
+        value = child_values[name]
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    output_name = "controller.action_literal_binding_output"
+    if bool(mx.any(migrated[output_name] != 0)):
+        raise RuntimeError(
+            "unified recurrence bootstrap action literal binding is not a no-op"
+        )
+    return migrated, {
+        "schema": "aura.unified_intrinsic.action_literal_binding_extension.v1",
+        "migration_rule": "parent_exact_plus_zero_output_public_literal_binding",
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
         "private_transition_program_visible": False,

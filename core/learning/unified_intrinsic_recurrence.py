@@ -110,6 +110,19 @@ CAUSAL_ACTION_PARAMETER_NAMES: Final = (
     "action_causal_output",
 )
 FAMILY_ACTION_PARAMETER_NAMES: Final = ("action_family_output",)
+ACTION_LITERAL_BINDING_PARAMETER_NAMES: Final = (
+    "action_literal_binding_query",
+    "action_literal_binding_key",
+    "action_literal_binding_output",
+)
+ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
+    "identity",
+    "unsigned_radix_low",
+    "unsigned_radix_high",
+    "positive_signed_radix_low",
+    "positive_signed_radix_high",
+    "offset_plus_three",
+)
 FRONTIER_ACTION_EXPERT_COUNT: Final = OP_FRONTIER_AUDIT - OP_FRONTIER_TRAVERSE + 1
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
@@ -327,6 +340,13 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x43415553),
             num=4,
+        )
+        (
+            key_action_literal_binding_query,
+            key_action_literal_binding_key,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x42494E44),
+            num=2,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -690,6 +710,32 @@ class UnifiedRecurrentController(nn.Module):
         )
         self.action_causal_output = mx.zeros(
             (config.action_slots, workspace_width, config.action_cardinality),
+            dtype=mx.float32,
+        )
+        # Prompt numbers remain exact observations, but their roles are learned.
+        # This pointer surface lets each action field bind one ordered public
+        # literal and choose a general numeric representation without requiring
+        # the transformer to reconstruct radix arithmetic in a dense vector.
+        # The output weights start at zero, so adding the surface to a parent
+        # checkpoint is exactly behavior-preserving until process supervision
+        # establishes useful bindings.
+        binding_rank = min(workspace_width, 2 * config.correction_rank)
+        self.action_literal_binding_query = (
+            mx.random.normal(
+                (config.action_slots, workspace_width, binding_rank),
+                key=key_action_literal_binding_query,
+            ).astype(mx.float32)
+            / math.sqrt(workspace_width)
+        )
+        self.action_literal_binding_key = (
+            mx.random.normal(
+                (config.hidden_size, binding_rank),
+                key=key_action_literal_binding_key,
+            ).astype(mx.float32)
+            / math.sqrt(config.hidden_size)
+        )
+        self.action_literal_binding_output = mx.zeros(
+            (config.action_slots, len(ACTION_LITERAL_BINDING_TRANSFORMS)),
             dtype=mx.float32,
         )
         self.literal_value_embeddings = (
@@ -1758,6 +1804,7 @@ class UnifiedRecurrentController(nn.Module):
         causal_action_lesion: bool = False,
         action_feedback_lesion: bool = False,
         family_action_lesion: bool = False,
+        action_literal_binding_lesion: bool = False,
     ) -> Any:
         """Decode the next typed operation from public evidence and current state."""
 
@@ -1799,6 +1846,13 @@ class UnifiedRecurrentController(nn.Module):
             workspace,
             token_ids=token_ids,
             family_action_lesion=family_action_lesion,
+        )
+        logits = self._action_literal_binding_logits(
+            logits,
+            problem_evidence,
+            workspace,
+            token_ids=token_ids,
+            lesion=action_literal_binding_lesion,
         )
         logits = self._causal_action_logits(
             logits,
@@ -2061,6 +2115,97 @@ class UnifiedRecurrentController(nn.Module):
             )
             prefix = self._workspace_norm(prefix + update)
         return mx.stack(decisions, axis=1)
+
+    def _action_literal_binding_logits(
+        self,
+        base_logits: Any,
+        problem_evidence: Any,
+        workspace: Any,
+        *,
+        token_ids: Any | None,
+        lesion: bool,
+    ) -> Any:
+        """Bind action fields to ordered public literals without assigning roles.
+
+        A prompt literal may enter the process machine directly, as one radix
+        digit, as the positive branch of the signed integer code, or through the
+        small offset used by bounded signed deltas. The pointer learns which
+        public position and representation a field needs. Computed values remain
+        the responsibility of recurrent execution and the ordinary action path.
+        """
+
+        if type(lesion) is not bool:
+            raise TypeError("action literal binding lesion flag must be bool")
+        if lesion or token_ids is None or not self.config.literal_digit_token_ids:
+            return base_logits
+        if (
+            len(problem_evidence.shape) != 3
+            or len(workspace.shape) != 3
+            or len(token_ids.shape) != 2
+            or tuple(problem_evidence.shape[:2]) != tuple(token_ids.shape)
+            or int(problem_evidence.shape[0]) != int(workspace.shape[0])
+            or int(workspace.shape[1]) != self.config.action_slots
+        ):
+            raise ValueError("action literal binding tensors differ")
+
+        contract = LiteralObservationContract(
+            self.config.literal_digit_token_ids,
+            max_value=self.config.numeric_observation_max_value,
+        )
+        values, masks = contract.observe(token_ids.tolist())
+        value_ids = mx.array(values, dtype=mx.int32)
+        observed = mx.array(masks, dtype=mx.bool_)
+        positive_signed = 2 * value_ids
+        candidates = mx.stack(
+            (
+                value_ids,
+                value_ids % PROCESS_RADIX,
+                value_ids // PROCESS_RADIX,
+                positive_signed % PROCESS_RADIX,
+                positive_signed // PROCESS_RADIX,
+                value_ids + 3,
+            ),
+            axis=-1,
+        )
+        validity = mx.stack(
+            (
+                value_ids < self.config.action_cardinality,
+                value_ids <= MAX_PROCESS_INTEGER,
+                value_ids <= MAX_PROCESS_INTEGER,
+                positive_signed <= MAX_PROCESS_INTEGER,
+                positive_signed <= MAX_PROCESS_INTEGER,
+                value_ids + 3 < self.config.action_cardinality,
+            ),
+            axis=-1,
+        ) & observed[..., None]
+
+        query = mx.einsum(
+            "baw,awr->bar",
+            self._workspace_norm(workspace.astype(mx.float32)),
+            self.action_literal_binding_query,
+        )
+        key = problem_evidence.astype(mx.float32) @ self.action_literal_binding_key
+        attention_logits = mx.einsum("bar,bnr->ban", query, key) / math.sqrt(
+            int(key.shape[-1])
+        )
+        attention = mx.softmax(attention_logits, axis=-1)[..., None]
+        weighted = attention * validity[:, None, :, :].astype(mx.float32)
+        weighted = weighted / mx.maximum(mx.sum(weighted, axis=2, keepdims=True), 1e-12)
+        categories = mx.arange(self.config.action_cardinality)[None, None, None, :]
+        candidate_one_hot = (candidates[..., None] == categories).astype(mx.float32)
+        probabilities = mx.einsum("bant,bntc->batc", weighted, candidate_one_hot)
+        pointer_logits = mx.log(mx.maximum(probabilities, 1e-6))
+        has_candidate = mx.any(validity, axis=1)
+        pointer_logits = mx.where(
+            has_candidate[:, None, :, None],
+            pointer_logits,
+            mx.zeros_like(pointer_logits),
+        )
+        return base_logits + mx.einsum(
+            "at,batc->bac",
+            self.action_literal_binding_output,
+            pointer_logits,
+        )
 
     def _family_action_logits(
         self,
@@ -2350,6 +2495,7 @@ class UnifiedRecurrentController(nn.Module):
             *ACTION_WORKSPACE_PARAMETER_NAMES,
             *CAUSAL_ACTION_PARAMETER_NAMES,
             *FAMILY_ACTION_PARAMETER_NAMES,
+            *ACTION_LITERAL_BINDING_PARAMETER_NAMES,
             "state_action_projection",
             "literal_value_embeddings",
             "literal_grounding_logit",
@@ -2402,6 +2548,14 @@ class UnifiedRecurrentController(nn.Module):
                     if self.config.frontier_family_token_patterns
                     else "disabled"
                 ),
+                "private_transition_program_visible": False,
+                "parent_attachment": "exact_zero_output_noop",
+                "lesionable": True,
+            },
+            "action_literal_binding": {
+                "source": "ordered_public_prompt_literals",
+                "transforms": list(ACTION_LITERAL_BINDING_TRANSFORMS),
+                "semantic_role_inferred": True,
                 "private_transition_program_visible": False,
                 "parent_attachment": "exact_zero_output_noop",
                 "lesionable": True,
@@ -2481,6 +2635,7 @@ def unified_recurrent_hidden_states(
     causal_action_lesion: bool = False,
     action_feedback_lesion: bool = False,
     family_action_lesion: bool = False,
+    action_literal_binding_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
     detach_problem_evidence: bool = True,
@@ -2497,6 +2652,7 @@ def unified_recurrent_hidden_states(
         or type(causal_action_lesion) is not bool
         or type(action_feedback_lesion) is not bool
         or type(family_action_lesion) is not bool
+        or type(action_literal_binding_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
         or type(detach_problem_evidence) is not bool
@@ -2695,6 +2851,7 @@ def unified_recurrent_hidden_states(
                     causal_action_lesion=causal_action_lesion,
                     action_feedback_lesion=action_feedback_lesion,
                     family_action_lesion=family_action_lesion,
+                    action_literal_binding_lesion=action_literal_binding_lesion,
                 )
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
@@ -3128,6 +3285,8 @@ def unified_recurrent_logits(
 
 
 __all__ = [
+    "ACTION_LITERAL_BINDING_PARAMETER_NAMES",
+    "ACTION_LITERAL_BINDING_TRANSFORMS",
     "ACTION_WORKSPACE_PARAMETER_NAMES",
     "CAUSAL_ACTION_PARAMETER_NAMES",
     "FAMILY_ACTION_PARAMETER_NAMES",

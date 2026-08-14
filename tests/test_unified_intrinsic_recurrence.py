@@ -177,6 +177,84 @@ def test_action_workspace_causally_reads_complete_prior_process_memory() -> None
         )
 
 
+def test_action_literal_binding_is_exact_noop_then_tracks_public_numbers() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    evidence = mx.random.normal((1, 2, 64), key=mx.random.key(904))
+    hidden = mx.random.normal((1, 9, 64), key=mx.random.key(905))
+    tokens = mx.array([[12, 19]])
+    baseline = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=tokens,
+        action_literal_binding_lesion=True,
+    )
+    no_op = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=tokens,
+    )
+    assert bool(mx.array_equal(baseline, no_op))
+
+    controller.action_literal_binding_output = (
+        controller.action_literal_binding_output.at[1, 0].add(1.0)
+    )
+    active = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=tokens,
+    )
+    changed_literal = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=mx.array([[13, 18]]),
+    )
+    assert not bool(mx.array_equal(active, baseline))
+    assert not bool(mx.array_equal(active[:, 1, :], changed_literal[:, 1, :]))
+    receipt = controller.receipt()["action_literal_binding"]
+    assert receipt["source"] == "ordered_public_prompt_literals"
+    assert receipt["private_transition_program_visible"] is False
+
+
+def test_action_literal_binding_gradient_reaches_zero_output_attachment() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    evidence = mx.random.normal((1, 2, 64), key=mx.random.key(906))
+    hidden = mx.random.normal((1, 9, 64), key=mx.random.key(907))
+
+    def objective(candidate: UnifiedRecurrentController):
+        logits = candidate.action_logits(
+            evidence,
+            hidden,
+            state_slot_start=2,
+            step=0,
+            token_ids=mx.array([[12, 19]]),
+        )
+        return -mx.mean(nn.log_softmax(logits, axis=-1)[:, 1, 2])
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    mx.eval(loss, gradients)
+    assert float(mx.max(mx.abs(gradients["action_literal_binding_output"]))) > 0.0
+
+
 def test_public_family_experts_attach_as_exact_noop_and_route_independently() -> None:
     patterns = tuple(
         (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
