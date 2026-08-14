@@ -1857,7 +1857,31 @@
       "scope": "<module>.Memory._atomic_write"
     },
     {
+      "callee": "core.runtime.atomic_writer.durable_replace",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/memory/atomic_storage.py",
+      "scope": "<module>.Memory._atomic_write"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/memory/atomic_storage.py",
+      "scope": "<module>.Memory._atomic_write"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/memory/atomic_storage.py",
+      "scope": "<module>.Memory._create_backup"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
@@ -10401,47 +10425,7 @@
       "scope": "<module>.Memory.__init__"
     },
     {
-      "callee": "backup_file.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/atomic_storage.py",
-      "scope": "<module>.Memory._atomic_write"
-    },
-    {
-      "callee": "backup_file.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/atomic_storage.py",
-      "scope": "<module>.Memory._atomic_write"
-    },
-    {
-      "callee": "self.storage_file.replace",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/atomic_storage.py",
-      "scope": "<module>.Memory._atomic_write"
-    },
-    {
-      "callee": "self.storage_file.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/atomic_storage.py",
-      "scope": "<module>.Memory._atomic_write"
-    },
-    {
       "callee": "backup_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/atomic_storage.py",
-      "scope": "<module>.Memory._create_backup"
-    },
-    {
-      "callee": "old_backup.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -15826,6 +15810,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "4566dfe25a1e1d84ee85f296cc2944a8f48a3fa35ab9624b95573c7a53cbdeee",
+  "inventory_sha256": "c861e23f2a1fe3a18f320ad73fbced873ebb7d962d672a8adc7c819dd969b07b",
   "schema_version": 1
 }

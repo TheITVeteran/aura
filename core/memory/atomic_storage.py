@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from core.runtime.atomic_writer import atomic_write_text as runtime_atomic_write_text
+from core.runtime.atomic_writer import durable_replace, durable_unlink
 
 logger = logging.getLogger("Kernel.Memory")
 
@@ -119,7 +120,7 @@ class Memory:
                 backups = sorted(backup_dir.glob("*.json"))
                 if len(backups) > self.BACKUP_COUNT:
                     for old_backup in backups[:-self.BACKUP_COUNT]:
-                        old_backup.unlink()
+                        durable_unlink(old_backup, missing_ok=True)
                         
         except (OSError, IOError) as e:
             record_degradation('atomic_storage', e)
@@ -145,7 +146,11 @@ class Memory:
             
             # Create backup of current file if it exists
             if self.storage_file.exists():
-                self.storage_file.replace(backup_file)
+                # durable_replace, not Path.replace. The rename that moves the
+                # live file aside is the point of no return for this rollback:
+                # if it is not durable, a crash between here and the write can
+                # leave the directory entry pointing at neither file.
+                durable_replace(self.storage_file, backup_file)
 
             runtime_atomic_write_text(
                 self.storage_file,
@@ -154,7 +159,7 @@ class Memory:
             
             # Clean up backup if everything succeeded
             if backup_file.exists():
-                backup_file.unlink()
+                durable_unlink(backup_file, missing_ok=True)
             
             return True
             
@@ -166,8 +171,8 @@ class Memory:
             try:
                 if backup_file.exists():
                     if self.storage_file.exists():
-                        self.storage_file.unlink()
-                    backup_file.replace(self.storage_file)
+                        durable_unlink(self.storage_file, missing_ok=True)
+                    durable_replace(backup_file, self.storage_file)
             except (RuntimeError, AttributeError, TypeError, ValueError) as rollback_error:
                 record_degradation('atomic_storage', rollback_error)
                 logger.critical("Rollback failed: %s", rollback_error)

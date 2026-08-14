@@ -37,8 +37,16 @@ BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 #: ungoverned effect debt.
 #: 1,000/905 before the orphan retirement removed 112 unreachable modules,
 #: which took their effect call sites with them.
-GOVERNED_CEILING = 974
-RAW_CEILING = 874
+#: The governed tier is deliberately NOT ratcheted downward, and that is not
+#: laxity. Paying raw debt MOVES a call into it — migrating atomic_storage's
+#: rename/unlink to durable_replace/durable_unlink took raw 874 -> 869 and
+#: governed 974 -> 979. A "governed only falls" rule would fail on exactly the
+#: work it is meant to encourage.
+#:
+#: The two invariants that do hold: total debt only falls, and the raw tier
+#: only falls. Together they permit migration and forbid regression.
+TOTAL_CEILING = 1848
+RAW_CEILING = 869
 
 
 def _split() -> tuple[int, int]:
@@ -64,9 +72,10 @@ def test_the_raw_tier_only_falls():
     )
 
 
-def test_the_governed_tier_only_falls():
-    governed, _raw = _split()
-    assert governed <= GOVERNED_CEILING
+def test_total_debt_only_falls():
+    """Governed may rise as raw falls; the sum may not rise either way."""
+    governed, raw = _split()
+    assert governed + raw <= TOTAL_CEILING
 
 
 def test_the_two_tiers_account_for_all_the_debt():
@@ -117,7 +126,7 @@ def test_the_gateways_themselves_are_canonical_owners():
 
 #: unlink/remove/rename/replace calls, which durable_unlink and durable_replace
 #: could take ownership of. Measured at the time of splitting; only falls.
-PAYABLE_CEILING = 184
+PAYABLE_CEILING = 179
 
 
 def _payable() -> int:
