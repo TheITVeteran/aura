@@ -29,7 +29,8 @@ class NightlyLoRATrainer:
         history = await self.state_repo.get_history(limit=1000) 
         
         training_examples = []
-        
+        skipped_uninstrumented = 0
+
         for state in history:
             # Only use high-significance moments as training signal.
             # Significance = affect magnitude at time of state transition.
@@ -46,11 +47,23 @@ class NightlyLoRATrainer:
             # reasoning.  Frustrated/confused high-arousal states can produce
             # poor outputs.  Only train on moments where the metacognitive
             # calibrator also indicates adequate confidence.
+            # The gate was INVERTED in effect. A state with no metacognition
+            # skipped it entirely, and a metacognition object without
+            # `avg_confidence` got the default 1.0 — the maximum. So the less
+            # was known about a moment, the more likely it was to train the
+            # weights, and an uninstrumented experience outranked an
+            # instrumented one that merely scored honestly.
+            #
+            # This writes to model weights. "We could not tell whether this
+            # was good reasoning" is not a reason to train on it; it is the
+            # reason not to.
             meta = getattr(state, "metacognition", None)
-            if meta is not None:
-                avg_confidence = getattr(meta, "avg_confidence", 1.0)
-                if avg_confidence < 0.55:
-                    continue  # High affect but low confidence → poor training signal
+            avg_confidence = getattr(meta, "avg_confidence", None) if meta is not None else None
+            if not isinstance(avg_confidence, (int, float)):
+                skipped_uninstrumented += 1
+                continue
+            if float(avg_confidence) < 0.55:
+                continue  # High affect but low confidence → poor training signal
             
             # Extract conversation turns from this state
             for msg in state.cognition.working_memory:
@@ -61,7 +74,25 @@ class NightlyLoRATrainer:
                         "affect_weight": affect_magnitude,
                         "cause": state.transition_cause,
                     })
-        
+
+        if skipped_uninstrumented:
+            # Reported, because the honest consequence of this gate is a
+            # SMALLER training set and a silent shrink is indistinguishable
+            # from a quiet day. If this number is large, the fix is to wire
+            # metacognition on those states — not to trust them again.
+            record_degradation(
+                "nightly_lora",
+                RuntimeError(
+                    f"{skipped_uninstrumented} states had no measured confidence"
+                ),
+                severity="info",
+                action="excluded uninstrumented states from LoRA training data",
+                extra={
+                    "skipped_uninstrumented": skipped_uninstrumented,
+                    "examples_collected": len(training_examples),
+                },
+            )
+
         return training_examples
 
     def _build_training_context(self, state, msg) -> str:

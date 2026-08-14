@@ -503,3 +503,102 @@ def test_a_recognised_dangerous_action_is_still_dangerous():
     level, _reason = model.classify_risk("delete file", "/tmp/x")
 
     assert level >= RiskLevel.HIGH
+
+
+# ─────── the less known about a moment, the more it trained the weights
+
+
+@pytest.mark.asyncio
+async def test_an_uninstrumented_state_does_not_train_the_model():
+    """The gate was inverted in effect.
+
+    A state with no metacognition skipped the quality gate entirely, and a
+    metacognition object without `avg_confidence` got the default 1.0 — the
+    MAXIMUM. So an uninstrumented experience outranked an instrumented one
+    that merely scored honestly, and this writes to model weights.
+    """
+    from types import SimpleNamespace
+
+    from core.adaptation.nightly_lora import NightlyLoRATrainer
+
+    def _state(meta):
+        return SimpleNamespace(
+            affect=SimpleNamespace(valence=0.9, curiosity=0.9, arousal=0.9),
+            metacognition=meta,
+            cognition=SimpleNamespace(
+                working_memory=[{"role": "assistant", "content": "an answer"}]
+            ),
+            transition_cause="test",
+        )
+
+    class _Repo:
+        def __init__(self, states):
+            self._states = states
+
+        async def get_history(self, limit=1000):
+            return self._states
+
+    trainer = NightlyLoRATrainer.__new__(NightlyLoRATrainer)
+    trainer.state_repo = _Repo([_state(None), _state(SimpleNamespace())])
+
+    examples = await trainer.collect_training_data()
+
+    assert examples == [], (
+        "a state with no measured confidence produced training examples; "
+        "'we could not tell whether this was good reasoning' is a reason "
+        "not to train on it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_measured_confident_state_still_trains():
+    """The fix must not empty the training set for instrumented states."""
+    from types import SimpleNamespace
+
+    from core.adaptation.nightly_lora import NightlyLoRATrainer
+
+    class _Repo:
+        async def get_history(self, limit=1000):
+            return [
+                SimpleNamespace(
+                    affect=SimpleNamespace(valence=0.9, curiosity=0.9, arousal=0.9),
+                    metacognition=SimpleNamespace(avg_confidence=0.8),
+                    cognition=SimpleNamespace(
+                        working_memory=[{"role": "assistant", "content": "an answer"}]
+                    ),
+                    transition_cause="test",
+                )
+            ]
+
+    trainer = NightlyLoRATrainer.__new__(NightlyLoRATrainer)
+    trainer.state_repo = _Repo()
+    trainer._build_training_context = lambda state, msg: "ctx"
+
+    examples = await trainer.collect_training_data()
+
+    assert len(examples) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_measured_low_confidence_state_still_does_not_train():
+    from types import SimpleNamespace
+
+    from core.adaptation.nightly_lora import NightlyLoRATrainer
+
+    class _Repo:
+        async def get_history(self, limit=1000):
+            return [
+                SimpleNamespace(
+                    affect=SimpleNamespace(valence=0.9, curiosity=0.9, arousal=0.9),
+                    metacognition=SimpleNamespace(avg_confidence=0.2),
+                    cognition=SimpleNamespace(
+                        working_memory=[{"role": "assistant", "content": "x"}]
+                    ),
+                    transition_cause="test",
+                )
+            ]
+
+    trainer = NightlyLoRATrainer.__new__(NightlyLoRATrainer)
+    trainer.state_repo = _Repo()
+
+    assert await trainer.collect_training_data() == []
