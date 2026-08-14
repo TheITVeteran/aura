@@ -82,7 +82,47 @@ class GovernanceToken:
 
     @property
     def valid(self) -> bool:
+        """Structurally well-formed and unexpired. NOT the same as authority.
+
+        A `VIOLATION` token and a `degraded_mode` token are both valid by
+        this test — they have a receipt_id and have not timed out. Sinks
+        that gate on `valid` (or merely on `token is not None`) therefore
+        accept the two objects that exist to record the ABSENCE of
+        governance. Use `authorizes` for that question.
+        """
         return bool(self.receipt_id) and not self.expired
+
+    @property
+    def authorizes(self) -> bool:
+        """Whether this token actually grants permission.
+
+        `require_governance` returns a token on three different paths and
+        only one of them is a grant:
+
+        * a real governed scope — authority;
+        * `degraded_mode`, meaning the governance runtime is not up yet, so
+          the boundary could not be applied;
+        * `VIOLATION`, meaning the call was made OUTSIDE a governed context
+          and the bypass was recorded.
+
+        The last two are records of absence. Returning them as tokens is
+        deliberate — boot has to proceed, and a recorded violation is more
+        useful than a silent one — but a downstream effect check that reads
+        "I got a token" as "I am permitted" converts the absence of the
+        security boundary into permission, which is precisely what the
+        boundary exists to prevent.
+        """
+        return (
+            self.valid
+            and self.domain not in _NON_AUTHORITY_DOMAINS
+            and self.receipt_id not in _NON_AUTHORITY_RECEIPTS
+        )
+
+
+#: Domains and receipt ids that record the ABSENCE of governance rather than
+#: a grant of it. Named once so `authorizes` and every gate agree.
+_NON_AUTHORITY_DOMAINS = frozenset({"degraded", "ungoverned"})
+_NON_AUTHORITY_RECEIPTS = frozenset({"degraded_mode", "VIOLATION"})
 
 
 @dataclass(frozen=True)

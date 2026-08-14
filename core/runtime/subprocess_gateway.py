@@ -738,7 +738,12 @@ def _require_effect_governance(operation: str) -> None:
         strict=True,
         allowed_domains=_EFFECT_DOMAINS,
     )
-    if should_fail_closed and (token is None or getattr(token, "domain", "") == "degraded"):
+    # `token.authorizes` rather than a hand-rolled domain string. This
+    # checked only "degraded" and so missed the OTHER non-authority token —
+    # domain "ungoverned", receipt "VIOLATION", handed back when a call is
+    # made outside a governed context. Both record the ABSENCE of the
+    # boundary; only one was being caught here.
+    if should_fail_closed and (token is None or not getattr(token, "authorizes", False)):
         raise GovernanceViolation(f"{operation} called outside governed context")
 
 
