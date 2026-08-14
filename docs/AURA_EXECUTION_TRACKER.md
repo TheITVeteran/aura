@@ -49042,3 +49042,34 @@ and that its active action path can be causally lesioned. It does not prove a
 fresh behavioral gain, resident-32B improvement, fusion, frontier performance
 or `WOW Signal`. Next is the source-bound 1.5B adaptation followed by a frozen
 base/CP232-parent/treatment/action-lesion canary.
+
+## Checkpoint 2026-08-13-398: Frozen Broad Transfer Canary
+
+CP398 makes the next behavioral question executable without changing its
+meaning after results arrive. A teacher-free typed decode lane now inserts the
+real state/action slots at the public-prompt boundary, executes the recurrent
+process for the frozen depth and emits through the ordinary model head. It
+does not use the executable teacher, terminal grammar, digit pointer or a
+compiled answer. Full-prefix replay is deliberate because the incremental
+cache lane excludes typed slots and would silently test a different mechanism.
+
+The source-bound canary freezes four arms on fresh contamination-safe frontier
+tasks: base greedy decoding, the exact CP232 parent reconstructed from the
+child's bootstrap receipt, the broad-adapted treatment, and the same treatment
+with its selected action replaced by an unrecognized null instruction before
+state transition. Arm order rotates by task commitment. Candidate responses
+and exact scorer output are append-only and private; the plan binds campaign,
+parent and treatment checkpoint/controller identities, source commit and
+implementation hashes before any candidate is scored. Runs resume only from
+the identical plan and reject duplicate or malformed journal rows.
+
+A supported canary requires a non-floor/non-ceiling base band, treatment gains
+over the frozen parent, zero parent regressions, preservation of base successes
+and loss of at least one treatment gain under the equal-compute action lesion.
+Incomplete matrices and unusable bands are inconclusive. Focused transfer,
+frontier, objective, trainer, checkpoint and recurrence contracts pass
+`143/143`; canonical smoke passes `104/104`; Ruff and compilation pass. This
+proves the comparison is ready to run. It does not itself prove a behavioral
+gain, resident-32B improvement, fusion, frontier performance or `WOW Signal`.
+Next is the bounded source-bound 1.5B adaptation at the measured natural
+process depths, followed immediately by this frozen canary.
