@@ -1399,6 +1399,52 @@ class CognitiveEngine:
         """Which augmentors may contribute to a turn."""
         return list(getattr(self, "_augmentor_registry_receipt", []) or [])
 
+    #: What a caller-supplied contract may contribute to the system prompt.
+    #: The same limits the inference gate applies to the same two strings —
+    #: they were bounded there and concatenated raw here.
+    _STYLE_CONTRACT_LIMIT = 1_400
+    _MIND_CONTRACT_LIMIT = 900
+
+    @staticmethod
+    def _log_safe_objective(objective: Any, limit: int = 50) -> str:
+        """A log-safe preview of what was asked.
+
+        Scrubbed, not just truncated: truncation preserves the FIRST fifty
+        characters, which is exactly where an address, a key or a phone number
+        appears in a message that opens with one.
+        """
+        text = str(objective or "")
+        try:
+            from core.brain.pii_scrubber import scrub_pii_for_cloud
+
+            text = scrub_pii_for_cloud(text)
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            # Unable to scrub is not permission to print.
+            return "[objective unavailable for logging]"
+        return text[:limit]
+
+    @staticmethod
+    def _contract_safe(value: Any, limit: int) -> str:
+        """Flatten a caller string so it cannot forge system-prompt structure.
+
+        response_style_contract and mind_context_contract arrive in the
+        caller's context and were concatenated straight into the system
+        message. A line break turns the rest into a sibling instruction; a
+        leading "#" opens a sibling section; a chat control token forges a role
+        boundary. The inference gate already neutralizes both of these strings
+        (_contract_safe there); this path did not, so the same value was safe
+        through one door and privileged through the other.
+        """
+        from core.brain.living_mind_context import neutralize_learned_text
+
+        text = neutralize_learned_text(str(value or ""))
+        if not text:
+            return ""
+        text = " ".join(text.split())
+        if len(text) <= limit:
+            return text
+        return text[: max(1, limit - 1)].rstrip() + "…"
+
     @classmethod
     def _bounded_augmentation(cls, raw: Any) -> Any:
         """Bound and neutralize what an augmentor contributes to the prompt.
@@ -2343,8 +2389,17 @@ class CognitiveEngine:
             )
             return self._empty_thought(mode, "background_reflection_suppressed")
 
+        # The first 50 characters of every objective went to the log sink as
+        # typed. A person's message can open with an address, a token, or a
+        # phone number, and log files are read, shipped and kept. The scrubber
+        # that already protects the cloud path protects this one too; her
+        # working memory keeps the real words, because that is her memory of
+        # what was said and this is a diagnostic.
         logger.info(
-            "🧠 CognitiveEngine.think: %s... (%s) Origin: %s", objective[:50], mode.name, origin
+            "🧠 CognitiveEngine.think: %s... (%s) Origin: %s",
+            self._log_safe_objective(objective),
+            mode.name,
+            origin,
         )
 
         # 1. Get current state (BUG-12 Fix: handle None state on first boot)
@@ -3747,7 +3802,9 @@ class CognitiveEngine:
             request_timeout = min(request_timeout, 90.0)
         if capability_inventory_contract:
             request_timeout = min(request_timeout, 28.0)
-        style_contract = str(context.get("response_style_contract") or "").strip()
+        style_contract = self._contract_safe(
+            context.get("response_style_contract"), self._STYLE_CONTRACT_LIMIT
+        )
         visible_user_message = str(context.get("visible_user_message") or objective or "").strip()
         recent_conversation_context = str(context.get("recent_conversation_context") or "").strip()
         history_messages = (
@@ -3776,27 +3833,44 @@ class CognitiveEngine:
             live_mind_context,
             live_mind_generation_controls,
         )
+        # The three flags below gate the structured floors, which return
+        # self-condition, planning, capability and identity answers at high
+        # confidence with live-mind metadata attached. They used to be
+        # satisfiable from the caller's own context booleans — and the last
+        # branch re-derived controls_bound as True from them, bypassing
+        # _live_mind_controls_bound entirely. A caller could therefore mint a
+        # proof-bearing reply by asserting that it was entitled to one.
+        #
+        # A context fallback is still allowed, but only when the payload
+        # carries this runtime's stamp: then the booleans are the runtime's own
+        # summary of a snapshot it produced, not a claim about itself.
+        from core.utils.injected_blocks import is_stamped_runtime_payload
+
+        _context_attested = is_stamped_runtime_payload(live_mind_context)
         live_mind_snapshot_ready = bool(
             isinstance(live_mind_context, dict)
             and isinstance(live_mind_context.get("mind_snapshot_quality"), dict)
             and live_mind_context["mind_snapshot_quality"].get("ready")
         )
-        if not live_mind_snapshot_ready:
+        if not live_mind_snapshot_ready and _context_attested:
             live_mind_snapshot_ready = bool(context.get("live_mind_snapshot_ready"))
         live_mind_required_subsystems_ok = bool(
             isinstance(live_mind_context, dict)
             and live_mind_context.get("required_subsystems_ok")
         )
-        if not live_mind_required_subsystems_ok:
+        if not live_mind_required_subsystems_ok and _context_attested:
             live_mind_required_subsystems_ok = bool(
                 context.get("live_mind_required_subsystems_ok")
             )
-        if (
+        # controls_bound comes from _live_mind_controls_bound and nowhere else.
+        # It used to be re-derived True here from the flags above, which is the
+        # check answering to the thing it was checking.
+        if live_mind_controls_bound and not (
             live_mind_generation_controls
             and live_mind_snapshot_ready
             and live_mind_required_subsystems_ok
         ):
-            live_mind_controls_bound = True
+            live_mind_controls_bound = False
         canonical_self_condition_reply = str(
             context.get("canonical_self_condition_reply") or ""
         ).strip()
@@ -4094,7 +4168,9 @@ class CognitiveEngine:
             # text could override it and it polluted task semantics, caching,
             # memory and audit attribution.
             system_prompt = f"{system_prompt}\n[PERSONA CONTRACT]\n{persona_contract[:2000]}"
-        mind_context_contract = str(context.get("mind_context_contract") or "").strip()
+        mind_context_contract = self._contract_safe(
+            context.get("mind_context_contract"), self._MIND_CONTRACT_LIMIT
+        )
         # The block below tells the model its own state is "causal grounding for
         # the reply". Whether it is, is a measurement, and this is the switch
         # that lets the measurement happen: lesioned, the whole block is absent
@@ -4140,6 +4216,7 @@ class CognitiveEngine:
             )
             if mind_context_contract:
                 system_prompt = f"{system_prompt}\n{mind_context_contract}"
+
             system_prompt = f"{system_prompt}\n[END LIVE MIND CONTEXT]"
         if isinstance(live_speech_frame, dict) and live_speech_frame and not capability_inventory_contract:
             compact_frame = {

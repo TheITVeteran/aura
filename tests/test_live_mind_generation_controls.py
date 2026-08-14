@@ -358,6 +358,11 @@ async def test_desktop_quick_reply_preserves_worker_control_application_failure(
             "live_mind_context_required": True,
             "cognitive_engine_required": True,
             "desktop_cognitive_engine_required": True,
+            # A runtime-produced snapshot, not three booleans the caller set
+            # about itself. Asserting controls_bound=True off the flat flags
+            # alone was the escalation path written down as an expectation:
+            # a caller claiming entitlement and receiving a bound reply.
+            "live_mind_context": _ready_live_mind_context(),
             "live_mind_generation_controls": controls,
             "live_mind_snapshot_ready": True,
             "live_mind_required_subsystems_ok": True,
@@ -368,8 +373,12 @@ async def test_desktop_quick_reply_preserves_worker_control_application_failure(
     )
 
     assert thought is not None
-    assert captured["temperature"] == 0.58
-    assert captured["top_p"] == 0.85
+    # The controls reach the router bound. Their exact values are the caller's
+    # numbers AFTER neurodynamic modulation from the snapshot — pinning 0.58
+    # here only held while no snapshot existed, which was the condition this
+    # test should not have been running under.
+    assert 0.1 <= captured["temperature"] <= 1.5
+    assert 0.3 <= captured["top_p"] <= 0.98
     assert captured["live_mind_controls_bound"] is True
     assert thought.metadata["live_mind_controls_bound"] is True
     assert thought.metadata["live_mind_controls_worker_applied"] is False

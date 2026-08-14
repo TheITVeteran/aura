@@ -6,6 +6,8 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+
+from core.utils.injected_blocks import stamp_runtime_payload
 from types import SimpleNamespace
 
 import pytest
@@ -9076,12 +9078,17 @@ async def test_cognitive_engine_self_condition_uses_canonical_projection_without
             "confidence": 0.91,
         },
         "live_mind_context_required": True,
-        "live_mind_context": {
+        # A snapshot the RUNTIME produced. The structured floors return
+        # self-condition answers at high confidence with live-mind metadata
+        # attached, and this used to bind on the caller's own booleans — a
+        # payload asserting it was entitled to a proof-bearing reply.
+        "live_mind_context": stamp_runtime_payload({
             "required_for_live_desktop": True,
             "must_answer_from_full_mind_path": True,
             "required_subsystems_ok": True,
+            "mind_snapshot": {"present": True},
             "mind_snapshot_quality": {"present": True, "ready": True},
-        },
+        }),
         "live_mind_generation_controls": {
             "temperature": 0.58,
             "top_p": 0.88,
