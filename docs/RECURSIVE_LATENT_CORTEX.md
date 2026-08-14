@@ -1,6 +1,9 @@
 # Recursive Latent Cortex (RLC)
 
 Status: Guide · Programme landing page · Reviewed against the tree 2026-08-13
+at CP409. Checkpoints land faster than this page tracks; the claims ladder
+below changes slowly, and the append-only
+[ledger](RLC_SPARK_EXECUTION_LEDGER.md) is the live record.
 
 Aura's largest research programme, and the one most likely to be worth your
 time if you only read one. It asks a question with a checkable answer:

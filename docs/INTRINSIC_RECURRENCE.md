@@ -165,6 +165,17 @@ The next bounded milestone is the 1.5B adaptation over train depths
 `1,3,4,5,6,8,10` with held-out `12,16`, followed immediately by the
 already-frozen four-arm behavioral canary.
 
+**This page is a snapshot; the ledger is the record.** It was reviewed at
+CP409, and checkpoints land faster than a narrative page can track. Everything
+above is *mechanism and status*, which changes slowly. For what happened most
+recently, read the tail of
+[RLC_SPARK_EXECUTION_LEDGER.md](RLC_SPARK_EXECUTION_LEDGER.md) and
+[AURA_EXECUTION_TRACKER.md](AURA_EXECUTION_TRACKER.md) — both append-only.
+What will *not* have changed silently is the "not established" list: every
+checkpoint in this programme restates it explicitly, so if a broad gain is ever
+claimed it will be claimed in a named checkpoint rather than drifting into
+being true.
+
 ---
 
 ## The code
