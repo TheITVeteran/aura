@@ -62,14 +62,43 @@ def test_salvage_appends_evidence_boundary_and_delivers():
     assert "self_claim_boundary_suffix" in repairs
 
 
-def test_salvage_delivers_style_only_residuals_with_receipt():
+def test_salvage_delivers_an_unmet_stated_requirement_and_says_so():
+    """The draft survives, and the person is told what they did not get.
+
+    This used to assert the draft came back byte-identical with no repairs.
+    Delivering is still right — destroying the turn leaves the person with
+    nothing — but `missing_requested_phrase` is the PERSON'S own stated
+    instruction, unmet, and returning it silently left them unable to tell a
+    shortfall from a decision.
+
+    The invariant the old assertion protected is unchanged and is asserted
+    below: a mutated draft MUST report the mutation as an applied repair,
+    never as silent model output.
+    """
     text, residual, repairs = _salvage_exhausted_user_surface(
         _job_for("Reply and include the phrase 'quantum duck' somewhere."),
         _SUBSTANTIVE_DRAFT,
         ["missing_requested_phrase"],
     )
-    assert text == _SUBSTANTIVE_DRAFT
+    assert text.startswith(_SUBSTANTIVE_DRAFT), "the answer itself must survive intact"
+    assert "phrase you asked for" in text
     assert residual == ["missing_requested_phrase"]
+    assert "requirement_shortfall_disclosure" in repairs, (
+        "the draft was mutated without disclosing the mutation as a repair"
+    )
+
+
+def test_salvage_delivers_a_thinness_residual_unamended():
+    """Thinness is our judgement about the draft, not an instruction the
+    person gave, so there is nothing to disclose and the draft is returned
+    byte-for-byte with no repairs."""
+    text, residual, repairs = _salvage_exhausted_user_surface(
+        _job_for("How are you?"),
+        _SUBSTANTIVE_DRAFT,
+        ["too_thin_for_user_turn"],
+    )
+    assert text == _SUBSTANTIVE_DRAFT
+    assert residual == ["too_thin_for_user_turn"]
     assert repairs == [], "an unamended draft must report no applied repairs"
 
 

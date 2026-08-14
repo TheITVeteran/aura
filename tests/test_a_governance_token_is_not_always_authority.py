@@ -420,3 +420,64 @@ def test_a_background_turn_still_needs_no_overrides():
         )
         == {}
     )
+
+
+# ─── the person asked for five bullets, got three, and was not told
+
+
+def test_an_unmet_stated_requirement_is_disclosed():
+    """`_DELIVERABLE_RESIDUAL_SURFACE_REASONS` rightly delivers a draft that
+    misses a formatting requirement — destroying the turn leaves the person
+    with nothing. But a stated requirement is the PERSON'S instruction, not
+    our judgement about thinness, and delivering silently means they cannot
+    tell a shortfall from a decision."""
+    from core.brain.llm.mlx_worker import _requirement_shortfall_note
+
+    note = _requirement_shortfall_note(["missing_requested_list_count"])
+
+    assert "list items you asked for" in note
+    assert note.startswith("\n\n(")
+
+
+def test_several_shortfalls_read_as_one_sentence():
+    from core.brain.llm.mlx_worker import _requirement_shortfall_note
+
+    note = _requirement_shortfall_note(
+        ["missing_requested_word_count", "missing_requested_followup_question"]
+    )
+
+    assert note.count("(") == 1
+    assert " or " in note
+
+
+def test_a_thinness_residual_discloses_nothing():
+    """Thinness is our judgement about the draft, not an instruction the
+    person gave. Apologising for it would bury the answer."""
+    from core.brain.llm.mlx_worker import _requirement_shortfall_note
+
+    assert _requirement_shortfall_note(["too_thin_for_user_turn"]) == ""
+    assert _requirement_shortfall_note(["reply_abandons_thread"]) == ""
+
+
+def test_every_shortfall_reason_has_a_human_label():
+    """A reason with no label discloses nothing and silently rejoins the
+    class this fix exists to close."""
+    from core.brain.llm.mlx_worker import (
+        _REQUIREMENT_SHORTFALL_LABELS,
+        _REQUIREMENT_SHORTFALL_REASONS,
+    )
+
+    unlabelled = _REQUIREMENT_SHORTFALL_REASONS - set(_REQUIREMENT_SHORTFALL_LABELS)
+
+    assert not unlabelled, f"these shortfalls would be delivered silently: {unlabelled}"
+
+
+def test_the_shortfall_reasons_are_actually_deliverable():
+    """If one of these were NOT in the deliverable set, the turn would be
+    destroyed and the disclosure would never run."""
+    from core.brain.llm.mlx_worker import (
+        _DELIVERABLE_RESIDUAL_SURFACE_REASONS,
+        _REQUIREMENT_SHORTFALL_REASONS,
+    )
+
+    assert _REQUIREMENT_SHORTFALL_REASONS <= _DELIVERABLE_RESIDUAL_SURFACE_REASONS

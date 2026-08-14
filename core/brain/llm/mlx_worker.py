@@ -1071,6 +1071,70 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
 # the boundary check (which looks for "functional", "not proof",
 # "phenomenal" and similar), so the guard remains self-healing without
 # inventing support for the claim it is repairing.
+#: Residuals where the USER asked for something specific and checkable and
+#: did not get it — a word count, a sentence count, a number of paragraphs
+#: or list items, a named reference, a clarifying choice, a follow-up
+#: question.
+#:
+#: These belong in the deliverable set for the reason the rest of it exists:
+#: a substantive answer that misses a formatting requirement beats a refusal,
+#: and destroying the turn leaves the person with nothing. But they differ in
+#: kind from the thinness verdicts around them. Thinness is our judgement
+#: about the draft; this is the person's own stated instruction, unmet — and
+#: delivering silently means they asked for five bullet points, received
+#: three, and were never told which of the two happened.
+#:
+#: So: deliver, and say so. The reply survives and the shortfall is visible
+#: to the one person who can decide whether it matters.
+_REQUIREMENT_SHORTFALL_REASONS = frozenset(
+    {
+        "missing_requested_phrase",
+        "missing_requested_word_count",
+        "missing_requested_sentence_count",
+        "missing_requested_reference_value",
+        "missing_requested_paragraph_count",
+        "missing_requested_list_count",
+        "empty_requested_list_item",
+        "missing_requested_choice_clarification",
+        "missing_requested_followup_question",
+    }
+)
+
+_REQUIREMENT_SHORTFALL_LABELS = {
+    "missing_requested_phrase": "include a phrase you asked for",
+    "missing_requested_word_count": "hit the word count you asked for",
+    "missing_requested_sentence_count": "hit the sentence count you asked for",
+    "missing_requested_reference_value": "include a reference value you asked for",
+    "missing_requested_paragraph_count": "hit the paragraph count you asked for",
+    "missing_requested_list_count": "hit the number of list items you asked for",
+    "empty_requested_list_item": "fill in every list item",
+    "missing_requested_choice_clarification": "give you the choice you asked for",
+    "missing_requested_followup_question": "end with the follow-up question you asked for",
+}
+
+
+def _requirement_shortfall_note(reasons: list[str]) -> str:
+    """A one-line disclosure of the stated requirements this draft missed.
+
+    Written in her voice and kept to one sentence: the answer is the point,
+    and a paragraph of apology about formatting would bury it.
+    """
+    missed = [
+        _REQUIREMENT_SHORTFALL_LABELS[reason]
+        for reason in sorted(set(reasons))
+        if reason in _REQUIREMENT_SHORTFALL_LABELS
+    ]
+    if not missed:
+        return ""
+    if len(missed) == 1:
+        detail = missed[0]
+    elif len(missed) == 2:
+        detail = f"{missed[0]} or {missed[1]}"
+    else:
+        detail = f"{', '.join(missed[:-1])}, or {missed[-1]}"
+    return f"\n\n(I did not {detail} — the answer above is what I have.)"
+
+
 _SELF_CLAIM_BOUNDARY_SUFFIX = (
     " To be precise about what I can honestly claim here: this is a "
     "functional description of how I process and behave, and it is not "
@@ -1275,6 +1339,14 @@ def _salvage_exhausted_user_surface(
     if not reasons:
         return draft, [], applied_repairs
     if set(reasons) <= _DELIVERABLE_RESIDUAL_SURFACE_REASONS:
+        # Delivered — and where the person stated a checkable requirement
+        # that this draft does not meet, they are told. Silently returning a
+        # three-item list to someone who asked for five leaves them unable
+        # to tell a shortfall from a decision.
+        note = _requirement_shortfall_note(reasons)
+        if note:
+            draft = f"{draft}{note}"
+            applied_repairs.append("requirement_shortfall_disclosure")
         return draft, reasons, applied_repairs
     return "", reasons, applied_repairs
 
