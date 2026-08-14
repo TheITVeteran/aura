@@ -984,6 +984,11 @@ class InferenceGate:
         self._identity_prompt_time: float = 0.0
         self._identity_prompt_state_key: tuple[Any, ...] | None = None
         self._cloud_backoff_until: float = 0.0
+        #: Per-provider cloud backoff deadlines. One global stamp let a
+        #: single provider's quota error suppress every other cloud path.
+        self._cloud_backoff_by_provider: dict[str, float] = {}
+        #: Receipt for the last cloud privacy scrub.
+        self._last_cloud_privacy_receipt: dict[str, Any] = {}
         self._cortex_recovery_in_progress: bool = False
         self._last_cortex_check: float = 0.0
         self._cortex_recovery_attempts: int = 0
@@ -7422,6 +7427,68 @@ class InferenceGate:
 
         return messages
 
+    #: How long a rate-limited provider is skipped. Not a guess about the
+    #: provider's policy: a Retry-After header, when the error carries one,
+    #: overrides it.
+    _CLOUD_BACKOFF_S = 60.0
+
+    @staticmethod
+    def _retry_after_seconds(error_text: str) -> float | None:
+        """Retry-After from the provider, when it said one."""
+        match = re.search(
+            r"retry[\s_-]?after[\s\"':=]*(\d+(?:\.\d+)?)", str(error_text or ""), re.IGNORECASE
+        )
+        if not match:
+            return None
+        value = _finite(match.group(1))
+        if value is None or value <= 0.0:
+            return None
+        return min(_MAX_HEALTH_WINDOW_S, value)
+
+    def _note_cloud_provider_failure(self, provider: str, error_text: str) -> bool:
+        """Back off ONE provider, not every cloud path.
+
+        A single shared deadline meant a quota error from one provider
+        suppressed cloud recovery through every other one — including the
+        HealthRouter path that might have had capacity. The deadline is per
+        provider now, and it honours a Retry-After when the provider sent one
+        instead of always assuming a minute.
+        """
+        text = str(error_text or "")
+        rate_limited = "429" in text or "quota" in text.lower() or "rate limit" in text.lower()
+        if not rate_limited:
+            return False
+        wait_s = self._retry_after_seconds(text) or self._CLOUD_BACKOFF_S
+        deadline = time.monotonic() + wait_s
+        store = getattr(self, "_cloud_backoff_by_provider", None)
+        if store is None:
+            store = {}
+            self._cloud_backoff_by_provider = store
+        key = str(provider or "cloud")
+        store[key] = max(float(store.get(key, 0.0) or 0.0), deadline)
+        logger.warning(
+            "☁️ Cloud provider %s rate-limited; backing it off %.0fs.", key, wait_s
+        )
+        return True
+
+    def _cloud_provider_in_backoff(self, provider: str) -> bool:
+        store = getattr(self, "_cloud_backoff_by_provider", None) or {}
+        return time.monotonic() < float(store.get(str(provider or "cloud"), 0.0) or 0.0)
+
+    def cloud_backoff_state(self) -> dict[str, float]:
+        """Seconds remaining per provider, for health and diagnosis."""
+        now = time.monotonic()
+        store = getattr(self, "_cloud_backoff_by_provider", None) or {}
+        return {
+            provider: round(max(0.0, float(deadline) - now), 1)
+            for provider, deadline in store.items()
+            if float(deadline) > now
+        }
+
+    def cloud_privacy_receipt(self) -> dict[str, Any]:
+        """What the last cloud scrub did, and what it verified."""
+        return copy.deepcopy(getattr(self, "_last_cloud_privacy_receipt", {}))
+
     def _scrub_cloud_payload(
         self,
         system_prompt: str,
@@ -7431,10 +7498,50 @@ class InferenceGate:
     ) -> tuple[str, str] | None:
         try:
             if scrubber is None:
-                from core.brain.pii_scrubber import scrub_pii_for_cloud
+                from core.brain.pii_scrubber import scrub_for_cloud_with_receipt
 
-                scrubber = scrub_pii_for_cloud
-            return str(scrubber(system_prompt)), str(scrubber(prompt))
+                scrubbed_system, system_receipt = scrub_for_cloud_with_receipt(system_prompt)
+                scrubbed_prompt, prompt_receipt = scrub_for_cloud_with_receipt(prompt)
+                # The privacy claim was two str() calls and a comment. None
+                # became the literal "None" and went out; a name the loader
+                # could not read went out unchanged; nothing recorded what had
+                # been done or checked that it worked.
+                residual = sorted(
+                    set(system_receipt["residual_findings"])
+                    | set(prompt_receipt["residual_findings"])
+                )
+                self._last_cloud_privacy_receipt = {
+                    "system": system_receipt,
+                    "prompt": prompt_receipt,
+                    "residual_findings": residual,
+                    "at": time.time(),
+                }
+                if residual or not (
+                    system_receipt["safe_to_send"] and prompt_receipt["safe_to_send"]
+                ):
+                    _record_inference_degradation(
+                        RuntimeError(
+                            "cloud payload still carries personal data after scrubbing: "
+                            + ", ".join(residual or ["unverified"])
+                        ),
+                        severity="critical",
+                        action="blocked cloud fallback because the scrubbed payload did not verify",
+                        extra={"residual_findings": residual},
+                    )
+                    return None
+                return scrubbed_system, scrubbed_prompt
+            scrubbed_system = scrubber(system_prompt)
+            scrubbed_prompt = scrubber(prompt)
+            if scrubbed_system is None or scrubbed_prompt is None:
+                # str(None) is "None" — a string that looks scrubbed and is a
+                # scrubber failure.
+                _record_inference_degradation(
+                    RuntimeError("cloud scrubber returned None"),
+                    severity="critical",
+                    action="blocked cloud fallback because the scrubber returned nothing",
+                )
+                return None
+            return str(scrubbed_system), str(scrubbed_prompt)
         except ImportError as scrub_exc:
             _record_inference_degradation(
                 scrub_exc,
@@ -11725,16 +11832,26 @@ class InferenceGate:
 
             # Try APIAdapter first (cleaner Gemini integration)
             adapter = ServiceContainer.get("api_adapter", default=None)
-            if adapter and getattr(adapter, "has_gemini", False):
+            if (
+                adapter
+                and getattr(adapter, "has_gemini", False)
+                and not self._cloud_provider_in_backoff("api_adapter")
+            ):
                 logger.info("☁️ Falling back to Gemini via APIAdapter...")
+                # The system prompt travels as a system instruction, not as
+                # "User: …\nAura:" text glued to the front of the user's
+                # message. Flattened, a user could write those same labels and
+                # compete with the instructions, and no provider metadata could
+                # show whether role separation had survived.
                 adapter_options = {
                     "model_tier": "api_fast",
                     "max_tokens": min(800, max(1, int(max_tokens))),
                     "temperature": 0.7,
                     "cloud_only": True,
                     "purpose": "user_cloud_recovery",
+                    "system_instruction": cloud_system_prompt,
                 }
-                adapter_prompt = f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:"
+                adapter_prompt = cloud_prompt
                 metadata_generate = getattr(adapter, "generate_with_metadata", None)
                 # Cloud recovery ran on its own 30s clock, after every local
                 # attempt had already spent the caller's budget — and then
@@ -11777,8 +11894,7 @@ class InferenceGate:
                         ),
                     )
                     adapter_error_text = str(adapter_err)
-                    if "429" in adapter_error_text or "quota" in adapter_error_text.lower():
-                        self._cloud_backoff_until = time.monotonic() + 60.0
+                    self._note_cloud_provider_failure("api_adapter", adapter_error_text)
                     logger.warning(
                         "APIAdapter cloud fallback failed; continuing to HealthRouter: %s",
                         adapter_err,
@@ -11843,7 +11959,11 @@ class InferenceGate:
             # Try HealthRouter as secondary cloud path (also PII-scrubbed)
             router = ServiceContainer.get("llm_router", default=None)
             metadata_generate = getattr(router, "generate_with_metadata", None)
-            if router and callable(metadata_generate):
+            if (
+                router
+                and callable(metadata_generate)
+                and not self._cloud_provider_in_backoff("health_router")
+            ):
                 logger.info("☁️ Falling back to HealthRouter...")
                 router_window_s = self._window_within(request_deadline, 30.0)
                 try:
@@ -11885,8 +12005,7 @@ class InferenceGate:
                         ),
                     )
                     router_error_text = str(router_err)
-                    if "429" in router_error_text or "quota" in router_error_text.lower():
-                        self._cloud_backoff_until = time.monotonic() + 60.0
+                    self._note_cloud_provider_failure("health_router", router_error_text)
                     logger.warning("HealthRouter cloud fallback failed: %s", router_err)
                     router_result = {
                         "ok": False,
@@ -11937,8 +12056,10 @@ class InferenceGate:
                 action="entered cloud backoff when applicable and returned exhausted-inference fallback",
             )
             cloud_err_text = str(cloud_err)
-            if "429" in cloud_err_text or "quota" in cloud_err_text.lower():
-                self._cloud_backoff_until = time.monotonic() + 60.0
+            # The outer handler cannot attribute the failure to one provider,
+            # so this is the only place a shared deadline is still right.
+            if self._note_cloud_provider_failure("cloud", cloud_err_text):
+                self._cloud_backoff_until = time.monotonic() + self._CLOUD_BACKOFF_S
             logger.error("☁️ Cloud fallback failed: %s", cloud_err)
 
         # All inference paths exhausted. Return None so callers can handle

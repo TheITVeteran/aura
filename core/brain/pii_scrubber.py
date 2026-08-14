@@ -14,6 +14,7 @@ personality context in cloud responses than to transmit real PII to
 third-party inference infrastructure.
 """
 
+import hashlib
 import logging
 import re
 from typing import Optional
@@ -47,6 +48,18 @@ _PII_SECTION_MARKERS = (
 
 # Regex patterns for common PII structures in Aura's prompts
 _PII_PATTERNS = [
+    # Contact details and credentials. The scrubber's name list catches
+    # "Bryan"; nothing caught an email address, a phone number, or an API key
+    # pasted into a prompt — and a third-party provider is exactly who must
+    # not receive those. residual_pii_findings() checks that these were
+    # actually removed, so a pattern that stops matching blocks the send
+    # instead of quietly letting the data through.
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[REDACTED_EMAIL]"),
+    (re.compile(r"\+?\d[\d\s().-]{8,}\d"), "[REDACTED_NUMBER]"),
+    (
+        re.compile(r"\b(?:sk|pk|api|key)[-_][A-Za-z0-9]{16,}\b", re.IGNORECASE),
+        "[REDACTED_KEY]",
+    ),
     # Trust scores: "trust": 0.92, trust=0.92, trust: 0.92
     (re.compile(r'"?trust"?\s*[:=]\s*\d+\.\d+', re.IGNORECASE), '"trust": [REDACTED]'),
     # Relationship labels: "relation": "Architect / Friend / Equal"
@@ -183,3 +196,67 @@ def scrub_pii_for_cloud(text: str) -> str:
 def get_pii_patterns() -> list[tuple[re.Pattern, str]]:
     """Return the PII patterns for external testing/validation."""
     return list(_PII_PATTERNS)
+
+
+#: Bumped whenever the patterns, the section markers, or the name handling
+#: change. A receipt without it cannot say WHICH scrubber produced the text,
+#: and two calls in one send could otherwise have used different ones.
+SCRUBBER_VERSION = "aura.pii_scrubber.v1"
+
+#: Shapes that must not survive scrubbing. These are the residual scan, not
+#: the scrubbing itself: the scrubber replaces, and this checks whether the
+#: replacement actually happened before the text leaves the machine.
+_RESIDUAL_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("email", re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")),
+    ("phone", re.compile(r"\+?\d[\d\s().-]{8,}\d")),
+    ("api_key", re.compile(r"\b(?:sk|pk|api|key)[-_][A-Za-z0-9]{16,}\b", re.IGNORECASE)),
+    ("trust_score", re.compile(r'"?trust"?\s*[:=]\s*\d+\.\d+', re.IGNORECASE)),
+]
+
+
+def residual_pii_findings(text: str) -> list[str]:
+    """Kinds of personal data still present AFTER scrubbing.
+
+    The privacy claim on the cloud path was two scrubbed strings and a comment.
+    Nothing checked whether the scrub worked, so a name the loader could not
+    read, or a shape no pattern covered, left the machine with the claim
+    intact. A non-empty result here blocks the send.
+    """
+    body = str(text or "")
+    if not body:
+        return []
+    findings = [name for name, pattern in _RESIDUAL_PATTERNS if pattern.search(body)]
+    try:
+        for name in _get_private_names():
+            if name and name in body:
+                findings.append("private_name")
+                break
+    except PrivateNamesUnavailable:
+        # Unable to check is not the same as clean. Say so; the caller blocks.
+        findings.append("private_names_unreadable")
+    return sorted(set(findings))
+
+
+def scrub_for_cloud_with_receipt(text: str) -> tuple[str, dict]:
+    """Scrub, then record what the scrub actually did.
+
+    The receipt is the difference between "we scrub before sending" as a
+    comment and as a checkable claim: which scrubber, what went in (by hash),
+    what came out (by hash), and whether anything recognisable survived.
+    """
+    source = str(text or "")
+    scrubbed = scrub_pii_for_cloud(source)
+    scrubbed_text = "" if scrubbed is None else str(scrubbed)
+    residual = residual_pii_findings(scrubbed_text)
+    receipt = {
+        "schema": "aura.cloud.privacy_receipt.v1",
+        "scrubber_version": SCRUBBER_VERSION,
+        "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+        "scrubbed_sha256": hashlib.sha256(scrubbed_text.encode("utf-8")).hexdigest(),
+        "source_chars": len(source),
+        "scrubbed_chars": len(scrubbed_text),
+        "changed": scrubbed_text != source,
+        "residual_findings": residual,
+        "safe_to_send": not residual and bool(scrubbed_text or not source),
+    }
+    return scrubbed_text, receipt

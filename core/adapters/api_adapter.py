@@ -388,12 +388,19 @@ class APIAdapter:
             model_name = GEMINI_MODELS.get(tier, GEMINI_MODELS["api_fast"])
             if self.has_gemini and time.monotonic() >= self._gemini_backoff_until:
                 self._last_gemini_error = ""
+                # Native role separation. _gemini_generate has always
+                # accepted system_instruction and nothing ever passed one, so
+                # callers flattened the system prompt into the user string with
+                # "User:"/"Aura:" labels — text the user can write themselves,
+                # competing with the instructions it was pretending to be.
+                system_instruction = str(config.get("system_instruction", "") or "") or None
                 try:
                     result = await self._gemini_generate(
                         prompt,
                         tier,
                         temperature,
                         max_tokens,
+                        system_instruction=system_instruction,
                         config=config,
                     )
                 except (
@@ -424,6 +431,10 @@ class APIAdapter:
                         "model": model_name,
                         "is_local": False,
                         "provider_verified": True,
+                        # Provable, rather than assumed: a caller can check
+                        # that the system prompt travelled as a system
+                        # instruction and not as user-visible text.
+                        "role_separation": "native" if system_instruction else "none",
                         "fallback_chain": fallback_chain,
                         "error": "",
                     }
