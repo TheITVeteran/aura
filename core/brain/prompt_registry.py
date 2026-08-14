@@ -14,6 +14,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.PromptRegistry")
 
@@ -134,7 +135,20 @@ def _bootstrap_prompts():
             category="reflection",
             description="Drives autonomous thinking when no one is talking to Aura",
         )
-    except ImportError:
-        logger.debug("aura_persona not available for prompt bootstrap")
+    except ImportError as exc:
+        # A debug line for a registry that came up EMPTY or half-populated.
+        # These are the identity prompt injected into every LLM call, the
+        # reflection prompt and the autonomous-thought prompt: without them
+        # she still runs, and still sounds like a general assistant rather
+        # than like herself, with nothing at boot saying why.
+        record_degradation(
+            "prompt_registry",
+            exc,
+            severity="critical",
+            action="booted with an incomplete prompt registry; identity prompts are missing",
+            extra={"registered": sorted(prompt_registry.names())
+                   if hasattr(prompt_registry, "names") else []},
+        )
+        logger.error("aura_persona unavailable; prompt registry is incomplete: %s", exc)
 
 _bootstrap_prompts()

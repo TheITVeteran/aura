@@ -397,8 +397,9 @@ class EmbodiedInteroception:
 
         # 8. Disk capacity → organ capacity
         try:
-            disk = psutil.disk_usage("/")
-            self.channels["disk_capacity"].update(disk.percent / 100.0)
+            from core.runtime.disk_budget import state_volume_percent
+
+            self.channels["disk_capacity"].update(state_volume_percent() / 100.0)
         except _EMBODIED_INTEROCEPTION_RECOVERABLE_ERRORS:
             self.channels["disk_capacity"].fail_safe()
 

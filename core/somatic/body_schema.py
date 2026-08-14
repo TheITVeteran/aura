@@ -341,7 +341,9 @@ class BodySchema(AuraBaseModule):
         ))
 
         # Disk space awareness
-        disk = psutil.disk_usage("/")
+        from core.runtime.disk_budget import state_volume_usage
+
+        disk = state_volume_usage()
         self._register_limb(Limb(
             name="disk_sensor",
             limb_type=LimbType.SENSOR,

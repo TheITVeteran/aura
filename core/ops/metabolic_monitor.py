@@ -243,7 +243,9 @@ class MetabolicMonitor:
 
             cpu, rss_mb = self._sanitize_metrics(cpu, rss_mb)
             system_ram_percent = _clamp(float(psutil.virtual_memory().percent), 0.0, 100.0)
-            disk_percent = _clamp(float(psutil.disk_usage("/").percent), 0.0, 100.0)
+            from core.runtime.disk_budget import state_volume_percent
+
+            disk_percent = _clamp(float(state_volume_percent()), 0.0, 100.0)
 
             with self._lock:
                 avg_latency = (

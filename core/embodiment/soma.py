@@ -10,6 +10,7 @@ from typing import Any, Dict
 from core.runtime import resource_psutil as psutil
 from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import record_degradation
+from core.runtime.disk_budget import state_volume_percent, state_volume_usage
 
 
 class SystemSoma(AuraBaseModule):
@@ -45,7 +46,7 @@ class SystemSoma(AuraBaseModule):
             self._somatic_state["thermal_load"] = cpu_pct
             
             # 3. Vitality (Disk space + System Load)
-            disk = psutil.disk_usage('/')
+            disk = state_volume_usage()
             disk_pct = disk.percent / 100.0
             
             # Vitality drops as resources saturate
@@ -70,6 +71,6 @@ class SystemSoma(AuraBaseModule):
             "metrics": {
                 "cpu": psutil.cpu_percent(),
                 "ram": psutil.virtual_memory().percent,
-                "disk": psutil.disk_usage('/').percent
+                "disk": state_volume_percent()
             }
         }

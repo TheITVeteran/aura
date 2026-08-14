@@ -17,6 +17,11 @@ from core.memory.retention_policy import training_buffer_retention_policy
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.tasks.managed_command import run_project_command
+from core.runtime.disk_budget import (
+    DiskBudgetRefusal,
+    directory_bytes,
+    ensure_headroom_for,
+)
 
 logger = logging.getLogger("Aura.LiveLearner")
 _LIVE_LEARNER_RECOVERABLE_ERRORS = (
@@ -986,6 +991,24 @@ class LiveLearner:
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         fused_path = self._fused_dir / f"Aura-live-{timestamp}"
         fused_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # A fused 32B is ~17GB. Sixty of them, written by paths that could not
+        # decline, is how the volume reached 99% and pinned metabolism in
+        # lockdown. Refuse before spawning, so the failure is a legible receipt
+        # rather than a half-written model on a full disk.
+        try:
+            ensure_headroom_for(
+                directory_bytes(model_path),
+                purpose=f"fuse {Path(str(model_path)).name} -> {fused_path.name}",
+                path=fused_path.parent,
+            )
+        except DiskBudgetRefusal as exc:
+            record_degradation(
+                "live_learner",
+                exc,
+                action="deferred a fuse that would not fit on the volume",
+            )
+            return False, str(exc), None
         cmd = (
             sys.executable, "-m", "mlx_lm", "fuse",
             "--model", str(model_path),

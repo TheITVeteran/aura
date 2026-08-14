@@ -152,22 +152,22 @@ class Quarantine:
 def _data_volume_percent(psutil_module: object) -> float:
     """Percent used of the volume holding Aura's state, not of "/".
 
-    Falls back to "/" only when the state root cannot be resolved, because a
-    reading from the wrong mount is worse than a slightly stale one.
+    Delegates rather than re-deriving: this monitor having its own idea of
+    where "the disk" is, is the defect that put ten subsystems on a read-only
+    system volume. The psutil module stays in the signature for the callers
+    that inject a fake one; it is only consulted if the canonical reading is
+    unavailable.
     """
     try:
-        from core.runtime.state_ownership import state_root
+        from core.runtime.disk_budget import state_volume_percent
 
-        target = str(state_root())
-    except (ImportError, RuntimeError, OSError, ValueError):
-        target = "/"
+        return float(state_volume_percent())
+    except (ImportError, OSError, ValueError):
+        pass
     try:
-        return float(psutil_module.disk_usage(target).percent)
+        return float(psutil_module.disk_usage("/").percent)
     except (OSError, ValueError, AttributeError):
-        try:
-            return float(psutil_module.disk_usage("/").percent)
-        except (OSError, ValueError, AttributeError):
-            return 0.0
+        return 0.0
 
 
 

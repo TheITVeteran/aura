@@ -55,8 +55,27 @@ class NarratorService:
         reasoning = action.get("reasoning", "")
         source = action.get("source", "agency")
 
-        # Fallback if services aren't available
+        # Fallback if services aren't available.
+        #
+        # This returns the RAW internal action message — the text the agency
+        # layer wrote for itself — straight to whoever asked for narration,
+        # and it used to do so without a word. The other two fallbacks below
+        # at least record a degradation; this one, the most likely to fire
+        # (it needs only a missing service, not an exception), recorded
+        # nothing. So internal phrasing reaching a person looked exactly
+        # like narration that worked.
         if not self.personality or not self.llm_router:
+            record_degradation(
+                "narrator",
+                RuntimeError("narration services unavailable"),
+                severity="warning",
+                action="returned the raw internal action message unnarrated",
+                extra={
+                    "action_type": str(action_type),
+                    "has_personality": bool(self.personality),
+                    "has_router": bool(self.llm_router),
+                },
+            )
             return f"{raw_message}"
 
         # Gather affective context safely

@@ -93,6 +93,7 @@ from core.learning.rsi_lineage import (
     improver_efficiency,
 )
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.disk_budget import DiskBudgetRefusal, ensure_headroom_for
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.WeightCompounding")
@@ -681,6 +682,34 @@ class WeightCompoundingLoop:
             return False, f"available={available >> 30}GB<peak≈{needed >> 30}GB"
         return True, f"available={available >> 30}GB>=peak≈{needed >> 30}GB"
 
+    def _fuse_disk_admits(self, base_model: str) -> tuple[bool, str]:
+        """True if the fused artifact fits without pushing the volume red.
+
+        The memory admission above asks "is there RAM for this?" and nothing
+        ever asked "is there DISK for this?". On 2026-08-13 the answer had been
+        no for a while: 19GB free on 1.8TB, the volume pinned at 99%, metabolism
+        in permanent lockdown. Sixty worktrees had each written their own 17GB
+        copy of a fused model, and no code path anywhere was able to decline.
+
+        Operator runs are NOT exempt, unlike the RAM check. An OOM kills one
+        subprocess and the host survives; filling the volume corrupts the
+        artifact being written AND every other writer on the machine, with no
+        kernel backstop to choose a victim.
+        """
+        model_dir = _resolve_model_dir(base_model)
+        base_bytes = _dir_weight_bytes(model_dir) if model_dir is not None else 0
+        if base_bytes == 0:
+            return True, "unknown_footprint"  # can't size it; don't block on ignorance
+        try:
+            ensure_headroom_for(
+                base_bytes,
+                purpose=f"fuse {base_model} -> {self.config.fused_root.name}",
+                path=self.config.fused_root,
+            )
+        except DiskBudgetRefusal as exc:
+            return False, str(exc)
+        return True, f"fits≈{base_bytes >> 30}GB"
+
     def fuse_and_publish(
         self,
         base_model: str,
@@ -701,6 +730,13 @@ class WeightCompoundingLoop:
         fits, admit_reason = self._fuse_memory_admits(base_model)
         if not fits:
             return "", [f"fuse_deferred_memory:{admit_reason}"]
+
+        # Pre-fuse DISK admission. Same deferral semantics: a gated adapter is
+        # preserved for a later window, not thrown away, and not written into a
+        # volume that cannot hold it.
+        fits_disk, disk_reason = self._fuse_disk_admits(base_model)
+        if not fits_disk:
+            return "", [f"fuse_deferred_disk:{disk_reason}"]
 
         command = (
             sys.executable, "-m", "mlx_lm", "fuse",

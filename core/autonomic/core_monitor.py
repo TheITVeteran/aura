@@ -112,12 +112,17 @@ class AutonomicCore:
         """
         try:
             mem = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
+            from core.runtime.disk_budget import (
+                DISK_RED_PERCENT,
+                state_volume_percent,
+            )
+
+            disk_percent = state_volume_percent()
             now = time.time()
 
             # 1. Critical Existential Threat — auto-recovery (Zero-Touch)
-            if mem.percent >= self.critical_ram_percent or disk.percent > 98.0:
-                logger.critical("Critical resource pressure (RAM: %s%%, Disk: %s%%). Auto-recovery.", mem.percent, disk.percent)
+            if mem.percent >= self.critical_ram_percent or disk_percent > DISK_RED_PERCENT:
+                logger.critical("Critical resource pressure (RAM: %s%%, Disk: %s%%). Auto-recovery.", mem.percent, disk_percent)
                 # The MOST severe tier must not leave memory_pressure reading
                 # False from an earlier healthy sample: only the 94-96%
                 # throttle branch used to set it, so at 96-100% every consumer

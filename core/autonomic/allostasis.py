@@ -52,6 +52,12 @@ into her control state, not a phenomenal one. The report boundary of
 """
 from __future__ import annotations
 
+from core.runtime.disk_budget import (
+    DISK_AMBER_PERCENT,
+    DISK_RED_PERCENT,
+    DISK_SETPOINT_PERCENT,
+)
+
 import asyncio
 import enum
 import json
@@ -480,7 +486,8 @@ def default_vital_specs() -> tuple[VitalSpec, ...]:
                   amber=1.0, red=5.0, setpoint=0.25,
                   min_meaningful_slope=0.25 / 3600.0),
         VitalSpec("disk_percent", "disk usage", "%",
-                  amber=92.0, red=98.0, setpoint=85.0,
+                  amber=DISK_AMBER_PERCENT, red=DISK_RED_PERCENT,
+                  setpoint=DISK_SETPOINT_PERCENT,
                   min_meaningful_slope=0.5 / 3600.0),
         VitalSpec("thermal_level", "thermal pressure", "level",
                   amber=2.0, red=3.0, setpoint=1.0,

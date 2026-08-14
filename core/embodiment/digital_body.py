@@ -72,7 +72,9 @@ class DigitalBody:
                     # Non-blocking CPU reading
                     cpu = psutil.cpu_percent(interval=None)
                     mem = psutil.virtual_memory().percent
-                    disk = psutil.disk_usage("/").percent
+                    from core.runtime.disk_budget import state_volume_percent
+
+                    disk = state_volume_percent()
 
                     self.resource_state["cpu_percent"] = float(cpu)
                     self.resource_state["memory_percent"] = float(mem)

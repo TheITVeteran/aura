@@ -36,6 +36,7 @@ from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
 from interface.auth import _require_internal
+from core.runtime.disk_budget import state_volume_percent
 
 logger = logging.getLogger("Aura.Server.Dashboard")
 
@@ -148,7 +149,7 @@ async def snapshot(_: None = Depends(_require_internal)) -> JSONResponse:
         payload["system"] = {
             "cpu_pct": psutil.cpu_percent(interval=None),
             "ram_pct": psutil.virtual_memory().percent,
-            "disk_pct": _safe(lambda: psutil.disk_usage("/").percent, default=0.0),
+            "disk_pct": _safe(lambda: state_volume_percent(), default=0.0),
             "uptime_s": time.time() - psutil.boot_time(),
         }
     except _DASHBOARD_ERRORS as exc:

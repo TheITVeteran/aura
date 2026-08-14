@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.disk_budget import state_volume_percent
 
 try:
     from core.runtime import resource_psutil as psutil
@@ -252,7 +253,7 @@ class Tricorder:
             hw_stats = {
                 "cpu_percent": psutil.cpu_percent(),
                 "memory_percent": psutil.virtual_memory().percent,
-                "disk_usage": psutil.disk_usage('/').percent
+                "disk_usage": state_volume_percent()
             }
 
         # 2. Cognitive Dimension

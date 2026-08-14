@@ -2442,7 +2442,9 @@ async def _collect_soma_payload(*, refresh: bool = True) -> dict[str, Any]:
         try:
             cpu_pct = float(psutil.cpu_percent(interval=None) or 0.0) / 100.0
             ram = psutil.virtual_memory()
-            disk = psutil.disk_usage("/")
+            from core.runtime.disk_budget import state_volume_usage
+
+            disk = state_volume_usage()
             ram_pct = float(getattr(ram, "percent", 0.0) or 0.0) / 100.0
             disk_pct = float(getattr(disk, "percent", 0.0) or 0.0) / 100.0
             vitality = max(0.0, 1.0 - (max(cpu_pct, ram_pct, disk_pct) * 0.2))

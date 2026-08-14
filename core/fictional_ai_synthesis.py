@@ -251,12 +251,14 @@ class ProactiveAnticipationEngine:
         try:
             cpu = psutil.cpu_percent(interval=None)
             mem = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
+            from core.runtime.disk_budget import state_volume_percent
+
+            disk_percent = state_volume_percent()
             return {
                 "cpu_percent": cpu,
                 "memory_percent": mem.percent,
                 "memory_available_gb": mem.available / (1024**3),
-                "disk_percent": disk.percent,
+                "disk_percent": disk_percent,
             }
         except (ImportError, OSError, AttributeError) as e:
             _record_fictional_degradation(

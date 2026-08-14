@@ -433,7 +433,9 @@ class MetabolicCoordinator:
         try:
             from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory().percent
-            disk = psutil.disk_usage("/").percent
+            from core.runtime.disk_budget import state_volume_percent
+
+            disk = state_volume_percent()
             return mem > 90 or disk > 95
         except (ImportError, OSError, AttributeError, RuntimeError, TypeError, ValueError):
             return False

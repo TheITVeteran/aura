@@ -39,12 +39,41 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 __all__ = [
+    "DISK_AMBER_PERCENT",
+    "DISK_RED_PERCENT",
+    "DISK_SETPOINT_PERCENT",
     "DiskBudgetRefusal",
     "FreeSpace",
+    "directory_bytes",
     "ensure_headroom_for",
     "free_space",
     "prune_superseded_artifacts",
+    "state_volume_percent",
+    "state_volume_usage",
 ]
+
+# ── one reading, one red line ────────────────────────────────────────────────
+#
+# Nine subsystems each called psutil.disk_usage("/") and compared it against
+# thresholds they declared themselves: allostasis (amber 92 / red 98),
+# survival_driver (95 / 98), fictional_ai_synthesis (>90), and six more. Every
+# one of them was measuring a mount that is not where Aura writes — on macOS
+# "/" is a sealed read-only volume sharing an APFS container with
+# /System/Volumes/Data, so what it reports depends on which of the two the
+# reading resolves to.
+#
+# That is not nine bugs to fix nine times. A vital that several subsystems each
+# sample their own way, against their own numbers, cannot be reasoned about:
+# they can disagree about whether the disk is full while all claiming to
+# measure "the disk". So there is now one reading and one set of thresholds,
+# and the subsystems consume them instead of restating them.
+
+#: Percent-used thresholds for the state volume. These are the numbers the
+#: allostasis vital and the reactive survival checks both consume; changing a
+#: red line here changes it everywhere, which is the point.
+DISK_AMBER_PERCENT = 92.0
+DISK_RED_PERCENT = 98.0
+DISK_SETPOINT_PERCENT = 85.0
 
 #: Below this, a large optional write is refused rather than attempted. A model
 #: fuse that lands on a full volume corrupts the artifact AND the host.
@@ -71,6 +100,27 @@ class FreeSpace:
             return 0.0
         return max(0.0, min(1.0, 1.0 - (self.free_gb / self.total_gb)))
 
+    # ── psutil.disk_usage() shape ────────────────────────────────────────────
+    # Named to match what psutil returns so a call site that was reading the
+    # wrong mount becomes correct by swapping the call, with nothing else to
+    # get subtly wrong in the arithmetic around it.
+
+    @property
+    def percent(self) -> float:
+        return self.used_fraction * 100.0
+
+    @property
+    def total(self) -> int:
+        return int(self.total_gb * (1024**3))
+
+    @property
+    def free(self) -> int:
+        return int(self.free_gb * (1024**3))
+
+    @property
+    def used(self) -> int:
+        return max(0, self.total - self.free)
+
 
 def free_space(path: Any = "/") -> FreeSpace:
     """Free and total gigabytes on the volume holding `path`."""
@@ -86,6 +136,68 @@ def free_space(path: Any = "/") -> FreeSpace:
     )
 
 
+def directory_bytes(path: Any) -> int:
+    """Total size of the files under `path`, or 0 when it cannot be read.
+
+    Used to size a write before making it. Returning 0 on failure is
+    deliberate: an unknown footprint must not block a legitimate write, only
+    a known-too-large one.
+    """
+
+    root = Path(str(path or "")).expanduser()
+    if not root.is_dir():
+        try:
+            return int(root.stat().st_size)
+        except OSError:
+            return 0
+    total = 0
+    try:
+        for item in root.rglob("*"):
+            try:
+                if item.is_file():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
+def state_volume_usage() -> FreeSpace:
+    """Usage of the volume Aura writes to, in psutil.disk_usage()'s shape."""
+
+    try:
+        from core.runtime.state_ownership import state_root
+
+        target: Any = state_root()
+    except (ImportError, RuntimeError, OSError, ValueError):
+        target = "/"
+    try:
+        return free_space(target)
+    except (OSError, ValueError):
+        return FreeSpace(path=str(target), free_gb=0.0, total_gb=0.0)
+
+
+def state_volume_percent() -> float:
+    """Percent used of the volume Aura writes to — the one canonical reading.
+
+    Every disk vital in the system resolves through here. Callers must not
+    re-probe a mount of their own choosing: that is how nine subsystems ended
+    up measuring a read-only system volume and calling it "the disk".
+    """
+
+    try:
+        from core.runtime.state_ownership import state_root
+
+        target: Any = state_root()
+    except (ImportError, RuntimeError, OSError, ValueError):
+        target = "/"
+    try:
+        return float(free_space(target).used_fraction * 100.0)
+    except (OSError, ValueError):
+        return 0.0
+
+
 def ensure_headroom_for(
     estimated_bytes: int,
     *,
@@ -97,13 +209,35 @@ def ensure_headroom_for(
 
     The estimate does not have to be exact. What matters is that a 17GB artifact
     cannot be started with 19GB free and no one asking.
+
+    Two conditions, because a fixed floor and a percentage answer different
+    questions on different-sized volumes: the write must leave `floor_gb`
+    behind, AND it must not push the volume past the red line the rest of the
+    system already acts on. Whichever binds first wins.
     """
 
     space = free_space(path)
     needed_gb = max(0.0, float(estimated_bytes)) / float(1024**3)
     remaining_after = space.free_gb - needed_gb
-    if remaining_after >= floor_gb:
+    percent_after = (
+        100.0 * (1.0 - (remaining_after / space.total_gb))
+        if space.total_gb > 0
+        else 0.0
+    )
+    if remaining_after >= floor_gb and percent_after < DISK_RED_PERCENT:
         return
+    if percent_after >= DISK_RED_PERCENT and remaining_after >= floor_gb:
+        refusal = DiskBudgetRefusal(
+            f"{purpose} needs {needed_gb:.1f}GB and would put {space.path} at "
+            f"{percent_after:.1f}% used, past the {DISK_RED_PERCENT:.0f}% red line "
+            f"(free now {space.free_gb:.1f}GB of {space.total_gb:.1f}GB)"
+        )
+        record_degradation(
+            "disk_budget",
+            refusal,
+            action="declined a large artifact write to protect the volume",
+        )
+        raise refusal
     refusal = DiskBudgetRefusal(
         f"{purpose} needs {needed_gb:.1f}GB and would leave {remaining_after:.1f}GB "
         f"on {space.path}, below the {floor_gb:.1f}GB floor "

@@ -359,7 +359,9 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
             pass  # no-op: intentional
 
         try:
-            disk = psutil.disk_usage("/")
+            from core.runtime.disk_budget import state_volume_usage
+
+            disk = state_volume_usage()
             body.update_limb(
                 "disk_sensor",
                 metadata_patch={

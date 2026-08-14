@@ -373,7 +373,9 @@ def _sample_from_container() -> ViabilitySample:
         cpu = psutil.cpu_percent(interval=None)
         ram = psutil.virtual_memory().percent
         try:
-            disk = psutil.disk_usage("/").percent
+            from core.runtime.disk_budget import state_volume_percent
+
+            disk = state_volume_percent()
         except (ImportError, OSError, AttributeError) as exc:
             record_degradation("viability", exc)
             logger.debug("Viability disk usage probe failed: %s", exc)
