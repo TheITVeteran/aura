@@ -48,7 +48,16 @@ async def test_prepare_runtime_payload_preserves_prompt_when_contract_state_is_i
     assert prompt == "Can you still answer?"
     assert system_prompt is None
     assert messages is None
-    assert contract is None
+    # Falsy exactly as `None` was, so every `if contract:` branch downstream
+    # behaves identically and the turn still proceeds without a contract.
+    assert not contract
+    # ...but no longer INDISTINGUISHABLE from a turn that never needed one.
+    # `contract is None` used to be both "this turn wants no contract" and
+    # "contract construction failed and we are generating without the rules
+    # that make the reply hers".
+    assert contract is not None
+    assert contract.reason == "contract_construction_failed"
+    assert "AttributeError" in contract.error
     assert runtime_state is not None
     actions = [
         record.action for record in get_degradation_tracker().recent(subsystem="runtime_wiring")
@@ -292,3 +301,40 @@ def test_substrate_generation_overrides_reuse_fresh_turn_profile(monkeypatch):
     assert overrides["temperature"] == pytest.approx(0.62)
     assert overrides["top_p"] == pytest.approx(0.81)
     assert overrides["substrate_generation_source"] == "bounded_voice, reused_runtime_profile"
+
+
+def test_a_failed_contract_still_gets_the_state_machine_default():
+    """The falsy sentinel must not silently skip a substitution.
+
+    `state_machine` substitutes a default `ResponseContract` when
+    `prepare_runtime_payload` returns nothing. It tested `contract is None`,
+    which the new `ContractUnavailable` does NOT satisfy — so a turn whose
+    contract failed to BUILD would have proceeded with no contract at all,
+    exactly where it previously received the default. Adding a distinction
+    must not quietly remove a fallback.
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "core" / "cognitive" / "state_machine.py"
+    ).read_text("utf-8")
+
+    block = source[source.index("state_machine_dialogue") - 500 :]
+    block = block[: source[source.index("state_machine_dialogue") - 500 :].index("state_machine_dialogue")]
+
+    assert "if contract is None:" not in block, (
+        "the default-contract substitution tests identity again, so a "
+        "ContractUnavailable skips it"
+    )
+    assert "if not contract:" in block
+
+
+def test_the_sentinel_is_falsy_so_existing_branches_are_unchanged():
+    from core.brain.llm.runtime_wiring import ContractUnavailable
+
+    contract = ContractUnavailable(reason="contract_construction_failed")
+
+    assert not contract
+    assert bool(contract) is False
+    # And still distinguishable, which is the entire point.
+    assert contract is not None

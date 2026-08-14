@@ -502,7 +502,13 @@ class StateMachine:
                 origin=origin,
                 is_background=not is_user_facing_origin(origin),
             )
-            if contract is None:
+            # Falsiness, not `is None`. `prepare_runtime_payload` now returns
+            # a falsy `ContractUnavailable` when contract CONSTRUCTION FAILED,
+            # to keep that case distinguishable from a turn that never wanted
+            # one — and this substitution must fire for both, or a turn whose
+            # contract failed to build would proceed with no contract at all
+            # where it previously got the default.
+            if not contract:
                 contract = ResponseContract(
                     is_user_facing=is_user_facing_origin(origin),
                     reason="state_machine_dialogue",

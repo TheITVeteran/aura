@@ -16,6 +16,7 @@ from core.phases.response_contract import (
 )
 from core.runtime import service_access
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,34 @@ _MEMORY_HYDRATION_REQUEST_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class ContractUnavailable:
+    """A response contract that could not be built, in the slot where one goes.
+
+    `contract = None` meant two things: "this turn needs no contract" (a
+    background turn, the common case) and "contract construction FAILED and
+    the turn is being generated without the rules that make the reply hers".
+    The second was recorded at critical severity and then handed to the
+    caller as the same `None` as the first, so nothing downstream could tell
+    a deliberate absence from a lost one.
+
+    Deliberately FALSY. Every existing `if contract:` and
+    `if contract and contract.reason != ...` branch treats it exactly as it
+    treated `None`, so generation behaviour is unchanged — this adds a
+    distinction without moving the code that reads it. A caller that wants
+    to know asks `contract is not None` or reads `.error`.
+
+    Returned rather than raised: a user-facing turn with no contract is
+    worse than one with, and better than no reply at all.
+    """
+
+    reason: str
+    error: str = ""
+
+    def __bool__(self) -> bool:
+        return False
 
 
 def _record_runtime_wiring_degradation(
@@ -559,7 +588,13 @@ async def prepare_runtime_payload(
                 severity="critical",
                 extra={"origin": str(origin or "system"), "objective_preview": objective[:160]},
             )
-            contract = None
+            # Not a bare None. See ContractUnavailable: this turn is being
+            # generated WITHOUT its response contract, which is a different
+            # fact from a turn that never needed one.
+            contract = ContractUnavailable(
+                reason="contract_construction_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
         if prepared_messages is None and not is_background:
             try:
