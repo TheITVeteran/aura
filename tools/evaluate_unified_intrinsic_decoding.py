@@ -541,6 +541,7 @@ def evaluate_decoding(
     per_cell: int,
     evaluation_seed: int,
     max_tokens: int,
+    bootstrap_output_dir: Path | None = None,
     task_depths: tuple[int, ...] | None = None,
     recurrence_depths: tuple[int, ...] | None = None,
     memory_limit_gb: float = 40.0,
@@ -572,6 +573,7 @@ def evaluate_decoding(
     with unified_evaluation_context(
         campaign_dir,
         stem=stem,
+        bootstrap_output_dir=bootstrap_output_dir,
         memory_limit_gb=memory_limit_gb,
         cache_limit_gb=cache_limit_gb,
         wired_limit_gb=wired_limit_gb,
@@ -639,6 +641,7 @@ def main() -> int:
     parser.add_argument("--per-cell", type=int, default=1)
     parser.add_argument("--evaluation-seed", type=int, default=20260810203)
     parser.add_argument("--max-tokens", type=int, default=32)
+    parser.add_argument("--bootstrap-output-dir", type=Path)
     parser.add_argument(
         "--task-depths",
         help="comma-separated task difficulties; defaults to campaign depth",
@@ -668,6 +671,7 @@ def main() -> int:
         per_cell=args.per_cell,
         evaluation_seed=args.evaluation_seed,
         max_tokens=args.max_tokens,
+        bootstrap_output_dir=args.bootstrap_output_dir,
         task_depths=(
             tuple(int(value) for value in args.task_depths.split(",")) if args.task_depths else None
         ),

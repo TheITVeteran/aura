@@ -135,17 +135,28 @@ def _load_resident_campaign_config(path: Path) -> dict[str, Any]:
     return _load_config(path)
 
 
-def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
+def _evaluation_layout(
+    campaign_dir: Path,
+    *,
+    bootstrap_output_dir: Path | None = None,
+) -> EvaluationLayout:
     """Resolve legacy co-located or resident split-output campaign storage."""
 
     root = campaign_dir.expanduser().resolve(strict=True)
+    explicit_bootstrap = (
+        bootstrap_output_dir.expanduser().resolve(strict=True)
+        if bootstrap_output_dir is not None
+        else None
+    )
+    if explicit_bootstrap is not None and not explicit_bootstrap.is_dir():
+        raise RuntimeError("unified checkpoint bootstrap output is not a directory")
     config_path = root / "campaign.json"
     if not config_path.exists():
         return EvaluationLayout(
             checkpoint_dir=root,
             dataset_path=root / "dataset.json",
             tokenized_dataset_path=root / TOKENIZED_DATASET_FILENAME,
-            bootstrap_output_dir=None,
+            bootstrap_output_dir=explicit_bootstrap,
         )
     config = _load_resident_campaign_config(config_path)
     paths = config.get("paths")
@@ -154,15 +165,22 @@ def _evaluation_layout(campaign_dir: Path) -> EvaluationLayout:
     configured_root = Path(str(paths["campaign_root"])).resolve(strict=True)
     if configured_root != root:
         raise RuntimeError("resident campaign root differs from evaluation root")
+    configured_bootstrap = (
+        Path(str(paths["bootstrap_output"])).resolve(strict=True)
+        if paths.get("bootstrap_output") is not None
+        else None
+    )
+    if (
+        explicit_bootstrap is not None
+        and configured_bootstrap is not None
+        and explicit_bootstrap != configured_bootstrap
+    ):
+        raise RuntimeError("explicit bootstrap output differs from resident campaign")
     return EvaluationLayout(
         checkpoint_dir=Path(str(paths["training_output"])).resolve(strict=True),
         dataset_path=Path(str(paths["dataset"])).resolve(strict=True),
         tokenized_dataset_path=Path(str(paths["tokenized_dataset"])).resolve(strict=True),
-        bootstrap_output_dir=(
-            Path(str(paths["bootstrap_output"])).resolve(strict=True)
-            if paths.get("bootstrap_output") is not None
-            else None
-        ),
+        bootstrap_output_dir=configured_bootstrap or explicit_bootstrap,
     )
 
 
@@ -571,6 +589,7 @@ def _load_checkpoint(
     campaign_dir: Path,
     *,
     stem: str,
+    bootstrap_output_dir: Path | None = None,
 ) -> tuple[
     UnifiedTrainingBundle,
     UnifiedRecurrentController,
@@ -578,7 +597,10 @@ def _load_checkpoint(
     UnifiedIntrinsicTrainingSpec,
     dict[str, Any],
 ]:
-    layout = _evaluation_layout(campaign_dir)
+    layout = _evaluation_layout(
+        campaign_dir,
+        bootstrap_output_dir=bootstrap_output_dir,
+    )
     try:
         resolved = resolve_checkpoint_generation(
             layout.checkpoint_dir,
@@ -800,6 +822,7 @@ def unified_evaluation_context(
     campaign_dir: Path,
     *,
     stem: str,
+    bootstrap_output_dir: Path | None = None,
     memory_limit_gb: float = 40.0,
     cache_limit_gb: float = 2.0,
     wired_limit_gb: float = 48.0,
@@ -826,7 +849,10 @@ def unified_evaluation_context(
     """Own the model lane and memory envelope for a complete evaluation."""
 
     campaign_dir = campaign_dir.expanduser().resolve(strict=True)
-    layout = _evaluation_layout(campaign_dir)
+    layout = _evaluation_layout(
+        campaign_dir,
+        bootstrap_output_dir=bootstrap_output_dir,
+    )
     resolved = resolve_checkpoint_generation(
         layout.checkpoint_dir,
         stem=stem,
@@ -879,6 +905,7 @@ def unified_evaluation_context(
         bundle, initial_controller, tokenizer, spec, identity = _load_checkpoint(
             campaign_dir,
             stem=stem,
+            bootstrap_output_dir=bootstrap_output_dir,
         )
         resource_receipt: dict[str, Any] | None = None
         if resource_enabled:
@@ -1066,6 +1093,7 @@ def evaluate_checkpoint(
     stem: str,
     per_cell: int,
     evaluation_seed: int,
+    bootstrap_output_dir: Path | None = None,
     memory_limit_gb: float = 40.0,
     cache_limit_gb: float = 2.0,
     wired_limit_gb: float = 48.0,
@@ -1080,6 +1108,7 @@ def evaluate_checkpoint(
     with unified_evaluation_context(
         campaign_dir,
         stem=stem,
+        bootstrap_output_dir=bootstrap_output_dir,
         memory_limit_gb=memory_limit_gb,
         cache_limit_gb=cache_limit_gb,
         wired_limit_gb=wired_limit_gb,
@@ -1125,6 +1154,7 @@ def main() -> int:
     parser.add_argument("--stem", default="checkpoint_best_heldout")
     parser.add_argument("--per-cell", type=int, default=8)
     parser.add_argument("--evaluation-seed", type=int, default=20260810203)
+    parser.add_argument("--bootstrap-output-dir", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--memory-limit-gb", type=float, default=40.0)
     parser.add_argument("--cache-limit-gb", type=float, default=2.0)
@@ -1142,6 +1172,7 @@ def main() -> int:
         stem=args.stem,
         per_cell=args.per_cell,
         evaluation_seed=args.evaluation_seed,
+        bootstrap_output_dir=args.bootstrap_output_dir,
         memory_limit_gb=args.memory_limit_gb,
         cache_limit_gb=args.cache_limit_gb,
         wired_limit_gb=args.wired_limit_gb,

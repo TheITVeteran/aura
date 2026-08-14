@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from core.brain.llm.latent_cortex.frontier_tasks import FRONTIER_DOMAINS
 from tools import run_unified_recurrent_transfer_canary as runner
 
@@ -38,6 +40,53 @@ class _Task:
             parsed=True,
             to_dict=lambda: {"correct": True, "parsed": True},
         )
+
+
+def test_runner_forwards_bootstrap_transport_to_layout_and_loader(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.mkdir()
+    observed: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(runner, "_ensure_private_directory", lambda path: path)
+    monkeypatch.setattr(runner, "_issuer", lambda *_args: object())
+    monkeypatch.setattr(runner, "_tasks", lambda _issuer: ())
+
+    def layout(_campaign_dir, *, bootstrap_output_dir=None):
+        observed.append(("layout", bootstrap_output_dir))
+        return SimpleNamespace(checkpoint_dir=tmp_path)
+
+    def context(_campaign_dir, **kwargs):
+        observed.append(("context", kwargs["bootstrap_output_dir"]))
+        raise RuntimeError("captured canary context")
+
+    monkeypatch.setattr(runner, "_evaluation_layout", layout)
+    monkeypatch.setattr(
+        runner,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(receipt={}),
+    )
+    monkeypatch.setattr(runner, "unified_evaluation_context", context)
+
+    with pytest.raises(RuntimeError, match="captured canary context"):
+        runner.run_canary(
+            campaign_dir=tmp_path,
+            stem="checkpoint_latest",
+            output_dir=tmp_path / "output",
+            seeds=(3,),
+            difficulty=1,
+            recurrence_depth=4,
+            max_tokens=16,
+            source_commit="a" * 40,
+            memory_limit_gb=4.0,
+            cache_limit_gb=1.0,
+            wired_limit_gb=8.0,
+            bootstrap_output_dir=bootstrap,
+        )
+
+    assert observed == [("layout", bootstrap), ("context", bootstrap)]
 
 
 def test_runner_executes_parent_treatment_and_real_action_lesion(

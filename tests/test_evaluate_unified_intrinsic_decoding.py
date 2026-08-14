@@ -4,6 +4,7 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 
+from tools import evaluate_unified_intrinsic_decoding as decoding  # noqa: E402
 from tools.evaluate_unified_intrinsic_decoding import (  # noqa: E402
     DECODE_CLAIM_BOUNDARY,
     _candidate_response,
@@ -105,3 +106,27 @@ def test_decode_task_depths_are_unique_positive_integers(tmp_path) -> None:
             max_tokens=8,
             recurrence_depths=(1,),
         )
+
+
+def test_decode_forwards_explicit_bootstrap_transport(tmp_path, monkeypatch) -> None:
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.mkdir()
+    observed: dict[str, object] = {}
+
+    def stop_after_capture(*_args, **kwargs):
+        observed.update(kwargs)
+        raise RuntimeError("captured evaluation context")
+
+    monkeypatch.setattr(decoding, "unified_evaluation_context", stop_after_capture)
+
+    with pytest.raises(RuntimeError, match="captured evaluation context"):
+        evaluate_decoding(
+            tmp_path,
+            stem="checkpoint",
+            per_cell=1,
+            evaluation_seed=3,
+            max_tokens=8,
+            bootstrap_output_dir=bootstrap,
+        )
+
+    assert observed["bootstrap_output_dir"] == bootstrap

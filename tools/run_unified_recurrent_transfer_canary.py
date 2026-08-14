@@ -291,13 +291,17 @@ def run_canary(
     memory_limit_gb: float,
     cache_limit_gb: float,
     wired_limit_gb: float,
+    bootstrap_output_dir: Path | None = None,
     pressure_broker_vm_stat_path: Path | None = None,
     pressure_broker_swapusage_path: Path | None = None,
 ) -> dict[str, Any]:
     output_dir = _ensure_private_directory(output_dir)
     issuer = _issuer(output_dir, seeds, difficulty)
     tasks = _tasks(issuer)
-    layout = _evaluation_layout(campaign_dir)
+    layout = _evaluation_layout(
+        campaign_dir,
+        bootstrap_output_dir=bootstrap_output_dir,
+    )
     resolved = resolve_checkpoint_generation(
         layout.checkpoint_dir,
         stem=stem,
@@ -309,6 +313,7 @@ def run_canary(
     with unified_evaluation_context(
         campaign_dir,
         stem=stem,
+        bootstrap_output_dir=bootstrap_output_dir,
         memory_limit_gb=memory_limit_gb,
         cache_limit_gb=cache_limit_gb,
         wired_limit_gb=wired_limit_gb,
@@ -377,6 +382,7 @@ def main() -> int:
     parser.add_argument("--memory-limit-gb", type=float, default=40.0)
     parser.add_argument("--cache-limit-gb", type=float, default=2.0)
     parser.add_argument("--wired-limit-gb", type=float, default=48.0)
+    parser.add_argument("--bootstrap-output-dir", type=Path)
     parser.add_argument("--pressure-broker-vm-stat-path", type=Path)
     parser.add_argument("--pressure-broker-swapusage-path", type=Path)
     arguments = parser.parse_args()
@@ -394,6 +400,7 @@ def main() -> int:
         memory_limit_gb=arguments.memory_limit_gb,
         cache_limit_gb=arguments.cache_limit_gb,
         wired_limit_gb=arguments.wired_limit_gb,
+        bootstrap_output_dir=arguments.bootstrap_output_dir,
         pressure_broker_vm_stat_path=arguments.pressure_broker_vm_stat_path,
         pressure_broker_swapusage_path=arguments.pressure_broker_swapusage_path,
     )

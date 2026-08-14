@@ -76,6 +76,17 @@ def test_evaluation_layout_supports_legacy_colocation(tmp_path) -> None:
     assert layout.bootstrap_output_dir is None
 
 
+def test_evaluation_layout_accepts_hash_verified_legacy_bootstrap_transport(tmp_path) -> None:
+    root = tmp_path / "campaign"
+    bootstrap = tmp_path / "bootstrap"
+    root.mkdir()
+    bootstrap.mkdir()
+
+    layout = _evaluation_layout(root, bootstrap_output_dir=bootstrap)
+
+    assert layout.bootstrap_output_dir == bootstrap.resolve()
+
+
 def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> None:
     root = tmp_path.resolve()
     inputs = root / "inputs"
@@ -107,6 +118,41 @@ def test_evaluation_layout_uses_resident_frozen_paths(tmp_path, monkeypatch) -> 
     assert layout.dataset_path == dataset
     assert layout.tokenized_dataset_path == tokenized
     assert layout.bootstrap_output_dir == bootstrap
+
+
+def test_evaluation_layout_refuses_resident_bootstrap_transport_substitution(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "campaign"
+    inputs = root / "inputs"
+    output = root / "training-output"
+    bootstrap = inputs / "bootstrap-output"
+    substitute = tmp_path / "substitute"
+    bootstrap.mkdir(parents=True)
+    output.mkdir()
+    substitute.mkdir()
+    dataset = inputs / "dataset.json"
+    tokenized = inputs / "tokenized_dataset.json"
+    dataset.write_text("{}", encoding="ascii")
+    tokenized.write_text("{}", encoding="ascii")
+    (root / "campaign.json").write_text("{}", encoding="ascii")
+    monkeypatch.setattr(
+        evaluator,
+        "_load_resident_campaign_config",
+        lambda _path: {
+            "paths": {
+                "campaign_root": str(root),
+                "training_output": str(output),
+                "dataset": str(dataset),
+                "tokenized_dataset": str(tokenized),
+                "bootstrap_output": str(bootstrap),
+            }
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="differs from resident campaign"):
+        _evaluation_layout(root, bootstrap_output_dir=substitute)
 
 
 def test_random_initial_controller_refuses_bootstrapped_identity() -> None:
