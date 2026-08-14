@@ -344,3 +344,79 @@ def test_a_valid_library_clears_the_error_and_keeps_its_revision(tmp_path):
         "a successful load must keep the on-disk revision; starting at 0 is "
         "what makes a later save look stale"
     )
+
+
+# ──── an empty override set meant two different things
+
+
+def test_a_failed_override_compilation_says_so_rather_than_returning_nothing(
+    monkeypatch,
+):
+    """`{}` from a failed compilation was indistinguishable from `{}`
+    meaning "no overrides were needed", so substrate-driven sampling and
+    voice constraints vanished with nothing the caller could see."""
+    from core.brain.llm import runtime_wiring as rw
+
+    class _Boom:
+        def get_generation_params_for(self, **_kw):
+            raise RuntimeError("substrate voice engine is down")
+
+    monkeypatch.setattr(
+        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
+        lambda: _Boom(),
+    )
+
+    overrides = rw.derive_substrate_generation_overrides(
+        runtime_state=object(), objective="say something", origin="user", is_background=False
+    )
+
+    assert overrides.get("substrate_generation_source", "").startswith("unavailable:"), (
+        f"a failed override compilation returned {overrides!r}, which reads "
+        "exactly like 'no overrides were needed'"
+    )
+
+
+def test_the_failure_marker_reaches_the_request():
+    """It rides the field the SUCCESS path already uses, so it arrives by a
+    route that exists rather than a new one."""
+    from core.brain.llm.llm_router import IntelligentLLMRouter
+
+    kwargs: dict = {}
+    IntelligentLLMRouter._apply_substrate_generation_overrides(
+        kwargs, {"substrate_generation_source": "unavailable:RuntimeError"}
+    )
+
+    assert kwargs["substrate_generation_source"] == "unavailable:RuntimeError"
+
+
+def test_no_sampling_values_are_invented_on_failure(monkeypatch):
+    """The caller's defaults still apply — that is the honest outcome. The
+    fix states it; it must not fabricate a temperature."""
+    from core.brain.llm import runtime_wiring as rw
+
+    class _Boom:
+        def get_generation_params_for(self, **_kw):
+            raise RuntimeError("down")
+
+    monkeypatch.setattr(
+        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
+        lambda: _Boom(),
+    )
+
+    overrides = rw.derive_substrate_generation_overrides(
+        runtime_state=object(), objective="x", origin="user", is_background=False
+    )
+
+    assert set(overrides) == {"substrate_generation_source"}
+
+
+def test_a_background_turn_still_needs_no_overrides():
+    """The fix must not turn "not applicable" into "failed"."""
+    from core.brain.llm.runtime_wiring import derive_substrate_generation_overrides
+
+    assert (
+        derive_substrate_generation_overrides(
+            runtime_state=None, objective="x", origin="s", is_background=True
+        )
+        == {}
+    )

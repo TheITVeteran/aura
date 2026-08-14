@@ -645,7 +645,24 @@ def derive_substrate_generation_overrides(
             extra={"origin": str(origin or "system"), "objective_preview": objective[:160]},
         )
         logger.debug("Substrate generation override skipped: %s", exc)
-        return {}
+        # NOT an empty dict. `{}` from a failed compilation was
+        # indistinguishable from `{}` meaning "no overrides were needed", so
+        # substrate-driven sampling and voice constraints vanished with
+        # nothing the caller could see — the degradation went to the log and
+        # the generation proceeded on caller defaults as though that had
+        # been the intent.
+        #
+        # `substrate_generation_source` is already the field the success
+        # path uses to say where the parameters came from, and the router
+        # passes it through to the request, so saying "unavailable" here
+        # reaches the receipt by the route that already exists. No sampling
+        # VALUES are invented: the caller's defaults still apply, which is
+        # the honest outcome, and now it is a stated one.
+        return {
+            "substrate_generation_source": (
+                f"unavailable:{type(exc).__name__}"
+            )
+        }
 
 
 def build_agentic_tool_map(
