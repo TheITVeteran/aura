@@ -255,6 +255,43 @@ def test_action_literal_binding_gradient_reaches_zero_output_attachment() -> Non
     assert float(mx.max(mx.abs(gradients["action_literal_binding_output"]))) > 0.0
 
 
+def test_later_literal_pointer_is_conditioned_on_earlier_action_fields() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+        )
+    )
+    controller.action_literal_binding_output = (
+        controller.action_literal_binding_output.at[2, 0].add(1.0)
+    )
+    evidence = mx.random.normal((1, 7, 64), key=mx.random.key(90_811))
+    hidden = mx.random.normal((1, 9, 64), key=mx.random.key(90_812))
+    tokens = mx.array([[12, 99, 19, 99, 14, 99, 17]])
+    left = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=tokens,
+        teacher_values=(1, 2, 3, 4, 5, 6, 7, 0),
+        teacher_forcing_probability=1.0,
+    )
+    right = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=2,
+        step=0,
+        token_ids=tokens,
+        teacher_values=(8, 2, 3, 4, 5, 6, 7, 0),
+        teacher_forcing_probability=1.0,
+    )
+    mx.eval(left, right)
+    assert bool(mx.array_equal(left[:, 0, :], right[:, 0, :]))
+    assert not bool(mx.array_equal(left[:, 2, :], right[:, 2, :]))
+
+
 def test_action_literal_binding_selects_transforms_by_public_family() -> None:
     patterns = tuple(
         (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))

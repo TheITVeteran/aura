@@ -1896,21 +1896,17 @@ class UnifiedRecurrentController(nn.Module):
             token_ids=token_ids,
             family_action_lesion=family_action_lesion,
         )
-        logits = self._action_literal_binding_logits(
-            logits,
-            problem_evidence,
-            workspace,
-            token_ids=token_ids,
-            lesion=action_literal_binding_lesion,
-        )
         logits = self._causal_action_logits(
             logits,
             workspace,
+            problem_evidence=problem_evidence,
+            token_ids=token_ids,
             teacher_values=teacher_values,
             teacher_forcing_probability=teacher_forcing_probability,
             prior_action_probabilities=prior_action_probabilities,
             causal_action_lesion=causal_action_lesion,
             action_feedback_lesion=action_feedback_lesion,
+            action_literal_binding_lesion=action_literal_binding_lesion,
         )
         # Observation priors help before a recurrent state exists, but they are
         # not licensed semantics. Once execution has a state, derived values
@@ -2080,13 +2076,22 @@ class UnifiedRecurrentController(nn.Module):
         base_logits: Any,
         workspace: Any,
         *,
+        problem_evidence: Any,
+        token_ids: Any | None,
         teacher_values: Sequence[int] | None,
         teacher_forcing_probability: float,
         prior_action_probabilities: Any | None,
         causal_action_lesion: bool,
         action_feedback_lesion: bool,
+        action_literal_binding_lesion: bool,
     ) -> Any:
-        """Decode one instruction left-to-right without future-field leakage."""
+        """Decode and ground one instruction left-to-right.
+
+        Numeric grounding belongs inside the autoregressive action reader. A
+        duration, score operand, or causal coefficient is often ambiguous until
+        an earlier field has selected its row or role. Grounding every slot in
+        parallel prevented that decision from moving later literal pointers.
+        """
 
         expected_logits = (
             int(workspace.shape[0]),
@@ -2098,7 +2103,11 @@ class UnifiedRecurrentController(nn.Module):
             expected_logits[1],
         ):
             raise ValueError("causal action tensors differ from the canonical schema")
-        if type(causal_action_lesion) is not bool or type(action_feedback_lesion) is not bool:
+        if (
+            type(causal_action_lesion) is not bool
+            or type(action_feedback_lesion) is not bool
+            or type(action_literal_binding_lesion) is not bool
+        ):
             raise TypeError("causal action lesion flags must be bools")
         if (
             isinstance(teacher_forcing_probability, bool)
@@ -2120,7 +2129,13 @@ class UnifiedRecurrentController(nn.Module):
         ) != expected_logits:
             raise ValueError("prior action probabilities differ from the canonical schema")
         if causal_action_lesion:
-            return base_logits
+            return self._action_literal_binding_logits(
+                base_logits,
+                problem_evidence,
+                workspace,
+                token_ids=token_ids,
+                lesion=action_literal_binding_lesion,
+            )
 
         width = int(workspace.shape[-1])
         prefix = mx.zeros((expected_logits[0], width), dtype=mx.float32)
@@ -2141,8 +2156,15 @@ class UnifiedRecurrentController(nn.Module):
             feature = self._workspace_norm(
                 workspace[:, slot, :].astype(mx.float32) + prefix
             )
+            grounded = self._action_literal_binding_logits(
+                base_logits,
+                problem_evidence,
+                workspace.astype(mx.float32) + prefix[:, None, :],
+                token_ids=token_ids,
+                lesion=action_literal_binding_lesion,
+            )
             slot_logits = (
-                base_logits[:, slot, :]
+                grounded[:, slot, :]
                 + feature @ self.action_causal_output[slot]
             )
             decisions.append(slot_logits)
@@ -2625,6 +2647,7 @@ class UnifiedRecurrentController(nn.Module):
                 "source": "ordered_public_prompt_literals",
                 "transforms": list(ACTION_LITERAL_BINDING_TRANSFORMS),
                 "transform_selection": "public_family_conditioned",
+                "field_conditioning": "prior_decoded_action_fields",
                 "semantic_role_inferred": True,
                 "private_transition_program_visible": False,
                 "parent_attachment": "exact_zero_output_noop",
