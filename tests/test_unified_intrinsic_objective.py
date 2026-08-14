@@ -368,8 +368,8 @@ def test_process_objective_uses_public_prompt_without_answer_or_coda_graph(
     flat = dict(tree_flatten(gradients))
     mx.eval(loss, gradients)
     assert float(loss.item()) > 0.0
-    assert float(mx.max(mx.abs(flat["state_transition_output"]))) > 0.0
     assert float(mx.max(mx.abs(flat["action_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["initial_state_output"]))) > 0.0
     _loss, receipt = unified_process_training_loss(
         model,
         TOKENS,

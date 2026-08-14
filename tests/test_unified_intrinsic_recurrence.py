@@ -137,7 +137,9 @@ def test_typed_state_decision_is_committed_as_next_step_input() -> None:
     receipt = controller.receipt()
     assert receipt["typed_state_bottleneck"] == "straight_through_categorical"
     assert receipt["predicted_state_is_next_step_input"] is True
-    assert receipt["state_processor"] == "shared_evidence_attention_transition"
+    assert receipt["state_processor"] == (
+        "separate_initial_parser_and_recurrent_transition"
+    )
     assert (
         receipt["state_problem_evidence"]
         == "frozen_deep_prefix_no_decoder_suffix"
@@ -271,9 +273,13 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
     model = _model()
     controller = _controller()
     controller.state_transition_bias = mx.full((5, 33), -100.0)
+    controller.initial_state_bias = mx.full((5, 33), -100.0)
     for slot in range(5):
         controller.state_transition_bias = (
             controller.state_transition_bias.at[slot, 0].add(200.0)
+        )
+        controller.initial_state_bias = (
+            controller.initial_state_bias.at[slot, 0].add(200.0)
         )
     plan = RecurrentDepthPlan(2, 6, iterations=3)
 
@@ -305,6 +311,18 @@ def test_process_tape_records_every_live_action_and_state_and_can_be_lesioned() 
     assert lesioned.process_tape_entries == 0
     assert lesioned.process_tape_active_entries == 0
     assert not bool(mx.array_equal(intact_final, lesioned_final))
+
+
+def test_initial_parser_and_recurrent_transition_do_not_alias() -> None:
+    controller = _controller()
+    before = mx.array(controller.state_transition_bias)
+
+    controller.initial_state_bias = controller.initial_state_bias + 1.0
+
+    assert bool(mx.array_equal(controller.state_transition_bias, before))
+    assert not bool(
+        mx.array_equal(controller.initial_state_bias, controller.state_transition_bias)
+    )
 
 
 def test_process_tape_identity_preserves_step_and_entry_kind() -> None:

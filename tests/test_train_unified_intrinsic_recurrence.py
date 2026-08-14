@@ -30,6 +30,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -65,12 +66,14 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_latest_checkpoint,
     _masked_process_decisions,
     _merge_bootstrap_codebook_extension,
+    _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
     _phase_gradients,
     _phase_schedule,
+    _process_component_gradients,
     _process_training_policy,
     _recurrent_training_task,
     _residual_hidden_size,
@@ -213,6 +216,40 @@ def test_bootstrap_process_reader_extension_rejects_partial_inventory() -> None:
 
     with pytest.raises(RuntimeError, match="tensor inventory differs"):
         _merge_bootstrap_process_reader_extension(parent, child)
+
+
+def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:
+    sources = {
+        "initial_state_query": "state_transition_query",
+        "initial_state_key": "state_transition_key",
+        "initial_state_value": "state_transition_value",
+        "initial_state_output": "state_transition_output",
+        "initial_state_bias": "state_transition_bias",
+        "initial_state_literal_copy_logit": "state_literal_copy_logit",
+    }
+    parent = {
+        f"controller.{source}": mx.full((2, 2), index + 1.0)
+        for index, source in enumerate(sources.values())
+    }
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.zeros((2, 2))
+            for name in INITIAL_STATE_PARAMETER_NAMES
+        },
+    }
+
+    migrated, receipt = _merge_bootstrap_initial_state_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    for name, source in sources.items():
+        assert bool(
+            mx.array_equal(
+                migrated[f"controller.{name}"],
+                parent[f"controller.{source}"],
+            )
+        )
 
 
 def _model() -> Model:
@@ -531,6 +568,35 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
     }
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")
+
+
+def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
+    gradients = {
+        "model": {"layer": {"lora_a": mx.ones((2, 2))}},
+        "controller": {
+            "initial_state_output": mx.ones((2, 2)),
+            "action_output": mx.ones((2, 2)),
+            "state_transition_output": mx.ones((2, 2)),
+            "answer_output": mx.ones((2, 2)),
+        },
+    }
+    expected = {
+        "initializer": {"model.layer.lora_a", "controller.initial_state_output"},
+        "action": {"controller.action_output"},
+        "transition": {"controller.state_transition_output"},
+        "joint": {
+            "controller.initial_state_output",
+            "controller.action_output",
+            "controller.state_transition_output",
+        },
+    }
+    for component, live_names in expected.items():
+        masked = dict(
+            tree_flatten(_process_component_gradients(gradients, component))
+        )
+        assert {
+            name for name, value in masked.items() if bool(mx.any(value != 0))
+        } == live_names
 
 
 def test_bridge_only_preflight_requires_exact_autonomous_process(tmp_path) -> None:

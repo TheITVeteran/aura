@@ -67,6 +67,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_process_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
     UnifiedRecurrenceConfig,
@@ -898,6 +899,10 @@ def _clip_gradient_norm(gradients: Any, max_norm: float) -> tuple[Any, Any]:
 def _gradient_ownership_group(name: str) -> str:
     if name.startswith("model."):
         return "scoped_transformer_bridge"
+    if name.startswith("controller.initial_state_") or name == (
+        "controller.state_slot_embeddings"
+    ):
+        return "typed_state_initializer"
     if name.startswith(
         (
             "controller.process_reader_",
@@ -917,7 +922,7 @@ def _gradient_ownership_group(name: str) -> str:
         )
     ):
         return "state_answer_bridge"
-    if name.startswith(("controller.action_value_embeddings", "controller.action_slot_embeddings")):
+    if name.startswith("controller.action_value_embeddings"):
         return "typed_action_codebook"
     if name.startswith(
         (
@@ -929,7 +934,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.action_bias",
             "controller.action_literal_copy_logit",
             "controller.opcode_copy_logit",
-            "controller.state_action_projection",
+            "controller.action_slot_embeddings",
         )
     ):
         return "typed_action_transition"
@@ -938,6 +943,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.state_transition_",
             "controller.state_readout_",
             "controller.state_literal_copy_logit",
+            "controller.state_action_projection",
         )
     ):
         return "typed_state_transition"
@@ -951,6 +957,40 @@ def _gradient_ownership_group(name: str) -> str:
     ):
         return "typed_state_codebook"
     return "recurrent_controller"
+
+
+def _process_component_gradients(gradients: Any, component: str) -> Any:
+    """Prevent one typed-process role from rewriting another role's tissue."""
+
+    allowed = {
+        "initializer": {"scoped_transformer_bridge", "typed_state_initializer"},
+        "action": {"typed_action_transition"},
+        "transition": {
+            "typed_action_codebook",
+            "typed_state_codebook",
+            "typed_state_transition",
+        },
+        "joint": {
+            "typed_action_codebook",
+            "typed_action_transition",
+            "typed_state_codebook",
+            "typed_state_initializer",
+            "typed_state_transition",
+        },
+    }
+    if component not in allowed:
+        raise ValueError("process gradient component is invalid")
+    return tree_unflatten(
+        [
+            (
+                name,
+                value
+                if _gradient_ownership_group(name) in allowed[component]
+                else mx.zeros_like(value),
+            )
+            for name, value in tree_flatten(gradients)
+        ]
+    )
 
 
 def _clip_gradient_groups(
@@ -1005,10 +1045,15 @@ def _apply_training_gradients(
     max_norm: float,
     totals: dict[str, Any],
     loss: Any,
+    process_component: str | None = None,
 ) -> None:
     """Apply one ownership-masked update and retain pre-clip diagnostics."""
 
     gradients = _phase_gradients(gradients, phase)
+    if process_component is not None:
+        if phase != "state_transition":
+            raise ValueError("process component requires state-transition phase")
+        gradients = _process_component_gradients(gradients, process_component)
     gradients, gradient_norm, gradient_group_norms = _clip_gradient_groups(
         gradients,
         max_norm,
@@ -2504,6 +2549,10 @@ def _bootstrap_bundle_from_checkpoint(
             "unified recurrence bootstrap tensor topology differs: "
             + ",".join(incompatible_tensors)
         )
+    bundle_values, initial_state_extension = _merge_bootstrap_initial_state_extension(
+        bundle_values,
+        child_values,
+    )
     bundle_values, reader_extension = _merge_bootstrap_process_reader_extension(
         bundle_values,
         child_values,
@@ -2535,6 +2584,8 @@ def _bootstrap_bundle_from_checkpoint(
     }
     if codebook_extension is not None:
         result["semantic_codebook_extension"] = codebook_extension
+    if initial_state_extension is not None:
+        result["initial_state_extension"] = initial_state_extension
     if reader_extension is not None:
         result["process_reader_extension"] = reader_extension
     return result
@@ -2544,6 +2595,57 @@ def _tensor_sha256(value: Any) -> str:
     materialized = value.astype(mx.float32)
     mx.eval(materialized)
     return hashlib.sha256(bytes(memoryview(materialized))).hexdigest()
+
+
+def _merge_bootstrap_initial_state_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Split legacy shared transition tensors into a behavior-identical parser."""
+
+    expected = {f"controller.{name}" for name in INITIAL_STATE_PARAMETER_NAMES}
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap initial-state inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    legacy_sources = {
+        "controller.initial_state_query": "controller.state_transition_query",
+        "controller.initial_state_key": "controller.state_transition_key",
+        "controller.initial_state_value": "controller.state_transition_value",
+        "controller.initial_state_output": "controller.state_transition_output",
+        "controller.initial_state_bias": "controller.state_transition_bias",
+        "controller.initial_state_literal_copy_logit": (
+            "controller.state_literal_copy_logit"
+        ),
+    }
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        source = legacy_sources[name]
+        if source not in parent_values or name not in child_values:
+            raise RuntimeError("unified recurrence bootstrap initial-state source differs")
+        value = parent_values[source]
+        child = child_values[name]
+        if tuple(value.shape) != tuple(child.shape) or str(value.dtype) != str(child.dtype):
+            raise RuntimeError("unified recurrence bootstrap initial-state topology differs")
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "legacy_source": source,
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    return migrated, {
+        "schema": "aura.unified_intrinsic.initial_state_extension.v1",
+        "migration_rule": "copy_legacy_shared_transition_tensors_exactly",
+        "behavior_before_training_preserved": True,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
 
 
 def _merge_bootstrap_process_reader_extension(
@@ -3631,6 +3733,7 @@ def main() -> int:
                     "recurrence": recurrent_learning_rate,
                 },
                 "phase_transition_resets_optimizer_state": True,
+                "process_component_transition_resets_optimizer_state": True,
             },
             "mlx_memory_envelope": envelope.to_receipt(),
         }
@@ -3769,6 +3872,7 @@ def main() -> int:
                 prompt, answer = encode_example(tokenizer, task, bridge)
                 with recurrence_adapter_scope(start=None, stop=None):
                     update_applied = False
+                    process_policy: dict[str, Any] | None = None
                     bridge_state_targets = None
                     bridge_action_targets = None
                     bridge_teacher_policy = None
@@ -4127,6 +4231,11 @@ def main() -> int:
                             max_norm=args.max_gradient_norm,
                             totals=rollin_totals,
                             loss=loss,
+                            process_component=(
+                                process_policy["component"]
+                                if process_policy is not None
+                                else None
+                            ),
                         )
                 step += 1
                 next_phase = _optimization_phase(
@@ -4135,7 +4244,17 @@ def main() -> int:
                     args.state_warmup_steps,
                     args.answer_bridge_steps,
                 )
-                if next_phase != phase:
+                next_process_component = None
+                if next_phase == "state_transition":
+                    next_process_component = _process_training_policy(
+                        step - args.semantic_warmup_steps,
+                        args.state_warmup_steps,
+                        args.process_curriculum,
+                    )["component"]
+                if next_phase != phase or (
+                    process_policy is not None
+                    and next_process_component != process_policy["component"]
+                ):
                     optimizer = _adam(phase_learning_rate(next_phase))
                 if step % 5 == 0:
                     print(

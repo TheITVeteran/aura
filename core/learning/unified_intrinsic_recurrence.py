@@ -76,6 +76,14 @@ PROCESS_READER_PARAMETER_NAMES: Final = (
     "process_reader_2_output",
     "process_reader_2_gate_logit",
 )
+INITIAL_STATE_PARAMETER_NAMES: Final = (
+    "initial_state_query",
+    "initial_state_key",
+    "initial_state_value",
+    "initial_state_output",
+    "initial_state_bias",
+    "initial_state_literal_copy_logit",
+)
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -404,6 +412,14 @@ class UnifiedRecurrentController(nn.Module):
             (config.state_slots, config.state_cardinality),
             dtype=mx.float32,
         )
+        # Initial parsing and recurrent transitions are separate causal roles.
+        # Start from identical tensors for behavior parity, then let their
+        # independently owned objectives train without overwriting each other.
+        self.initial_state_query = mx.array(self.state_transition_query)
+        self.initial_state_key = mx.array(self.state_transition_key)
+        self.initial_state_value = mx.array(self.state_transition_value)
+        self.initial_state_output = mx.array(self.state_transition_output)
+        self.initial_state_bias = mx.array(self.state_transition_bias)
         self.action_slot_embeddings = (
             mx.random.normal(
                 (config.action_slots, config.hidden_size), key=key_action_slots
@@ -587,6 +603,9 @@ class UnifiedRecurrentController(nn.Module):
         self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
         self.state_literal_copy_logit = mx.array(
             (-4.0, 0.5, 0.5, 0.5, -4.0), dtype=mx.float32
+        )
+        self.initial_state_literal_copy_logit = mx.array(
+            self.state_literal_copy_logit
         )
         self.action_literal_copy_logit = mx.array(
             (-4.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, -4.0),
@@ -1134,10 +1153,10 @@ class UnifiedRecurrentController(nn.Module):
         slot_queries = mx.einsum(
             "sh,shr->sr",
             self.state_slot_embeddings.astype(mx.float32),
-            self.state_transition_query,
+            self.initial_state_query,
         )
-        keys = problem_evidence.astype(mx.float32) @ self.state_transition_key
-        values = problem_evidence.astype(mx.float32) @ self.state_transition_value
+        keys = problem_evidence.astype(mx.float32) @ self.initial_state_key
+        values = problem_evidence.astype(mx.float32) @ self.initial_state_value
         attention = mx.softmax(
             mx.einsum("sr,bnr->bsn", slot_queries, keys)
             / math.sqrt(self.config.correction_rank),
@@ -1145,8 +1164,8 @@ class UnifiedRecurrentController(nn.Module):
         )
         context = mx.einsum("bsn,bnr->bsr", attention, values)
         logits = mx.einsum(
-            "bsr,src->bsc", context, self.state_transition_output
-        ) + self.state_transition_bias
+            "bsr,src->bsc", context, self.initial_state_output
+        ) + self.initial_state_bias
         if token_ids is not None and self.config.literal_digit_token_ids:
             pointer = self._literal_pointer_logits(
                 problem_evidence,
@@ -1155,12 +1174,12 @@ class UnifiedRecurrentController(nn.Module):
                     slot_queries[None, :, :],
                     (int(problem_evidence.shape[0]),) + tuple(slot_queries.shape),
                 ),
-                self.state_transition_key,
+                self.initial_state_key,
                 self.config.state_cardinality,
             )
             copy_strength = mx.logaddexp(
-                self.state_literal_copy_logit,
-                mx.zeros_like(self.state_literal_copy_logit),
+                self.initial_state_literal_copy_logit,
+                mx.zeros_like(self.initial_state_literal_copy_logit),
             )
             logits = logits + copy_strength[None, :, None] * pointer
         if (
@@ -1817,6 +1836,7 @@ class UnifiedRecurrentController(nn.Module):
             "state_readout_bias",
             "state_slot_embeddings",
             "state_value_embeddings",
+            *INITIAL_STATE_PARAMETER_NAMES,
             "state_transition_query",
             "state_transition_key",
             "state_transition_value",
@@ -1854,7 +1874,7 @@ class UnifiedRecurrentController(nn.Module):
             "depth_extrapolation_defined": True,
             "typed_state_bottleneck": "straight_through_categorical",
             "predicted_state_is_next_step_input": True,
-            "state_processor": "shared_evidence_attention_transition",
+            "state_processor": "separate_initial_parser_and_recurrent_transition",
             "action_processor": "public_evidence_typed_action_transition",
             "predicted_action_is_state_transition_input": True,
             "terminal_state_semantics": "exact_idempotent_stutter",
