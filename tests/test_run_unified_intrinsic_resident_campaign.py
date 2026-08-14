@@ -293,11 +293,11 @@ def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
     assert training["process_family_batch_mode"] == "balanced_families"
     assert training["lora_targets"] == "q_proj,o_proj,v_proj"
     assert training["process_transformer_gradient_scale"] == pytest.approx(0.1)
-    assert training["process_query_gradient_scale"] == pytest.approx(0.01)
+    assert training["process_query_gradient_scale"] == pytest.approx(0.1)
     assert training["state_warmup_steps"] == training["max_steps"] == 64
     assert training["eval_every"] == training["checkpoint_every"] == 8
     assert arguments[arguments.index("--process-family-batch-mode") + 1] == ("balanced_families")
-    assert arguments[arguments.index("--process-query-gradient-scale") + 1] == "0.01"
+    assert arguments[arguments.index("--process-query-gradient-scale") + 1] == "0.1"
 
 
 def test_process_family_acquisition_signed_config_is_controller_admitted(
