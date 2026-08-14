@@ -138,7 +138,10 @@ def _canonical_instruction(
         "case_terminal",
     ):
         opcode = OP_FRONTIER_SIMULATE
-        arguments[:] = action
+        # Stateful execution reconstructs balances from the causal action tape.
+        # Pressure, active-count and case-terminal are derived future facts, not
+        # operands the neural action reader should be asked to guess.
+        arguments[:3] = action[:3]
     elif family == "frontier_scientific_inference" and field_names == (
         "stage",
         "arg0",

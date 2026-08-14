@@ -90,6 +90,7 @@ def test_every_frontier_process_executes_exactly_without_its_teacher(
         UnifiedRecurrenceConfig(hidden_size=32, correction_rank=4)
     )
     current = program.state_trace.states[0]
+    action_history = []
     for step, expected in enumerate(program.state_trace.states[1:]):
         state_probabilities = controller.exact_probabilities(
             current,
@@ -101,9 +102,11 @@ def test_every_frontier_process_executes_exactly_without_its_teacher(
             slots=controller.config.action_slots,
             cardinality=controller.config.action_cardinality,
         )
+        action_history.append(action_probabilities)
         logits, recognized = controller.microcode_transition_logits(
             state_probabilities,
             action_probabilities,
+            action_probability_history=action_history,
         )
         mx.eval(logits, recognized)
         produced = tuple(
@@ -127,6 +130,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     scientific = compile_frontier_process_supervision(
         generate_task("scientific_inference", seed=51_904, difficulty=2)
     ).program
+    coding = compile_frontier_process_supervision(
+        generate_task("coding", seed=51_905, difficulty=2)
+    ).program
 
     novel_targets = action_targets_from_program(novel, novel.state_trace.depth)
     audit_targets = action_targets_from_program(audit, audit.state_trace.depth)
@@ -134,6 +140,7 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     scientific_targets = action_targets_from_program(
         scientific, scientific.state_trace.depth
     )
+    coding_targets = action_targets_from_program(coding, coding.state_trace.depth)
 
     # Traversal carries selection plus value operands, never the teacher's
     # precomputed checksum. Premise audit carries a row plus score operands,
@@ -152,6 +159,7 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     expected_prediction_digits = scientific.state_trace.states[-1][2:4]
     assert final_science_action[2:4] != expected_prediction_digits
     assert all(value != ACTION_NULL for value in final_science_action)
+    assert all(row[4:7] == (ACTION_NULL,) * 3 for row in coding_targets.values)
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)

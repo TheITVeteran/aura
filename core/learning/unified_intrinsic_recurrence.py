@@ -1597,6 +1597,7 @@ class UnifiedRecurrentController(nn.Module):
         action_state: Any | None = None,
         state_probabilities: Any | None = None,
         action_probabilities: Any | None = None,
+        action_probability_history: Sequence[Any] | None = None,
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
 
@@ -1654,6 +1655,7 @@ class UnifiedRecurrentController(nn.Module):
         microcode_logits, recognized = self.microcode_transition_logits(
             state_probabilities,
             action_probabilities,
+            action_probability_history=action_probability_history,
         )
         state_values = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
         terminal = state_values[:, -1] == 1
@@ -1670,6 +1672,8 @@ class UnifiedRecurrentController(nn.Module):
         self,
         state_probabilities: Any,
         action_probabilities: Any,
+        *,
+        action_probability_history: Sequence[Any] | None = None,
     ) -> tuple[Any, Any]:
         """Execute recognized canonical instructions on categorical registers."""
 
@@ -1683,6 +1687,14 @@ class UnifiedRecurrentController(nn.Module):
             raise ValueError("microcode categorical state differs from its schema")
         state = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
         action = mx.argmax(action_probabilities, axis=-1).astype(mx.int32)
+        if action_probability_history is not None and (
+            not action_probability_history
+            or any(
+                tuple(item.shape) != tuple(action_probabilities.shape)
+                for item in action_probability_history
+            )
+        ):
+            raise ValueError("microcode action history differs from its schema")
         opcode = action[:, 0]
         arguments = action[:, 1:7]
         terminal = action[:, 7]
@@ -1754,9 +1766,34 @@ class UnifiedRecurrentController(nn.Module):
         value2 = mx.where(is_enumerate, arg5, value2)
 
         is_simulate = opcode == OP_FRONTIER_SIMULATE
-        value0 = mx.where(is_simulate, arg0, value0)
-        value1 = mx.where(is_simulate, arg4, value1)
-        value2 = mx.where(is_simulate, arg3, value2)
+        if action_probability_history is not None:
+            history = mx.stack(
+                [
+                    mx.argmax(item, axis=-1).astype(mx.int32)
+                    for item in action_probability_history
+                ],
+                axis=1,
+            )
+            same_case_event = (
+                (history[:, :, 0] == OP_FRONTIER_SIMULATE)
+                & (history[:, :, 1] == arg0[:, None])
+            )
+            names = mx.arange(self.config.action_cardinality)[None, None, :]
+            matching_name = history[:, :, 2, None] == names
+            deltas = history[:, :, 3] - 3
+            balances = mx.sum(
+                mx.where(
+                    same_case_event[:, :, None] & matching_name,
+                    deltas[:, :, None],
+                    0,
+                ),
+                axis=1,
+            )
+            active_count = mx.sum(balances != 0, axis=1).astype(mx.int32)
+            pressure = mx.sum(mx.abs(balances), axis=1).astype(mx.int32)
+            value0 = mx.where(is_simulate, arg0, value0)
+            value1 = mx.where(is_simulate, active_count, value1)
+            value2 = mx.where(is_simulate, pressure, value2)
 
         is_infer = opcode == OP_FRONTIER_INFER
         inferred_role = mx.where(
@@ -2851,6 +2888,7 @@ def unified_recurrent_hidden_states(
     problem_evidence: Any | None = None
     state_probabilities: Any | None = None
     prior_action_probabilities: Any | None = None
+    action_probability_history: list[Any] = []
     if state_slot_start is not None:
         # Prefix-only execution is causally identical to the same positions in
         # the complete sequence, but cannot expose teacher-forced answer tokens.
@@ -2972,6 +3010,7 @@ def unified_recurrent_hidden_states(
                 action_state = controller.commit_action_probabilities(
                     action_probabilities
                 )
+                action_probability_history.append(action_probabilities)
                 prior_action_probabilities = action_probabilities
                 state_logits = controller.state_transition_logits(
                     problem_evidence,
@@ -2981,6 +3020,7 @@ def unified_recurrent_hidden_states(
                     action_state=action_state,
                     state_probabilities=state_probabilities,
                     action_probabilities=action_probabilities,
+                    action_probability_history=action_probability_history,
                 )
                 next_state_probabilities = (
                     controller.straight_through_probabilities(state_logits)
