@@ -633,6 +633,23 @@ def _should_pass_user_facing_draft_downstream(
     return True
 
 
+#: A leading word that says this is NOT a person waiting. It vetoes, so an
+#: allowlisted word later in the label cannot promote the request.
+_NOT_USER_FACING_ORIGIN_PREFIXES = frozenset(
+    {
+        "background",
+        "internal",
+        "system",
+        "auto",
+        "autonomous",
+        "cron",
+        "scheduled",
+        "daemon",
+        "maintenance",
+        "sweep",
+    }
+)
+
 _USER_FACING_ORIGINS = frozenset(
     {
         "user",
@@ -987,6 +1004,8 @@ class InferenceGate:
         self._lane_transition_at: float = 0.0
         #: Cancelled loads not yet observed to stop.
         self._abandoned_cortex_loads: list[Any] = []
+        #: Last shed paid for by a promotion inferred from prompt text.
+        self._last_heuristic_shed_at: float = 0.0
         #: Guards the status-triggered recovery cooldown stamp.
         self._status_recovery_lock = checked_lock(
             "inference_gate.status_recovery_cooldown", rank=LockRank.LEAF
@@ -1412,6 +1431,56 @@ class InferenceGate:
                 action="continued after local client abort hook failed",
                 severity="error",
             )
+
+    #: A request may not ask for a longer budget than this. An unvalidated
+    #: caller timeout of inf produced a deadline that never expired, which is
+    #: the same as having no deadline while claiming to have one.
+    _MAX_REQUEST_TIMEOUT_S = 900.0
+
+    #: How often a promotion inferred from prompt text may pay for a global
+    #: shed. Derived from the quiet window it extends: one shed per window is
+    #: the most that window can be worth, and a second inside it buys nothing
+    #: except a reload of whatever the first one unloaded.
+    _HEURISTIC_SHED_INTERVAL_S = 180.0
+
+    def _admit_heuristic_protected_shed(self) -> bool:
+        """Whether a text-inferred protected turn may shed background workers."""
+        now = time.monotonic()
+        last = float(getattr(self, "_last_heuristic_shed_at", 0.0) or 0.0)
+        if last and (now - last) < self._HEURISTIC_SHED_INTERVAL_S:
+            return False
+        self._last_heuristic_shed_at = now
+        return True
+
+    @classmethod
+    def _requested_timeout_s(cls, timeout: Any, default: float) -> float:
+        """A usable request budget from whatever the caller passed.
+
+        ``timeout or default`` treated any truthy value as a budget, so -1 and
+        inf both bypassed the default: the first produced an already-expired
+        deadline before routing, the second produced one that never expires.
+        Neither is a timeout.
+        """
+        fallback = _finite(default, 90.0) or 90.0
+        candidate = _finite(timeout)
+        if candidate is None or candidate <= 0.0:
+            return max(1.0, min(cls._MAX_REQUEST_TIMEOUT_S, fallback))
+        return max(1.0, min(cls._MAX_REQUEST_TIMEOUT_S, candidate))
+
+    @classmethod
+    def _requested_max_tokens(cls, requested: Any, default: int) -> int:
+        """A usable token budget, never a raised TypeError at the front door.
+
+        ``int(context.get("max_tokens") or default)`` runs before the protected
+        cap parser further down, so a caller passing "lots" — or a float NaN —
+        aborted a user-facing generation with a conversion error rather than
+        being rejected as a bad request.
+        """
+        fallback = max(1, int(_finite(default, 512) or 512))
+        candidate = _finite(requested)
+        if candidate is None or candidate <= 0.0:
+            return min(cls._TOKEN_BOUND_HARD_CEILING, fallback)
+        return max(1, min(cls._TOKEN_BOUND_HARD_CEILING, int(candidate)))
 
     @staticmethod
     def _window_within(deadline: Any, requested: float) -> float:
@@ -4552,6 +4621,19 @@ class InferenceGate:
 
     @staticmethod
     def _origin_is_user_facing(origin: str | None) -> bool:
+        """Whether this origin gets protected foreground routing.
+
+        The label is caller-supplied and unauthenticated, so the matching rule
+        is the whole security property. It used to be "any underscore-delimited
+        token anywhere in the string", which made ``background_user``,
+        ``audit_probe`` and ``internal_test_sweep`` all user-facing — a caller
+        could inherit the protected Cortex lane, its memory admission work and
+        its worker shedding by putting one allowlisted word anywhere in a name.
+
+        Now the origin must BE an allowlisted label or START with one, and a
+        leading word that says the opposite vetoes outright. Checked against
+        every origin literal in the tree: no real origin changes meaning.
+        """
         normalized = str(origin or "").strip().lower().replace("-", "_")
         if not normalized:
             return False
@@ -4559,10 +4641,10 @@ class InferenceGate:
             normalized = normalized[len("routing_") :]
         if not normalized:
             return False
+        head = normalized.split("_", 1)[0]
+        if head in _NOT_USER_FACING_ORIGIN_PREFIXES:
+            return False
         if normalized in _USER_FACING_ORIGINS:
-            return True
-        tokens = {token for token in normalized.split("_") if token}
-        if tokens & _USER_FACING_ORIGINS:
             return True
         return any(normalized.startswith(f"{prefix}_") for prefix in _USER_FACING_ORIGINS)
 
@@ -8734,12 +8816,30 @@ class InferenceGate:
                 )
 
         if protected_foreground_lane and not is_background:
-            self._extend_startup_quiet_window(180.0)
-            if not self._primary_lane_ready():
-                await self._shed_background_workers_for_memory_pressure(
-                    force=True,
-                    reason="protected_foreground_shed",
+            # Global resource side effects, and the promotion that reaches them
+            # can come from PROMPT TEXT: looks_like_deep_mind_probe is a
+            # heuristic over what the person typed, and a match promotes the
+            # turn to the protected lane. Unbudgeted, a run of probe-shaped
+            # messages sheds background workers and extends the quiet window
+            # once per message. Explicit callers — a contract that says
+            # protected_foreground_lane — are not rate-limited; a promotion
+            # inferred from text is.
+            heuristic_promotion = bool(
+                context.get("deep_mind_probe", False)
+                and not context.get("protected_foreground_lane", False)
+            )
+            if heuristic_promotion and not self._admit_heuristic_protected_shed():
+                logger.info(
+                    "🛡️ Text-inferred protected lane: shed budget spent, "
+                    "serving on the current lane state."
                 )
+            else:
+                self._extend_startup_quiet_window(180.0)
+                if not self._primary_lane_ready():
+                    await self._shed_background_workers_for_memory_pressure(
+                        force=True,
+                        reason="protected_foreground_shed",
+                    )
 
         # ── Morphogenesis routing advice ──────────────────────────────────
         # If the morphogenetic metabolism reports very high system pressure,
@@ -8963,13 +9063,29 @@ class InferenceGate:
 
                 # [STABILITY v58] Force Primary 32B lane for all human-interaction tiers.
                 # No brainstem fallbacks for Sovereign, Trusted, or Guest users.
+                #
+                # Recognition is not authorization for resources. The three
+                # levels used to be treated identically here, so an
+                # UNAUTHENTICATED guest could reverse a downgrade that
+                # morphogenesis, a dead cortex, or headroom policy had already
+                # made in this same request — and each promotion re-runs the
+                # high-memory admission path. Guest keeps the lane it was
+                # given when something safety-relevant already downgraded it;
+                # sovereign and trusted still get the primary lane, because a
+                # recognized principal is who the protected lane is for.
                 if _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED, TrustLevel.GUEST):
-                    # Trust should keep ordinary conversation on the primary
-                    # Cortex lane, but it must not turn an explicitly deep
-                    # request into an untouchable 72B allocation when headroom
-                    # policy says to downgrade. Preserve safety downgrades for
-                    # secondary handoffs.
-                    if requested_tier != "secondary":
+                    downgraded_for_safety = bool(
+                        requested_tier == "secondary"
+                        or context.get("resource_stakes_blocked", False)
+                        or context.get("local_deep_block_reason")
+                        or deep_handoff
+                    )
+                    if _trust_level is TrustLevel.GUEST and downgraded_for_safety:
+                        logger.info(
+                            "🎭 Guest recognized, but this request was already "
+                            "downgraded; not re-promoting it to the protected lane."
+                        )
+                    elif requested_tier != "secondary":
                         protected_foreground_lane = True
                         requested_tier = "primary"
                         logger.info(
@@ -8982,9 +9098,25 @@ class InferenceGate:
                             _trust_level.name,
                         )
 
-                # Inject trust level into state for ContextAssembler visibility
+                # Trust belongs to THIS request, not to whatever reads the
+                # state next.
+                #
+                # It used to be written to state.cognition.modifiers with no
+                # session, principal or timestamp, so a later turn — or another
+                # interlocutor sharing the same state — assembled context under
+                # a trust classification recognition had granted to somebody
+                # else. The value stays for ContextAssembler, and it now says
+                # whose it is and when, so a stale one is identifiable rather
+                # than inherited.
+                context["trust_level"] = getattr(_trust_level, "name", str(_trust_level))
                 if hasattr(state, "cognition") and hasattr(state.cognition, "modifiers"):
                     state.cognition.modifiers["trust_level"] = _trust_level
+                    state.cognition.modifiers["trust_level_binding"] = {
+                        "session_id": str(context.get("session_id", "") or ""),
+                        "origin": str(origin or ""),
+                        "recognized_at": time.time(),
+                        "level": getattr(_trust_level, "name", str(_trust_level)),
+                    }
 
                 # Block tool use for untrusted sessions
                 if _trust_level in (TrustLevel.SUSPICIOUS, TrustLevel.HOSTILE):
@@ -9060,11 +9192,14 @@ class InferenceGate:
                 requested_tier = "primary"
                 deep_handoff = False
 
-        timeout_val = timeout or self._default_timeout_for_request(
-            origin,
-            requested_tier,
-            deep_handoff=deep_handoff,
-            is_background=is_background,
+        timeout_val = self._requested_timeout_s(
+            timeout,
+            self._default_timeout_for_request(
+                origin,
+                requested_tier,
+                deep_handoff=deep_handoff,
+                is_background=is_background,
+            ),
         )
         primary_timeout, fallback_timeout = self._split_attempt_timeouts(
             timeout_val, requested_tier
@@ -9080,14 +9215,14 @@ class InferenceGate:
         # window below is capped by what is left of it.
         request_deadline = get_deadline(float(timeout_val))
         context["request_deadline_s"] = float(timeout_val)
-        max_tokens = int(
-            context.get("max_tokens")
-            or self._default_max_tokens_for_request(
+        max_tokens = self._requested_max_tokens(
+            context.get("max_tokens"),
+            self._default_max_tokens_for_request(
                 origin,
                 requested_tier,
                 deep_handoff=deep_handoff,
                 is_background=is_background,
-            )
+            ),
         )
         explicit_max_tokens_cap: int | None = None
         if "max_tokens" in context:
@@ -9150,11 +9285,14 @@ class InferenceGate:
                 )
                 requested_tier = "primary"
                 deep_handoff = False
-                timeout_val = timeout or self._default_timeout_for_request(
-                    origin,
-                    requested_tier,
-                    deep_handoff=deep_handoff,
-                    is_background=is_background,
+                timeout_val = self._requested_timeout_s(
+                    timeout,
+                    self._default_timeout_for_request(
+                        origin,
+                        requested_tier,
+                        deep_handoff=deep_handoff,
+                        is_background=is_background,
+                    ),
                 )
                 primary_timeout, fallback_timeout = self._split_attempt_timeouts(
                     timeout_val, requested_tier
@@ -9163,14 +9301,14 @@ class InferenceGate:
                 # restart, so the deadline keeps its original start time.
                 request_deadline = get_deadline(float(timeout_val))
                 context["request_deadline_s"] = float(timeout_val)
-                max_tokens = int(
-                    context.get("max_tokens")
-                    or self._default_max_tokens_for_request(
+                max_tokens = self._requested_max_tokens(
+                    context.get("max_tokens"),
+                    self._default_max_tokens_for_request(
                         origin,
                         requested_tier,
                         deep_handoff=deep_handoff,
                         is_background=is_background,
-                    )
+                    ),
                 )
                 if "max_tokens" not in context:
                     max_tokens = self._adaptive_max_tokens_for_prompt(
@@ -10180,6 +10318,21 @@ class InferenceGate:
             context=context,
         )
         provided_messages = context.get("messages")
+        if provided_messages is not None and not isinstance(provided_messages, list):
+            # Dropping it silently is what let a malformed payload become a
+            # system-only generation: the merge iterated nothing, inserted the
+            # system message, and sent a prompt with no user turn in it. The
+            # caller's `prompt` still carries the request, so the turn is
+            # served — but the caller is told its payload was not used.
+            _record_inference_degradation(
+                TypeError(
+                    f"context['messages'] is {type(provided_messages).__name__}, not a list"
+                ),
+                action="ignored a malformed prebuilt message payload and used the prompt instead",
+                extra={"origin": str(origin or "")},
+            )
+            context["prebuilt_messages_rejected"] = "not_a_list"
+            provided_messages = None
         if not isinstance(provided_messages, list):
             provided_messages = None
         context_system_prompt = str(context.get("system_prompt", "") or "").strip()
@@ -10460,6 +10613,23 @@ class InferenceGate:
         )
         if provided_messages is not None:
             messages = [dict(msg) for msg in provided_messages if isinstance(msg, dict)]
+            # A payload whose entries are all malformed — or that carries only
+            # system turns — reaches the model as instructions with nothing to
+            # answer. The caller's prompt is the request; put it back.
+            if not any(
+                str(msg.get("role", "") or "").strip().lower() == "user"
+                and str(msg.get("content", "") or "").strip()
+                for msg in messages
+            ):
+                recovered = str(prompt or "").strip()
+                if recovered:
+                    messages.append({"role": "user", "content": recovered})
+                    context["prebuilt_messages_user_turn_recovered"] = True
+                    _record_inference_degradation(
+                        ValueError("prebuilt messages carried no usable user turn"),
+                        action="restored the caller's prompt as the user turn",
+                        extra={"origin": str(origin or ""), "messages": len(messages)},
+                    )
             if not isolated_generation_contract and (prompt_user_facing or living_mind_context):
                 reliability_block = conversation_reliability_system_block(visible_user_prompt)
                 inserted = False
@@ -10626,6 +10796,25 @@ class InferenceGate:
             system_prompt = "\n\n".join(
                 [str(system_prompt or ""), *volatile_grounding_blocks]
             ).strip()
+        # Cache policy is not a caller preference.
+        #
+        # morpho_kwargs is populated from `context` early, then several
+        # contracts (strict proof, operator evidence, health probe) set
+        # context["disable_prompt_cache"] = True LATER — after the copy. A
+        # caller that passed disable_prompt_cache=False therefore kept its
+        # False in the kwargs that actually reach the worker, and an exact-cold
+        # prompt contract silently ran on reused KV. Re-sync here, once, after
+        # every contract has had its say: policy wins.
+        for _cache_key in ("disable_prompt_cache", "clear_prompt_cache"):
+            if bool(context.get(_cache_key, False)):
+                if not bool(morpho_kwargs.get(_cache_key, False)):
+                    logger.debug(
+                        "Cache policy overrides caller %s=%r for this contract.",
+                        _cache_key,
+                        morpho_kwargs.get(_cache_key),
+                    )
+                morpho_kwargs[_cache_key] = True
+
         # Last word on size, in the unit the window is actually measured in.
         # Every budget above this line is in characters; this one is in tokens
         # and it applies to every route, including prebuilt message payloads

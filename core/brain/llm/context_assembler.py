@@ -16,6 +16,12 @@ from core.synthesis import get_identity_lock
 
 logger = logging.getLogger("Brain.Context")
 
+#: Longest a recognized trust level may be inherited by a later assembly. The
+#: inference gate caps a request at _MAX_REQUEST_TIMEOUT_S, so a binding older
+#: than that cannot belong to the request being assembled now.
+_TRUST_BINDING_MAX_AGE_S = 900.0
+
+
 # Characters of system-prompt tail that trimming must NEVER surrender. The
 # few-shot voice anchor and the [STRUCTURAL CONSTRAINT] block are appended
 # last so they bind the model; if budget pressure deletes them the prompt
@@ -1036,8 +1042,35 @@ class ContextAssembler:
         elevated_trust = False
         try:
             from core.security.trust_engine import TrustLevel
+
             _trust_level = mods.get("trust_level", TrustLevel.GUEST)
-            elevated_trust = _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED)
+            # A trust level in shared state belongs to the request that
+            # recognized it. Without a binding it is a classification granted
+            # to somebody else that this turn inherited — the inference gate
+            # writes when and for which origin it was recognized, and a level
+            # older than the longest a request can live cannot be this one's.
+            binding = mods.get("trust_level_binding")
+            recognized_at = 0.0
+            if isinstance(binding, dict):
+                try:
+                    recognized_at = float(binding.get("recognized_at", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    recognized_at = 0.0
+            fresh = bool(
+                recognized_at > 0.0
+                and (time.time() - recognized_at) <= _TRUST_BINDING_MAX_AGE_S
+            )
+            elevated_trust = fresh and _trust_level in (
+                TrustLevel.SOVEREIGN,
+                TrustLevel.TRUSTED,
+            )
+            if not fresh and _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED):
+                record_degradation(
+                    "context_assembler.trust",
+                    RuntimeError("elevated trust level has no fresh request binding"),
+                    severity="warning",
+                    action="used guest prompt policy for an unbound elevated trust level",
+                )
         except (ImportError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler.trust",
