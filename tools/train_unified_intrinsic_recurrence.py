@@ -67,6 +67,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_process_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    ACTION_WORKSPACE_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
@@ -935,6 +936,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.action_literal_copy_logit",
             "controller.opcode_copy_logit",
             "controller.action_slot_embeddings",
+            "controller.action_workspace_",
         )
     ):
         return "typed_action_transition"
@@ -2557,6 +2559,12 @@ def _bootstrap_bundle_from_checkpoint(
         bundle_values,
         child_values,
     )
+    bundle_values, action_workspace_extension = (
+        _merge_bootstrap_action_workspace_extension(
+            bundle_values,
+            child_values,
+        )
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -2588,6 +2596,8 @@ def _bootstrap_bundle_from_checkpoint(
         result["initial_state_extension"] = initial_state_extension
     if reader_extension is not None:
         result["process_reader_extension"] = reader_extension
+    if action_workspace_extension is not None:
+        result["action_workspace_extension"] = action_workspace_extension
     return result
 
 
@@ -2655,12 +2665,18 @@ def _merge_bootstrap_process_reader_extension(
     """Add only the independently initialized causal-reader parameter family."""
 
     expected = {f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES}
-    missing = set(child_values) - set(parent_values)
+    missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
     if missing != expected:
         raise RuntimeError(
             "unified recurrence bootstrap tensor inventory differs: " + ",".join(sorted(missing))
+        )
+    missing_child = expected - set(child_values)
+    if missing_child:
+        raise RuntimeError(
+            "unified recurrence bootstrap tensor inventory differs: "
+            + ",".join(sorted(missing_child))
         )
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
@@ -2676,6 +2692,50 @@ def _merge_bootstrap_process_reader_extension(
         "schema": "aura.unified_intrinsic.process_reader_extension.v1",
         "migration_rule": "parent_exact_plus_deterministic_new_reader_tensors",
         "parent_tensor_inventory_preserved": True,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
+def _merge_bootstrap_action_workspace_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach an exact no-op action workspace without rewriting parent tissue."""
+
+    expected = {f"controller.{name}" for name in ACTION_WORKSPACE_PARAMETER_NAMES}
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap action-workspace inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap action-workspace source differs"
+            )
+        value = child_values[name]
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    output_name = "controller.action_workspace_output"
+    if bool(mx.any(migrated[output_name] != 0)):
+        raise RuntimeError(
+            "unified recurrence bootstrap action workspace is not a no-op"
+        )
+    return migrated, {
+        "schema": "aura.unified_intrinsic.action_workspace_extension.v1",
+        "migration_rule": "parent_exact_plus_zero_output_recurrent_action_workspace",
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
         "new_tensor_names": sorted(expected),
         "tensors": tensor_receipts,
     }

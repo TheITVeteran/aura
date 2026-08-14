@@ -38,6 +38,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 
 
 def _model() -> Model:
+    mx.random.seed(7)
     model = Model(
         ModelArgs(
             model_type="qwen2",
@@ -296,6 +297,7 @@ def test_exact_state_teacher_shapes_recurrent_tissue_without_entering_prompt() -
     assert float(mx.max(mx.abs(flat["state_transition_query"]))) > 0.0
     assert float(mx.max(mx.abs(flat["state_value_embeddings"]))) > 0.0
     assert float(mx.max(mx.abs(flat["action_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["action_workspace_output"]))) > 0.0
     _loss, receipt = unified_intrinsic_training_loss(
         model,
         TOKENS,

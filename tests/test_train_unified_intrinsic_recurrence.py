@@ -30,6 +30,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_intrinsic_training_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    ACTION_WORKSPACE_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
@@ -65,6 +66,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _load_frozen_dataset,
     _load_latest_checkpoint,
     _masked_process_decisions,
+    _merge_bootstrap_action_workspace_extension,
     _merge_bootstrap_codebook_extension,
     _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
@@ -216,6 +218,50 @@ def test_bootstrap_process_reader_extension_rejects_partial_inventory() -> None:
 
     with pytest.raises(RuntimeError, match="tensor inventory differs"):
         _merge_bootstrap_process_reader_extension(parent, child)
+
+
+def test_bootstrap_action_workspace_extension_is_exact_and_audited() -> None:
+    parent = {"controller.action_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in ACTION_WORKSPACE_PARAMETER_NAMES
+            if name != "action_workspace_output"
+        },
+        "controller.action_workspace_output": mx.zeros((2, 2), dtype=mx.float32),
+    }
+
+    migrated, receipt = _merge_bootstrap_action_workspace_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["parent_tensor_inventory_preserved"] is True
+    assert migrated["controller.action_output"] is parent["controller.action_output"]
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_action_workspace_rejects_partial_or_active_extension() -> None:
+    child = {
+        "controller.action_output": mx.ones((2, 3), dtype=mx.float32),
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in ACTION_WORKSPACE_PARAMETER_NAMES
+        },
+    }
+    partial_parent = {
+        "controller.action_output": child["controller.action_output"],
+        "controller.action_workspace_seed": child[
+            "controller.action_workspace_seed"
+        ],
+    }
+    with pytest.raises(RuntimeError, match="action-workspace inventory differs"):
+        _merge_bootstrap_action_workspace_extension(partial_parent, child)
+
+    parent = {"controller.action_output": child["controller.action_output"]}
+    with pytest.raises(RuntimeError, match="action workspace is not a no-op"):
+        _merge_bootstrap_action_workspace_extension(parent, child)
 
 
 def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:
@@ -576,17 +622,22 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
         "controller": {
             "initial_state_output": mx.ones((2, 2)),
             "action_output": mx.ones((2, 2)),
+            "action_workspace_output": mx.ones((2, 2)),
             "state_transition_output": mx.ones((2, 2)),
             "answer_output": mx.ones((2, 2)),
         },
     }
     expected = {
         "initializer": {"model.layer.lora_a", "controller.initial_state_output"},
-        "action": {"controller.action_output"},
+        "action": {
+            "controller.action_output",
+            "controller.action_workspace_output",
+        },
         "transition": {"controller.state_transition_output"},
         "joint": {
             "controller.initial_state_output",
             "controller.action_output",
+            "controller.action_workspace_output",
             "controller.state_transition_output",
         },
     }
@@ -1984,11 +2035,13 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
         )
 
 
-def test_bootstrap_extends_legacy_parent_with_exact_process_reader(
+def test_bootstrap_extends_legacy_parent_with_reader_and_action_workspace(
     tmp_path: Path,
 ) -> None:
     parent, _wiring = _bundle()
     for name in PROCESS_READER_PARAMETER_NAMES:
+        delattr(parent.controller, name)
+    for name in ACTION_WORKSPACE_PARAMETER_NAMES:
         delattr(parent.controller, name)
     parent_values = {name: value + 0 for name, value in _trainable(parent).items()}
     optimizer = optim.Adam(learning_rate=0.01)
@@ -2042,6 +2095,12 @@ def test_bootstrap_extends_legacy_parent_with_exact_process_reader(
     assert extension["parent_tensor_inventory_preserved"] is True
     assert set(extension["new_tensor_names"]) == {
         f"controller.{name}" for name in PROCESS_READER_PARAMETER_NAMES
+    }
+    action_extension = receipt["action_workspace_extension"]
+    assert action_extension["parent_tensor_inventory_preserved"] is True
+    assert action_extension["behavior_before_training_preserved"] is True
+    assert set(action_extension["new_tensor_names"]) == {
+        f"controller.{name}" for name in ACTION_WORKSPACE_PARAMETER_NAMES
     }
 
 

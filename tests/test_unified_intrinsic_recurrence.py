@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 mx = pytest.importorskip("mlx.core")
+nn = pytest.importorskip("mlx.nn")
 pytest.importorskip("mlx_lm")
 
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
@@ -86,6 +87,67 @@ def test_controller_initialization_seed_replays_and_varies() -> None:
     )
     assert first.parameter_sha256() == replay.parameter_sha256()
     assert first.parameter_sha256() != other.parameter_sha256()
+
+
+def test_action_workspace_attaches_as_exact_noop_then_changes_logits() -> None:
+    baseline = _controller()
+    altered = _controller()
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(91))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(92))
+
+    expected = baseline.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+    )
+    altered.action_workspace_cross_query = mx.full_like(
+        altered.action_workspace_cross_query,
+        17.0,
+    )
+    no_op = altered.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+    )
+    assert bool(mx.array_equal(expected, no_op))
+
+    altered.action_workspace_output = mx.full_like(
+        altered.action_workspace_output,
+        0.01,
+    )
+    active = altered.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+    )
+    assert not bool(mx.array_equal(expected, active))
+    assert (
+        altered.receipt()["action_processor"]
+        == "public_evidence_bounded_recurrent_semantic_action_workspace"
+    )
+
+
+def test_action_loss_reaches_workspace_without_needing_nonzero_attachment() -> None:
+    controller = _controller()
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(93))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(94))
+
+    def objective(candidate: UnifiedRecurrentController):
+        logits = candidate.action_logits(
+            evidence,
+            hidden,
+            state_slot_start=4,
+            step=3,
+        )
+        return -mx.mean(nn.log_softmax(logits, axis=-1)[:, :, 7])
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    mx.eval(loss, gradients)
+    assert float(mx.max(mx.abs(gradients["action_workspace_output"]))) > 0.0
+    assert float(mx.max(mx.abs(gradients["initial_state_output"]))) == 0.0
 
 
 def test_state_readout_uses_only_the_declared_public_prompt_position() -> None:

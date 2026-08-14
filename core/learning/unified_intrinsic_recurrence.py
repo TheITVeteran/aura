@@ -84,6 +84,21 @@ INITIAL_STATE_PARAMETER_NAMES: Final = (
     "initial_state_bias",
     "initial_state_literal_copy_logit",
 )
+ACTION_WORKSPACE_PARAMETER_NAMES: Final = (
+    "action_workspace_seed",
+    "action_workspace_depth",
+    "action_workspace_cross_query",
+    "action_workspace_cross_key",
+    "action_workspace_cross_value",
+    "action_workspace_cross_output",
+    "action_workspace_self_query",
+    "action_workspace_self_key",
+    "action_workspace_self_value",
+    "action_workspace_self_output",
+    "action_workspace_ff_up",
+    "action_workspace_ff_down",
+    "action_workspace_output",
+)
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -267,6 +282,23 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x50524F43),
             num=8,
+        )
+        (
+            key_action_workspace_seed,
+            key_action_workspace_depth,
+            key_action_workspace_cross_query,
+            key_action_workspace_cross_key,
+            key_action_workspace_cross_value,
+            key_action_workspace_cross_output,
+            key_action_workspace_self_query,
+            key_action_workspace_self_key,
+            key_action_workspace_self_value,
+            key_action_workspace_self_output,
+            key_action_workspace_ff_up,
+            key_action_workspace_ff_down,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x4143544E),
+            num=12,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -478,6 +510,103 @@ class UnifiedRecurrentController(nn.Module):
                 key=key_state_action,
             ).astype(mx.float32)
             * scale
+        )
+        # The legacy action head is a single cross-attention read. Broad
+        # programs require several action fields to jointly retain evidence,
+        # state and execution order. This fixed-cost workspace refines the
+        # eight action slots without quadratic prompt attention. Its final
+        # projection starts at exact zero, so attaching it to proven parent
+        # tissue is behavior-identical until the action objective trains it.
+        workspace_width = min(config.hidden_size, 4 * config.correction_rank)
+        workspace_scale = 1.0 / math.sqrt(workspace_width)
+        hidden_scale = 1.0 / math.sqrt(config.hidden_size)
+        self.action_workspace_seed = (
+            mx.random.normal(
+                (config.correction_rank, workspace_width),
+                key=key_action_workspace_seed,
+            ).astype(mx.float32)
+            / math.sqrt(config.correction_rank)
+        )
+        self.action_workspace_depth = (
+            mx.random.normal(
+                (config.depth_basis_size, workspace_width),
+                key=key_action_workspace_depth,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.action_workspace_cross_query = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_cross_query,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_cross_key = (
+            mx.random.normal(
+                (2, config.hidden_size, workspace_width),
+                key=key_action_workspace_cross_key,
+            ).astype(mx.float32)
+            * hidden_scale
+        )
+        self.action_workspace_cross_value = (
+            mx.random.normal(
+                (2, config.hidden_size, workspace_width),
+                key=key_action_workspace_cross_value,
+            ).astype(mx.float32)
+            * hidden_scale
+        )
+        self.action_workspace_cross_output = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_cross_output,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_self_query = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_self_query,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_self_key = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_self_key,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_self_value = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_self_value,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_self_output = (
+            mx.random.normal(
+                (2, workspace_width, workspace_width),
+                key=key_action_workspace_self_output,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_ff_up = (
+            mx.random.normal(
+                (2, workspace_width, 4 * workspace_width),
+                key=key_action_workspace_ff_up,
+            ).astype(mx.float32)
+            * workspace_scale
+        )
+        self.action_workspace_ff_down = (
+            mx.random.normal(
+                (2, 4 * workspace_width, workspace_width),
+                key=key_action_workspace_ff_down,
+            ).astype(mx.float32)
+            / math.sqrt(4 * workspace_width)
+        )
+        self.action_workspace_output = mx.zeros(
+            (config.action_slots, workspace_width, config.action_cardinality),
+            dtype=mx.float32,
         )
         self.literal_value_embeddings = (
             mx.random.normal(
@@ -1542,6 +1671,12 @@ class UnifiedRecurrentController(nn.Module):
             mx.einsum("bar,arc->bac", features, self.action_output)
             + self.action_bias
         )
+        workspace = self._action_workspace(problem_evidence, query, step=step)
+        logits = logits + mx.einsum(
+            "baw,awc->bac",
+            workspace,
+            self.action_workspace_output,
+        )
         if token_ids is not None and self.config.literal_digit_token_ids:
             pointer = self._literal_pointer_logits(
                 problem_evidence,
@@ -1607,6 +1742,75 @@ class UnifiedRecurrentController(nn.Module):
             known = mx.array(recognized, dtype=mx.bool_)
             logits = mx.where(known[:, None, None], exact, logits)
         return logits
+
+    @staticmethod
+    def _workspace_norm(value: Any) -> Any:
+        return value / mx.sqrt(
+            mx.mean(value.astype(mx.float32) ** 2, axis=-1, keepdims=True) + 1e-6
+        )
+
+    @staticmethod
+    def _workspace_attention(query: Any, key: Any, value: Any) -> Any:
+        width = int(query.shape[-1])
+        heads = math.gcd(width, 4)
+        head_width = width // heads
+
+        def split(tensor: Any) -> Any:
+            batch, tokens, _width = tensor.shape
+            return tensor.reshape(batch, tokens, heads, head_width).transpose(0, 2, 1, 3)
+
+        query_heads = split(query)
+        key_heads = split(key)
+        value_heads = split(value)
+        weights = mx.softmax(
+            (query_heads @ key_heads.transpose(0, 1, 3, 2))
+            / math.sqrt(head_width),
+            axis=-1,
+        )
+        attended = weights @ value_heads
+        return attended.transpose(0, 2, 1, 3).reshape(
+            query.shape[0], query.shape[1], width
+        )
+
+    def _action_workspace(
+        self,
+        problem_evidence: Any,
+        query: Any,
+        *,
+        step: int,
+    ) -> Any:
+        """Compose public evidence into a bounded recurrent action program."""
+
+        depth = self.depth_features(step) @ self.action_workspace_depth
+        workspace = (
+            query @ self.action_workspace_seed
+            + depth[None, None, :]
+        )
+        evidence = problem_evidence.astype(mx.float32)
+        for layer in range(2):
+            normalized = self._workspace_norm(workspace)
+            cross_query = normalized @ self.action_workspace_cross_query[layer]
+            cross_key = evidence @ self.action_workspace_cross_key[layer]
+            cross_value = evidence @ self.action_workspace_cross_value[layer]
+            cross = self._workspace_attention(
+                cross_query,
+                cross_key,
+                cross_value,
+            ) @ self.action_workspace_cross_output[layer]
+            workspace = workspace + cross
+
+            normalized = self._workspace_norm(workspace)
+            reflected = self._workspace_attention(
+                normalized @ self.action_workspace_self_query[layer],
+                normalized @ self.action_workspace_self_key[layer],
+                normalized @ self.action_workspace_self_value[layer],
+            ) @ self.action_workspace_self_output[layer]
+            workspace = workspace + reflected
+
+            normalized = self._workspace_norm(workspace)
+            expanded = nn.gelu(normalized @ self.action_workspace_ff_up[layer])
+            workspace = workspace + expanded @ self.action_workspace_ff_down[layer]
+        return self._workspace_norm(workspace)
 
     @staticmethod
     def _exact_categorical_logits(
@@ -1852,6 +2056,7 @@ class UnifiedRecurrentController(nn.Module):
             "action_output",
             "action_depth",
             "action_bias",
+            *ACTION_WORKSPACE_PARAMETER_NAMES,
             "state_action_projection",
             "literal_value_embeddings",
             "literal_grounding_logit",
@@ -1875,7 +2080,9 @@ class UnifiedRecurrentController(nn.Module):
             "typed_state_bottleneck": "straight_through_categorical",
             "predicted_state_is_next_step_input": True,
             "state_processor": "separate_initial_parser_and_recurrent_transition",
-            "action_processor": "public_evidence_typed_action_transition",
+            "action_processor": (
+                "public_evidence_bounded_recurrent_semantic_action_workspace"
+            ),
             "predicted_action_is_state_transition_input": True,
             "terminal_state_semantics": "exact_idempotent_stutter",
             "terminal_decode_semantics": "first_terminal_state_preserved",
@@ -2576,6 +2783,7 @@ def unified_recurrent_logits(
 
 
 __all__ = [
+    "ACTION_WORKSPACE_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",
