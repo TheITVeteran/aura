@@ -282,3 +282,65 @@ def test_the_action_still_proceeds_on_a_real_approval():
         break
     else:
         raise AssertionError("the unaudited-approval branch was not found")
+
+
+# ───── "starting empty" and "is empty" were the same observable state
+
+
+def _library(tmp_path, payload: str | None):
+    from core.brain.llm.latent_cortex.schedules import ScheduleLibrary
+
+    path = tmp_path / "schedules.json"
+    if payload is not None:
+        path.write_text(payload, encoding="utf-8")
+    return ScheduleLibrary(path)
+
+
+def test_a_corrupt_schedule_library_is_distinguishable_from_an_empty_one(tmp_path):
+    """A silent loss of every measured schedule looked like a fresh install.
+
+    Downstream status and schedule selection could not tell a library that
+    legitimately holds nothing from one that is corrupt, unreadable by
+    permission, or written under a schema this build does not accept.
+    """
+    corrupt = _library(tmp_path, "{ not json")
+
+    assert corrupt.load_error, "an unreadable library reports nothing wrong"
+    assert "JSONDecodeError" in corrupt.load_error
+
+
+def test_a_schema_mismatch_is_reported_rather_than_silently_empty(tmp_path):
+    import json
+
+    mismatched = _library(
+        tmp_path, json.dumps({"version": -1, "revision": 1, "records": []})
+    )
+
+    assert "schema version" in mismatched.load_error
+
+
+def test_an_absent_library_is_not_an_error(tmp_path):
+    """A first run has nothing to load, and that is a fact about the
+    library rather than about the reader."""
+    assert _library(tmp_path, None).load_error == ""
+
+
+def test_a_valid_library_clears_the_error_and_keeps_its_revision(tmp_path):
+    import json
+
+    from core.brain.llm.latent_cortex.schedules import (
+        SCHEDULE_LIBRARY_SCHEMA_VERSION,
+    )
+
+    library = _library(
+        tmp_path,
+        json.dumps(
+            {"version": SCHEDULE_LIBRARY_SCHEMA_VERSION, "revision": 3, "records": []}
+        ),
+    )
+
+    assert library.load_error == ""
+    assert library._revision == 3, (
+        "a successful load must keep the on-disk revision; starting at 0 is "
+        "what makes a later save look stale"
+    )

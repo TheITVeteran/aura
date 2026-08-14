@@ -914,6 +914,10 @@ class ScheduleLibrary:
         self._path = Path(path) if path else None
         self._records: dict[tuple[str, str], ScheduleRecord] = {}
         self._revision = 0
+        #: Why the library is empty, when it is empty for a REASON. Empty
+        #: string means it loaded (possibly to nothing, which is a fact
+        #: about the library rather than about the reader).
+        self._load_error = ""
         self._lock = threading.RLock()
         if self._path is not None and self._path.exists():
             self._load()
@@ -950,13 +954,30 @@ class ScheduleLibrary:
         try:
             revision, records = self._read_store()
         except (OSError, TypeError, ValueError) as exc:
-            logger.warning(
+            # "starting empty" and "is empty" were the same observable state.
+            # Downstream status and schedule selection could not tell a
+            # library that legitimately holds nothing from one that is
+            # corrupt, unreadable by permission, or written under a schema
+            # this build does not accept — so a silent loss of every
+            # measured schedule looked like a fresh install.
+            from core.runtime.errors import record_degradation
+
+            self._load_error = f"{type(exc).__name__}: {exc}"
+            record_degradation(
+                "latent_cortex.schedules",
+                exc,
+                severity="error",
+                action="started with an empty schedule library because the store was unreadable",
+                extra={"path": str(self._path)},
+            )
+            logger.error(
                 "Schedule library unreadable at %s: %s - starting empty",
                 self._path,
                 exc,
             )
             return
         with self._lock:
+            self._load_error = ""
             self._revision = revision
             self._records = records
 
@@ -983,6 +1004,15 @@ class ScheduleLibrary:
             indent=1,
             sort_keys=True,
         ).encode("utf-8")
+
+    @property
+    def load_error(self) -> str:
+        """Why this library is empty, or "" when it genuinely loaded.
+
+        The distinction selection needs: an empty library is a reason to
+        explore, an unreadable one is a reason to stop and look.
+        """
+        return self._load_error
 
     def save(self) -> bool:
         if self._path is None:
