@@ -56,7 +56,10 @@ from core.learning.recurrent_literal_grounding import (
     LITERAL_MAX_VALUE,
     LiteralObservationContract,
 )
-from core.learning.recurrent_opcode_grounding import OpcodeObservationContract
+from core.learning.recurrent_opcode_grounding import (
+    FrontierFamilyObservationContract,
+    OpcodeObservationContract,
+)
 from core.learning.recurrent_state_schema import (
     STATE_CARDINALITY,
     STATE_SLOT_NAMES,
@@ -106,6 +109,8 @@ CAUSAL_ACTION_PARAMETER_NAMES: Final = (
     "action_causal_prior_projection",
     "action_causal_output",
 )
+FAMILY_ACTION_PARAMETER_NAMES: Final = ("action_family_output",)
+FRONTIER_ACTION_EXPERT_COUNT: Final = OP_FRONTIER_AUDIT - OP_FRONTIER_TRAVERSE + 1
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -137,6 +142,7 @@ class UnifiedRecurrenceConfig:
     literal_digit_token_ids: tuple[int, ...] = ()
     opcode_token_patterns: tuple[tuple[int, tuple[int, ...]], ...] = ()
     opcode_context_patterns: tuple[tuple[str, tuple[int, ...]], ...] = ()
+    frontier_family_token_patterns: tuple[tuple[int, tuple[int, ...]], ...] = ()
     initialization_seed: int = 20260810198
     schema: str = UNIFIED_INTRINSIC_RECURRENCE_SCHEMA
 
@@ -181,6 +187,8 @@ class UnifiedRecurrenceConfig:
                 self.opcode_token_patterns,
                 self.opcode_context_patterns,
             )
+        if self.frontier_family_token_patterns:
+            FrontierFamilyObservationContract(self.frontier_family_token_patterns)
         if type(self.minimum_iterations) is not int or self.minimum_iterations < 1:
             raise ValueError("minimum_iterations must be positive")
         if type(self.initialization_seed) is not int or self.initialization_seed < 0:
@@ -622,6 +630,20 @@ class UnifiedRecurrentController(nn.Module):
         )
         self.action_workspace_output = mx.zeros(
             (config.action_slots, workspace_width, config.action_cardinality),
+            dtype=mx.float32,
+        )
+        # Frontier families execute different algorithms and assign different
+        # meanings to the same argument slots. One shared projection collapsed
+        # to a cross-family class prior in CP425. Public family declarations may
+        # select an isolated expert, but no private program or answer enters the
+        # route. Zero outputs preserve every parent logit before training.
+        self.action_family_output = mx.zeros(
+            (
+                FRONTIER_ACTION_EXPERT_COUNT,
+                config.action_slots,
+                workspace_width,
+                config.action_cardinality,
+            ),
             dtype=mx.float32,
         )
         # A program instruction is not eight independent labels. The opcode
@@ -1709,6 +1731,7 @@ class UnifiedRecurrentController(nn.Module):
         prior_action_probabilities: Any | None = None,
         causal_action_lesion: bool = False,
         action_feedback_lesion: bool = False,
+        family_action_lesion: bool = False,
     ) -> Any:
         """Decode the next typed operation from public evidence and current state."""
 
@@ -1739,6 +1762,12 @@ class UnifiedRecurrentController(nn.Module):
             "baw,awc->bac",
             workspace,
             self.action_workspace_output,
+        )
+        logits = self._family_action_logits(
+            logits,
+            workspace,
+            token_ids=token_ids,
+            family_action_lesion=family_action_lesion,
         )
         logits = self._causal_action_logits(
             logits,
@@ -1989,6 +2018,47 @@ class UnifiedRecurrentController(nn.Module):
             prefix = self._workspace_norm(prefix + update)
         return mx.stack(decisions, axis=1)
 
+    def _family_action_logits(
+        self,
+        base_logits: Any,
+        workspace: Any,
+        *,
+        token_ids: Any | None,
+        family_action_lesion: bool,
+    ) -> Any:
+        """Apply one public-family expert without exposing private supervision."""
+
+        if type(family_action_lesion) is not bool:
+            raise TypeError("family action lesion flag must be bool")
+        if (
+            family_action_lesion
+            or token_ids is None
+            or not self.config.frontier_family_token_patterns
+        ):
+            return base_logits
+        contract = FrontierFamilyObservationContract(
+            self.config.frontier_family_token_patterns
+        )
+        opcodes, recognized = contract.observe(token_ids.tolist())
+        routes = mx.array(
+            [
+                [
+                    1.0
+                    if known and opcode == OP_FRONTIER_TRAVERSE + expert
+                    else 0.0
+                    for expert in range(FRONTIER_ACTION_EXPERT_COUNT)
+                ]
+                for opcode, known in zip(opcodes, recognized, strict=True)
+            ],
+            dtype=mx.float32,
+        )
+        expert_logits = mx.einsum(
+            "baw,eawc->beac",
+            workspace.astype(mx.float32),
+            self.action_family_output,
+        )
+        return base_logits + mx.einsum("be,beac->bac", routes, expert_logits)
+
     @staticmethod
     def _exact_categorical_logits(
         values: Sequence[Sequence[int]],
@@ -2235,6 +2305,7 @@ class UnifiedRecurrentController(nn.Module):
             "action_bias",
             *ACTION_WORKSPACE_PARAMETER_NAMES,
             *CAUSAL_ACTION_PARAMETER_NAMES,
+            *FAMILY_ACTION_PARAMETER_NAMES,
             "state_action_projection",
             "literal_value_embeddings",
             "literal_grounding_logit",
@@ -2266,6 +2337,17 @@ class UnifiedRecurrentController(nn.Module):
                 "field_order": list(ACTION_SLOT_NAMES),
                 "future_field_teacher_leakage": False,
                 "previous_action_feedback": True,
+                "parent_attachment": "exact_zero_output_noop",
+                "lesionable": True,
+            },
+            "frontier_action_experts": {
+                "count": FRONTIER_ACTION_EXPERT_COUNT,
+                "route": (
+                    "tokenizer_bound_public_family_declaration"
+                    if self.config.frontier_family_token_patterns
+                    else "disabled"
+                ),
+                "private_transition_program_visible": False,
                 "parent_attachment": "exact_zero_output_noop",
                 "lesionable": True,
             },
@@ -2343,6 +2425,7 @@ def unified_recurrent_hidden_states(
     typed_action_lesion: bool = False,
     causal_action_lesion: bool = False,
     action_feedback_lesion: bool = False,
+    family_action_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
     detach_problem_evidence: bool = True,
@@ -2358,6 +2441,7 @@ def unified_recurrent_hidden_states(
         or type(typed_action_lesion) is not bool
         or type(causal_action_lesion) is not bool
         or type(action_feedback_lesion) is not bool
+        or type(family_action_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
         or type(detach_problem_evidence) is not bool
@@ -2550,6 +2634,7 @@ def unified_recurrent_hidden_states(
                     prior_action_probabilities=prior_action_probabilities,
                     causal_action_lesion=causal_action_lesion,
                     action_feedback_lesion=action_feedback_lesion,
+                    family_action_lesion=family_action_lesion,
                 )
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
@@ -2985,6 +3070,8 @@ def unified_recurrent_logits(
 __all__ = [
     "ACTION_WORKSPACE_PARAMETER_NAMES",
     "CAUSAL_ACTION_PARAMETER_NAMES",
+    "FAMILY_ACTION_PARAMETER_NAMES",
+    "FRONTIER_ACTION_EXPERT_COUNT",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",

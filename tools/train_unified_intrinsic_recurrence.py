@@ -47,6 +47,7 @@ from core.learning.recurrent_literal_grounding import (  # noqa: E402
     tokenizer_digit_token_ids,
 )
 from core.learning.recurrent_opcode_grounding import (  # noqa: E402
+    tokenizer_frontier_family_contract,
     tokenizer_opcode_contract,
 )
 from core.learning.recurrent_state_schema import (  # noqa: E402
@@ -69,6 +70,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     ACTION_WORKSPACE_PARAMETER_NAMES,
     CAUSAL_ACTION_PARAMETER_NAMES,
+    FAMILY_ACTION_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
@@ -935,7 +937,13 @@ def _gradient_ownership_group(name: str) -> str:
         return "state_answer_bridge"
     if name.startswith("controller.action_value_embeddings"):
         return "typed_action_codebook"
-    if name.startswith(("controller.action_workspace_", "controller.action_causal_")):
+    if name.startswith(
+        (
+            "controller.action_workspace_",
+            "controller.action_causal_",
+            "controller.action_family_",
+        )
+    ):
         return "typed_action_workspace"
     if name.startswith(
         (
@@ -2583,6 +2591,10 @@ def _bootstrap_bundle_from_checkpoint(
         bundle_values,
         child_values,
     )
+    bundle_values, family_action_extension = _merge_bootstrap_family_action_extension(
+        bundle_values,
+        child_values,
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -2618,6 +2630,8 @@ def _bootstrap_bundle_from_checkpoint(
         result["action_workspace_extension"] = action_workspace_extension
     if causal_action_extension is not None:
         result["causal_action_extension"] = causal_action_extension
+    if family_action_extension is not None:
+        result["family_action_extension"] = family_action_extension
     return result
 
 
@@ -2802,6 +2816,50 @@ def _merge_bootstrap_causal_action_extension(
         "behavior_before_training_preserved": True,
         "field_order": list(ACTION_SLOT_NAMES),
         "future_field_teacher_leakage": False,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
+def _merge_bootstrap_family_action_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach isolated public-family experts as an exact no-op."""
+
+    expected = {f"controller.{name}" for name in FAMILY_ACTION_PARAMETER_NAMES}
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap family-action inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap family-action source differs"
+            )
+        value = child_values[name]
+        if bool(mx.any(value != 0)):
+            raise RuntimeError(
+                "unified recurrence bootstrap family action experts are not a no-op"
+            )
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    return migrated, {
+        "schema": "aura.unified_intrinsic.family_action_extension.v1",
+        "migration_rule": "parent_exact_plus_zero_output_public_family_experts",
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "private_transition_program_visible": False,
         "new_tensor_names": sorted(expected),
         "tensors": tensor_receipts,
     }
@@ -3713,6 +3771,7 @@ def main() -> int:
         literal_digit_ids = tokenizer_digit_token_ids(tokenizer)
         literal_contract = LiteralObservationContract(literal_digit_ids)
         opcode_contract = tokenizer_opcode_contract(tokenizer)
+        family_contract = tokenizer_frontier_family_contract(tokenizer)
         answer_emission_contract = tokenizer_answer_emission_contract(
             tokenizer,
             opcode_contract,
@@ -3778,6 +3837,7 @@ def main() -> int:
                 literal_digit_token_ids=literal_digit_ids,
                 opcode_token_patterns=opcode_contract.patterns,
                 opcode_context_patterns=opcode_contract.contexts,
+                frontier_family_token_patterns=family_contract.patterns,
             )
         )
         state_codebook_grounding = _ground_state_value_embeddings(
@@ -3844,6 +3904,10 @@ def main() -> int:
             "opcode_observation_contract": {
                 **opcode_contract.to_dict(),
                 "contract_sha256": opcode_contract.contract_sha256,
+            },
+            "frontier_family_observation_contract": {
+                **family_contract.to_dict(),
+                "contract_sha256": family_contract.contract_sha256,
             },
             "answer_emission_contract": {
                 **answer_emission_contract.to_dict(),

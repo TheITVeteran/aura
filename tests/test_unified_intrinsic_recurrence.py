@@ -12,6 +12,10 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.learning.intrinsic_recurrence import RecurrentDepthPlan  # noqa: E402
 from core.learning.protected_memory import MemoryLayout  # noqa: E402
+from core.learning.recurrent_action_schema import (  # noqa: E402
+    OP_FRONTIER_AUDIT,
+    OP_FRONTIER_TRAVERSE,
+)
 from core.learning.recurrent_answer_emission import (  # noqa: E402
     RecurrentAnswerEmissionContract,
 )
@@ -128,6 +132,102 @@ def test_action_workspace_attaches_as_exact_noop_then_changes_logits() -> None:
         altered.receipt()["action_processor"]
         == "public_evidence_bounded_autoregressive_typed_action_workspace"
     )
+
+
+def test_public_family_experts_attach_as_exact_noop_and_route_independently() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.repeat(
+        mx.random.normal((1, 9, 64), key=mx.random.key(191)),
+        2,
+        axis=0,
+    )
+    hidden = mx.repeat(
+        mx.random.normal((1, 12, 64), key=mx.random.key(192)),
+        2,
+        axis=0,
+    )
+    tokens = mx.array([[100, 1], [101, 1]])
+    baseline = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        token_ids=tokens,
+        family_action_lesion=True,
+    )
+    no_op = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        token_ids=tokens,
+    )
+    assert bool(mx.array_equal(baseline, no_op))
+    assert bool(mx.all(controller.action_family_output == 0))
+
+    controller.action_family_output = mx.random.normal(
+        controller.action_family_output.shape,
+        key=mx.random.key(193),
+    )
+    active = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        token_ids=tokens,
+    )
+    lesioned = controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=4,
+        step=3,
+        token_ids=tokens,
+        family_action_lesion=True,
+    )
+    assert not bool(mx.array_equal(active, lesioned))
+    assert not bool(mx.array_equal(active[0], active[1]))
+
+
+def test_public_family_expert_gradient_isolated_to_selected_route() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(194))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(195))
+
+    def objective(candidate: UnifiedRecurrentController):
+        logits = candidate.action_logits(
+            evidence,
+            hidden,
+            state_slot_start=4,
+            step=3,
+            token_ids=mx.array([[100, 1]]),
+        )
+        return -mx.mean(nn.log_softmax(logits, axis=-1)[:, :, 7])
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    mx.eval(loss, gradients)
+    expert_gradients = gradients["action_family_output"]
+    assert float(mx.max(mx.abs(expert_gradients[0]))) > 0.0
+    assert float(mx.max(mx.abs(expert_gradients[1:]))) == 0.0
 
 
 def test_causal_action_decoder_is_exact_noop_until_its_output_is_trained() -> None:

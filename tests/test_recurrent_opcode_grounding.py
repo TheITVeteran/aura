@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from core.learning.recurrent_action_schema import (
     ACTION_NULL,
     OP_ADD_MOD,
@@ -10,12 +12,22 @@ from core.learning.recurrent_action_schema import (
     OP_BOOL_OR,
     OP_BOOL_XOR,
     OP_COPY_VALUE,
+    OP_FRONTIER_AUDIT,
+    OP_FRONTIER_CALIBRATE,
+    OP_FRONTIER_ENUMERATE,
+    OP_FRONTIER_INFER,
+    OP_FRONTIER_SCHEDULE,
+    OP_FRONTIER_SIMULATE,
+    OP_FRONTIER_TRAVERSE,
     OP_MUL_MOD,
     OP_REGISTER_AFFINE,
     OP_SUB_MOD,
 )
 from core.learning.recurrent_literal_grounding import LiteralObservationContract
-from core.learning.recurrent_opcode_grounding import OpcodeObservationContract
+from core.learning.recurrent_opcode_grounding import (
+    FrontierFamilyObservationContract,
+    OpcodeObservationContract,
+)
 
 OPCODE_PATTERNS = (
     (OP_COPY_VALUE, (7,)),
@@ -39,6 +51,36 @@ CONTEXT_PATTERNS = (
     ("register_ops_start", (48,)),
     ("register_ops_end", (49,)),
 )
+FRONTIER_PATTERNS = tuple(
+    (opcode, (100 + index, 200 + index))
+    for index, opcode in enumerate(
+        (
+            OP_FRONTIER_TRAVERSE,
+            OP_FRONTIER_ENUMERATE,
+            OP_FRONTIER_SIMULATE,
+            OP_FRONTIER_INFER,
+            OP_FRONTIER_SCHEDULE,
+            OP_FRONTIER_CALIBRATE,
+            OP_FRONTIER_AUDIT,
+        )
+    )
+)
+
+
+def test_frontier_family_contract_routes_public_markers_only() -> None:
+    contract = FrontierFamilyObservationContract(FRONTIER_PATTERNS)
+    values, recognized = contract.observe(
+        ((1, 100, 200, 2), (1, 106, 206, 2), (1, 2, 3))
+    )
+    assert values == (OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT, ACTION_NULL)
+    assert recognized == (True, True, False)
+    assert len(contract.contract_sha256) == 64
+
+
+def test_frontier_family_contract_rejects_conflicting_public_markers() -> None:
+    contract = FrontierFamilyObservationContract(FRONTIER_PATTERNS)
+    with pytest.raises(ValueError, match="conflicting frontier families"):
+        contract.observe(((100, 200, 101, 201),))
 
 
 def test_opcode_contract_marks_every_exact_occurrence_without_assigning_relevance() -> None:

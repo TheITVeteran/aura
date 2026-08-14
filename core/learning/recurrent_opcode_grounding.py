@@ -16,12 +16,20 @@ from core.learning.recurrent_action_schema import (
     OP_BOOL_OR,
     OP_BOOL_XOR,
     OP_COPY_VALUE,
+    OP_FRONTIER_AUDIT,
+    OP_FRONTIER_CALIBRATE,
+    OP_FRONTIER_ENUMERATE,
+    OP_FRONTIER_INFER,
+    OP_FRONTIER_SCHEDULE,
+    OP_FRONTIER_SIMULATE,
+    OP_FRONTIER_TRAVERSE,
     OP_MUL_MOD,
     OP_REGISTER_AFFINE,
     OP_SUB_MOD,
 )
 
 OPCODE_GROUNDING_SCHEMA: Final = "aura.recurrent_opcode_grounding.v1"
+FRONTIER_FAMILY_GROUNDING_SCHEMA: Final = "aura.frontier_family_grounding.v1"
 _OPCODE_TEXT: Final = (
     (OP_COPY_VALUE, "->"),
     (OP_ADD_MOD, " +"),
@@ -46,6 +54,16 @@ _CONTEXT_TEXT: Final = (
 )
 _CONTEXT_KEYS: Final = frozenset(name for name, _text in _CONTEXT_TEXT)
 _OBSERVED_OPCODES: Final = frozenset(opcode for opcode, _text in _OPCODE_TEXT)
+_FRONTIER_FAMILY_TEXT: Final = (
+    (OP_FRONTIER_TRAVERSE, "Fresh algorithm task."),
+    (OP_FRONTIER_ENUMERATE, "Fresh combinatorics task."),
+    (OP_FRONTIER_SIMULATE, "Fresh code-semantics task."),
+    (OP_FRONTIER_INFER, "Fresh causal-inference task."),
+    (OP_FRONTIER_SCHEDULE, "Fresh planning task."),
+    (OP_FRONTIER_CALIBRATE, "Fresh calibration task."),
+    (OP_FRONTIER_AUDIT, "Fresh premise-audit task."),
+)
+_FRONTIER_OPCODES: Final = frozenset(opcode for opcode, _text in _FRONTIER_FAMILY_TEXT)
 
 
 def _tokenizer_patterns(
@@ -83,6 +101,80 @@ def tokenizer_opcode_contract(tokenizer: Any) -> OpcodeObservationContract:
         _tokenizer_patterns(tokenizer, _OPCODE_TEXT),
         _tokenizer_patterns(tokenizer, _CONTEXT_TEXT),
     )
+
+
+def tokenizer_frontier_family_contract(
+    tokenizer: Any,
+) -> FrontierFamilyObservationContract:
+    """Bind public frontier task declarations to their canonical operation family."""
+
+    return FrontierFamilyObservationContract(
+        _tokenizer_patterns(tokenizer, _FRONTIER_FAMILY_TEXT)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FrontierFamilyObservationContract:
+    """Recognize only the public task family, never its private transition trace."""
+
+    patterns: tuple[tuple[int, tuple[int, ...]], ...]
+    schema: str = FRONTIER_FAMILY_GROUNDING_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.schema != FRONTIER_FAMILY_GROUNDING_SCHEMA or not self.patterns:
+            raise ValueError("frontier family observation schema differs")
+        if (
+            {opcode for opcode, _pattern in self.patterns} != _FRONTIER_OPCODES
+            or any(
+                type(opcode) is not int
+                or not pattern
+                or any(type(token_id) is not int or token_id < 0 for token_id in pattern)
+                for opcode, pattern in self.patterns
+            )
+            or len({pattern for _opcode, pattern in self.patterns}) != len(self.patterns)
+        ):
+            raise ValueError("frontier family observation vocabulary is invalid")
+
+    def observe(
+        self,
+        token_rows: Sequence[Sequence[int]],
+    ) -> tuple[tuple[int, ...], tuple[bool, ...]]:
+        values: list[int] = []
+        recognized: list[bool] = []
+        for row in token_rows:
+            matches = [
+                opcode
+                for opcode, pattern in self.patterns
+                if any(
+                    tuple(row[index : index + len(pattern)]) == pattern
+                    for index in range(len(row) - len(pattern) + 1)
+                )
+            ]
+            if len(matches) > 1:
+                raise ValueError("public prompt declares conflicting frontier families")
+            values.append(matches[0] if matches else ACTION_NULL)
+            recognized.append(bool(matches))
+        return tuple(values), tuple(recognized)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "patterns": [
+                {"opcode": opcode, "token_ids": list(pattern)}
+                for opcode, pattern in self.patterns
+            ],
+        }
+
+    @property
+    def contract_sha256(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                self.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("ascii")
+        ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,7 +534,10 @@ class OpcodeObservationContract:
 
 
 __all__ = [
+    "FRONTIER_FAMILY_GROUNDING_SCHEMA",
     "OPCODE_GROUNDING_SCHEMA",
+    "FrontierFamilyObservationContract",
     "OpcodeObservationContract",
+    "tokenizer_frontier_family_contract",
     "tokenizer_opcode_contract",
 ]

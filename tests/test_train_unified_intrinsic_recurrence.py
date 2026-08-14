@@ -32,6 +32,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     ACTION_WORKSPACE_PARAMETER_NAMES,
     CAUSAL_ACTION_PARAMETER_NAMES,
+    FAMILY_ACTION_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
@@ -70,6 +71,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_action_workspace_extension,
     _merge_bootstrap_causal_action_extension,
     _merge_bootstrap_codebook_extension,
+    _merge_bootstrap_family_action_extension,
     _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
     _model_identity,
@@ -308,6 +310,29 @@ def test_bootstrap_causal_action_rejects_partial_or_active_extension() -> None:
     parent = {"controller.action_output": child["controller.action_output"]}
     with pytest.raises(RuntimeError, match="not a no-op"):
         _merge_bootstrap_causal_action_extension(parent, child)
+
+
+def test_bootstrap_family_action_extension_is_exact_and_rejects_active_output() -> None:
+    parent = {"controller.action_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.zeros((7, 8, 2, 33), dtype=mx.float32)
+            for name in FAMILY_ACTION_PARAMETER_NAMES
+        },
+    }
+    migrated, receipt = _merge_bootstrap_family_action_extension(parent, child)
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["private_transition_program_visible"] is False
+    assert set(migrated) == set(child)
+
+    active = {
+        **child,
+        "controller.action_family_output": mx.ones((7, 8, 2, 33)),
+    }
+    with pytest.raises(RuntimeError, match="experts are not a no-op"):
+        _merge_bootstrap_family_action_extension(parent, active)
 
 
 def test_bootstrap_initial_state_extension_copies_legacy_transition_exactly() -> None:

@@ -37,7 +37,9 @@ from core.learning.recurrent_literal_grounding import (  # noqa: E402
     tokenizer_digit_token_ids,
 )
 from core.learning.recurrent_opcode_grounding import (  # noqa: E402
+    FrontierFamilyObservationContract,
     OpcodeObservationContract,
+    tokenizer_frontier_family_contract,
     tokenizer_opcode_contract,
 )
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
@@ -280,6 +282,14 @@ def _controller_config(
     literal_contract: LiteralObservationContract,
     opcode_contract: OpcodeObservationContract,
 ) -> UnifiedRecurrenceConfig:
+    family_identity = identity.get("frontier_family_observation_contract")
+    if not isinstance(family_identity, dict):
+        raise RuntimeError("unified checkpoint frontier family contract is absent")
+    family_patterns = tuple(
+        (row.get("opcode"), tuple(row.get("token_ids", ())))
+        for row in family_identity.get("patterns", ())
+        if isinstance(row, dict)
+    )
     return UnifiedRecurrenceConfig(
         hidden_size=int(model.model.layers[0].input_layernorm.weight.shape[0]),
         correction_rank=int(identity["controller_rank"]),
@@ -289,6 +299,7 @@ def _controller_config(
         literal_digit_token_ids=literal_contract.digit_token_ids,
         opcode_token_patterns=opcode_contract.patterns,
         opcode_context_patterns=opcode_contract.contexts,
+        frontier_family_token_patterns=family_patterns,
     )
 
 
@@ -745,6 +756,23 @@ def _load_checkpoint(
         or opcode_contract != tokenizer_contract
     ):
         raise RuntimeError("unified checkpoint opcode contract differs")
+    family_identity = identity.get("frontier_family_observation_contract")
+    if not isinstance(family_identity, dict):
+        raise RuntimeError("unified checkpoint frontier family contract is absent")
+    family_contract = FrontierFamilyObservationContract(
+        tuple(
+            (row.get("opcode"), tuple(row.get("token_ids", ())))
+            for row in family_identity.get("patterns", ())
+            if isinstance(row, dict)
+        ),
+        schema=family_identity.get("schema"),
+    )
+    if (
+        family_contract.contract_sha256
+        != family_identity.get("contract_sha256")
+        or family_contract != tokenizer_frontier_family_contract(tokenizer)
+    ):
+        raise RuntimeError("unified checkpoint frontier family contract differs")
     answer_identity = identity.get("answer_emission_contract")
     if not isinstance(answer_identity, dict):
         raise RuntimeError("unified checkpoint answer emission contract is absent")
