@@ -37,8 +37,8 @@ BASELINE = ROOT / "config" / "aura_effect_ownership_baseline.json"
 #: ungoverned effect debt.
 #: 1,000/905 before the orphan retirement removed 112 unreachable modules,
 #: which took their effect call sites with them.
-GOVERNED_CEILING = 976
-RAW_CEILING = 878
+GOVERNED_CEILING = 974
+RAW_CEILING = 874
 
 
 def _split() -> tuple[int, int]:

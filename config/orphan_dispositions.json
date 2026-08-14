@@ -55,10 +55,10 @@
       "lines": 255,
       "reason": "exposes ['get_distillation_service']"
     },
-    "core.continuity.checkpoint_manager": {
+    "core.continuity.state_snapshot": {
       "classified": "SCAFFOLDING",
       "disposition": "RETIRE",
-      "lines": 50,
+      "lines": 32,
       "reason": "no references, no entry point, no accessor"
     },
     "core.conversational": {
@@ -355,12 +355,6 @@
       "lines": 223,
       "reason": "exposes ['get_degradation_manager', 'get_status_summary']"
     },
-    "core.resilience.sandbox_manager": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 59,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.resource": {
       "classified": "PACKAGE",
       "disposition": "STRUCTURAL",
@@ -433,12 +427,6 @@
       "lines": 1,
       "reason": "package __init__ \u2014 importing the package requires it"
     },
-    "core.sim.monte_carlo": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 30,
-      "reason": "no references, no entry point, no accessor"
-    },
     "core.simulation": {
       "classified": "PACKAGE",
       "disposition": "STRUCTURAL",
@@ -510,18 +498,6 @@
       "disposition": "INVOKED",
       "lines": 88,
       "reason": "has __main__ block"
-    },
-    "core.temporal.causal_reasoning": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 507,
-      "reason": "no references, no entry point, no accessor"
-    },
-    "core.temporal.temporal_reasoning": {
-      "classified": "SCAFFOLDING",
-      "disposition": "RETIRE",
-      "lines": 855,
-      "reason": "no references, no entry point, no accessor"
     },
     "core.unknowns": {
       "classified": "PACKAGE",

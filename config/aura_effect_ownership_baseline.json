@@ -3977,14 +3977,6 @@
       "scope": "<module>.ContinuityEngine.save"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/continuity/checkpoint_manager.py",
-      "scope": "<module>.CheckpointManager.save_checkpoint"
-    },
-    {
       "callee": "<file_write_gateway>.write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -5967,14 +5959,6 @@
       "count": 1,
       "path": "core/state/state_repository.py",
       "scope": "<module>.StateRepository._ensure_db_parent_directory"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/temporal/temporal_reasoning.py",
-      "scope": "<module>.PastReflectionEngine._persist_event.write_sync"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -11373,30 +11357,6 @@
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
-      "path": "core/resilience/sandbox_manager.py",
-      "scope": "<module>.SandboxManager.__init__"
-    },
-    {
-      "callee": "shutil.copy2",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/sandbox_manager.py",
-      "scope": "<module>.SandboxManager.create_snapshot"
-    },
-    {
-      "callee": "shutil.copy2",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/sandbox_manager.py",
-      "scope": "<module>.SandboxManager.restore_snapshot"
-    },
-    {
-      "callee": "self.snapshot_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
       "path": "core/resilience/snapshot_manager.py",
       "scope": "<module>.SnapshotManager.__init__"
     },
@@ -13519,14 +13479,6 @@
       "count": 1,
       "path": "core/tasks/dead_letter_queue.py",
       "scope": "<module>.DeadLetterQueue.__init__"
-    },
-    {
-      "callee": "self.memory_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/temporal/temporal_reasoning.py",
-      "scope": "<module>.PastReflectionEngine.__init__"
     },
     {
       "callee": "os.unlink",
@@ -15874,6 +15826,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "cd1a0cea595f5cfcf66ab85dcfd97a0373e543c9737cde4040091a3c782f972e",
+  "inventory_sha256": "4566dfe25a1e1d84ee85f296cc2944a8f48a3fa35ab9624b95573c7a53cbdeee",
   "schema_version": 1
 }
