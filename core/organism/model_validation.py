@@ -1202,102 +1202,7 @@ def install_runtime_validation() -> dict[str, Any]:
     # Six statements that used to be made more broadly than the code supported.
     # Each predicate below re-derives its answer from the live modules, so a
     # regression retracts the claim rather than leaving it standing in prose.
-    for name, description, capability, observation_name, source, predicate, owner in (
-        (
-            "honesty_coverage_is_closed_over_the_capability_vocabulary",
-            "every declared desktop action has both a renderer and a claim recogniser",
-            "effect_registry",
-            "no_capability_lacks_an_auditor",
-            "core/epistemics/effect_registry.py coverage gate",
-            _honesty_coverage_is_closed,
-            "core/epistemics/effect_registry.py",
-        ),
-        (
-            "zero_receipt_completion_is_caught_without_any_effect_pattern",
-            "a completion claim on a turn with no verified effect is corrected, "
-            "and an ordinary reply about thinking is not",
-            "unevidenced_action_audit",
-            "live_false_completions_are_caught",
-            "core/epistemics/unevidenced_action.py, against the 2026-08-10 failures",
-            _zero_receipt_completion_is_caught,
-            "core/epistemics/unevidenced_action.py",
-        ),
-        (
-            "functional_i_policy_reaches_generation",
-            "the self-model's identity tension tightens sampling and never loosens it",
-            "functional_i_coupling",
-            "self_model_constrains_sampling",
-            "core/being/policy_coupler.py wiring tests",
-            _functional_i_policy_reaches_generation,
-            "core/being/policy_coupler.py",
-        ),
-        (
-            "identity_is_anchored_to_a_key_not_a_state_id",
-            "the entity id is stable across state derivation and signs state lineage",
-            "entity_identity",
-            "anchor_survives_state_change",
-            "core/identity/entity_key.py chain tests",
-            _identity_is_key_anchored,
-            "core/identity/entity_key.py",
-        ),
-        (
-            "cognitive_contracts_are_checked_against_observed_writes",
-            "a phase that writes a field its contract did not declare is detected "
-            "by measurement rather than by self-report",
-            "cognitive_contracts",
-            "undeclared_writes_are_detected",
-            "core/runtime/cognitive_contract.py contract gate",
-            _cognitive_contracts_detect_undeclared_writes,
-            "core/runtime/cognitive_contract.py",
-        ),
-        (
-            "standing_prohibitions_are_deny_only",
-            "a standing directive can forbid and cannot grant, so a learned "
-            "preference cannot become permission",
-            "standing_directives",
-            "prohibitions_have_no_grant_path",
-            "core/governance/standing_directives.py deny-only contract",
-            _standing_prohibitions_are_deny_only,
-            "core/governance/standing_directives.py",
-        ),
-        (
-            "a_held_fact_survives_the_stages_that_rewrite_the_reply",
-            "a stage that drops or contradicts an established fact is detected, "
-            "attributed by name, and corrected at the terminal boundary",
-            "fact_custody",
-            "custody_breaks_are_caught_and_repaired",
-            "core/runtime/fact_custody.py, against the 2026-08-10 count failure",
-            _held_facts_survive_the_reply_path,
-            "core/runtime/fact_custody.py",
-        ),
-        (
-            "why_she_did_it_is_answered_from_the_record",
-            "the account of a decision names the measured phase and branch, and "
-            "an empty record produces no account at all",
-            "decision_provenance",
-            "the_answer_comes_from_receipts",
-            "core/introspection/decision_provenance.py against a recorded tick",
-            _why_is_answered_from_provenance,
-            "core/introspection/decision_provenance.py",
-        ),
-    ):
-        suite.add_test(
-            ValidationTest(
-                name=name,
-                description=description,
-                required_capability=capability,
-                observation=Observation(
-                    name=observation_name,
-                    value=True,
-                    source=source,
-                ),
-                predict=lambda _m, _p=predicate: _p(),
-                score=lambda p, o: boolean_score(
-                    bool(p), expected=bool(o.value), subject="contract holds"
-                ),
-                owner=owner,
-            )
-        )
+    _install_honesty_coverage_claims(suite)
 
     _install_suite_tail(suite)
 
@@ -1726,6 +1631,110 @@ def install_runtime_validation() -> dict[str, Any]:
         "tests": [t.name for t in suite.tests()],
         "claims": len(suite.claims()),
     }
+
+def _install_honesty_coverage_claims(suite):
+    """Body lifted verbatim out of ``install_runtime_validation``.
+
+    Moved by tools/extract_seam.py, which refuses to write unless the
+    relocated body diffs clean against the original. The seam was
+    1 names in, 0 out, 0 early return(s), 0 awaits.
+    """
+    for name, description, capability, observation_name, source, predicate, owner in (
+        (
+            "honesty_coverage_is_closed_over_the_capability_vocabulary",
+            "every declared desktop action has both a renderer and a claim recogniser",
+            "effect_registry",
+            "no_capability_lacks_an_auditor",
+            "core/epistemics/effect_registry.py coverage gate",
+            _honesty_coverage_is_closed,
+            "core/epistemics/effect_registry.py",
+        ),
+        (
+            "zero_receipt_completion_is_caught_without_any_effect_pattern",
+            "a completion claim on a turn with no verified effect is corrected, "
+            "and an ordinary reply about thinking is not",
+            "unevidenced_action_audit",
+            "live_false_completions_are_caught",
+            "core/epistemics/unevidenced_action.py, against the 2026-08-10 failures",
+            _zero_receipt_completion_is_caught,
+            "core/epistemics/unevidenced_action.py",
+        ),
+        (
+            "functional_i_policy_reaches_generation",
+            "the self-model's identity tension tightens sampling and never loosens it",
+            "functional_i_coupling",
+            "self_model_constrains_sampling",
+            "core/being/policy_coupler.py wiring tests",
+            _functional_i_policy_reaches_generation,
+            "core/being/policy_coupler.py",
+        ),
+        (
+            "identity_is_anchored_to_a_key_not_a_state_id",
+            "the entity id is stable across state derivation and signs state lineage",
+            "entity_identity",
+            "anchor_survives_state_change",
+            "core/identity/entity_key.py chain tests",
+            _identity_is_key_anchored,
+            "core/identity/entity_key.py",
+        ),
+        (
+            "cognitive_contracts_are_checked_against_observed_writes",
+            "a phase that writes a field its contract did not declare is detected "
+            "by measurement rather than by self-report",
+            "cognitive_contracts",
+            "undeclared_writes_are_detected",
+            "core/runtime/cognitive_contract.py contract gate",
+            _cognitive_contracts_detect_undeclared_writes,
+            "core/runtime/cognitive_contract.py",
+        ),
+        (
+            "standing_prohibitions_are_deny_only",
+            "a standing directive can forbid and cannot grant, so a learned "
+            "preference cannot become permission",
+            "standing_directives",
+            "prohibitions_have_no_grant_path",
+            "core/governance/standing_directives.py deny-only contract",
+            _standing_prohibitions_are_deny_only,
+            "core/governance/standing_directives.py",
+        ),
+        (
+            "a_held_fact_survives_the_stages_that_rewrite_the_reply",
+            "a stage that drops or contradicts an established fact is detected, "
+            "attributed by name, and corrected at the terminal boundary",
+            "fact_custody",
+            "custody_breaks_are_caught_and_repaired",
+            "core/runtime/fact_custody.py, against the 2026-08-10 count failure",
+            _held_facts_survive_the_reply_path,
+            "core/runtime/fact_custody.py",
+        ),
+        (
+            "why_she_did_it_is_answered_from_the_record",
+            "the account of a decision names the measured phase and branch, and "
+            "an empty record produces no account at all",
+            "decision_provenance",
+            "the_answer_comes_from_receipts",
+            "core/introspection/decision_provenance.py against a recorded tick",
+            _why_is_answered_from_provenance,
+            "core/introspection/decision_provenance.py",
+        ),
+    ):
+        suite.add_test(
+            ValidationTest(
+                name=name,
+                description=description,
+                required_capability=capability,
+                observation=Observation(
+                    name=observation_name,
+                    value=True,
+                    source=source,
+                ),
+                predict=lambda _m, _p=predicate: _p(),
+                score=lambda p, o: boolean_score(
+                    bool(p), expected=bool(o.value), subject="contract holds"
+                ),
+                owner=owner,
+            )
+        )
 
 def _install_suite_tail(suite):
     """Body lifted verbatim out of ``install_runtime_validation``.

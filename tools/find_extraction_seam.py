@@ -121,6 +121,34 @@ def _bound_in(node: ast.AST) -> set[str]:
     return bound
 
 
+def _nested_scope_bindings(node: ast.AST) -> set[str]:
+    """Names bound by scopes nested inside the seam, which are never inputs.
+
+    Python opens a new scope for a lambda, a comprehension and a nested def, so
+    their parameters and targets are not free variables of the block — they do
+    not exist at the call site and passing one as an extraction argument would
+    be a NameError, or worse, would silently shadow the real value.
+
+    Patched twice by case before being done properly: comprehension targets
+    first, then lambda arguments after ``install_runtime_validation`` reported
+    ``p`` and ``o`` — the parameters of ``lambda p, o: ...`` — as inputs it
+    needed passed in.
+    """
+    bound: set[str] = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for generator in sub.generators:
+                bound |= _names(generator.target, ast.Store)
+        elif isinstance(sub, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = sub.args
+            for group in (args.posonlyargs, args.args, args.kwonlyargs):
+                bound |= {a.arg for a in group}
+            for special in (args.vararg, args.kwarg):
+                if special is not None:
+                    bound.add(special.arg)
+    return bound
+
+
 def _read_before_written(node: ast.AST) -> set[str]:
     """Names the block reads before it first assigns them.
 
@@ -135,14 +163,7 @@ def _read_before_written(node: ast.AST) -> set[str]:
     statement: a read on an earlier line than every write to the same name
     cannot be reached after that write.
     """
-    # Comprehension targets bind in their own scope and are written and read
-    # on the same line, so a line-based comparison flags every one of them.
-    # They are never inputs to the enclosing block.
-    comprehension_targets: set[str] = set()
-    for sub in ast.walk(node):
-        if isinstance(sub, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            for generator in sub.generators:
-                comprehension_targets |= _names(generator.target, ast.Store)
+    comprehension_targets = _nested_scope_bindings(node)
 
     first_write: dict[str, int] = {}
     first_read: dict[str, int] = {}
@@ -216,10 +237,15 @@ def analyse(path: Path, function: str, *, min_lines: int = 60) -> list[Seam]:
             continue
 
         bound = _bound_in(stmt)
-        # A name the block rebinds is still an input if it is read first.
+        nested = _nested_scope_bindings(stmt)
+        # A name the block rebinds is still an input if it is read first, and a
+        # name bound by a nested scope is never one.
         reads = (
-            (_names(stmt, ast.Load) - bound) | _read_before_written(stmt)
-        ) - module_scope - _BUILTINS
+            ((_names(stmt, ast.Load) - bound) | _read_before_written(stmt))
+            - nested
+            - module_scope
+            - _BUILTINS
+        )
 
         after: set[str] = set()
         for other in fn.body:

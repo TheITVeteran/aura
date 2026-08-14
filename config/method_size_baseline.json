@@ -1,7 +1,7 @@
 {
   "threshold_lines": 400,
   "tracked": 76,
-  "total_lines": 69571,
+  "total_lines": 69433,
   "functions": {
     "core/brain/cognitive_engine.py::CognitiveEngine._direct_desktop_quick_reply": {
       "lines": 975,
@@ -9,8 +9,8 @@
       "returns": 12
     },
     "core/brain/cognitive_engine.py::CognitiveEngine._run_thinking_loop": {
-      "lines": 690,
-      "complexity": 95,
+      "lines": 630,
+      "complexity": 83,
       "returns": 12
     },
     "core/brain/frontier_gap.py::validate_capability_report": {
@@ -49,9 +49,9 @@
       "returns": 1
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine._latent_episode": {
-      "lines": 5051,
-      "complexity": 589,
-      "returns": 14
+      "lines": 5056,
+      "complexity": 590,
+      "returns": 15
     },
     "core/brain/llm/latent_cortex/engine.py::LatentCortexEngine.reason": {
       "lines": 548,
@@ -59,8 +59,8 @@
       "returns": 3
     },
     "core/brain/llm/latent_cortex/fast_weight_learning.py::validate_fast_weight_learning_receipt": {
-      "lines": 490,
-      "complexity": 250,
+      "lines": 502,
+      "complexity": 253,
       "returns": 1
     },
     "core/brain/llm/latent_cortex/frontier_certification.py::verify_frontier_gain_bundle": {
@@ -259,8 +259,8 @@
       "returns": 29
     },
     "core/organism/model_validation.py::install_runtime_validation": {
-      "lines": 1102,
-      "complexity": 3,
+      "lines": 1007,
+      "complexity": 2,
       "returns": 1
     },
     "core/phases/cognitive_routing.py::CognitiveRoutingPhase.execute": {

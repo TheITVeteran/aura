@@ -2294,67 +2294,7 @@ class CognitiveEngine:
             context.get("suppress_user_memory_append")
             or context.get("suppress_working_memory_user_append")
         )
-        if self._is_user_facing_origin(origin) and append_user_message:
-            # WHAT THE PERSON SAID — not what the turn assembled around it.
-            #
-            # `objective` is the augmented prompt: the visible message plus
-            # whatever this turn attached to it — the live-desktop contract
-            # directives, grounding evidence, a screen reading, excerpts of
-            # her own source. Appending THAT as ``role: user`` records
-            # machine-generated instructions as things the person said, and
-            # they persist for the rest of the conversation.
-            #
-            # Measured live 2026-08-04. Two turns about her source code
-            # attached real excerpts as evidence; the third turn asked
-            # "what's 17 times 4?" and came back with a function from
-            # core/memory/associative_entity_memory.py. The excerpts were
-            # still in working memory, and text in working memory is
-            # material a model continues — the same mechanism that made a
-            # screen capture come back as the reply.
-            #
-            # The visible message is what she should remember being asked.
-            from core.utils.injected_blocks import (
-                contains_injected_block,
-                strip_injected_blocks,
-            )
-
-            remembered = strip_injected_blocks(
-                str(
-                    context.get("visible_user_message")
-                    or surface_prompt.prompt
-                    or objective
-                ).strip()
-                or str(objective)
-            )
-
-            # A conversation contaminated BEFORE this fix carries those
-            # blocks for the rest of its life, and they go on being
-            # continued. Scrub what is already there on the way past, so
-            # the damage heals instead of persisting.
-            for entry in state.cognition.working_memory:
-                if not isinstance(entry, dict):
-                    continue
-                existing = entry.get("content")
-                if isinstance(existing, str) and contains_injected_block(existing):
-                    entry["content"] = strip_injected_blocks(existing)
-            # Check if already in history to avoid duplication
-            # vResilience: Workaround for Pyre2 slice limitations
-            history = state.cognition.working_memory
-            recent_count = min(5, len(history))
-            recent = [history[i] for i in range(len(history) - recent_count, len(history))]
-            is_duplicate = any(
-                m.get("content") in (remembered, objective) for m in recent
-            )
-            if not is_duplicate:
-                # We already derived at the start of the cycle, so we just append here.
-                state.cognition.working_memory.append(
-                    {
-                        "role": "user",
-                        "content": remembered,
-                        "timestamp": time.time(),
-                        "origin": origin,
-                    }
-                )
+        self._thinking_loop_surface_prompt(append_user_message, context, objective, origin, state, surface_prompt)
 
         is_background = bool(kwargs.get("is_background", False))
         explicit_timeout = kwargs.get("timeout_s", kwargs.get("timeout"))
@@ -2948,6 +2888,75 @@ class CognitiveEngine:
             origin,
         )
         return self._empty_thought(mode, "user_cycle_no_response")
+
+    def _thinking_loop_surface_prompt(self, append_user_message, context, objective, origin, state, surface_prompt):
+        """Body lifted verbatim out of ``CognitiveEngine._run_thinking_loop``.
+
+        Moved by tools/extract_seam.py, which refuses to write unless the
+        relocated body diffs clean against the original. The seam was
+        7 names in, 0 out, 0 early return(s), 0 awaits.
+        """
+        if self._is_user_facing_origin(origin) and append_user_message:
+            # WHAT THE PERSON SAID — not what the turn assembled around it.
+            #
+            # `objective` is the augmented prompt: the visible message plus
+            # whatever this turn attached to it — the live-desktop contract
+            # directives, grounding evidence, a screen reading, excerpts of
+            # her own source. Appending THAT as ``role: user`` records
+            # machine-generated instructions as things the person said, and
+            # they persist for the rest of the conversation.
+            #
+            # Measured live 2026-08-04. Two turns about her source code
+            # attached real excerpts as evidence; the third turn asked
+            # "what's 17 times 4?" and came back with a function from
+            # core/memory/associative_entity_memory.py. The excerpts were
+            # still in working memory, and text in working memory is
+            # material a model continues — the same mechanism that made a
+            # screen capture come back as the reply.
+            #
+            # The visible message is what she should remember being asked.
+            from core.utils.injected_blocks import (
+                contains_injected_block,
+                strip_injected_blocks,
+            )
+
+            remembered = strip_injected_blocks(
+                str(
+                    context.get("visible_user_message")
+                    or surface_prompt.prompt
+                    or objective
+                ).strip()
+                or str(objective)
+            )
+
+            # A conversation contaminated BEFORE this fix carries those
+            # blocks for the rest of its life, and they go on being
+            # continued. Scrub what is already there on the way past, so
+            # the damage heals instead of persisting.
+            for entry in state.cognition.working_memory:
+                if not isinstance(entry, dict):
+                    continue
+                existing = entry.get("content")
+                if isinstance(existing, str) and contains_injected_block(existing):
+                    entry["content"] = strip_injected_blocks(existing)
+            # Check if already in history to avoid duplication
+            # vResilience: Workaround for Pyre2 slice limitations
+            history = state.cognition.working_memory
+            recent_count = min(5, len(history))
+            recent = [history[i] for i in range(len(history) - recent_count, len(history))]
+            is_duplicate = any(
+                m.get("content") in (remembered, objective) for m in recent
+            )
+            if not is_duplicate:
+                # We already derived at the start of the cycle, so we just append here.
+                state.cognition.working_memory.append(
+                    {
+                        "role": "user",
+                        "content": remembered,
+                        "timestamp": time.time(),
+                        "origin": origin,
+                    }
+                )
 
     async def _direct_user_facing_recovery(
         self,
