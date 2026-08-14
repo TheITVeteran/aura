@@ -1677,7 +1677,18 @@ class UnifiedRecurrentController(nn.Module):
             workspace,
             self.action_workspace_output,
         )
-        if token_ids is not None and self.config.literal_digit_token_ids:
+        # Observation priors help before a recurrent state exists, but they are
+        # not licensed semantics. Once execution has a state, derived values
+        # need not occur literally in the prompt. Applying the copy prior there
+        # assigns every absent category a large negative logit and makes broad
+        # programs fight the parser merely to express a computed value. Exact
+        # recognized public instructions remain authoritative below.
+        use_observation_priors = state_probabilities is None
+        if (
+            use_observation_priors
+            and token_ids is not None
+            and self.config.literal_digit_token_ids
+        ):
             pointer = self._literal_pointer_logits(
                 problem_evidence,
                 token_ids,
@@ -1690,7 +1701,11 @@ class UnifiedRecurrentController(nn.Module):
                 mx.zeros_like(self.action_literal_copy_logit),
             )
             logits = logits + copy_strength[None, :, None] * pointer
-        if token_ids is not None and self.config.opcode_token_patterns:
+        if (
+            use_observation_priors
+            and token_ids is not None
+            and self.config.opcode_token_patterns
+        ):
             contract = OpcodeObservationContract(
                 self.config.opcode_token_patterns,
                 self.config.opcode_context_patterns,

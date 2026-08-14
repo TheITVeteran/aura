@@ -694,6 +694,62 @@ def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor
     return _ModelCommandDescriptor(True, tuple(model_paths), purpose)
 
 
+_DIRECT_MODEL_SCRIPT_NAMES = frozenset(
+    {
+        "heldout_eval.py",
+        "selfplay_harvest.py",
+        "bench_speculative_decoding.py",
+        "front_door_demo.py",
+        "generate_lora_consolidation_proof.py",
+        "probe_nonparametric_memory.py",
+        "train_unified_intrinsic_recurrence.py",
+        "evaluate_unified_intrinsic_checkpoint.py",
+        "evaluate_unified_intrinsic_decoding.py",
+        "zenith_v2_state_benchmark.py",
+    }
+)
+_DIRECT_MODEL_MODULE_PREFIXES = ("mlx_lm", "mlx_lm_lora")
+
+
+def _directly_executes_model_command(command: Iterable[str]) -> bool:
+    """Return whether this process, rather than one of its children, owns the model.
+
+    Process-table argv for shells and wrappers such as ``caffeinate`` contains
+    the complete child command.  Searching the joined argv therefore counts
+    each wrapper as another fully loaded checkpoint and can make an exclusive
+    trainer reject itself before model load.  Only the direct Python
+    script/module or model binary owns that memory; wrappers are observed again
+    once their real child appears.
+    """
+
+    argv = tuple(str(part) for part in command)
+    if not argv:
+        return False
+    executable = Path(argv[0]).name.lower()
+    if executable.startswith(("python", "pypy")):
+        try:
+            module_index = argv.index("-m") + 1
+            module = str(argv[module_index]).lower()
+        except (ValueError, IndexError):
+            module = ""
+        if module:
+            return module.startswith(_DIRECT_MODEL_MODULE_PREFIXES)
+        if "-c" in argv:
+            return False
+        for argument in argv[1:]:
+            if not argument or argument.startswith("-"):
+                continue
+            return Path(argument).name.lower() in _DIRECT_MODEL_SCRIPT_NAMES
+        return False
+    return executable in {
+        "mlx_lm",
+        "mlx-lm",
+        "mlx_lm_lora",
+        "mlx-lm-lora",
+        *_DIRECT_MODEL_SCRIPT_NAMES,
+    }
+
+
 def infer_model_process_claim(
     command: Iterable[str],
     *,
@@ -840,7 +896,7 @@ def discover_external_model_processes(
                 continue
             command = tuple(str(part) for part in process.cmdline)
             descriptor = _model_command_descriptor(command)
-            if not descriptor.recognized:
+            if not descriptor.recognized or not _directly_executes_model_command(command):
                 continue
             try:
                 process_group_id = int(os.getpgid(pid))

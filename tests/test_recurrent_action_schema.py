@@ -27,6 +27,38 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
 )
 
 
+def _grounded_controller() -> UnifiedRecurrentController:
+    return UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            literal_digit_token_ids=tuple(range(100, 110)),
+            opcode_token_patterns=(
+                (OP_COPY_VALUE, (70,)),
+                (OP_ADD_MOD, (71,)),
+                (OP_MUL_MOD, (72,)),
+                (OP_SUB_MOD, (73,)),
+                (OP_BOOL_NOT, (74,)),
+                (OP_BOOL_AND, (75,)),
+                (OP_BOOL_OR, (76,)),
+                (OP_BOOL_XOR, (77,)),
+            ),
+            opcode_context_patterns=(
+                ("graph", (40,)),
+                ("graph_edges_start", (41,)),
+                ("graph_edges_end", (42,)),
+                ("modular_start", (43,)),
+                ("modular_end", (44,)),
+                ("boolean_start", (45,)),
+                ("boolean_end", (46,)),
+                ("register", (47,)),
+                ("register_ops_start", (48,)),
+                ("register_ops_end", (49,)),
+            ),
+        )
+    )
+
+
 def test_actions_share_one_schema_and_null_post_completion() -> None:
     khop = TASK_GENERATORS["khop"](1, 41).transition_program
     registers = TASK_GENERATORS["register_trace"](2, 42).transition_program
@@ -183,34 +215,7 @@ def test_tokenizer_literal_observation_causally_changes_problem_evidence() -> No
 
 
 def test_tokenizer_opcode_observation_causally_selects_the_operation() -> None:
-    controller = UnifiedRecurrentController(
-        UnifiedRecurrenceConfig(
-            hidden_size=32,
-            correction_rank=4,
-            opcode_token_patterns=(
-                (OP_COPY_VALUE, (70,)),
-                (OP_ADD_MOD, (71,)),
-                (OP_MUL_MOD, (72,)),
-                (OP_SUB_MOD, (73,)),
-                (OP_BOOL_NOT, (74,)),
-                (OP_BOOL_AND, (75,)),
-                (OP_BOOL_OR, (76,)),
-                (OP_BOOL_XOR, (77,)),
-            ),
-            opcode_context_patterns=(
-                ("graph", (40,)),
-                ("graph_edges_start", (41,)),
-                ("graph_edges_end", (42,)),
-                ("modular_start", (43,)),
-                ("modular_end", (44,)),
-                ("boolean_start", (45,)),
-                ("boolean_end", (46,)),
-                ("register", (47,)),
-                ("register_ops_start", (48,)),
-                ("register_ops_end", (49,)),
-            ),
-        )
-    )
+    controller = _grounded_controller()
     problem = mx.zeros((1, 3, 32), dtype=mx.float32)
     hidden = mx.zeros((1, 8, 32), dtype=mx.float32)
     copy_logits = controller.action_logits(
@@ -231,3 +236,66 @@ def test_tokenizer_opcode_observation_causally_selects_the_operation() -> None:
     assert int(mx.argmax(copy_logits[0, 0]).item()) == OP_COPY_VALUE
     assert int(mx.argmax(multiply_logits[0, 0]).item()) == OP_MUL_MOD
     assert not bool(mx.array_equal(copy_logits[:, 0], multiply_logits[:, 0]))
+
+
+def test_unrecognized_recurrent_action_is_not_biased_toward_prompt_literals() -> None:
+    controller = _grounded_controller()
+    token_ids = mx.array([[109, 60, 108, 60, 107]])
+    problem = mx.zeros((1, 5, 32), dtype=mx.float32)
+    hidden = mx.zeros((1, 10, 32), dtype=mx.float32)
+    state = controller.exact_probabilities(
+        (0, 0, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+
+    ungrounded = controller.action_logits(
+        problem,
+        hidden,
+        state_slot_start=5,
+        step=0,
+    )
+    unrecognized = controller.action_logits(
+        problem,
+        hidden,
+        state_slot_start=5,
+        step=0,
+        token_ids=token_ids,
+        state_probabilities=state,
+    )
+
+    mx.eval(ungrounded, unrecognized)
+    assert bool(mx.array_equal(ungrounded, unrecognized))
+
+
+def test_recognized_recurrent_action_remains_exact_without_copy_prior() -> None:
+    controller = _grounded_controller()
+    token_ids = mx.array([[105, 60, 102, 43, 71, 103, 44]])
+    problem = mx.zeros((1, 7, 32), dtype=mx.float32)
+    hidden = mx.zeros((1, 12, 32), dtype=mx.float32)
+    state = controller.exact_probabilities(
+        (0, 2, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+
+    logits = controller.action_logits(
+        problem,
+        hidden,
+        state_slot_start=7,
+        step=0,
+        token_ids=token_ids,
+        state_probabilities=state,
+    )
+
+    mx.eval(logits)
+    assert tuple(int(value) for value in mx.argmax(logits[0], axis=-1).tolist()) == (
+        OP_ADD_MOD,
+        3,
+        5,
+        ACTION_NULL,
+        ACTION_NULL,
+        ACTION_NULL,
+        ACTION_NULL,
+        1,
+    )

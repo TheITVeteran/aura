@@ -1344,6 +1344,69 @@ def test_process_table_discovery_accounts_for_external_model_identity(
     assert observed.metadata["model_identity_status"] == "resolved"
 
 
+def test_process_table_discovery_ignores_non_owning_model_wrappers(
+    resource_observer,
+) -> None:
+    from core.runtime.resource_observation import ProcessObservation
+
+    shell_pid = os.getpid() + 110_000
+    caffeinate_pid = shell_pid + 1
+    model = "/models/qwen-1.5b"
+    child_command = (
+        "/usr/bin/python3",
+        "tools/train_unified_intrinsic_recurrence.py",
+        "--model",
+        model,
+    )
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=shell_pid,
+                ppid=1,
+                create_time=2234.5,
+                status="running",
+                cmdline=(
+                    "/bin/zsh",
+                    "-lc",
+                    "python tools/train_unified_intrinsic_recurrence.py "
+                    f"--model {model}",
+                ),
+                name="zsh",
+                rss_bytes=1024,
+            ),
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=caffeinate_pid,
+                ppid=shell_pid,
+                create_time=2235.5,
+                status="running",
+                cmdline=("/usr/bin/caffeinate", "-dims", *child_command),
+                name="caffeinate",
+                rss_bytes=1024,
+                ancestor_pids=(shell_pid,),
+            ),
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=caffeinate_pid + 1,
+                ppid=caffeinate_pid,
+                create_time=2236.5,
+                status="running",
+                cmdline=child_command,
+                name="python3",
+                rss_bytes=2 * 1024**3,
+                ancestor_pids=(caffeinate_pid, shell_pid),
+            ),
+        ]
+    )
+
+    observations = discover_external_model_processes([], observer=resource_observer)
+
+    assert len(observations) == 1
+    assert observations[0].process.pid == caffeinate_pid + 1
+    assert observations[0].model_path == model
+
+
 def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_escape(
     monkeypatch: pytest.MonkeyPatch,
     resource_observer,
