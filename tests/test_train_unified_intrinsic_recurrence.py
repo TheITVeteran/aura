@@ -2185,19 +2185,27 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
 def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:
     parameters = {
         "model": {
-            "layer": {"lora_a": mx.array([1.0])},
-            "block": {
-                "self_attn": {"q_proj": {"lora_b": mx.array([1.0])}}
-            },
+            "layers": [
+                {
+                    "self_attn": {
+                        "q_proj": {"lora_b": mx.array([1.0])},
+                        "o_proj": {"lora_a": mx.array([1.0])},
+                    }
+                }
+            ],
         },
         "controller": {"action_workspace_output": mx.array([1.0])},
     }
     gradients = {
         "model": {
-            "layer": {"lora_a": mx.array([50.0])},
-            "block": {
-                "self_attn": {"q_proj": {"lora_b": mx.array([50.0])}}
-            },
+            "layers": [
+                {
+                    "self_attn": {
+                        "q_proj": {"lora_b": mx.array([50.0])},
+                        "o_proj": {"lora_a": mx.array([50.0])},
+                    }
+                }
+            ],
         },
         "controller": {"action_workspace_output": mx.array([50.0])},
     }
@@ -2209,8 +2217,8 @@ def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> 
     updated = optimizer.apply_gradients(gradients, parameters)
     mx.eval(updated, optimizer.state)
     flat = dict(tree_flatten(updated))
-    tissue_delta = 1.0 - float(flat["model.layer.lora_a"].item())
-    query_delta = 1.0 - float(flat["model.block.self_attn.q_proj.lora_b"].item())
+    tissue_delta = 1.0 - float(flat["model.layers.0.self_attn.o_proj.lora_a"].item())
+    query_delta = 1.0 - float(flat["model.layers.0.self_attn.q_proj.lora_b"].item())
     controller_delta = 1.0 - float(flat["controller.action_workspace_output"].item())
 
     assert tissue_delta > 0.0

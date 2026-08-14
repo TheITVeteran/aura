@@ -214,6 +214,25 @@ def _adam(learning_rate: float) -> Any:
     )
 
 
+class _DisjointPathMultiOptimizer(optim.MultiOptimizer):
+    """Merge optimizer outputs by leaf path, including siblings in module lists."""
+
+    def apply_gradients(self, gradients: dict, parameters: dict) -> dict:
+        updated: list[tuple[str, Any]] = []
+        seen: set[str] = set()
+        for optimizer, group in zip(
+            self.optimizers,
+            self._split_dictionary(gradients),  # noqa: SLF001 - repair MLX merge defect
+            strict=True,
+        ):
+            for name, value in tree_flatten(optimizer.apply_gradients(group, parameters)):
+                if name in seen:
+                    raise ValueError("optimizer ownership paths overlap")
+                seen.add(name)
+                updated.append((name, value))
+        return tree_unflatten(updated)
+
+
 def _ownership_optimizer(
     learning_rate: float,
     *,
@@ -233,7 +252,7 @@ def _ownership_optimizer(
         ):
             raise ValueError(f"{label} optimizer rate scale must be inside [0, 1]")
     if query_rate_scale is None:
-        return optim.MultiOptimizer(
+        return _DisjointPathMultiOptimizer(
             [
                 _adam(float(learning_rate) * float(transformer_rate_scale)),
                 _adam(float(learning_rate)),
@@ -244,7 +263,7 @@ def _ownership_optimizer(
                 )
             ],
         )
-    return optim.MultiOptimizer(
+    return _DisjointPathMultiOptimizer(
         [
             _adam(float(learning_rate) * float(query_rate_scale)),
             _adam(float(learning_rate) * float(transformer_rate_scale)),
