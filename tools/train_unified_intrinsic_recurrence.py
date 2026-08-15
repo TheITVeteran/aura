@@ -34,6 +34,7 @@ from core.learning.public_frontier_action_compiler import (  # noqa: E402
     compile_public_frontier_actions,
 )
 from core.learning.recurrent_action_schema import (  # noqa: E402
+    ACTION_CARDINALITY,
     ACTION_SLOT_NAMES,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_TRAVERSE,
@@ -81,6 +82,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
     TRANSITION_MEMORY_PARAMETER_NAMES,
+    TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -3309,6 +3311,12 @@ def _bootstrap_bundle_from_checkpoint(
             child_values,
         )
     )
+    bundle_values, transition_opcode_expert_extension = (
+        _merge_bootstrap_transition_opcode_expert_extension(
+            bundle_values,
+            child_values,
+        )
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -3360,6 +3368,10 @@ def _bootstrap_bundle_from_checkpoint(
         result["transition_memory_extension"] = transition_memory_extension
     if transition_processor_extension is not None:
         result["transition_processor_extension"] = transition_processor_extension
+    if transition_opcode_expert_extension is not None:
+        result["transition_opcode_expert_extension"] = (
+            transition_opcode_expert_extension
+        )
     return result
 
 
@@ -3831,6 +3843,55 @@ def _merge_bootstrap_transition_processor_extension(
         "category_identity": "exact_one_hot_or_deterministic_fourier",
         "state_register_order": list(STATE_SLOT_NAMES),
         "action_field_order": list(ACTION_SLOT_NAMES),
+        "future_action_visible": False,
+        "private_transition_trace_visible": False,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
+def _merge_bootstrap_transition_opcode_expert_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach operation-isolated transition heads as an exact parent no-op."""
+
+    expected = {
+        f"controller.{name}" for name in TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES
+    }
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap transition-opcode expert inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap transition-opcode expert source differs"
+            )
+        value = child_values[name]
+        if bool(mx.any(value != 0)):
+            raise RuntimeError(
+                "unified recurrence bootstrap transition-opcode expert is not a no-op"
+            )
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    return migrated, {
+        "schema": "aura.unified_intrinsic.transition_opcode_expert_extension.v1",
+        "migration_rule": "parent_exact_plus_zero_output_opcode_isolated_heads",
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "opcode_order": list(range(ACTION_CARDINALITY)),
+        "state_register_order": list(STATE_SLOT_NAMES),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
         "new_tensor_names": sorted(expected),

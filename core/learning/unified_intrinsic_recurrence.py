@@ -152,6 +152,9 @@ TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
     "transition_processor_interaction_down",
     "transition_processor_output",
 )
+TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES: Final = (
+    "transition_processor_opcode_output",
+)
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
     "identity",
     "unsigned_radix_low",
@@ -811,6 +814,20 @@ class UnifiedRecurrentController(nn.Module):
         )
         self.transition_processor_output = mx.zeros(
             (
+                config.state_slots,
+                config.correction_rank,
+                config.state_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        # Different public opcodes implement genuinely different state
+        # machines. A shared head made sparse examples from one family rewrite
+        # another family's readout. This zero-attached expert bank preserves
+        # parent behavior while giving each opcode an independently trainable
+        # categorical transition head over the shared processor features.
+        self.transition_processor_opcode_output = mx.zeros(
+            (
+                config.action_cardinality,
                 config.state_slots,
                 config.correction_rank,
                 config.state_cardinality,
@@ -2114,11 +2131,19 @@ class UnifiedRecurrentController(nn.Module):
                 self.transition_processor_interaction_down,
             )
         )
-        return mx.einsum(
+        shared_logits = mx.einsum(
             "bsr,src->bsc",
             processed,
             self.transition_processor_output,
         )
+        opcode_probabilities = action_probabilities[:, 0, :].astype(mx.float32)
+        expert_logits = mx.einsum(
+            "bo,osrc,bsr->bsc",
+            opcode_probabilities,
+            self.transition_processor_opcode_output,
+            processed,
+        )
+        return shared_logits + expert_logits
 
     def state_transition_logits(
         self,
@@ -3477,6 +3502,7 @@ class UnifiedRecurrentController(nn.Module):
             "state_action_projection",
             *TRANSITION_MEMORY_PARAMETER_NAMES,
             *TRANSITION_PROCESSOR_PARAMETER_NAMES,
+            *TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
             "literal_value_embeddings",
             "literal_grounding_logit",
             "state_literal_copy_logit",
@@ -3519,6 +3545,7 @@ class UnifiedRecurrentController(nn.Module):
             },
             "state_transition_processor": {
                 "architecture": "typed_categorical_higher_order_register_processor",
+                "opcode_isolation": "independent_zero_attached_categorical_expert_heads",
                 "category_identity": "exact_one_hot_or_deterministic_fourier",
                 "interactions": [
                     "state_action",
@@ -3528,6 +3555,9 @@ class UnifiedRecurrentController(nn.Module):
                 ],
                 "bootstrap_contract": "zero_output_exact_parent_noop",
                 "output_active": bool(mx.any(self.transition_processor_output != 0)),
+                "opcode_expert_output_active": bool(
+                    mx.any(self.transition_processor_opcode_output != 0)
+                ),
                 "lesionable": True,
                 "private_transition_trace_visible": False,
             },
@@ -4349,6 +4379,7 @@ __all__ = [
     "MAX_PROCESS_INTEGER",
     "PROCESS_RADIX",
     "TRANSITION_MEMORY_PARAMETER_NAMES",
+    "TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES",
     "TRANSITION_PROCESSOR_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",

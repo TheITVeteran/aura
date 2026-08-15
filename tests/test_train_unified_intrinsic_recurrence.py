@@ -37,6 +37,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
     TRANSITION_MEMORY_PARAMETER_NAMES,
+    TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -83,6 +84,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_process_reader_extension,
     _merge_bootstrap_scoped_lora_target_extension,
     _merge_bootstrap_transition_memory_extension,
+    _merge_bootstrap_transition_opcode_expert_extension,
     _merge_bootstrap_transition_processor_extension,
     _model_identity,
     _model_lane_purpose,
@@ -407,6 +409,31 @@ def test_bootstrap_transition_processor_rejects_partial_or_active_extension() ->
     }
     with pytest.raises(RuntimeError, match="transition processor is not a no-op"):
         _merge_bootstrap_transition_processor_extension(parent, child)
+
+
+def test_bootstrap_transition_opcode_experts_are_exact_and_audited() -> None:
+    parent = {"controller.transition_processor_output": mx.ones((2, 3))}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.zeros((4, 2, 3), dtype=mx.float32)
+            for name in TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES
+        },
+    }
+
+    migrated, receipt = _merge_bootstrap_transition_opcode_expert_extension(
+        parent, child
+    )
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+    active = dict(child)
+    active["controller.transition_processor_opcode_output"] = mx.ones((4, 2, 3))
+    with pytest.raises(RuntimeError, match="expert is not a no-op"):
+        _merge_bootstrap_transition_opcode_expert_extension(parent, active)
 
 
 def test_bootstrap_scoped_lora_query_extension_is_exact_and_audited() -> None:
@@ -1161,6 +1188,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "state_transition_output": mx.ones((2, 2)),
             "transition_memory_output": mx.ones((2, 2)),
             "transition_processor_output": mx.ones((2, 2)),
+            "transition_processor_opcode_output": mx.ones((2, 2)),
             "answer_output": mx.ones((2, 2)),
         },
     }
@@ -1189,6 +1217,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "controller.state_transition_output",
             "controller.transition_memory_output",
             "controller.transition_processor_output",
+            "controller.transition_processor_opcode_output",
         },
         "joint": {
             "model.block.self_attn.q_proj.lora_b",
@@ -1200,6 +1229,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "controller.state_transition_output",
             "controller.transition_memory_output",
             "controller.transition_processor_output",
+            "controller.transition_processor_opcode_output",
         },
     }
     for component, live_names in expected.items():
@@ -2531,6 +2561,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
             "state_transition_output": mx.array([0.0, 12.0]),
             "transition_memory_output": mx.array([0.0, 9.0]),
             "transition_processor_output": mx.array([0.0, 11.0]),
+            "transition_processor_opcode_output": mx.array([0.0, 10.0]),
             "state_value_embeddings": mx.array([0.0, 8.0]),
             "action_output": mx.array([0.0, 6.0]),
             "opcode_copy_logit": mx.array(2.0),
@@ -2560,6 +2591,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
             mx.sum(flat["controller.state_transition_output"] ** 2)
             + mx.sum(flat["controller.transition_memory_output"] ** 2)
             + mx.sum(flat["controller.transition_processor_output"] ** 2)
+            + mx.sum(flat["controller.transition_processor_opcode_output"] ** 2)
         ).item()
     ) == pytest.approx(1.0)
     assert float(mx.linalg.norm(flat["controller.state_value_embeddings"]).item()) == pytest.approx(

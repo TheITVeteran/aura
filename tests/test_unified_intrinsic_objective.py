@@ -599,6 +599,9 @@ def test_direct_transition_objective_reaches_only_categorical_processor() -> Non
 
     assert float(loss.item()) > 0.0
     assert float(mx.max(mx.abs(flat["transition_processor_output"]))) > 0.0
+    assert (
+        float(mx.max(mx.abs(flat["transition_processor_opcode_output"]))) > 0.0
+    )
     assert float(mx.max(mx.abs(flat["state_transition_output"]))) == 0.0
     _loss, receipt = unified_typed_transition_processor_loss(
         controller,

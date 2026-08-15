@@ -49601,3 +49601,38 @@ parallel answer solver. The next campaign must clear `0.95` one-step exactness,
 retain correctness under autonomous recurrence and improve unseen deep
 transitions. Processor/history lesions, answer emission and resident-32B work
 remain blocked until those gates pass.
+
+## Checkpoint 2026-08-14-497: Replace Sparse Trace Memorization With Opcode Experts
+
+CP496 isolated the typed processor from the transformer and answer bridge and
+fit its supervised distribution cleanly: loss fell from `1.16781` to values as
+low as `0.01684`. That fit did not transfer. At the step-256 interim gate,
+unseen T1 exact-value state accuracy remained `0.50`, T16 was `0.1146`, and
+additional depth remained harmful. The exact job was stopped after its durable
+step-352 checkpoint; the result is frozen in
+`artifacts/closeout/latent_cortex/cp496_direct_transition_acquisition_verdict.json`.
+
+The data geometry explains the split. Sixty-four tasks supplied 640
+transitions, 636 of which had unique `(state, action, causal history)` keys;
+only `1.25%` of held-out transitions repeated such a key. There were no
+contradictory full-history mappings and canonical opcode already identified
+the task family. The processor therefore had enough capacity to memorize its
+sparse paths but too little repeated operation support to identify reusable
+transition algebra.
+
+The transition processor now has an independent categorical output head for
+every public opcode. The shared higher-order state/action/history features
+remain intact, while mathematics, coding, calibration and premise-audit
+gradients no longer have to overwrite one shared output map. The expert bank
+attaches at exact zero, has a separately audited bootstrap extension, enters
+the controller identity and gradient trust boundary, and remains covered by
+the existing processor lesion.
+
+A factorized direct-acquisition profile expands exact training support from 16
+to 128 tasks per family while retaining a fresh holdout, balanced four-family
+updates, no transformer/query gradients, no answer phase and teacher-free
+autonomous evaluation. It runs 2,048 inexpensive processor steps, evaluates
+every 256 steps and preserves resumable checkpoints every 32 steps. This is a
+mechanism and curriculum change, not a relaxed evidence gate. The next
+campaign must still clear `0.95` one-step exactness, preserve matched baseline
+successes and improve deep unseen execution before answer emission resumes.

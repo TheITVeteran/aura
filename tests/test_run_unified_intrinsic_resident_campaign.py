@@ -119,6 +119,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "process_public_transition_acquisition",
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
+        "process_public_transition_factorized_acquisition",
         "recovery",
     }
     if profile in bootstrap_profiles:
@@ -454,6 +455,21 @@ def test_direct_transition_acquisition_removes_transformer_graph() -> None:
     assert training["state_warmup_steps"] == training["max_steps"] == 1024
     assert training["state_teacher_forcing_probability"] == 0.0
     assert training["state_teacher_forcing_final_probability"] == 0.0
+    assert "--direct-transition-processor" in arguments
+
+
+def test_factorized_transition_acquisition_expands_operation_support() -> None:
+    training = _profile_training("process_public_transition_factorized_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["public_action_program"] is True
+    assert training["direct_transition_processor"] is True
+    assert training["per_cell"] == 128
+    assert training["holdout_per_cell"] == 6
+    assert training["max_steps"] == training["state_warmup_steps"] == 2048
+    assert training["process_family_batch_size"] == 4
+    assert training["eval_every"] == 256
+    assert training["state_learning_rate"] == 0.0002
     assert "--direct-transition-processor" in arguments
 
 

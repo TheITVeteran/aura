@@ -1145,6 +1145,39 @@ def test_typed_transition_processor_attaches_as_exact_noop() -> None:
     assert bool(mx.all(logits == 0))
 
 
+def test_typed_transition_processor_opcode_experts_are_isolated() -> None:
+    controller = _controller()
+    controller.transition_processor_opcode_output = (
+        controller.transition_processor_opcode_output.at[8].add(1.0)
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    opcode_eight = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    opcode_nine = controller.exact_probabilities(
+        (9, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    active = controller.typed_transition_processor_logits(
+        state, opcode_eight, None
+    )
+    isolated = controller.typed_transition_processor_logits(
+        state, opcode_nine, None
+    )
+
+    mx.eval(active, isolated)
+    assert bool(mx.any(active != 0))
+    assert bool(mx.all(isolated == 0))
+
+
 def test_typed_transition_processor_preserves_state_action_and_history_identity() -> None:
     controller = _controller()
     controller.transition_processor_output = mx.random.normal(

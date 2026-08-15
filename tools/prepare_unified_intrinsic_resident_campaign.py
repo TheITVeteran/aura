@@ -74,6 +74,7 @@ PROFILES: Final = frozenset(
         "process_public_transition_acquisition",
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
+        "process_public_transition_factorized_acquisition",
         "recovery",
     }
 )
@@ -485,6 +486,44 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "wired_limit_gb": 28.0,
             "max_minutes": 120.0,
         }
+    if profile == "process_public_transition_factorized_acquisition":
+        process_steps = 2048
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": "mathematics,coding,calibration,misleading_premise",
+            "task_depths": "3,5,9,10",
+            "train_depths": "1,3,5,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 128,
+            "holdout_per_cell": 6,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 4,
+            "process_family_batch_mode": "balanced_families",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "public_action_program": True,
+            "direct_transition_processor": True,
+            "state_teacher_forcing_probability": 0.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 256,
+            "checkpoint_every": 32,
+            "state_learning_rate": 0.0002,
+            "max_gradient_norm": 1.0,
+            "seed": 2026081502,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 120.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -802,6 +841,7 @@ def _freeze_campaign(
         "process_public_transition_acquisition",
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
+        "process_public_transition_factorized_acquisition",
         "recovery",
     }
     if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
@@ -948,6 +988,7 @@ def _freeze_campaign(
                     "process_public_transition_acquisition",
                     "process_public_transition_direct_acquisition",
                     "process_public_transition_extended_acquisition",
+                    "process_public_transition_factorized_acquisition",
                 }
                 else 14.0 * 3600.0
                 if profile == "recovery"
