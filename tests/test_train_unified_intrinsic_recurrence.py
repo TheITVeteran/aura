@@ -2872,3 +2872,47 @@ def test_evaluation_separates_trained_from_heldout_depth_gains(
     assert report["process_by_family_at_max_depth"] == {"depth": 8, "families": {}}
     assert final_only_calls == [True] * len(spec.depths)
     assert reclaim_calls == [True] * len(spec.depths)
+
+
+def test_evaluation_propagates_public_action_program_to_every_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+    observed: list[tuple[int, bool]] = []
+
+    def fake_depth(
+        _bundle_value,
+        _prompt,
+        _answer,
+        _task,
+        _spec_value,
+        depth,
+        *,
+        public_action_program=False,
+    ):
+        observed.append((depth, public_action_program))
+        return {"loss": float(depth)}
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._evaluate_depth",
+        fake_depth,
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]]), mx.array([[2]])),
+    )
+    envelope = type("Envelope", (), {"reclaim": lambda *_args, **_kwargs: None})()
+    report = _evaluate(
+        bundle,
+        type("Tokenizer", (), {})(),
+        [type("Task", (), {"prompt": "p", "answer": "a"})()],
+        spec,
+        "",
+        spec.depths,
+        envelope=envelope,
+        public_action_program=True,
+    )
+
+    assert observed == [(depth, True) for depth in spec.depths]
+    assert report["ce"] == {f"T{depth}": float(depth) for depth in spec.depths}

@@ -182,6 +182,31 @@ def test_typed_semantic_objective_can_disable_legacy_digit_pointer(
     assert float(losses[0].item()) > 0.0
 
 
+def test_answer_trajectory_can_execute_public_actions_without_microcode() -> None:
+    actions = (
+        (10, 1, 2, 3, 4, 5, 6, 0),
+        (10, 2, 3, 4, 5, 6, 7, 0),
+        (10, 3, 4, 5, 6, 7, 8, 1),
+    )
+    recurrent, hidden, losses, states = unified_answer_and_recurrent_trajectory(
+        _model(),
+        TOKENS,
+        ANSWERS,
+        _spec().plan_at(3),
+        _controller(literal_digit_token_ids=tuple(range(10))),
+        use_state_slots=True,
+        public_action_values=actions,
+        microcode_lesion=True,
+        answer_digit_pointer_enabled=False,
+        final_answer_only=True,
+    )
+    mx.eval(recurrent, hidden, losses, states)
+
+    assert len(recurrent) == len(states) == 3
+    assert len(hidden) == len(losses) == 1
+    assert float(losses[0].item()) > 0.0
+
+
 def test_student_rollin_changes_history_without_changing_labels() -> None:
     model = _model()
     controller = _controller()

@@ -185,8 +185,10 @@ def unified_answer_and_recurrent_trajectory(
     use_state_slots: bool = False,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
     action_teacher_values: Sequence[Sequence[int]] | None = None,
+    public_action_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
+    microcode_lesion: bool = False,
     initial_state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
     answer_role_logit_trajectory: list[Any] | None = None,
@@ -250,8 +252,10 @@ def unified_answer_and_recurrent_trajectory(
         ),
         state_teacher_values=state_teacher_values,
         action_teacher_values=action_teacher_values,
+        public_action_values=public_action_values,
         initial_state_teacher_values=initial_state_teacher_values,
         state_teacher_forcing_probability=state_teacher_forcing_probability,
+        microcode_lesion=microcode_lesion,
     )
     answer_start = int(tokens.shape[-1]) + state_slots - 1
     hidden_states: list[Any] = []

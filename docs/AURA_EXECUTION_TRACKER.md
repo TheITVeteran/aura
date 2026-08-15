@@ -49200,3 +49200,28 @@ CP472 remains preserved as negative forensic evidence and is not eligible for
 admission or fusion. The next campaign must start from a new immutable source
 capsule and demonstrate improvement under decreasing teacher authority before
 any answer-bridge or `WOW Signal` claim proceeds.
+
+## Checkpoint 2026-08-14-475: Evaluate the Mechanism That the Campaign Trains
+
+CP474's first periodic report exposed a second arm mismatch. Training and final
+process admission use the answer-blind public action stream with exact microcode
+removed, but the generic depth ladder still ran the obsolete learned-action
+reader. Its low action accuracy and resulting recurrent state scores therefore
+described a different mechanism. They cannot be used as evidence for or against
+the public-program transition tissue. CP474 remains bounded because its
+terminal unseen admission already executes the intended arm; its periodic
+ladder is explicitly non-authoritative.
+
+The shared answer-trajectory API now accepts public actions and the microcode
+lesion as first-class inference inputs. Public-program evaluation compiles each
+task at each measured depth, executes those instructions through the learned
+transition, and replaces diagnostic action logits with the exact public input
+probabilities so action telemetry reports what actually ran. Both periodic and
+terminal ladders receive the source-bound campaign flag. Tests prove the mode is
+propagated across every train and held-out depth and that the decoded trajectory
+can run public actions while exact microcode is unavailable.
+
+Focused trainer/objective contracts pass `96/96`; canonical smoke passes
+`104/104`; Ruff and compilation pass. This repairs measurement identity only.
+It does not make CP474's earlier ladder rows valid, prove unseen process
+admission, authorize fusion, or establish `WOW Signal`.

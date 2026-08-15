@@ -3761,11 +3761,16 @@ def _evaluate_depth(
     task: Any,
     spec: UnifiedIntrinsicTrainingSpec,
     depth: int,
+    *,
+    public_action_program: bool = False,
 ) -> dict[str, float]:
     """Evaluate one depth and release its MLX graph before the next depth."""
 
     initial_state_logits: list[Any] = []
     action_logits: list[Any] = []
+    public_actions = (
+        _public_actions_for_task(task, depth) if public_action_program else None
+    )
     recurrent_states, _states, losses, state_logits = unified_answer_and_recurrent_trajectory(
         bundle.model,
         prompt,
@@ -3775,6 +3780,8 @@ def _evaluate_depth(
         use_state_slots=(getattr(task, "transition_trace", None) is not None),
         initial_state_logit_trajectory=initial_state_logits,
         action_logit_trajectory=action_logits,
+        public_action_values=public_actions,
+        microcode_lesion=public_action_program,
         answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
         # Evaluation consumes only the final answer loss. Decoding every
         # recurrent intermediate through the resident 32B coda retains a
@@ -3810,6 +3817,16 @@ def _evaluate_depth(
     if program is None:
         raise RuntimeError("evaluation task has no exact action program")
     action_targets = action_targets_from_program(program, depth)
+    if public_actions is not None:
+        action_logits = [
+            bundle.controller.exact_probabilities(
+                row,
+                slots=bundle.controller.config.action_slots,
+                cardinality=bundle.controller.config.action_cardinality,
+            )
+            for row in public_actions
+        ]
+        mx.eval(*action_logits)
     _action_loss, action_accuracy, _action_steps = structured_action_loss(
         action_logits, action_targets
     )
@@ -3840,6 +3857,7 @@ def _evaluate(
     depths: tuple[int, ...],
     *,
     envelope: Any,
+    public_action_program: bool = False,
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
@@ -3870,6 +3888,7 @@ def _evaluate(
                     task,
                     spec,
                     depth,
+                    public_action_program=public_action_program,
                 )
                 totals[depth] += metrics["loss"]
                 if "state_accuracy" in metrics:
@@ -5620,6 +5639,7 @@ def main() -> int:
                         bridge,
                         spec.depths,
                         envelope=envelope,
+                        public_action_program=args.public_action_program,
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
@@ -5690,6 +5710,7 @@ def main() -> int:
                 bridge,
                 spec.depths,
                 envelope=envelope,
+                public_action_program=args.public_action_program,
             )
             final_ladder["step"] = step
             final_ladder["optimization_phase"] = _optimization_phase(
