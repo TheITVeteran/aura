@@ -49225,3 +49225,39 @@ Focused trainer/objective contracts pass `96/96`; canonical smoke passes
 `104/104`; Ruff and compilation pass. This repairs measurement identity only.
 It does not make CP474's earlier ladder rows valid, prove unseen process
 admission, authorize fusion, or establish `WOW Signal`.
+
+## Checkpoint 2026-08-14-476: Make Prior Actions Causal Transition State
+
+The public transition lane exposed a remaining asymmetry between the exact
+executor and the learned recurrent tissue. Exact microcode can inspect the
+ordered action history, but the learned state transition received only the
+current typed action, current state and immutable problem evidence. Stateful
+code, calibration and enumeration programs therefore had to reconstruct their
+execution tape from the prompt at every recurrent step even though the runtime
+had already produced that tape.
+
+CP474's terminal admission then independently isolated the same defect. All 12
+unseen initial states and all 12 public action programs were exact with teacher
+authority and exact microcode absent, but no complete learned state trajectory
+was exact. State-field accuracy ranged from `0.76-0.78` for mathematics,
+`0.58-0.60` for calibration, `0.50-0.56` for coding and `0.30-0.44` for premise
+auditing. Its immutable negative verdict and measurement boundary are frozen in
+`artifacts/closeout/latent_cortex/cp476_cp474_transition_verdict.json`.
+
+The learned transition now folds only prior typed-action probabilities through
+an ordered recurrent summary before applying the current action's existing
+slot-aware projection. Future actions and private teaching traces remain
+unavailable. The implementation reuses existing transition projections, so it
+does not change checkpoint topology or silently initialize new trainable
+tensors. A first-class lesion removes the history from both learned execution
+and exact microcode, and the controller receipt records the source, ordering,
+privacy boundary and unchanged parameter topology.
+
+A direct causal regression holds problem evidence, current state and current
+action fixed while reversing two prior actions; the microcode-lesioned learned
+transition logits change. Recurrence contracts pass `59/59`, trainer/objective
+contracts pass `96/96`, canonical smoke passes `104/104`, and Ruff,
+compilation and diff integrity pass. This proves that action order can now
+causally affect learned transition state. It does not prove that CP474 or a
+future campaign generalizes, establish an answer-level gain, authorize fusion,
+or establish `WOW Signal`.

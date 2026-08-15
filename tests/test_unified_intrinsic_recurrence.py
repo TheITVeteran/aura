@@ -1020,6 +1020,58 @@ def test_microcode_lesion_forces_the_learned_transition_surface() -> None:
     assert not bool(mx.array_equal(exact, learned))
 
 
+def test_learned_transition_reads_prior_actions_in_causal_order() -> None:
+    controller = _controller()
+    problem = mx.random.normal((1, 7, 64), key=mx.random.key(116))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(117))
+    state = controller.exact_probabilities(
+        (0, 0, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    first = controller.exact_probabilities(
+        (0, 7, 32, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    second = controller.exact_probabilities(
+        (1, 5, 13, 32, 32, 32, 32, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    current = controller.exact_probabilities(
+        (4, 3, 2, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    current_state = controller.commit_action_probabilities(current)
+    forward = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=2,
+        action_state=current_state,
+        state_probabilities=state,
+        action_probabilities=current,
+        action_probability_history=(first, second, current),
+        microcode_lesion=True,
+    )
+    reversed_history = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=2,
+        action_state=current_state,
+        state_probabilities=state,
+        action_probabilities=current,
+        action_probability_history=(second, first, current),
+        microcode_lesion=True,
+    )
+
+    mx.eval(forward, reversed_history)
+    assert not bool(mx.allclose(forward, reversed_history))
+
+
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
     controller = _controller()
     candidate = mx.zeros((1, 12, 64), dtype=mx.float32)

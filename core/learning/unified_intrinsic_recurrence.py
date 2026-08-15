@@ -1707,6 +1707,46 @@ class UnifiedRecurrentController(nn.Module):
         )
         depth = self.depth_features(step) @ self.state_transition_depth
         features = mx.tanh(context + self_state + depth[None, None, :])
+        if action_probability_history is not None:
+            if not action_probability_history or any(
+                tuple(item.shape)
+                != (
+                    int(hidden.shape[0]),
+                    self.config.action_slots,
+                    self.config.action_cardinality,
+                )
+                for item in action_probability_history
+            ):
+                raise ValueError("state transition action history differs")
+            # The current instruction has its own slot-aware projection below.
+            # Fold only prior instructions into an ordered recurrent summary so
+            # stateful programs do not have to rediscover their execution tape
+            # from prompt text at every step. Reusing the existing transition
+            # projections preserves checkpoint topology while making order
+            # causal: permuting two prior instructions changes this state.
+            history = mx.zeros(
+                (int(hidden.shape[0]), self.config.correction_rank),
+                dtype=mx.float32,
+            )
+            for history_step, probabilities in enumerate(
+                action_probability_history[:-1]
+            ):
+                historical_state = self.commit_action_probabilities(probabilities)
+                historical_action = mx.mean(
+                    mx.einsum(
+                        "bah,ahr->bar",
+                        historical_state.astype(mx.float32),
+                        self.state_action_projection,
+                    ),
+                    axis=1,
+                )
+                historical_depth = (
+                    self.depth_features(history_step) @ self.state_transition_depth
+                )
+                history = mx.tanh(
+                    0.5 * history + historical_action + historical_depth[None, :]
+                )
+            features = mx.tanh(features + history[:, None, :])
         if action_state is not None:
             if action_state.shape != (
                 int(hidden.shape[0]),
@@ -2993,6 +3033,14 @@ class UnifiedRecurrentController(nn.Module):
                 "semantic_role_inferred": False,
             },
             "predicted_action_is_state_transition_input": True,
+            "state_transition_action_history": {
+                "source": "ordered_prior_typed_actions_only",
+                "current_action_path": "separate_slot_aware_projection",
+                "future_steps_visible": False,
+                "private_transition_program_visible": False,
+                "parameter_topology_changed": False,
+                "lesionable": True,
+            },
             "causal_action_decoder": {
                 "field_order": list(ACTION_SLOT_NAMES),
                 "future_field_teacher_leakage": False,
@@ -3107,6 +3155,7 @@ def unified_recurrent_hidden_states(
     family_action_lesion: bool = False,
     action_literal_binding_lesion: bool = False,
     microcode_lesion: bool = False,
+    transition_history_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
     detach_problem_evidence: bool = True,
@@ -3125,6 +3174,7 @@ def unified_recurrent_hidden_states(
         or type(family_action_lesion) is not bool
         or type(action_literal_binding_lesion) is not bool
         or type(microcode_lesion) is not bool
+        or type(transition_history_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
         or type(detach_problem_evidence) is not bool
@@ -3377,7 +3427,11 @@ def unified_recurrent_hidden_states(
                     action_state=action_state,
                     state_probabilities=state_probabilities,
                     action_probabilities=action_probabilities,
-                    action_probability_history=action_probability_history,
+                    action_probability_history=(
+                        None
+                        if transition_history_lesion
+                        else action_probability_history
+                    ),
                     microcode_lesion=microcode_lesion,
                 )
                 next_state_probabilities = (
