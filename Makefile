@@ -1,4 +1,4 @@
-.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint guarded-imports lock-coverage phrase-pins lexical-debt method-size assumptions writing seams reachability layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture checkpoint-hygiene-audit cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit lifecycle-ownership-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot evidence-integrity
+.PHONY: coverage coverage-check coverage-bless mutation update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint guarded-imports lock-coverage phrase-pins lexical-debt method-size assumptions writing seams reachability layering layering-baseline reqproof-gate reqproof-release reqproof-progress reqproof-docket reqproof-capture checkpoint-hygiene-audit cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit lifecycle-ownership-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit skill-readiness-ui-audit model-load-audit resource-observation-audit security enterprise-gate enterprise-collect enterprise-strict production-gate frontend-contract architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot evidence-integrity claim-constants module-size module-size-baseline
 
 
 PYTHON ?= python
@@ -268,6 +268,18 @@ claim-lexicon:
 evidence-integrity:
 	@echo "🧾 Checking that no claim outranks its evidence..."
 	@$(PYTHON) tools/check_evidence_integrity.py --json /tmp/aura_evidence_integrity.json
+
+claim-constants:
+	@echo "📐 Checking that every constant a claim cites still holds that value..."
+	@$(PYTHON) tools/verify_claim_constants.py
+
+module-size:
+	@echo "📏 Checking that no module grew past its size baseline..."
+	@$(PYTHON) tools/lint_module_size.py
+
+module-size-baseline:
+	@echo "📏 Recording the current module size baseline (it may only shrink)..."
+	@$(PYTHON) tools/lint_module_size.py --write-baseline
 
 enterprise-gate:
 	@echo "🏢 Running enterprise static ratchet gate..."
