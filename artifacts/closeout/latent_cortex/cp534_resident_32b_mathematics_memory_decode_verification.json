@@ -1,0 +1,31 @@
+{
+  "arm_count": 8,
+  "artifact_path": "artifacts/closeout/latent_cortex/cp533_resident_32b_mathematics_memory_decode_canary.json",
+  "artifact_receipt_sha256": "8109dbe0e78651c55130b081639a1fbece53e49532087dcc8984a1ca03aa3b2b",
+  "artifact_sha256": "e28f65d018572eb1a909b527cc89e68a22ae54f12df8118a82383faf821afa3c",
+  "causal_control_exacts": {
+    "matched_initialization": 0,
+    "matched_wire_base": 0,
+    "matched_wrong_state": 0,
+    "no_read": 0,
+    "no_write": 0,
+    "reset_memory": 0
+  },
+  "claim_boundary": "bounded teacher-free recurrent-state-to-free-decode transfer on the model cryptographically bound in model_identity; not open-domain, multi-domain, frontier-level, globally fusion-authorized, or WOW",
+  "gain_count": 30,
+  "independently_verified": true,
+  "matched_wire_base_exact": 0,
+  "measured_source_commit": "d511c161be442bafc218c5989e51ffcb6e474291",
+  "measurement_count": 240,
+  "model_config_sha256": "c027829d800805358d67ac87819a3754fd8240be973f7147840651310fd30ae3",
+  "ordinary_base_exact": 0,
+  "receipt_sha256": "6dfe3e35e958412d0d4b737eb8e1d358038d1c4e560c4f83d479b6b8e62dd284",
+  "regression_count": 0,
+  "schema": "aura.rlc.mathematics_memory_decode_canary_verification.v1",
+  "task_count": 30,
+  "tissue_sha256": "b78e07c6b3e81a50d92f5d8b82eadc988b4e7d7bcff33189b4f5554929e305bc",
+  "treatment_exact": 30,
+  "verifier_source_clean": true,
+  "verifier_source_commit": "2b9b2c454bf199d7978674d1e0c333e0149d0e39",
+  "verifier_source_sha256": "38e818e8ee3bc750bbf71534ad9b9817c7fc2a9833865aed1fd52a6a01e7f58e"
+}

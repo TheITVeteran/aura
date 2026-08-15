@@ -319,3 +319,19 @@ This closes the bounded resident model transfer measurement. It does not close
 independent certification, semantic multi-domain recurrence, powered broad
 replication, global runtime authority, permanent weight fusion, frontier
 reasoning or `WOW Signal`.
+
+## CP535 addendum
+
+CP535 independently certifies the CP534 resident evidence. The verifier
+regenerated all 30 public tasks, replayed treatment and every lesion, matched
+240 state and response receipts, rescored every raw output and checked both the
+historical measured source and resident model hashes. The clean verifier
+certificate receipt is
+`6dfe3e35e958412d0d4b737eb8e1d358038d1c4e560c4f83d479b6b8e62dd284`.
+
+A separate model-validation claim now pins that certificate, artifact receipt,
+verifier bytes, clean-source status, resident model configuration and weight
+index, eight-arm result and model-neutral scientific boundary. This closes
+independent certification of bounded resident transfer. Semantic multi-domain
+state execution, answer-level replication outside mathematics, runtime
+promotion, permanent fusion, frontier reasoning and `WOW Signal` remain open.

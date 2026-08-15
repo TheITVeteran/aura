@@ -1202,6 +1202,35 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="tools/verify_mathematics_memory_decode_canary.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_memory_tissue_reaches_resident_language_head",
+            description=(
+                "sealed teacher-removed recurrent work memory converts bounded "
+                "resident-32B decode failures under independent replay and "
+                "causal lesions"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="resident_recurrent_memory_decode_certificate_is_verified",
+                value=True,
+                source=(
+                    "tests/test_verify_mathematics_memory_decode_canary.py and "
+                    "artifacts/closeout/latent_cortex/"
+                    "cp534_resident_32b_mathematics_memory_decode_verification.json"
+                ),
+            ),
+            predict=lambda _m: (
+                _resident_recurrent_memory_decode_certificate_holds()
+            ),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="bounded resident recurrent-memory language-head transfer",
+            ),
+            owner="tools/verify_mathematics_memory_decode_canary.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1393,6 +1422,29 @@ def install_runtime_validation() -> dict[str, Any]:
                 "ordinary decode, matched wire, initialization, wrong-state, write, "
                 "read, and reset controls were 0/30. This is bounded local-1.5B "
                 "transfer, not resident-32B, open-domain, frontier reasoning, or WOW."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "On 30 fresh bounded separated-subset tasks, Aura's sealed recurrent "
+                "work-memory tissue converted every resident-32B ordinary-decode "
+                "failure while matched initialization, wire, state, write, read, "
+                "and reset controls removed the gain."
+            ),
+            test="recurrent_memory_tissue_reaches_resident_language_head",
+            owner="tools/verify_mathematics_memory_decode_canary.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "An independent verifier reconstructed 30 tasks, 240 resident-model "
+                "measurements, all recurrent state receipts, every raw-output score, "
+                "source/model identity, and every evidence receipt. Treatment was "
+                "30/30; true ordinary decode, matched wire, initialization, "
+                "wrong-state, write, read, and reset controls were 0/30. This is "
+                "bounded resident-32B transfer, not multi-domain, open-domain, "
+                "frontier reasoning, permanent fusion, or WOW."
             ),
         )
     )
@@ -2350,15 +2402,53 @@ def _recurrent_memory_complete_engine_contract_holds() -> bool:
 
 
 def _recurrent_memory_decode_certificate_holds() -> bool:
+    return _recurrent_memory_decode_certificate_holds_at(
+        "cp531_mathematics_memory_decode_verification.json"
+    )
+
+
+def _resident_recurrent_memory_decode_certificate_holds() -> bool:
+    return _recurrent_memory_decode_certificate_holds_at(
+        "cp534_resident_32b_mathematics_memory_decode_verification.json",
+        expected_certificate_receipt=(
+            "6dfe3e35e958412d0d4b737eb8e1d358038d1c4e560c4f83d479b6b8e62dd284"
+        ),
+        expected_artifact_receipt=(
+            "8109dbe0e78651c55130b081639a1fbece53e49532087dcc8984a1ca03aa3b2b"
+        ),
+        expected_model_name="Qwen2.5-32B-Instruct-4bit",
+        expected_config_sha=(
+            "c027829d800805358d67ac87819a3754fd8240be973f7147840651310fd30ae3"
+        ),
+        expected_weights_index_sha=(
+            "7b6da9b2b1f3ebd698ae15f9fcf6ba3099e742ec07e5d383f28b7cb77a4d16db"
+        ),
+        expected_claim_boundary=(
+            "bounded teacher-free recurrent-state-to-free-decode transfer on "
+            "the model cryptographically bound in model_identity; not "
+            "open-domain, multi-domain, frontier-level, globally "
+            "fusion-authorized, or WOW"
+        ),
+    )
+
+
+def _recurrent_memory_decode_certificate_holds_at(
+    certificate_name: str,
+    *,
+    expected_certificate_receipt: str | None = None,
+    expected_artifact_receipt: str | None = None,
+    expected_model_name: str | None = None,
+    expected_config_sha: str | None = None,
+    expected_weights_index_sha: str | None = None,
+    expected_claim_boundary: str | None = None,
+) -> bool:
     import hashlib
     import json
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
     certificate_path = (
-        root
-        / "artifacts/closeout/latent_cortex/"
-        "cp531_mathematics_memory_decode_verification.json"
+        root / "artifacts/closeout/latent_cortex" / certificate_name
     )
     try:
         certificate = json.loads(certificate_path.read_text(encoding="utf-8"))
@@ -2376,18 +2466,34 @@ def _recurrent_memory_decode_certificate_holds() -> bool:
                 allow_nan=False,
             ).encode("ascii")
         ).hexdigest()
-        artifact_path = root / certificate["artifact_path"]
+        artifact_path = (root / certificate["artifact_path"]).resolve()
+        if root not in artifact_path.parents:
+            return False
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
         artifact_sha = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        artifact_body = {
+            key: value for key, value in artifact.items() if key != "receipt_sha256"
+        }
+        artifact_receipt = hashlib.sha256(
+            json.dumps(
+                artifact_body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
         verifier_path = root / "tools/verify_mathematics_memory_decode_canary.py"
         verifier_sha = hashlib.sha256(verifier_path.read_bytes()).hexdigest()
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
     controls = certificate.get("causal_control_exacts")
-    return bool(
+    base_contract_holds = bool(
         certificate.get("schema")
         == "aura.rlc.mathematics_memory_decode_canary_verification.v1"
         and certificate.get("receipt_sha256") == receipt
         and certificate.get("artifact_sha256") == artifact_sha
+        and artifact.get("receipt_sha256") == artifact_receipt
         and certificate.get("verifier_source_sha256") == verifier_sha
         and certificate.get("verifier_source_clean") is True
         and certificate.get("independently_verified") is True
@@ -2400,6 +2506,37 @@ def _recurrent_memory_decode_certificate_holds() -> bool:
         and set(controls.values()) == {0}
         and certificate.get("gain_count") == 30
         and certificate.get("regression_count") == 0
+    )
+    if not base_contract_holds:
+        return False
+    if (
+        expected_certificate_receipt is not None
+        and receipt != expected_certificate_receipt
+    ):
+        return False
+    if (
+        expected_artifact_receipt is not None
+        and artifact_receipt != expected_artifact_receipt
+    ):
+        return False
+    if expected_claim_boundary is not None and (
+        certificate.get("claim_boundary") != expected_claim_boundary
+        or artifact.get("claim_boundary") != expected_claim_boundary
+    ):
+        return False
+    if expected_model_name is None:
+        return True
+    model_identity = artifact.get("model_identity")
+    if not isinstance(model_identity, dict):
+        return False
+    model_path = model_identity.get("path")
+    return bool(
+        isinstance(model_path, str)
+        and Path(model_path).name == expected_model_name
+        and model_identity.get("config_sha256") == expected_config_sha
+        and model_identity.get("weights_index_sha256")
+        == expected_weights_index_sha
+        and certificate.get("model_config_sha256") == expected_config_sha
     )
 
 

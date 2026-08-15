@@ -50033,3 +50033,27 @@ immutable measured artifact; a clean-source independent certificate and
 registered resident claim remain the next gate. This is bounded resident-32B
 causal transfer evidence, not open-domain or multi-domain reasoning, permanent
 weight fusion, frontier performance, or `WOW Signal`.
+
+## Checkpoint 2026-08-15-535: Independently Certify Resident Transfer
+
+The clean CP534 verifier independently regenerated the 30 public tasks, replayed
+the sealed recurrent tissue and all lesions, matched all 240 state/response
+receipts, rescored every raw model output, and rechecked measured source plus
+resident model identity. Its source-clean certificate receipt is
+`6dfe3e35e958412d0d4b737eb8e1d358038d1c4e560c4f83d479b6b8e62dd284`.
+
+Model validation now registers a separate resident claim rather than widening
+the older 1.5B result. The fail-closed contract pins the artifact and certificate
+receipts, verifier bytes, clean verifier source, eight-arm counts, resident
+model name, configuration hash, weight-index hash and exact claim boundary. It
+also validates the artifact's own canonical receipt and rejects evidence paths
+that escape the repository. Focused independent-replay and claim contracts are
+`5 passed`.
+
+The independently accepted claim is bounded resident-32B recurrent-state
+transfer: treatment `30/30`, both baselines and all six causal controls `0/30`,
+30 converted failures and zero regressions. It does not establish multiple
+reasoning domains, open-domain generality, globally authorized runtime use,
+permanent neural-weight fusion, frontier performance, or `WOW Signal`. The next
+proof gate is a fresh semantic-state canary across coding, calibration and
+misleading-premise families before broader answer-level replication.
