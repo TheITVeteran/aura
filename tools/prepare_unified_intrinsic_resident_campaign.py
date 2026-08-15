@@ -72,11 +72,47 @@ PROFILES: Final = frozenset(
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_compositional_canary",
         "process_public_transition_compositional_acquisition",
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "process_public_transition_factorized_acquisition",
         "recovery",
+    }
+)
+BOOTSTRAP_PROFILES: Final = frozenset(
+    {
+        "process_action_canary",
+        "process_answer_bridge_canary",
+        "process_analytic_acquisition",
+        "process_completion_acquisition",
+        "process_family_acquisition",
+        "process_neural_acquisition",
+        "process_public_transition_acquisition",
+        "process_public_transition_compositional_canary",
+        "process_public_transition_compositional_acquisition",
+        "process_public_transition_direct_acquisition",
+        "process_public_transition_extended_acquisition",
+        "process_public_transition_factorized_acquisition",
+        "recovery",
+    }
+)
+BOUNDED_ATTEMPT_PROFILES: Final = frozenset(
+    {
+        "canary",
+        "process_action_canary",
+        "process_answer_bridge_canary",
+        "process_analytic_acquisition",
+        "process_canary",
+        "process_completion_acquisition",
+        "process_family_acquisition",
+        "process_neural_acquisition",
+        "process_public_transition_acquisition",
+        "process_public_transition_compositional_canary",
+        "process_public_transition_compositional_acquisition",
+        "process_public_transition_direct_acquisition",
+        "process_public_transition_extended_acquisition",
+        "process_public_transition_factorized_acquisition",
     }
 )
 DEFAULT_CAPSULE_ROOT: Final = Path.home() / ".aura/training-capsules"
@@ -568,6 +604,46 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "wired_limit_gb": 28.0,
             "max_minutes": 120.0,
         }
+    if profile == "process_public_transition_compositional_canary":
+        process_steps = 192
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": "mathematics,coding,calibration,misleading_premise",
+            "task_depths": "3,5,9,10",
+            "train_depths": "1,3,5,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 32,
+            "holdout_per_cell": 8,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 4,
+            "process_family_batch_mode": "balanced_families",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "public_action_program": True,
+            "direct_transition_processor": True,
+            "direct_transition_curriculum": "progressive",
+            "direct_transition_weakest_register_weight": 0.25,
+            "state_teacher_forcing_probability": 0.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 32,
+            "checkpoint_every": 16,
+            "state_learning_rate": 0.0002,
+            "max_gradient_norm": 1.0,
+            "seed": 2026081504,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 60.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -882,20 +958,7 @@ def _freeze_campaign(
     training = _profile_training(profile)
     training_args = _training_cli(training)
 
-    bootstrap_profiles = {
-        "process_action_canary",
-        "process_answer_bridge_canary",
-        "process_analytic_acquisition",
-        "process_completion_acquisition",
-        "process_family_acquisition",
-        "process_neural_acquisition",
-        "process_public_transition_acquisition",
-        "process_public_transition_direct_acquisition",
-        "process_public_transition_extended_acquisition",
-        "process_public_transition_factorized_acquisition",
-        "recovery",
-    }
-    if (profile in bootstrap_profiles) != (bootstrap_output_dir is not None):
+    if (profile in BOOTSTRAP_PROFILES) != (bootstrap_output_dir is not None):
         _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
     bootstrap_pin_present = (
         bootstrap_checkpoint_sha256 is not None and bootstrap_step is not None
@@ -1026,21 +1089,7 @@ def _freeze_campaign(
             "heartbeat_stale_s": 180.0,
             "attempt_timeout_s": (
                 5.0 * 3600.0
-                if profile
-                in {
-                    "canary",
-                    "process_action_canary",
-                    "process_answer_bridge_canary",
-                    "process_analytic_acquisition",
-                    "process_canary",
-                    "process_completion_acquisition",
-                    "process_family_acquisition",
-                    "process_neural_acquisition",
-                    "process_public_transition_acquisition",
-                    "process_public_transition_direct_acquisition",
-                    "process_public_transition_extended_acquisition",
-                    "process_public_transition_factorized_acquisition",
-                }
+                if profile in BOUNDED_ATTEMPT_PROFILES
                 else 14.0 * 3600.0
                 if profile == "recovery"
                 else 54.0 * 3600.0

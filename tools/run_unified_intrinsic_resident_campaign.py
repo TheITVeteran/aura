@@ -34,7 +34,9 @@ from core.runtime.model_lane_control import get_model_lane_controller  # noqa: E
 from core.runtime.resource_observation import get_resource_observer  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools.prepare_unified_intrinsic_resident_campaign import (  # noqa: E402
+    BOOTSTRAP_PROFILES,
     CONFIG_SCHEMA,
+    PROFILES,
     _profile_training,
     _training_cli,
 )
@@ -279,23 +281,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         set(config) not in allowed_keys
         or config.get("schema") != CONFIG_SCHEMA
         or config.get("config_sha256") != canonical_sha256(body)
-        or config.get("profile")
-        not in {
-            "canary",
-            "full",
-            "process_action_canary",
-            "process_answer_bridge_canary",
-            "process_analytic_acquisition",
-            "process_canary",
-            "process_completion_acquisition",
-            "process_family_acquisition",
-            "process_neural_acquisition",
-            "process_public_transition_acquisition",
-            "process_public_transition_direct_acquisition",
-            "process_public_transition_extended_acquisition",
-            "process_public_transition_factorized_acquisition",
-            "recovery",
-        }
+        or config.get("profile") not in PROFILES
         or not isinstance(config.get("campaign_id"), str)
     ):
         _fail("campaign_config_invalid")
@@ -315,22 +301,9 @@ def _load_config(path: Path) -> dict[str, Any]:
         "detached_attempts",
         "heartbeat_key",
     }
-    bootstrap_profiles = {
-        "process_action_canary",
-        "process_answer_bridge_canary",
-        "process_analytic_acquisition",
-        "process_completion_acquisition",
-        "process_family_acquisition",
-        "process_neural_acquisition",
-        "process_public_transition_acquisition",
-        "process_public_transition_direct_acquisition",
-        "process_public_transition_extended_acquisition",
-        "process_public_transition_factorized_acquisition",
-        "recovery",
-    }
     expected_path_keys = (
         base_path_keys | {"bootstrap_output"}
-        if config["profile"] in bootstrap_profiles
+        if config["profile"] in BOOTSTRAP_PROFILES
         else base_path_keys
     )
     if not isinstance(paths, dict) or set(paths) != expected_path_keys:
@@ -349,7 +322,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "heartbeat_key": root / "heartbeat.key",
         **(
             {"bootstrap_output": inputs / "bootstrap-output"}
-            if config["profile"] in bootstrap_profiles
+            if config["profile"] in BOOTSTRAP_PROFILES
             else {}
         ),
     }
@@ -360,7 +333,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     if path != root / "campaign.json":
         _fail("campaign_config_path_drift")
     bootstrap = config.get("bootstrap")
-    if config["profile"] in bootstrap_profiles:
+    if config["profile"] in BOOTSTRAP_PROFILES:
         if not isinstance(bootstrap, dict):
             _fail("campaign_bootstrap_invalid")
         bootstrap_body = {
@@ -998,19 +971,7 @@ def _trainer_command(
         str(config["config_sha256"]),
         *[str(value) for value in config["training_args"]],
     ]
-    if config["profile"] in {
-        "process_action_canary",
-        "process_answer_bridge_canary",
-        "process_analytic_acquisition",
-        "process_completion_acquisition",
-        "process_family_acquisition",
-        "process_neural_acquisition",
-        "process_public_transition_acquisition",
-        "process_public_transition_direct_acquisition",
-        "process_public_transition_extended_acquisition",
-        "process_public_transition_factorized_acquisition",
-        "recovery",
-    }:
+    if config["profile"] in BOOTSTRAP_PROFILES:
         bootstrap = config["bootstrap"]
         command.extend(
             (

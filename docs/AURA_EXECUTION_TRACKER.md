@@ -49794,3 +49794,26 @@ CP498 repair mechanisms; it does not establish the external review's predicted
 accuracies, decoded reasoning gain, resident-32B transfer, fusion or `WOW
 Signal`. Those claims remain gated on a bounded clean canary, matched lesions
 and fresh replication.
+
+## Checkpoint 2026-08-14-504: Make The Compositional Campaign Launchable
+
+CP503 registered its full compositional acquisition profile in the campaign
+preparer but the detached runner still carried three older independent profile
+allowlists. A prepared campaign would therefore have been rejected before its
+first durable step. Valid profiles, profiles requiring an authenticated parent
+checkpoint and bounded-attempt profiles now have one source of truth in the
+preparer; the runner imports those contracts rather than retyping them.
+
+A separate 192-step compositional canary now exercises all six CP503 stages:
+verified one-, two- and four-transition windows, clean full closed loops,
+controlled recovery and a final clean closed-loop tail. It uses the same four
+real process families, balanced updates, public action tape, register loss,
+opcode controls and held-out depth-12/16 evaluation as the full profile, but
+with 32 training tasks and eight fresh holdouts per cell. It checkpoints every
+16 steps and evaluates every 32, allowing the mechanism to be stopped at an
+observed futility boundary instead of spending the full 1,536-step budget.
+
+Both compositional profiles now pass the signed bootstrap loader and command
+materializer with an identity-pinned parent checkpoint. The focused campaign
+and trainer set is `133 passed`. This closes launch plumbing only; canary
+accuracy and depth behavior remain unmeasured.

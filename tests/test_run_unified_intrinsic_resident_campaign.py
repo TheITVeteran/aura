@@ -13,6 +13,7 @@ import tools.run_unified_intrinsic_resident_campaign as controller
 from core.learning.frontier_process_supervision import frontier_process_task_battery
 from tools import run_detached_step as detached
 from tools.prepare_unified_intrinsic_resident_campaign import (
+    BOOTSTRAP_PROFILES,
     _freeze_bootstrap_checkpoint,
     _profile_training,
     _training_cli,
@@ -109,20 +110,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
     training = _profile_training(profile)
     campaign_id = f"unit-{profile}"
     bootstrap = None
-    bootstrap_profiles = {
-        "process_action_canary",
-        "process_answer_bridge_canary",
-        "process_analytic_acquisition",
-        "process_completion_acquisition",
-        "process_family_acquisition",
-        "process_neural_acquisition",
-        "process_public_transition_acquisition",
-        "process_public_transition_direct_acquisition",
-        "process_public_transition_extended_acquisition",
-        "process_public_transition_factorized_acquisition",
-        "recovery",
-    }
-    if profile in bootstrap_profiles:
+    if profile in BOOTSTRAP_PROFILES:
         bootstrap_output = _private(inputs / "bootstrap-output")
         body_without_sha = {
             "schema": "aura.unified_intrinsic.bootstrap_input.v1",
@@ -159,7 +147,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "dataset": {"identity_sha256": "1" * 64},
         "tokenizer": {"identity_sha256": "2" * 64},
         "tokenized_dataset": {"identity_sha256": "3" * 64},
-        **({"bootstrap": bootstrap} if profile in bootstrap_profiles else {}),
+        **({"bootstrap": bootstrap} if profile in BOOTSTRAP_PROFILES else {}),
         "paths": {
             "workspace_root": str(tmp_path),
             "campaign_root": str(root),
@@ -497,6 +485,49 @@ def test_compositional_transition_acquisition_stages_before_closed_loop() -> Non
     assert arguments[
         arguments.index("--direct-transition-weakest-register-weight") + 1
     ] == "0.25"
+
+
+def test_compositional_transition_canary_exercises_every_stage_quickly() -> None:
+    training = _profile_training("process_public_transition_compositional_canary")
+    arguments = _training_cli(training)
+
+    assert training["direct_transition_curriculum"] == "progressive"
+    assert training["max_steps"] == training["state_warmup_steps"] == 192
+    assert training["per_cell"] == 32
+    assert training["holdout_per_cell"] == 8
+    assert training["eval_every"] == 32
+    assert training["checkpoint_every"] == 16
+    assert "--direct-transition-processor" in arguments
+    assert arguments[arguments.index("--direct-transition-curriculum") + 1] == (
+        "progressive"
+    )
+
+
+def test_compositional_profiles_share_runner_bootstrap_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        controller,
+        "resolve_checkpoint_generation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            receipt={
+                "step": 73,
+                "checkpoint_sha256": "c" * 64,
+                "receipt_sha256": "d" * 64,
+                "identity": {"identity_sha256": "e" * 64},
+            }
+        ),
+    )
+    for profile in (
+        "process_public_transition_compositional_canary",
+        "process_public_transition_compositional_acquisition",
+    ):
+        path, _raw = _config(tmp_path / profile, profile=profile)
+        loaded = controller._load_config(path)
+
+        assert loaded["profile"] == profile
+        assert "bootstrap_output" in loaded["paths"]
 
 
 def test_process_completion_signed_config_is_controller_admitted(
