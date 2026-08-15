@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tools.run_semantic_neural_decode_canary import _arm_order, _summary
+from tools.run_semantic_neural_decode_canary import _arm_order, _lane_kwargs, _summary
 
 
 def test_semantic_neural_decode_arm_order_is_complete_and_deterministic():
@@ -39,3 +39,12 @@ def test_semantic_neural_decode_summary_counts_exact_results():
     assert summary["exact_accuracy"] == 0.5
     assert summary["parsed_accuracy"] == 1.0
     assert summary["mean_latency_ms"] == 25.0
+
+
+def test_semantic_neural_decode_uses_current_nonpreemptible_lane_contract(tmp_path):
+    values = _lane_kwargs(tmp_path / "model", tmp_path / "result.json")
+    assert values["model_path"] == str(tmp_path / "model")
+    assert values["purpose"] == "evaluation"
+    assert values["preemptible"] is False
+    assert values["allow_owner_eviction"] is False
+    assert "require_live_runtime_absent" not in values

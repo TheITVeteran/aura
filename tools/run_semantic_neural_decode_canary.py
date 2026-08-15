@@ -165,6 +165,17 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _lane_kwargs(model_path: Path, output: Path) -> dict[str, Any]:
+    return {
+        "owner_id": f"semantic-neural-decode:{output.name}",
+        "model_path": str(model_path),
+        "purpose": "evaluation",
+        "preemptible": False,
+        "allow_owner_eviction": False,
+        "metadata": {"tool": Path(__file__).name},
+    }
+
+
 def _run(args: argparse.Namespace, model_path: Path) -> int:
     if not 2 <= args.tasks_per_difficulty <= 20:
         raise ValueError("semantic decode task count is outside [2, 20]")
@@ -337,12 +348,7 @@ def main() -> int:
     output = args.out.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     args.out = output
-    with standalone_model_lane(
-        purpose="semantic_neural_decode_canary",
-        model_path=model_path,
-        require_live_runtime_absent=True,
-        require_model_workers_absent=True,
-    ):
+    with standalone_model_lane(**_lane_kwargs(model_path, output)):
         return _run(args, model_path)
 
 
