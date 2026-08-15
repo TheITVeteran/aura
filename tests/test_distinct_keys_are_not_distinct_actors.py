@@ -518,3 +518,126 @@ def test_changing_the_profile_would_change_the_protocol_digest():
     }
     assert evidence.sha256_json(body) == evidence.PROTOCOL_MANIFEST_SHA256
     assert "canonical_json_profile" in body
+
+
+# ─────────────────────────── the seed the policy names
+
+
+def test_the_seed_is_derived_from_the_challenge_and_the_item():
+    """The budget declared "challenge_item_derived" and nothing recorded or
+    recomputed a seed, so two runs could use different randomness and look
+    matched on every field the protocol checks."""
+    seed = evidence.derive_item_seed(
+        challenge_nonce_sha256="a" * 64, item_id="int-3"
+    )
+
+    assert isinstance(seed, int)
+    assert seed == evidence.derive_item_seed(
+        challenge_nonce_sha256="a" * 64, item_id="int-3"
+    )
+
+
+def test_a_different_item_gets_a_different_seed():
+    first = evidence.derive_item_seed(challenge_nonce_sha256="a" * 64, item_id="int-3")
+    second = evidence.derive_item_seed(challenge_nonce_sha256="a" * 64, item_id="int-4")
+
+    assert first != second
+
+
+def test_a_different_challenge_gets_a_different_seed():
+    first = evidence.derive_item_seed(challenge_nonce_sha256="a" * 64, item_id="int-3")
+    second = evidence.derive_item_seed(challenge_nonce_sha256="b" * 64, item_id="int-3")
+
+    assert first != second
+
+
+def test_both_sides_can_compute_it_without_exchanging_it():
+    """That is what makes it checkable from evidence a verifier already holds."""
+    source = inspect.getsource(evidence.derive_item_seed)
+
+    assert "challenge_nonce_sha256" in source
+    assert "item_id" in source
+
+
+def test_a_receipt_that_declares_a_wrong_seed_is_refused():
+    source = inspect.getsource(evidence.validate_worker_receipt)
+
+    assert "does not follow the challenge_item_derived" in source
+
+
+def test_the_seed_field_is_optional_but_nothing_else_is():
+    source = inspect.getsource(evidence.validate_worker_receipt)
+
+    assert 'optional = {"generation_seed"}' in source
+    assert "not set(payload) <= required | optional" in source
+
+
+# ─────────────────────────── what backs each claim, written down
+
+
+def test_the_assurance_map_grades_every_claim():
+    assurance = evidence.evidence_assurance()
+
+    assert assurance["schema"] == evidence.EVIDENCE_ASSURANCE_SCHEMA
+    for row in assurance["claims"].values():
+        assert row["grade"] in {"measured", "recomputed", "self_reported", "pinned"}
+        assert row["claim"]
+        assert row["gap"]
+
+
+def test_the_protocol_does_not_claim_to_be_measured_throughout():
+    """The honest answer today: most of it is signed self-report."""
+    assurance = evidence.evidence_assurance()
+
+    assert assurance["independently_measured_throughout"] is False
+    assert assurance["self_reported"] > 0
+
+
+def test_the_isolation_and_resource_claims_are_graded_self_reported():
+    claims = evidence.evidence_assurance()["claims"]
+
+    assert claims["runtime_isolation"]["grade"] == "self_reported"
+    assert claims["prohibited_resource_use"]["grade"] == "self_reported"
+    assert claims["process_isolation"]["grade"] == "self_reported"
+    assert claims["supervisor_observation"]["grade"] == "self_reported"
+
+
+def test_the_pinned_claims_say_they_only_label():
+    claims = evidence.evidence_assurance()["claims"]
+
+    assert claims["release_head_and_tree"]["grade"] == "pinned"
+    assert claims["verifier_implementation"]["grade"] == "pinned"
+
+
+def test_the_seed_is_the_one_recomputed_claim():
+    claims = evidence.evidence_assurance()["claims"]
+
+    assert claims["generation_seed"]["grade"] == "recomputed"
+
+
+def test_every_gap_names_what_is_missing_not_just_that_something_is():
+    for row in evidence.EVIDENCE_ASSURANCE.values():
+        assert len(row["gap"].split()) >= 6, row["gap"]
+
+
+def test_the_protocol_manifest_carries_the_grades():
+    assert set(evidence.PROTOCOL_MANIFEST["evidence_assurance"]) == set(
+        evidence.EVIDENCE_ASSURANCE
+    )
+
+
+def test_downgrading_a_claim_changes_the_protocol_digest():
+    """A grade that could drift silently would be worth nothing."""
+    body = {
+        key: value
+        for key, value in evidence.PROTOCOL_MANIFEST.items()
+        if key != "manifest_sha256"
+    }
+    assert evidence.sha256_json(body) == evidence.PROTOCOL_MANIFEST_SHA256
+
+    tampered = {**body}
+    tampered["evidence_assurance"] = {
+        **body["evidence_assurance"],
+        "runtime_isolation": "measured",
+    }
+    assert evidence.sha256_json(tampered) != evidence.PROTOCOL_MANIFEST_SHA256

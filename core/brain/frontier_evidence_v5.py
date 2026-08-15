@@ -88,6 +88,91 @@ MATCHED_BUDGET: dict[str, Any] = {
     "max_peak_memory_bytes": 48 * 1024 * 1024 * 1024,
 }
 
+EVIDENCE_ASSURANCE_SCHEMA = "aura.frontier_evidence.assurance.v1"
+
+#: How each protocol claim is actually established.
+#:
+#: The protocol reads as if every field were measured. Most are asserted by the
+#: party being measured and then signed, which authenticates WHO said it and
+#: nothing about whether it is so. Writing the grade down next to the claim is
+#: what stops a reader — or a downstream gate — treating a signature as a
+#: measurement.
+#:
+#: * ``measured`` — an independent party produced the value
+#: * ``recomputed`` — the validator derives it from other evidence and compares
+#: * ``self_reported`` — signed by the party whose behaviour it describes
+#: * ``pinned`` — compared with a caller-supplied constant, which labels rather
+#:   than establishes
+EVIDENCE_ASSURANCE: dict[str, dict[str, str]] = {
+    "runtime_isolation": {
+        "grade": "self_reported",
+        "claim": "fresh process, immutable source, no network/tools/caches, sealed evaluation",
+        "gap": "no sandbox measurement, namespace proof, launch receipt or cache inspection",
+    },
+    "prohibited_resource_use": {
+        "grade": "self_reported",
+        "claim": "zero tool, network and cache operations",
+        "gap": "counters are worker-signed; no kernel, proxy or filesystem observation ties them to effects",
+    },
+    "process_isolation": {
+        "grade": "self_reported",
+        "claim": "one live pid that survived the response",
+        "gap": "no start identity, parent, executable hash, namespace, per-item replacement or termination proof",
+    },
+    "supervisor_observation": {
+        "grade": "self_reported",
+        "claim": "independent timing and process state",
+        "gap": "the observation carries no signature of its own; the run coordinator signs its hash",
+    },
+    "release_head_and_tree": {
+        "grade": "pinned",
+        "claim": "the measured commit and tree belong to the attested release",
+        "gap": "the release signature covers repository, remote, ref, release commit and issue time only",
+    },
+    "verifier_implementation": {
+        "grade": "pinned",
+        "claim": "the verifier that graded is the pinned one",
+        "gap": "digests are compared with caller-supplied strings; no artifact manifest or executable measurement",
+    },
+    "grading_trace": {
+        "grade": "self_reported",
+        "claim": "the deterministic grader ran and produced this verdict",
+        "gap": "grader_execution_sha256 is opaque; commitments are not opened by this validator",
+    },
+    "inference_libraries": {
+        "grade": "self_reported",
+        "claim": "the named libraries at the named versions",
+        "gap": "the lock hashes name-to-version labels, not installed code, build flags or transitive libraries",
+    },
+    "generation_seed": {
+        "grade": "recomputed",
+        "claim": "sampling randomness follows challenge_item_derived",
+        "gap": "only when the receipt carries the seed; a receipt without one asserts the policy alone",
+    },
+}
+
+
+def evidence_assurance() -> dict[str, Any]:
+    """What backs each protocol claim, and what it does not.
+
+    Published so a consumer can require a grade rather than inferring one from
+    the absence of a complaint.
+    """
+
+    grades = [row["grade"] for row in EVIDENCE_ASSURANCE.values()]
+    return {
+        "schema": EVIDENCE_ASSURANCE_SCHEMA,
+        "claims": copy.deepcopy(EVIDENCE_ASSURANCE),
+        "measured": grades.count("measured"),
+        "recomputed": grades.count("recomputed"),
+        "self_reported": grades.count("self_reported"),
+        "pinned": grades.count("pinned"),
+        "independently_measured_throughout": all(
+            grade in {"measured", "recomputed"} for grade in grades
+        ),
+    }
+
+
 PROTOCOL_MANIFEST_BODY: dict[str, Any] = {
     "schema": PROTOCOL_MANIFEST_SCHEMA,
     "protocol_version": PROTOCOL_VERSION,
@@ -96,6 +181,11 @@ PROTOCOL_MANIFEST_BODY: dict[str, Any] = {
     # can tell whether it agrees, instead of discovering a disagreement as a
     # failed signature.
     "canonical_json_profile": CANONICAL_JSON_PROFILE,
+    # How each execution claim below is established. The booleans say what is
+    # claimed; this says what backs it.
+    "evidence_assurance": {
+        key: row["grade"] for key, row in sorted(EVIDENCE_ASSURANCE.items())
+    },
     "budget": MATCHED_BUDGET,
     "execution": {
         "fresh_generation_process": True,
@@ -893,6 +983,25 @@ def validate_task_spec(
     }
 
 
+def derive_item_seed(*, challenge_nonce_sha256: str, item_id: str) -> int:
+    """The generation seed the ``challenge_item_derived`` policy names.
+
+    MATCHED_BUDGET declared the policy as a string and stopped there: no
+    receipt carried a concrete seed and nothing recomputed one, so two runs
+    could use entirely different sampling randomness and still look matched on
+    every field the protocol checks.
+
+    The derivation is the policy's own words — the challenge nonce and the item
+    identity — so both sides compute the same value without exchanging it, and
+    a verifier can recompute it from evidence it already holds.
+    """
+
+    digest = hashlib.sha256(
+        f"{challenge_nonce_sha256}:{item_id}".encode()
+    ).digest()
+    return int.from_bytes(digest[:4], "big")
+
+
 def _validate_resource_usage(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) != {
         "input_tokens",
@@ -993,7 +1102,12 @@ def validate_worker_receipt(
         "sealed_evaluation_enforced",
         "fallbacks_used",
     }
-    if set(payload) != required:
+    # generation_seed is optional so existing signed receipts stay valid, but
+    # a receipt that carries one has to have derived it correctly. Nothing
+    # else may appear: an unknown field in a signed payload is content the
+    # validator has no rule for.
+    optional = {"generation_seed"}
+    if not required <= set(payload) or not set(payload) <= required | optional:
         raise ValueError("generation worker receipt fields are invalid")
     for field_name in (
         "run_id",
@@ -1041,6 +1155,24 @@ def validate_worker_receipt(
         raise ValueError("generation worker exceeded the hard time budget")
     if payload.get("decoding_parameters") != MATCHED_BUDGET:
         raise ValueError("generation worker decoding parameters are not matched")
+    # The seed policy is "challenge_item_derived". A receipt that repeats the
+    # policy string without the seed proves nothing about the randomness that
+    # produced the answer, so when the receipt carries one it has to be the
+    # value the policy actually derives.
+    declared_seed = payload.get("generation_seed")
+    challenge_nonce_sha256 = str(bindings.get("challenge_nonce_sha256") or "")
+    if declared_seed is not None and challenge_nonce_sha256:
+        expected_seed = derive_item_seed(
+            challenge_nonce_sha256=challenge_nonce_sha256,
+            item_id=str(payload.get("item_id") or ""),
+        )
+        if isinstance(declared_seed, bool) or not isinstance(declared_seed, int):
+            raise ValueError("generation worker seed is not an integer")
+        if declared_seed != expected_seed:
+            raise ValueError(
+                "generation worker seed does not follow the challenge_item_derived "
+                "policy it declares"
+            )
     usage = _validate_resource_usage(payload.get("resource_usage"))
     if abs(float(usage["wall_time_s"]) - elapsed) > 0.25:
         raise ValueError("generation worker usage contradicts elapsed time")
