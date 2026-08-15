@@ -113,6 +113,12 @@ CAUSAL_ACTION_PARAMETER_NAMES: Final = (
 FAMILY_ACTION_PARAMETER_NAMES: Final = (
     "action_family_output",
     "action_family_bias",
+    "action_family_kernel_mean",
+    "action_family_kernel_inv_scale",
+    "action_family_kernel_prototypes",
+    "action_family_kernel_coefficients",
+    "action_family_kernel_mask",
+    "action_family_kernel_gamma",
 )
 ACTION_LITERAL_BINDING_PARAMETER_NAMES: Final = (
     "action_literal_binding_query",
@@ -681,6 +687,40 @@ class UnifiedRecurrentController(nn.Module):
                 config.action_slots,
                 config.action_cardinality,
             ),
+            dtype=mx.float32,
+        )
+        kernel_capacity = 128
+        self.action_family_kernel_mean = mx.zeros(
+            (FRONTIER_ACTION_EXPERT_COUNT, config.action_slots, workspace_width),
+            dtype=mx.float32,
+        )
+        self.action_family_kernel_inv_scale = mx.zeros_like(
+            self.action_family_kernel_mean
+        )
+        self.action_family_kernel_prototypes = mx.zeros(
+            (
+                FRONTIER_ACTION_EXPERT_COUNT,
+                config.action_slots,
+                kernel_capacity,
+                workspace_width,
+            ),
+            dtype=mx.float32,
+        )
+        self.action_family_kernel_coefficients = mx.zeros(
+            (
+                FRONTIER_ACTION_EXPERT_COUNT,
+                config.action_slots,
+                kernel_capacity,
+                config.action_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        self.action_family_kernel_mask = mx.zeros(
+            (FRONTIER_ACTION_EXPERT_COUNT, config.action_slots, kernel_capacity),
+            dtype=mx.float32,
+        )
+        self.action_family_kernel_gamma = mx.zeros(
+            (FRONTIER_ACTION_EXPERT_COUNT, config.action_slots),
             dtype=mx.float32,
         )
         # A program instruction is not eight independent labels. The opcode
@@ -2535,6 +2575,29 @@ class UnifiedRecurrentController(nn.Module):
             workspace.astype(mx.float32),
             self.action_family_output,
         ) + self.action_family_bias[None, :, :, :]
+        normalized = (
+            workspace[:, None, :, None, :].astype(mx.float32)
+            - self.action_family_kernel_mean[None, :, :, None, :]
+        ) * self.action_family_kernel_inv_scale[None, :, :, None, :]
+        distance = mx.mean(
+            mx.square(
+                normalized
+                - self.action_family_kernel_prototypes[None, :, :, :, :]
+            ),
+            axis=-1,
+        )
+        kernel = (
+            mx.exp(
+                -self.action_family_kernel_gamma[None, :, :, None]
+                * distance
+            )
+            * self.action_family_kernel_mask[None, :, :, :]
+        )
+        expert_logits = expert_logits + mx.einsum(
+            "beap,eapc->beac",
+            kernel,
+            self.action_family_kernel_coefficients,
+        )
         return base_logits + mx.einsum("be,beac->bac", routes, expert_logits)
 
     @staticmethod

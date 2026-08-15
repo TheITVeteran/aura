@@ -89,6 +89,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _process_component_gradients,
     _process_family_training_batch,
     _process_training_policy,
+    _rbf_residual_readout,
     _recurrent_training_task,
     _residual_hidden_size,
     _resolve_recurrent_window,
@@ -442,16 +443,18 @@ def test_bootstrap_family_action_extension_is_exact_and_rejects_active_output() 
         _merge_bootstrap_family_action_extension(parent, active)
 
 
-def test_bootstrap_family_action_extension_can_add_only_new_bias() -> None:
-    output_name = "controller.action_family_output"
+def test_bootstrap_family_action_extension_can_add_one_new_additive_tensor() -> None:
     bias_name = "controller.action_family_bias"
-    output = mx.zeros((7, 8, 4, 33), dtype=mx.float32)
-    bias = mx.zeros((7, 8, 33), dtype=mx.float32)
+    child = {
+        f"controller.{name}": mx.zeros((1,), dtype=mx.float32)
+        for name in FAMILY_ACTION_PARAMETER_NAMES
+    }
+    parent = {name: value for name, value in child.items() if name != bias_name}
     migrated, receipt = _merge_bootstrap_family_action_extension(
-        {output_name: output},
-        {output_name: output, bias_name: bias},
+        parent,
+        child,
     )
-    assert set(migrated) == {output_name, bias_name}
+    assert set(migrated) == set(child)
     assert receipt is not None
     assert receipt["new_tensor_names"] == [bias_name]
 
@@ -956,6 +959,37 @@ def test_dual_ridge_residual_readout_writes_exact_training_decision() -> None:
         margin=8.0,
     )
     fitted = base + features @ weight + bias
+    assert np.array_equal(np.argmax(fitted, axis=1), labels)
+    assert report["after_accuracy"] == 1.0
+
+
+def test_rbf_residual_readout_separates_nonlinear_training_cells() -> None:
+    import numpy as np
+
+    features = np.asarray(
+        [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0]],
+        dtype=np.float32,
+    )
+    base = np.zeros((4, 2), dtype=np.float32)
+    labels = np.asarray([0, 1, 1, 0], dtype=np.int64)
+    parameters, report = _rbf_residual_readout(
+        features,
+        base,
+        labels,
+        capacity=8,
+        regularization=1e-4,
+        margin=8.0,
+    )
+    normalized = (features - parameters["mean"]) * parameters["inv_scale"]
+    distance = np.mean(
+        np.square(normalized[:, None, :] - parameters["prototypes"][None, :, :]),
+        axis=-1,
+    )
+    kernel = (
+        np.exp(-parameters["gamma"] * distance)
+        * parameters["mask"][None, :]
+    )
+    fitted = base + kernel @ parameters["coefficients"]
     assert np.array_equal(np.argmax(fitted, axis=1), labels)
     assert report["after_accuracy"] == 1.0
 

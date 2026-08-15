@@ -1654,6 +1654,79 @@ def _dual_ridge_residual_readout(
     return raw_weight.astype(np.float32), raw_bias.astype(np.float32), report
 
 
+def _rbf_residual_readout(
+    features: Any,
+    base_logits: Any,
+    labels: Any,
+    *,
+    capacity: int,
+    regularization: float,
+    margin: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fit a bounded nonlinear residual over training observations only."""
+
+    import numpy as np
+
+    x = np.asarray(features, dtype=np.float64)
+    base = np.asarray(base_logits, dtype=np.float64)
+    target = np.asarray(labels, dtype=np.int64)
+    if (
+        x.ndim != 2
+        or base.ndim != 2
+        or target.ndim != 1
+        or len(x) < 1
+        or len(x) > capacity
+        or len(x) != len(base)
+        or len(x) != len(target)
+    ):
+        raise ValueError("kernel action readout observations are invalid")
+    mean = x.mean(axis=0)
+    scale = x.std(axis=0)
+    scale = np.where(scale > 1e-8, scale, 1.0)
+    normalized = (x - mean) / scale
+    distance = np.mean(
+        np.square(normalized[:, None, :] - normalized[None, :, :]),
+        axis=-1,
+    )
+    nonzero = distance[distance > 1e-10]
+    gamma = (
+        float(np.log(2.0) / np.median(nonzero))
+        if nonzero.size
+        else 1.0
+    )
+    kernel = np.exp(-gamma * distance)
+    desired = np.full((len(x), base.shape[1]), -float(margin), dtype=np.float64)
+    desired[np.arange(len(x)), target] = float(margin)
+    ridge = float(regularization) * max(float(np.trace(kernel)) / len(x), 1e-9)
+    coefficients = np.linalg.solve(
+        kernel + ridge * np.eye(len(x)),
+        desired - base,
+    )
+    fitted = base + kernel @ coefficients
+    prototypes = np.zeros((capacity, x.shape[1]), dtype=np.float32)
+    output = np.zeros((capacity, base.shape[1]), dtype=np.float32)
+    mask = np.zeros((capacity,), dtype=np.float32)
+    prototypes[: len(x)] = normalized.astype(np.float32)
+    output[: len(x)] = coefficients.astype(np.float32)
+    mask[: len(x)] = 1.0
+    parameters = {
+        "mean": mean.astype(np.float32),
+        "inv_scale": (1.0 / scale).astype(np.float32),
+        "prototypes": prototypes,
+        "coefficients": output,
+        "mask": mask,
+        "gamma": np.float32(gamma),
+    }
+    report = {
+        "observations": len(x),
+        "before_accuracy": float(np.mean(np.argmax(base, axis=1) == target)),
+        "after_accuracy": float(np.mean(np.argmax(fitted, axis=1) == target)),
+        "gamma": gamma,
+        "ridge": ridge,
+    }
+    return parameters, report
+
+
 def _fit_family_action_readout(
     bundle: UnifiedTrainingBundle,
     tokenizer: Any,
@@ -1686,6 +1759,7 @@ def _fit_family_action_readout(
     slot_count = int(controller.action_family_output.shape[1])
     workspace_width = int(controller.action_family_output.shape[2])
     cardinality = int(controller.action_family_output.shape[3])
+    kernel_capacity = int(controller.action_family_kernel_prototypes.shape[2])
     observations: dict[tuple[int, int], list[tuple[Any, Any, int]]] = {}
     instruction_rows: list[tuple[int, list[tuple[int, Any, Any, int]]]] = []
     task_commitments: list[dict[str, Any]] = []
@@ -1766,6 +1840,22 @@ def _fit_family_action_readout(
         (expert_count, slot_count, cardinality),
         dtype=np.float32,
     )
+    kernel_mean = np.zeros(
+        (expert_count, slot_count, workspace_width), dtype=np.float32
+    )
+    kernel_inv_scale = np.zeros_like(kernel_mean)
+    kernel_prototypes = np.zeros(
+        (expert_count, slot_count, kernel_capacity, workspace_width),
+        dtype=np.float32,
+    )
+    kernel_coefficients = np.zeros(
+        (expert_count, slot_count, kernel_capacity, cardinality),
+        dtype=np.float32,
+    )
+    kernel_mask = np.zeros(
+        (expert_count, slot_count, kernel_capacity), dtype=np.float32
+    )
+    kernel_gamma = np.zeros((expert_count, slot_count), dtype=np.float32)
     cell_receipts: dict[str, Any] = {}
     for (expert, slot), rows in sorted(observations.items()):
         features = np.stack([row[0] for row in rows])
@@ -1780,7 +1870,25 @@ def _fit_family_action_readout(
         )
         fitted_weights[expert, slot] = raw_weight
         fitted_bias[expert, slot] = raw_bias
-        cell_receipts[f"expert-{expert}:slot-{slot}"] = cell_report
+        linear_logits = bases + features @ raw_weight + raw_bias
+        kernel_parameters, kernel_report = _rbf_residual_readout(
+            features,
+            linear_logits,
+            labels,
+            capacity=kernel_capacity,
+            regularization=float(regularization),
+            margin=float(margin),
+        )
+        kernel_mean[expert, slot] = kernel_parameters["mean"]
+        kernel_inv_scale[expert, slot] = kernel_parameters["inv_scale"]
+        kernel_prototypes[expert, slot] = kernel_parameters["prototypes"]
+        kernel_coefficients[expert, slot] = kernel_parameters["coefficients"]
+        kernel_mask[expert, slot] = kernel_parameters["mask"]
+        kernel_gamma[expert, slot] = kernel_parameters["gamma"]
+        cell_receipts[f"expert-{expert}:slot-{slot}"] = {
+            "linear": cell_report,
+            "kernel": kernel_report,
+        }
 
     before_correct = 0
     after_correct = 0
@@ -1794,16 +1902,55 @@ def _fit_family_action_readout(
                 + feature @ fitted_weights[expert, slot]
                 + fitted_bias[expert, slot]
             )
+            normalized = (
+                feature - kernel_mean[expert, slot]
+            ) * kernel_inv_scale[expert, slot]
+            distances = np.mean(
+                np.square(
+                    normalized[None, :]
+                    - kernel_prototypes[expert, slot]
+                ),
+                axis=-1,
+            )
+            kernel = (
+                np.exp(-kernel_gamma[expert, slot] * distances)
+                * kernel_mask[expert, slot]
+            )
+            corrected = (
+                corrected
+                + kernel @ kernel_coefficients[expert, slot]
+            )
             after_correct += int(np.argmax(corrected) == target)
             total += 1
     before_sha256 = controller.parameter_sha256()
     controller.action_family_output = mx.array(fitted_weights, dtype=mx.float32)
     controller.action_family_bias = mx.array(fitted_bias, dtype=mx.float32)
-    mx.eval(controller.action_family_output, controller.action_family_bias)
+    controller.action_family_kernel_mean = mx.array(kernel_mean, dtype=mx.float32)
+    controller.action_family_kernel_inv_scale = mx.array(
+        kernel_inv_scale, dtype=mx.float32
+    )
+    controller.action_family_kernel_prototypes = mx.array(
+        kernel_prototypes, dtype=mx.float32
+    )
+    controller.action_family_kernel_coefficients = mx.array(
+        kernel_coefficients, dtype=mx.float32
+    )
+    controller.action_family_kernel_mask = mx.array(kernel_mask, dtype=mx.float32)
+    controller.action_family_kernel_gamma = mx.array(kernel_gamma, dtype=mx.float32)
+    mx.eval(
+        controller.action_family_output,
+        controller.action_family_bias,
+        controller.action_family_kernel_mean,
+        controller.action_family_kernel_inv_scale,
+        controller.action_family_kernel_prototypes,
+        controller.action_family_kernel_coefficients,
+        controller.action_family_kernel_mask,
+        controller.action_family_kernel_gamma,
+    )
     after_sha256 = controller.parameter_sha256()
     body = {
         "schema": "aura.unified_intrinsic.analytic_action_readout_fit.v1",
-        "method": "training_only_dual_ridge_residual_synaptic_write",
+        "method": "training_only_affine_plus_rbf_residual_synaptic_write",
         "regularization": float(regularization),
         "target_logit_margin": float(margin),
         "training_tasks": len(task_commitments),
@@ -3378,8 +3525,8 @@ def _merge_bootstrap_family_action_extension(
     missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
-    bias_name = "controller.action_family_bias"
-    if missing not in (expected, {bias_name}):
+    output_name = "controller.action_family_output"
+    if output_name in missing and missing != expected:
         raise RuntimeError(
             "unified recurrence bootstrap family-action inventory differs: "
             + ",".join(sorted(missing))
@@ -4612,7 +4759,7 @@ def main() -> int:
             "process_query_gradient_scale": args.process_query_gradient_scale,
             "analytic_action_readout": {
                 "enabled": args.analytic_action_readout_fit,
-                "method": "training_only_dual_ridge_residual_synaptic_write",
+                "method": "training_only_affine_plus_rbf_residual_synaptic_write",
                 "regularization": args.analytic_action_readout_ridge,
                 "target_logit_margin": args.analytic_action_readout_margin,
                 "holdout_fit_authority": False,

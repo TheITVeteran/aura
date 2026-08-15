@@ -488,6 +488,42 @@ def test_public_family_expert_gradient_isolated_to_selected_route() -> None:
     assert float(mx.max(mx.abs(bias_gradients[1:]))) == 0.0
 
 
+def test_public_family_kernel_is_noop_until_training_prototypes_attach() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.random.normal((1, 9, 64), key=mx.random.key(199))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(200))
+    tokens = mx.array([[100, 1]])
+    baseline = controller.action_logits(
+        evidence, hidden, state_slot_start=4, step=3, token_ids=tokens
+    )
+    controller.action_family_kernel_inv_scale = mx.ones_like(
+        controller.action_family_kernel_inv_scale
+    )
+    controller.action_family_kernel_mask = controller.action_family_kernel_mask.at[
+        0, :, 0
+    ].add(1.0)
+    controller.action_family_kernel_gamma = controller.action_family_kernel_gamma.at[
+        0, :
+    ].add(1.0)
+    controller.action_family_kernel_coefficients = (
+        controller.action_family_kernel_coefficients.at[0, :, 0, 7].add(5.0)
+    )
+    active = controller.action_logits(
+        evidence, hidden, state_slot_start=4, step=3, token_ids=tokens
+    )
+    assert not bool(mx.array_equal(baseline, active))
+
+
 def test_causal_action_decoder_is_exact_noop_until_its_output_is_trained() -> None:
     controller = _controller()
     evidence = mx.random.normal((1, 9, 64), key=mx.random.key(95))
