@@ -50422,3 +50422,27 @@ wrong object.
 
 The admission rule remains unchanged. A new unseen-seed full replication is
 still required before any resident-32B run.
+
+## Checkpoint 2026-08-15-553: Fresh Replication Makes the Bounded Transfer Result Durable
+
+The new unseen-seed replication completed all `450` real-model decodes across
+`90` fresh tasks in 188.84 seconds. Treatment decoded `90/90`; ordinary,
+syntax-matched and same-family wrong-state controls remained `0/90`; and the
+learned multiplication-coefficient lesion decoded only `30/90`. Treatment
+therefore converted all 90 ordinary failures with zero regressions under the
+unchanged perfect-treatment bar.
+
+The independent verifier regenerated and regraded the cohort, replayed all 90
+authenticated treatment states, rehashed the committed producer sources and
+model identity, and verified every event in the fsynced journal. The journal
+contains `450/450` decode commits and `452/452` receipt-chained events. The
+paired one-sided exact probability for 90 gains and zero losses is
+`8.077935669463161e-28`. Producer output, journal and independent attestation
+are frozen in
+`artifacts/closeout/latent_cortex/cp553_semantic_decode_replication/`.
+
+This replicates bounded teacher-free neural-state-to-free-decode transfer on
+the named 1.5B checkpoint. It does not establish open-domain or broad reasoning
+gain, resident-32B transfer, ordinary runtime activation, fusion, frontier
+performance or `WOW Signal`. The next gate is the first source-bound bounded
+resident-32B five-arm canary under the same admission rule.

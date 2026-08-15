@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from core.learning.frontier_process_supervision import (  # noqa: E402
 from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.rlc.semantic_neural_decode_canary.v1"
+JOURNAL_SCHEMA: Final = "aura.rlc.semantic_neural_decode_journal.v1"
 VERIFICATION_SCHEMA: Final = "aura.rlc.semantic_neural_decode_verification.v1"
 ARMS: Final = (
     "ordinary_base",
@@ -92,7 +94,98 @@ def _expected_tasks(seed: int, per_cell: int):
     )
 
 
-def verify_canary(artifact_path: Path, *, model_path: Path) -> dict[str, Any]:
+def _paired_one_sided_p(gains: int, regressions: int) -> float:
+    discordant = gains + regressions
+    if discordant == 0:
+        return 1.0
+    return sum(math.comb(discordant, value) for value in range(gains, discordant + 1)) / (
+        2**discordant
+    )
+
+
+def _verify_journal(
+    journal_path: Path,
+    *,
+    payload: dict[str, Any],
+    raw_outputs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    journal_path = journal_path.expanduser().resolve(strict=True)
+    events: list[dict[str, Any]] = []
+    previous = "0" * 64
+    with journal_path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"semantic decode journal line {line_number} is invalid JSON"
+                ) from exc
+            if not isinstance(event, dict) or event.get("schema") != JOURNAL_SCHEMA:
+                raise RuntimeError(f"semantic decode journal line {line_number} is invalid")
+            receipt = event.get("receipt_sha256")
+            body = {key: value for key, value in event.items() if key != "receipt_sha256"}
+            if event.get("previous_receipt_sha256") != previous or receipt != _sha(body):
+                raise RuntimeError(
+                    f"semantic decode journal receipt chain broke at line {line_number}"
+                )
+            previous = receipt
+            events.append(event)
+
+    expected_count = len(raw_outputs)
+    if len(events) != expected_count + 2:
+        raise RuntimeError("semantic decode journal event count mismatch")
+    started, *decode_events, completed = events
+    expected_start = {
+        "event": "campaign_started",
+        "source_commit": payload["source_commit"],
+        "seed": payload["seed"],
+        "tasks_per_difficulty": payload["tasks_per_difficulty"],
+        "task_count": payload["task_count"],
+        "arm_count": len(ARMS),
+    }
+    if any(started.get(key) != value for key, value in expected_start.items()):
+        raise RuntimeError("semantic decode journal campaign identity mismatch")
+
+    for index, (event, raw_output) in enumerate(
+        zip(decode_events, raw_outputs, strict=True), start=1
+    ):
+        row = event.get("row")
+        if (
+            event.get("event") != "decode_committed"
+            or event.get("completed") != index
+            or event.get("total") != expected_count
+            or event.get("raw_output") != raw_output
+            or not isinstance(row, dict)
+            or row.get("task_id") != raw_output.get("task_id")
+            or row.get("arm") != raw_output.get("arm")
+            or row.get("response_sha256")
+            != hashlib.sha256(str(raw_output.get("response", "")).encode()).hexdigest()
+        ):
+            raise RuntimeError(f"semantic decode journal row {index} mismatch")
+    last_decode_receipt = decode_events[-1]["receipt_sha256"]
+    if payload.get("journal_last_decode_receipt_sha256") != last_decode_receipt:
+        raise RuntimeError("semantic decode final journal decode receipt mismatch")
+    if (
+        completed.get("event") != "campaign_completed"
+        or completed.get("previous_receipt_sha256") != last_decode_receipt
+        or completed.get("admitted") is not payload.get("admitted")
+        or completed.get("report_receipt_sha256") != payload.get("receipt_sha256")
+    ):
+        raise RuntimeError("semantic decode journal completion mismatch")
+    return {
+        "journal_sha256": _file_sha(journal_path),
+        "journal_event_count": len(events),
+        "journal_decode_count": len(decode_events),
+        "journal_final_receipt_sha256": completed["receipt_sha256"],
+    }
+
+
+def verify_canary(
+    artifact_path: Path,
+    *,
+    model_path: Path,
+    journal_path: Path | None = None,
+) -> dict[str, Any]:
     artifact_path = artifact_path.expanduser().resolve(strict=True)
     model_path = model_path.expanduser().resolve(strict=True)
     raw_bytes = artifact_path.read_bytes()
@@ -208,6 +301,13 @@ def verify_canary(artifact_path: Path, *, model_path: Path) -> dict[str, Any]:
     if payload.get("admitted") is not admitted or not admitted:
         raise RuntimeError("semantic decode independently derived admission failed")
 
+    journal_verification = (
+        _verify_journal(journal_path, payload=payload, raw_outputs=raw_outputs)
+        if journal_path is not None
+        else {}
+    )
+    paired_p = _paired_one_sided_p(len(gains), len(regressions))
+
     body = {
         "schema": VERIFICATION_SCHEMA,
         "verified": True,
@@ -223,7 +323,10 @@ def verify_canary(artifact_path: Path, *, model_path: Path) -> dict[str, Any]:
         "independent_parsed_by_arm": dict(parsed_counts),
         "gain_count": len(gains),
         "regression_count": len(regressions),
+        "paired_discordant_count": len(gains) + len(regressions),
+        "paired_one_sided_exact_p": paired_p,
         "treatment_state_replay_count": len(replayed_state_receipts),
+        **journal_verification,
         "claim_boundary": payload.get("claim_boundary"),
         "verifier_source_sha256": _file_sha(Path(__file__)),
     }
@@ -234,9 +337,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--journal", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    report = verify_canary(args.artifact, model_path=args.model)
+    report = verify_canary(
+        args.artifact,
+        model_path=args.model,
+        journal_path=args.journal,
+    )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:
         destination = args.report.expanduser().resolve()

@@ -5945,3 +5945,17 @@ arm's own authenticated state found that 80 tokens crossed the stable bad
 branch while leaving the model to generate the suffix. Exact-object-only token
 overrun normalization closes the adjacent BPE boundary case. The strict full
 replication gate remains pending on a new unseen seed.
+
+### 2026-08-15 - CP553 fresh replication independently accepts bounded transfer
+
+The source-clean 1.5B replication passed the unchanged five-arm bar on 90
+fresh tasks: treatment `90/90`, ordinary `0/90`, syntax-matched `0/90`,
+same-family wrong-state `0/90`, and learned-coefficient lesion `30/90`, with 90
+wrong-to-right conversions and zero regressions. Its 450 decode commits form a
+complete 452-event fsynced receipt chain. Independent cohort regeneration,
+grading, state replay, source/model verification and journal verification all
+passed; the paired one-sided exact probability is `8.08e-28`.
+
+This authorizes the bounded resident-32B semantic decode canary. It does not
+close SPARK-069 through SPARK-072 or authorize ordinary serving, fusion,
+frontier performance or `WOW Signal`.
