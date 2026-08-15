@@ -104,7 +104,7 @@ def test_older_history_stays_contiguous_under_budget_pressure(monkeypatch):
     monkeypatch.setattr(
         ContextAssembler,
         "build_system_prompt",
-        staticmethod(lambda _state: "SYS"),
+        staticmethod(lambda _state, **_kw: "SYS"),
     )
 
     messages = ContextAssembler.build_messages(state, "current", max_tokens=2048)

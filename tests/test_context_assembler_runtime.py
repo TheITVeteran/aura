@@ -14,13 +14,62 @@ def test_short_greeting_stays_casual():
     assert ContextAssembler._is_casual_interaction("hey") is True
 
 
-def test_build_messages_updates_attention_focus():
+def test_rendering_a_prompt_does_not_move_attention():
+    """A retry, a preview, a gate-side assembly against a payload copy, and a
+    generation that died before its first token all called this. None of them
+    is an accepted turn, and every one of them moved what Aura was attending
+    to."""
     state = AuraState.default()
-    state.cognition.attention_focus = None
+    state.cognition.attention_focus = "the thing she was already thinking about"
 
     ContextAssembler.build_messages(state, "Let's debug the retrieval pipeline.")
 
+    assert state.cognition.attention_focus == "the thing she was already thinking about"
+
+
+def test_the_serving_lane_can_still_record_attention():
+    state = AuraState.default()
+    state.cognition.attention_focus = None
+
+    ContextAssembler.build_messages(
+        state, "Let's debug the retrieval pipeline.", record_attention=True
+    )
+
     assert state.cognition.attention_focus == "Let's debug the retrieval pipeline."
+
+
+def test_only_the_serving_lane_opts_in():
+    """One caller, named, rather than a default that every caller inherits."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    opted_in = []
+    for path in (root / "core").rglob("*.py"):
+        text = path.read_text("utf-8", errors="ignore")
+        if "record_attention=True" in text:
+            opted_in.append(str(path.relative_to(root)))
+    assert opted_in == ["core/brain/cognitive_engine.py"], opted_in
+    assert not _re.search(
+        r"record_attention\s*:\s*bool\s*=\s*True",
+        (root / "core" / "brain" / "llm" / "context_assembler.py").read_text("utf-8"),
+    ), "the default flipped; every renderer would mutate again"
+
+
+def test_the_prompt_path_does_not_call_the_stakes_organ():
+    """Its block is deliberately not injected. The call remained anyway, with
+    the return discarded, so the organ ran on the foreground path for nothing."""
+    from pathlib import Path as _Path
+
+    source = (
+        _Path(__file__).resolve().parents[1]
+        / "core" / "brain" / "llm" / "context_assembler.py"
+    ).read_text("utf-8")
+
+    assert "stakes.get_context_block()" not in source
+    assert "Existential stakes are deliberately absent" in source, (
+        "keep the note explaining the absence, or the call comes back"
+    )
 
 
 class ToolAffordanceRecorder:
@@ -279,7 +328,7 @@ def test_build_messages_preserves_current_input_under_tight_budget(monkeypatch):
     monkeypatch.setattr(
         ContextAssembler,
         "build_system_prompt",
-        staticmethod(lambda _state: "SYSTEM-HEAD\n" + ("s" * 20000) + "\nSYSTEM-TAIL"),
+        staticmethod(lambda _state, **_kw: "SYSTEM-HEAD\n" + ("s" * 20000) + "\nSYSTEM-TAIL"),
     )
 
     messages = ContextAssembler.build_messages(state, objective, max_tokens=2048)
@@ -302,7 +351,7 @@ def test_build_messages_counts_dropped_history_without_negative_slice(monkeypatc
     monkeypatch.setattr(
         ContextAssembler,
         "build_system_prompt",
-        staticmethod(lambda _state: "s" * 6500),
+        staticmethod(lambda _state, **_kw: "s" * 6500),
     )
 
     messages = ContextAssembler.build_messages(state, "current", max_tokens=2048)
@@ -314,3 +363,54 @@ def test_build_messages_counts_dropped_history_without_negative_slice(monkeypatc
     ]
     assert notices
     assert "10 older conversational messages" in notices[0]
+
+
+def test_the_being_runtime_is_sampled_once_per_assembly(monkeypatch):
+    """runtime.sample measures a system that keeps moving. It was taken twice
+    inside one system message — once in build_system_prompt, once in
+    build_messages — so one prompt could state two different valences and two
+    different focal objects as Aura's state right now."""
+    calls = []
+
+    class FakeRenderer:
+        @staticmethod
+        def render_prompt_block(_now):
+            return ""
+
+    class FakeRuntime:
+        renderer = FakeRenderer
+
+        def sample(self, _state, objective=""):
+            calls.append(objective)
+
+            class Now:
+                @staticmethod
+                def to_report_packet():
+                    return {
+                        "attention": {"focal_object": "the pipeline"},
+                        "affect": {
+                            "valence": 0.1,
+                            "arousal": 0.2,
+                            "distress": 0.0,
+                            "free_energy": 0.3,
+                        },
+                    }
+
+                @staticmethod
+                def compact_prompt_block():
+                    return "## AURA NOW\n"
+
+            return Now()
+
+        @staticmethod
+        def organismal_workspace_prompt_block(compact=False):
+            return ""
+
+    import core.being.runtime as being_runtime
+
+    monkeypatch.setattr(being_runtime, "get_being_runtime", lambda: FakeRuntime())
+
+    state = AuraState.default()
+    ContextAssembler.build_messages(state, "debug the retrieval pipeline", max_tokens=4096)
+
+    assert len(calls) == 1, f"sampled {len(calls)} times in one assembly"

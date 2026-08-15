@@ -76,12 +76,46 @@ class ContextAssembler:
         }
 
     @staticmethod
-    def _build_aura_now_prompt_block(state: AuraState, objective: str, *, compact: bool = False) -> str:
+    def _sample_aura_now(state: AuraState, objective: str) -> tuple[Any, Any] | None:
+        """One reading of the being runtime, taken once per assembly.
+
+        ``runtime.sample`` is a measurement of a system that keeps moving, and
+        it was taken twice while building a single system message: once inside
+        build_system_prompt and again in build_messages. The two readings can
+        disagree — different valence, different focal object — inside one
+        prompt that presents both as Aura's state right now, and any read the
+        organ accounts for happened twice for one turn.
+        """
         try:
             from core.being.runtime import get_being_runtime
 
             runtime = get_being_runtime()
-            now = runtime.sample(state, objective=objective)
+            return runtime, runtime.sample(state, objective=objective)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler",
+                exc,
+                severity="warning",
+                action="continued prompt assembly without AuraNow state-grounded block",
+            )
+            logger.debug("AuraNow sample unavailable: %s", exc)
+            return None
+
+    @staticmethod
+    def _build_aura_now_prompt_block(
+        state: AuraState,
+        objective: str,
+        *,
+        compact: bool = False,
+        sample: tuple[Any, Any] | None = None,
+    ) -> str:
+        try:
+            sampled = sample if sample is not None else ContextAssembler._sample_aura_now(
+                state, objective
+            )
+            if sampled is None:
+                return ""
+            runtime, now = sampled
             organismal_block = runtime.organismal_workspace_prompt_block(compact=compact)
             felt_thought_block = (
                 ContextAssembler._build_felt_thought_block(compact=compact)
@@ -478,7 +512,11 @@ class ContextAssembler:
         return system_msgs + result + recent
 
     @staticmethod
-    def build_system_prompt(state: AuraState) -> str:
+    def build_system_prompt(
+        state: AuraState,
+        *,
+        aura_now_sample: tuple[Any, Any] | None = None,
+    ) -> str:
         """Construct the core system prompt from state. Uses Elasticity to scale verbosity.
 
         CONTEXT PRESSURE: the resident primary model's window is resolved from
@@ -515,17 +553,13 @@ class ContextAssembler:
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
         identity_block = f"{get_identity_lock()}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
 
-        # Existential stakes affect runtime policy and inference parameters, not
-        # conversational identity. Injecting pressure language into the user
-        # prompt made live desktop replies drift into "existential stakes"
-        # narration after ordinary load spikes.
-        try:
-            from core.container import ServiceContainer
-            stakes = ServiceContainer.get("existential_stakes", default=None)
-            if stakes:
-                stakes.get_context_block()
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
-            record_degradation("context_assembler.existential_stakes", _e)
+        # Existential stakes are deliberately absent from this prompt: they
+        # affect runtime policy and inference parameters, not conversational
+        # identity, and injecting pressure language made live desktop replies
+        # drift into "existential stakes" narration after ordinary load spikes.
+        # The organ was still being CALLED here with its return discarded, so
+        # whatever accounting or caching get_context_block does ran on the
+        # foreground prompt path while contributing nothing to the prompt.
 
         # Temporal Continuity context injection
         try:
@@ -617,7 +651,12 @@ class ContextAssembler:
         aura_now_block = ""
         phenomenal_state = getattr(state.cognition, "phenomenal_state", None)
         if (phenomenal_state or not is_casual) and not black_box_steering:
-            aura_now_block = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=is_casual or elasticity >= 2)
+            aura_now_block = ContextAssembler._build_aura_now_prompt_block(
+                state,
+                objective,
+                compact=is_casual or elasticity >= 2,
+                sample=aura_now_sample,
+            )
 
         # Continuity budget GROWS with depth. At depth 46 the old policy gave
         # the summary 400 characters to represent the whole conversation; that
@@ -1634,12 +1673,27 @@ class ContextAssembler:
         )
 
     @classmethod
-    def build_messages(cls, state: AuraState, objective: str, max_tokens: int | None = None) -> list[dict[str, str]]:
+    def build_messages(
+        cls,
+        state: AuraState,
+        objective: str,
+        max_tokens: int | None = None,
+        *,
+        record_attention: bool = False,
+    ) -> list[dict[str, str]]:
         """
         Builds the LLM message array using strict priority budgeting to prevent context collapse.
         Priority: System Prompt (Identity/Constraints) > Current Input > Affective State > Recent History > RAG Context > Older History
+
+        ``record_attention`` is off by default because rendering a prompt is not
+        an event in the mind. This wrote ``cognition.attention_focus``
+        unconditionally, so a retry, a preview, a gate-side assembly against a
+        payload copy, and a generation that failed before producing a token all
+        moved what Aura was attending to — with no accepted turn behind any of
+        them. ExecutiveClosure owns this field from the global-workspace winner;
+        only the lane that is actually serving a turn asks for it here.
         """
-        if objective and hasattr(state, "cognition"):
+        if record_attention and objective and hasattr(state, "cognition"):
             try:
                 from core.continuity import is_evaluation_contamination
 
@@ -1691,13 +1745,23 @@ class ContextAssembler:
         system_budget = max(1024, char_limit - user_budget - 512)
 
         # 1. PRIORITY 1: Core Identity & Constraints
-        system_prompt = ContextAssembler.build_system_prompt(state)
+        #
+        # One sample, shared by both renderings. The system prompt and the
+        # compact block below are two views of the same moment; taking a fresh
+        # reading for each let one message state two different valences and
+        # two different focal objects as Aura's state right now.
+        aura_now_sample = ContextAssembler._sample_aura_now(state, objective)
+        system_prompt = ContextAssembler.build_system_prompt(
+            state, aura_now_sample=aura_now_sample
+        )
         if cls._black_box_steering_enabled(state):
             dynamic_system = system_prompt
         else:
             try:
                 affect_summary = state.affect.get_rich_summary() if hasattr(state.affect, "get_rich_summary") else str(state.affect)
-                aura_now = ContextAssembler._build_aura_now_prompt_block(state, objective, compact=True)
+                aura_now = ContextAssembler._build_aura_now_prompt_block(
+                    state, objective, compact=True, sample=aura_now_sample
+                )
                 dynamic_system = (
                     f"{system_prompt}\n\n"
                     f"[CURRENT FUNCTIONAL STATE]\n{affect_summary}\n\n"

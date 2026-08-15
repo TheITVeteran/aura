@@ -21,7 +21,11 @@ ARTIFACT = (
     REPO_ROOT
     / "artifacts/closeout/latent_cortex/cp529_mathematics_memory_decode_canary.json"
 )
-MODEL = Path("/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit")
+# Anchored to the checkout, not to one machine's home directory: the
+# absolute literal made the skipif true on every host but this one, so a
+# verifier contract could pass by never running. Matches the convention in
+# tools/front_door_demo.py.
+MODEL = REPO_ROOT / "models" / "Qwen2.5-1.5B-Instruct-4bit"
 
 
 @pytest.mark.skipif(not MODEL.exists(), reason="local frozen 1.5B unavailable")

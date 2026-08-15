@@ -5496,7 +5496,9 @@ class CognitiveEngine:
             )
 
         # Build structured messages
-        messages = ContextAssembler.build_messages(state, objective)
+        # The lane actually serving this turn, so the objective is what she
+        # is attending to. Every other caller renders without moving it.
+        messages = ContextAssembler.build_messages(state, objective, record_attention=True)
 
         # Standard streaming path
         async for event in router.think_stream(messages=messages, **kwargs):
