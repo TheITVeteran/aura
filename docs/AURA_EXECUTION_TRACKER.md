@@ -50531,3 +50531,75 @@ This completes bounded runtime promotion with causal controls and rollback. It
 does not close broad reasoning, open-domain transfer, static fusion, frontier
 performance or `WOW!`. The next work is broader neural state schemas and fresh
 powered equal-compute replication with matched and causal lesion arms.
+
+## Checkpoint 2026-08-15-557: Add a Fourth Causal Scientific Tissue
+
+The recurrent semantic machine now implements `frontier_scientific_inference`
+through a public, answer-blind 14-step causal microprogram. It infers the root,
+mediator and downstream variable from intervention topology, then uses the
+learned ALU tissue for quotient, multiplication and addition to predict the
+held-out intervention. Baseline values, variable presentation and root-edge
+order are randomized so neither prompt position nor a constant answer can
+solve the task.
+
+The public compiler checks exact intervention gains, chain consistency,
+recurrent-state capacity and terminal semantics. A 300-task randomized stress
+run executed `300/300` exactly; the family-targeted causal lesion disrupted
+`300/300`. Canary and verifier identities now bind arbitrary signed domain and
+difficulty cohorts instead of silently assuming the original three families.
+
+This adds a fourth bounded executable reasoning family and a causal lesion. It
+does not establish broad scientific reasoning, unrestricted language transfer,
+frontier performance or `WOW!`.
+
+## Checkpoint 2026-08-15-558: Replicate Four-Domain Transfer on the 1.5B Gate
+
+The fresh source-bound five-arm replication completed `600` real-checkpoint
+decodes over `120` unseen tasks. Treatment decoded `120/120`; ordinary,
+syntax-matched, family-targeted coefficient-lesion and same-family wrong-state
+controls each decoded `0/120`. The independent verifier regenerated the cohort,
+regraded every raw response, replayed all `120` state receipts and all `602`
+receipt-chained journal events, and accepted 120 gains with zero regressions.
+The paired one-sided exact probability is `7.52316384526264e-37`.
+
+This proves the expanded four-family mechanism survived a large local transfer
+gate. It authorized one bounded resident canary; it did not itself establish a
+resident, broad, frontier or `WOW!` claim.
+
+## Checkpoint 2026-08-15-559: The Fourth Family Transfers on Aura's Resident 32B
+
+The manifest-selected fused resident 32B completed a fresh `36`-task,
+five-arm canary (`180` decodes). Treatment decoded `36/36`; ordinary resident
+decode scored `11/36`; matched-wire control `4/36`; the family-targeted
+coefficient lesion `4/36`; and same-family wrong-state control `0/36`.
+Treatment converted 25 ordinary failures and regressed none of the 11 ordinary
+successes. The independent verifier accepted the complete source/model/task and
+journal binding with one-sided exact `p=2.9802322387695312e-8`.
+
+This extends bounded resident neural-state-to-free-decode transfer to four
+families, including causal scientific inference. The resident model was then
+unloaded so Aura's live cortex lane is available. The result remains narrower
+than open-domain or general reasoning and is not yet `WOW!`.
+
+## Checkpoint 2026-08-15-560: Promote the Four-Domain Resident Evidence
+
+The canonical healthy ingress now activates all four proven semantic families
+from a CP559-bound, content-addressed package. Admission reopens the resident
+result and independent verification, requires the exact four-domain cohort,
+perfect treatment, strict separation from every matched or lesioned control,
+zero regressions, a verified lesion contract, the active resident manifest and
+the complete measured/runtime source inventory. Any drift disables serving.
+
+The runtime verifier executed `120/120` fresh tasks exactly, evenly split across
+the four domains. Every family-targeted lesion disrupted its corresponding
+execution (`120/120`), and unsupported ordinary language was refused. Mean
+latency was `51.182 ms`, p50 `54.327 ms`, and maximum `108.033 ms`. Activation
+receipt `140abaa2ef7f4fa02dae73b58ee42183bfa3c5c55cc54a5fd079ccde6496c437`
+and runtime verification receipt
+`6f5e405880a7b4dc031935208ed3264a6fd32cc8380d20fef0641fb705264ede`
+bind the deployed package and proof.
+
+The remaining fixed path to `WOW!` is a less-constrained transfer gate built and
+falsified locally, followed only after it passes by a powered fresh resident
+replication and fixed adjudication. Construction and diagnosis must not occupy
+the resident 32B lane.

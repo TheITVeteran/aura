@@ -13,37 +13,39 @@ from typing import Any, Final
 
 SEMANTIC_NEURAL_SERVING_SCHEMA: Final = "aura.semantic_neural_serving.v1"
 SEMANTIC_NEURAL_SERVING_MODE: Final = "qualified_exact_semantic_v1"
-PACKAGE_ID: Final = "cp556-resident-semantic-neural-serving"
+PACKAGE_ID: Final = "cp560-resident-semantic-neural-serving"
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 DEFAULT_ACTIVATION_PATH: Final = (
-    REPO_ROOT / "artifacts/closeout/latent_cortex/cp556_semantic_neural_runtime/activation.json"
+    REPO_ROOT / "artifacts/closeout/latent_cortex/cp560_semantic_neural_runtime/activation.json"
 )
-CP555_RESULT_PATH: Final = (
-    REPO_ROOT / "artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/result.json"
-)
-CP555_VERIFICATION_PATH: Final = (
+RESIDENT_RESULT_PATH: Final = (
     REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/verification.json"
+    / "artifacts/closeout/latent_cortex/cp559_resident_scientific_semantic_decode_canary/result.json"
+)
+RESIDENT_VERIFICATION_PATH: Final = (
+    REPO_ROOT
+    / "artifacts/closeout/latent_cortex/cp559_resident_scientific_semantic_decode_canary/verification.json"
 )
 MEASURED_SOURCE_FILES: Final = (
     "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
+    "core/brain/llm/latent_cortex/frontier_tasks.py",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py",
+    "core/learning/frontier_process_supervision.py",
     "core/learning/public_frontier_action_compiler.py",
+    "core/learning/recurrent_action_schema.py",
+    "core/learning/recurrent_state_schema.py",
+    "core/learning/semantic_neural_controls.py",
     "core/learning/semantic_neural_machine.py",
 )
 ACTIVATION_SOURCE_FILES: Final = (
     *MEASURED_SOURCE_FILES,
     "core/brain/foreground_latent_runtime.py",
     "core/brain/latent_cortex_service.py",
-    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json",
-    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
-    "core/brain/llm/latent_cortex/frontier_tasks.py",
     "core/brain/llm/latent_cortex/persistence.py",
-    "core/brain/llm/latent_cortex/systematic_neural_alu.py",
     "core/brain/llm/qualified_recurrent_ingress.py",
     "core/brain/llm/semantic_neural_serving.py",
-    "core/learning/semantic_neural_controls.py",
-    "core/learning/recurrent_action_schema.py",
-    "core/learning/recurrent_state_schema.py",
     "core/learning/systematic_neural_alu_training.py",
     "core/phases/response_generation_unitary.py",
 )
@@ -51,6 +53,13 @@ ALLOWED_FAMILIES: Final = (
     "frontier_calibration",
     "frontier_coding",
     "frontier_misleading_premise",
+    "frontier_scientific_inference",
+)
+EVIDENCE_DOMAINS: Final = (
+    "coding",
+    "calibration",
+    "misleading_premise",
+    "scientific_inference",
 )
 _FALSE_VALUES: Final = frozenset({"0", "false", "no", "off", "disabled"})
 
@@ -140,7 +149,7 @@ def _resolve_evidence_path(repo_root: Path, value: Any) -> Path:
     return candidate
 
 
-def _verify_cp555_evidence(
+def _verify_resident_evidence(
     *,
     repo_root: Path,
     result_path: Path,
@@ -155,6 +164,8 @@ def _verify_cp555_evidence(
     verification_body = {
         key: value for key, value in verification.items() if key != "verification_receipt_sha256"
     }
+    exact_by_arm = verification.get("independent_exact_by_arm")
+    task_count = verification.get("task_count")
     if (
         result.get("receipt_sha256") != _sha(result_body)
         or verification.get("verification_receipt_sha256") != _sha(verification_body)
@@ -163,31 +174,41 @@ def _verify_cp555_evidence(
         or verification.get("artifact_receipt_sha256") != result.get("receipt_sha256")
         or verification.get("gain_count", 0) <= 0
         or verification.get("regression_count") != 0
+        or result.get("domains") != list(EVIDENCE_DOMAINS)
+        or verification.get("domains") != list(EVIDENCE_DOMAINS)
+        or result.get("task_count") != task_count
+        or not isinstance(exact_by_arm, dict)
+        or exact_by_arm.get("treatment") != task_count
+        or any(
+            exact_by_arm.get(arm, task_count) >= task_count
+            for arm in ("matched_wire_base", "coefficient_lesion", "matched_wrong_state")
+        )
+        or verification.get("coefficient_lesion_contract_verified") is not True
         or "resident model bound by" not in str(verification.get("claim_boundary") or "")
         or "not open-domain" not in str(verification.get("claim_boundary") or "")
     ):
-        raise RuntimeError("CP555 semantic serving evidence is not admissible")
+        raise RuntimeError("resident semantic serving evidence is not admissible")
     measured_hashes = result.get("source_sha256s")
     if not isinstance(measured_hashes, dict) or any(
         measured_hashes.get(relative) != _file_sha(repo_root / relative)
         for relative in MEASURED_SOURCE_FILES
     ):
-        raise RuntimeError("CP555 measured semantic source has drifted")
+        raise RuntimeError("resident measured semantic source has drifted")
     return result, verification, result_raw, verification_raw
 
 
 def build_semantic_neural_activation(
     *,
     repo_root: Path = REPO_ROOT,
-    result_path: Path = CP555_RESULT_PATH,
-    verification_path: Path = CP555_VERIFICATION_PATH,
+    result_path: Path = RESIDENT_RESULT_PATH,
+    verification_path: Path = RESIDENT_VERIFICATION_PATH,
     resident_manifest_path: Path,
     model_path: Path,
 ) -> dict[str, Any]:
     """Materialize a source/model/evidence-bound qualified activation."""
 
     root = repo_root.expanduser().resolve(strict=True)
-    result, verification, result_raw, verification_raw = _verify_cp555_evidence(
+    result, verification, result_raw, verification_raw = _verify_resident_evidence(
         repo_root=root,
         result_path=result_path,
         verification_path=verification_path,
@@ -199,7 +220,7 @@ def build_semantic_neural_activation(
         or manifest_identity != verification.get("resident_manifest_identity")
         or manifest_identity["active_model_path"] != model_identity["path"]
     ):
-        raise RuntimeError("semantic serving resident identity differs from CP555")
+        raise RuntimeError("semantic serving resident identity differs from evidence")
     body = {
         "schema": SEMANTIC_NEURAL_SERVING_SCHEMA,
         "package_id": PACKAGE_ID,
@@ -221,6 +242,12 @@ def build_semantic_neural_activation(
             "gain_count": verification["gain_count"],
             "regression_count": verification["regression_count"],
             "paired_one_sided_exact_p": verification["paired_one_sided_exact_p"],
+            "domains": verification["domains"],
+            "task_count": verification["task_count"],
+            "independent_exact_by_arm": verification["independent_exact_by_arm"],
+            "coefficient_lesion_contract_verified": verification[
+                "coefficient_lesion_contract_verified"
+            ],
         },
         "claim_boundary": verification["claim_boundary"],
     }
@@ -269,7 +296,7 @@ def semantic_neural_activation_errors(
                 root,
                 evidence["verification_path"],
             )
-            result, verification, result_raw, verification_raw = _verify_cp555_evidence(
+            result, verification, result_raw, verification_raw = _verify_resident_evidence(
                 repo_root=root,
                 result_path=result_path,
                 verification_path=verification_path,
@@ -400,6 +427,9 @@ __all__ = [
     "ACTIVATION_SOURCE_FILES",
     "ALLOWED_FAMILIES",
     "DEFAULT_ACTIVATION_PATH",
+    "EVIDENCE_DOMAINS",
+    "RESIDENT_RESULT_PATH",
+    "RESIDENT_VERIFICATION_PATH",
     "SEMANTIC_NEURAL_SERVING_MODE",
     "SEMANTIC_NEURAL_SERVING_SCHEMA",
     "build_semantic_neural_activation",

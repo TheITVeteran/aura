@@ -280,3 +280,45 @@ async def test_executor_refuses_recognized_semantic_family_before_activation(
     assert result["attempted"] is False
     assert result["ok"] is False
     assert result["reason"] == "semantic_neural_family_not_activated"
+
+
+@pytest.mark.asyncio
+async def test_executor_serves_activated_scientific_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = frontier_process_task_battery(
+        ("scientific_inference",),
+        (3,),
+        1,
+        seed=2026081559,
+    )[0]
+
+    class Client:
+        model_path = "/resident/model"
+
+    monkeypatch.setattr(
+        "core.brain.llm.semantic_neural_serving.semantic_neural_serving_status",
+        lambda _model_path: {
+            "active": True,
+            "reason": "semantic_neural_serving_active",
+            "receipt": {
+                "schema": "aura.semantic_neural_serving.v1",
+                "activation_sha256": "a" * 64,
+                "allowed_families": [
+                    "frontier_calibration",
+                    "frontier_coding",
+                    "frontier_misleading_premise",
+                    "frontier_scientific_inference",
+                ],
+            },
+        },
+    )
+    result = await ingress.execute_qualified_recurrent_objective(
+        Client(),
+        task.prompt,
+        timeout_s=5.0,
+    )
+
+    assert result["ok"] is True
+    assert result["text"] == task.answer
+    assert result["reason"] == "qualified_semantic_neural_completed"

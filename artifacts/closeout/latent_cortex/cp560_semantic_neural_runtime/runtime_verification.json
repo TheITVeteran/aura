@@ -1,0 +1,1269 @@
+{
+  "activation_receipt": {
+    "activation_sha256": "140abaa2ef7f4fa02dae73b58ee42183bfa3c5c55cc54a5fd079ccde6496c437",
+    "allowed_families": [
+      "frontier_calibration",
+      "frontier_coding",
+      "frontier_misleading_premise",
+      "frontier_scientific_inference"
+    ],
+    "claim_boundary": "bounded teacher-free multi-domain neural-state-to-free-decode transfer on the resident model bound by model_identity and resident_manifest_identity; not open-domain, broad reasoning, fusion, frontier performance, or WOW",
+    "mode": "qualified_exact_semantic_v1",
+    "model_identity": {
+      "config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
+      "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+      "weights_index_sha256": "8ae48f398d91156dc01a99e58de936e4ddd94c0768f4d0e2e9537170aee60d0b"
+    },
+    "package_id": "cp560-resident-semantic-neural-serving",
+    "resident_manifest_identity": {
+      "active_model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+      "base_model": "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit",
+      "fused_at": 1782967900,
+      "path": "/Users/bryan/.aura/live-source/training/fused-model/active.json",
+      "schema_version": 2,
+      "sha256": "05b4a40e57251651b2c31a99390c6babb69fe57862e702112e6ac574c8a6b83f",
+      "tag": "crsm-closeout-jul1"
+    },
+    "schema": "aura.semantic_neural_serving.v1"
+  },
+  "claim_boundary": "qualified four-domain semantic runtime integration on the CP560 activation bound to CP559 resident evidence; not open-domain, broad reasoning, fusion, frontier performance, or WOW",
+  "difficulties": [
+    1,
+    2,
+    3
+  ],
+  "domains": [
+    "coding",
+    "calibration",
+    "misleading_premise",
+    "scientific_inference"
+  ],
+  "exact_by_domain": {
+    "calibration": 30,
+    "coding": 30,
+    "misleading_premise": 30,
+    "scientific_inference": 30
+  },
+  "exact_count": 120,
+  "lesion_disruption_count": 120,
+  "lesion_disruptions_by_domain": {
+    "calibration": 30,
+    "coding": 30,
+    "misleading_premise": 30,
+    "scientific_inference": 30
+  },
+  "max_latency_ms": 108.033,
+  "mean_latency_ms": 51.182,
+  "p50_latency_ms": 54.327,
+  "rows": [
+    {
+      "answer_sha256": "7a7e01f574add597fe5a327629bb9fbbf75cda2f0c64b78f6bf72de5910d176f",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 103.837,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6b5816b7545ba965baae4a49e3383e9e2cc6145818e451db110c2265586bcbe5",
+      "semantic_state_receipt_sha256": "e7a42deb51532181ddfa8a5a7dbaf36f9c2916489a4a2da3cb0ce4c5511acb1a",
+      "task_id": "recurrence-frontier_coding-d15-s767619171759158867"
+    },
+    {
+      "answer_sha256": "fff7d1348632b2ff0a043bd9b073a3d4a17ac983329ba2bd8c6944c3965296e2",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 80.331,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d6e8418951d2826971ce2a10e6a50f86dac988c5d1b8386a2c44471e2ab87b86",
+      "semantic_state_receipt_sha256": "48f3336f9d7f61e85a6edb03ff35132982fd77ef957d6cb8bf7c114c1a0517a9",
+      "task_id": "recurrence-frontier_coding-d15-s776081514681869807"
+    },
+    {
+      "answer_sha256": "047971655b14468a86a7e7e4bf445e15a0a46d55315b773aae37a7a659c222d1",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 60.053,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "4d67799e3ca063c1a3e346bdcd4b07afe23ac7e722b393a89405518c80b08b2c",
+      "semantic_state_receipt_sha256": "125458302bff9d2ad514673d47a54795c15405dee92c4bb82c8d87257454ae1c",
+      "task_id": "recurrence-frontier_coding-d15-s207715694996516238"
+    },
+    {
+      "answer_sha256": "9181fa866264c1dfe1fb9113c6a5723064e14f87e2ce0a52ef8acdf6fdec1166",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 71.412,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "35b051a785e6b1a15e270729ff00217fcc4556e89ccc4977aef835e34d79576d",
+      "semantic_state_receipt_sha256": "38169701c48456a5a03f2ebddb11567b07bd1364ae0741b8ef1b3fe8fd5956c6",
+      "task_id": "recurrence-frontier_coding-d15-s665200642644439277"
+    },
+    {
+      "answer_sha256": "c15c73de09315878e3ff8b0d3050a1001c96317f256b3162c206a7cb2d3856b9",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 57.389,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "52f38ad51deb9bd29ff25a2c663e258fbc60b3397a565ed7d00225ba0c8c7122",
+      "semantic_state_receipt_sha256": "2c3caba136bbed78043e73be501abb59b36582719d7f527e1bc58aa0b7c2688a",
+      "task_id": "recurrence-frontier_coding-d15-s450260197089072390"
+    },
+    {
+      "answer_sha256": "43f08c84a7d471a9d5990dcd922926f74d5aa65194c0c68ab26162b25cf2ba3e",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 71.458,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "9c72eafdff0ec2888ec96a34a720e59da562ec26edc757fff71d7475a71b1029",
+      "semantic_state_receipt_sha256": "889755384e92f01d3f05c06bcae053e1ddbe281fa9d90f9f68e844c404ba24ab",
+      "task_id": "recurrence-frontier_coding-d15-s127777900785699923"
+    },
+    {
+      "answer_sha256": "720a4b8906182e902f8e43aa35af481d0b5141b5d4e704b6d3515db577124d46",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 62.166,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "47115886673ec01d58999ddd56ccb0dcfb978c0a37d23b3294bf080461d39f8e",
+      "semantic_state_receipt_sha256": "4b89d8bbd317cdc15a129931bb9718224df2ee02c30f0fc9d9be177d7a4b3b4b",
+      "task_id": "recurrence-frontier_coding-d15-s883023271844458627"
+    },
+    {
+      "answer_sha256": "36280147c5c8eddbf5cba25368a3c9213ba85221aa2a7bb201b0617c1d8a62af",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 65.616,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "35822b0de50c953ee26ab4657db102d634926c445a9c909b81072cb9830fe64f",
+      "semantic_state_receipt_sha256": "66125fb9709ec35e8495e30f07ea6febbac6775a3ff5379aa6c53303eed4cd9a",
+      "task_id": "recurrence-frontier_coding-d15-s466476255993092804"
+    },
+    {
+      "answer_sha256": "48d1ca902fa23a16625c7bca2309389bda607a14c763ad66e119baa53ff7dd65",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 59.565,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "b7f2e66a7817f4af4bbc5c3a71f2b2244799e0263d8fbd7da2f8176804afd588",
+      "semantic_state_receipt_sha256": "3fc7ecbb263e6d7a6003ec290b85eba41ee215c1a3a64072469ba36150c78953",
+      "task_id": "recurrence-frontier_coding-d15-s710155077918437807"
+    },
+    {
+      "answer_sha256": "4bc08af71b873b4b634d037e2fa63a237ba860e5d3df82858444307d2d7133a8",
+      "depth": 15,
+      "family": "frontier_coding",
+      "latency_ms": 52.518,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "577be1cc319844ad687a57997b2eb01749e544d97fd873791786ee978b402d4b",
+      "semantic_state_receipt_sha256": "acf2f9fbb594a55380adef2c891117eb55a1a191d483e478de65531a3cd192a9",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "answer_sha256": "1287b181e74451b9fe1784d68b5b31b093b8dc2fe62d052f12d06955606b6268",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 66.478,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0bdec34a89a6ec628b5aeef2058ecf48259a8088a2c5e6c5d9d0ca2d905621da",
+      "semantic_state_receipt_sha256": "54e70d2fb641a5c1d5bdb933763ecefa21523f768bb81ef7a0574c2441c034d2",
+      "task_id": "recurrence-frontier_coding-d17-s743369635273993013"
+    },
+    {
+      "answer_sha256": "0ec6e158f3701e6b36de7fc76371d579a20a12d3cc84f181d1399ee9acc586d5",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 97.709,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "4d8ff5ad0bbe9ab30f20cb64fd612ef0b10ee40303055437665e6c58a1480fb9",
+      "semantic_state_receipt_sha256": "3124cb33a7ba4964240c0060b252d02c5210eadd9fa3b262106063aad9750d59",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "answer_sha256": "aa90ce27aec3716dd75df50ed0169c8f48be28f2b232f482c498251752f3ae7b",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 65.999,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6a669856c00728df210cf1f7d46d645387f0087b6e86481d0f6a93fda257faea",
+      "semantic_state_receipt_sha256": "f5cb31e86166d57e0052102e3bc36d8adb65bd794c0b3aa51d50e3db2483de6f",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "answer_sha256": "4be6f5bd53cc7bb9600a6eb57877913636ab8576476b528a9c7cd6c5f68006b5",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 65.445,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d4dab30d669d922adb20d0de1ccdb5d035ec747fa722f4b472738df3160ecb01",
+      "semantic_state_receipt_sha256": "42e0adb6d69348d764f2cda867df2407db0d8e613f39b267dde8180c14764163",
+      "task_id": "recurrence-frontier_coding-d17-s544426126186045886"
+    },
+    {
+      "answer_sha256": "a8c2d614bddef1b34323ceaf50e856d4352f3e9edf9887857570f5cb8b4636e1",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 70.48,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "1fd99ea0e57ea43c48cfb2f6cb45d482dbb7bb1ce9902c8d9832fe633449ec51",
+      "semantic_state_receipt_sha256": "32d1f642cdc9bb4ea072971ea799526bddefd5a04d9bf80715df853365c71d7e",
+      "task_id": "recurrence-frontier_coding-d17-s530720288576851575"
+    },
+    {
+      "answer_sha256": "44f1e0c7808a1c4fbeac2a377f3cdec242061b68f921c6b98f20ec4e251143f9",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 87.655,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "357e9fab729b706ebb6112efa0b91e6e307bee70a63a7a42c0dbe2cecec74558",
+      "semantic_state_receipt_sha256": "836bb5e737b6fb6ffcd0fb27c63b8f261c88c1363a8e750cbfbf854c1556dd0a",
+      "task_id": "recurrence-frontier_coding-d17-s774636954701804891"
+    },
+    {
+      "answer_sha256": "de7fdc744c4a327a633a14a8240dbf501520548eba9eade12fa59bb5bbefcdba",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 62.6,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "f5e2d86ba028e9c2d544a2951f4a626b046656c2278e505ebb47a81408a58ed4",
+      "semantic_state_receipt_sha256": "1c34ef3044823dac44ba6d9f2eb1ddc8c513a07c886fffe9f121df2aaaaf487d",
+      "task_id": "recurrence-frontier_coding-d17-s392689739756457292"
+    },
+    {
+      "answer_sha256": "1974f5a6e03905ab23a711392074dac87ecb61640072d6050ecdb09eaddaee0b",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 67.193,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "e8f92d79fe164520c67f37213062990293b4b9c78db9d0a0bd30617dde74d52c",
+      "semantic_state_receipt_sha256": "decc4996730979e635af94f23b4c256d62cb84e2238f78fc4df2d39e87130f5e",
+      "task_id": "recurrence-frontier_coding-d17-s212422312237389414"
+    },
+    {
+      "answer_sha256": "dc2689d0c09a5b19d12ef6b078d5a751a25507d906015ec4dd9cd5e2324b31e5",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 62.955,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "b12f5da439cac9bf779913f9ea25392e6733d32ae1c99d3bd8b7587cf9c02e41",
+      "semantic_state_receipt_sha256": "80948f8807989abd48696867b4447fe8b468dbce48166506e48d64f8320a97e1",
+      "task_id": "recurrence-frontier_coding-d17-s771226428377195095"
+    },
+    {
+      "answer_sha256": "23cae4f0c3800af8c711267b17bffbf130927f59ecab79577ddfb66e232f7f5f",
+      "depth": 17,
+      "family": "frontier_coding",
+      "latency_ms": 97.809,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "3999dec2be7abf7025e9680dabf5ea654bb02431da09674164abfe251e51d492",
+      "semantic_state_receipt_sha256": "5603f6dda772f5779e851da67f63ddd3b56da56adb94c48233e2a06e0694835c",
+      "task_id": "recurrence-frontier_coding-d17-s657914721671457396"
+    },
+    {
+      "answer_sha256": "06ee060c28eab9c1d96a964c0321a6a442d523ad2e81ab5619b8dd372f6444aa",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 82.964,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "dc8e422132b682309d5c7ffb1a2238f967c087f61110fdff0966be8a69cb4b8a",
+      "semantic_state_receipt_sha256": "925b9b9ac61110bd40d824b4bc7992fe9913488f79244181d3968b646bf5b54c",
+      "task_id": "recurrence-frontier_coding-d19-s658339737092531792"
+    },
+    {
+      "answer_sha256": "939dfa6398b392b72cb612aec2ab669546370bbc06e9b3dce1e6de502052aa81",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 80.462,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5d9f8fea7d01f8dfd99c03ae5f2eb1668fdeb28896f7817c6e307757833c8c46",
+      "semantic_state_receipt_sha256": "6c0b11028af4ee9f5e672a73cecc251279376ac2faa149ed1f23e3d0e9708834",
+      "task_id": "recurrence-frontier_coding-d19-s652376228604249584"
+    },
+    {
+      "answer_sha256": "e64800d52649dce2c034763dad77d7a2e99f1b8c23f4217b51bb20811bd05a13",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 72.491,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "9a66cdafae9a40a241edec694c56ef5c473a42a8b12636db117a88fb67567c99",
+      "semantic_state_receipt_sha256": "9e7c1287ba541ff9c046f7c8d5eba6e14762077a0929177abcbf27d51c116172",
+      "task_id": "recurrence-frontier_coding-d19-s979922888155387183"
+    },
+    {
+      "answer_sha256": "2fe49f256634b53303ebb863d3ec9f466c5f60bd633c82d6dcb0c64819fb844c",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 67.334,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "adf6b20a9de3879527479f3f74224f2fe3ea1c292720d6b73f8dd3d6fec3b4ea",
+      "semantic_state_receipt_sha256": "ce26ed6268713e8acdc77acf349693f884d2b0a7de929c0aed762acdd973fbeb",
+      "task_id": "recurrence-frontier_coding-d19-s695740889835946967"
+    },
+    {
+      "answer_sha256": "e136f6d6ff1902ebd0becf56e6d17db08be707258600ee53a4a7f63ac39a4cc2",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 77.786,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5c24dea0fb71031c4b0548f765eb33ff9f8ea7bce3bcb0bfdffb2a7eb71420fa",
+      "semantic_state_receipt_sha256": "100d73095e7cd892f56c9686fe31c349309c418f2b7e8b74f094bc6db610de9e",
+      "task_id": "recurrence-frontier_coding-d19-s814969944011013969"
+    },
+    {
+      "answer_sha256": "3a1738389cb5ee837921e86599cac7f1f03517c60aaa90959a7a5595630788b6",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 101.303,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "44a3d7b252962fbd20cb18610de0b30c61665f413003d78fb457836e505b5007",
+      "semantic_state_receipt_sha256": "426bcbc80292c29cc8b9ac69de59d81fae364e5aee72b64bb0e4485cfa7230f8",
+      "task_id": "recurrence-frontier_coding-d19-s685163901477275311"
+    },
+    {
+      "answer_sha256": "dfa76369f4e7be5995616eee29d47e3a97b99ba66f7bee584b40aaff5c983ae0",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 73.132,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "f42c6adddb9379bd40dc02082c7a8d0814cd37d4fe19af87f0d330e3e7270c79",
+      "semantic_state_receipt_sha256": "8d36d76ba16803266dd1850cc6a02fe7abe9dcf19388234eee7958fb2a4f08df",
+      "task_id": "recurrence-frontier_coding-d19-s585133427053002223"
+    },
+    {
+      "answer_sha256": "94b0af6c07c68327a5a5a428fe4c950536c0a85c9f40226a2947e71953f7fa10",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 84.716,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6949c9dbedecc96894898b5f842d3d1be6e082e00b7e3a274b8931210e2323a3",
+      "semantic_state_receipt_sha256": "4c0644b751df665b7f04069c8f938cf4615eafc28cbaec4bfb83370a7be69bd5",
+      "task_id": "recurrence-frontier_coding-d19-s277247098935239391"
+    },
+    {
+      "answer_sha256": "1ac60d943a65428a781681be94ff22e261484def6e639c2bd4bb3099c1bf0825",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 72.532,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "2e4a0f05242460130995af6d1779c95b60065f10202b80d7c888197afc65fb75",
+      "semantic_state_receipt_sha256": "a65502295840ebbac411a3423cb077e16289c9bd7a36fdee41618edc2082bc43",
+      "task_id": "recurrence-frontier_coding-d19-s922606246919115395"
+    },
+    {
+      "answer_sha256": "01d84f1ecd2fd73821d22c1419cbc76bf2794e17a6f8b66656efde3b7effd9fd",
+      "depth": 19,
+      "family": "frontier_coding",
+      "latency_ms": 75.596,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "3441c24469da949feb0ffe591e304a0fe8fe424d0caa160555e16a79ec0e2fd9",
+      "semantic_state_receipt_sha256": "8a74c00bc510edf334e0eccb6516fbe5d83a4acd6ed0040000fc8a91a277872b",
+      "task_id": "recurrence-frontier_coding-d19-s433892631231215271"
+    },
+    {
+      "answer_sha256": "41fd65665165f06e1e8eebe40e668e683b1367e5bea4a20b7ca389830284fccd",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 69.264,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "3f8b8cdc070450370f9203a4ffa95d0014347f2ecf78b07b0bb9151c72b82d63",
+      "semantic_state_receipt_sha256": "97ee0b0f9b7e53796155ebad28590e28bae9dfde12d18376a16f5810710666eb",
+      "task_id": "recurrence-frontier_calibration-d28-s814456810358783763"
+    },
+    {
+      "answer_sha256": "2c9d585eb650abf675a9e06e1c8b450162256ce96e05baaac8937342d30dc2bf",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 73.864,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "dc3de308f10af62731b1b74128be8687d3a7bfd792de7e9c572a486f2ba2aada",
+      "semantic_state_receipt_sha256": "e8b94b0ea1a286262676055b7253ff5f5f789641e8896b8cd8f7703c4526e669",
+      "task_id": "recurrence-frontier_calibration-d28-s62972745678925125"
+    },
+    {
+      "answer_sha256": "f2e6b07323c402466f2deaa597fc1774aa456cafd43d1ab6df76ab271f3fc7f2",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 75.723,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "37cbb60f5a31e269323ba178a0ad12521b360b1e88365c511b35173b0a6a93c7",
+      "semantic_state_receipt_sha256": "7da85543802219755380b9cb2f0ad598f1f728eeb4cf92091ff2dcec9332c00e",
+      "task_id": "recurrence-frontier_calibration-d28-s316883996448509794"
+    },
+    {
+      "answer_sha256": "1bdec6cf5ec8554f829bc80c191b65cbfa999c1ba3ffd4530322c319dbd1a370",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 88.718,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "57fd4c7fb3fbe2ed8c206cf0b44dd9fb9a412367bf0c2fe018dfa3d46f9a8b29",
+      "semantic_state_receipt_sha256": "3ac8d5f912b836a572ce6328b34675ae9fe1aaf374a9d229364288240e82e303",
+      "task_id": "recurrence-frontier_calibration-d28-s1021125089586279192"
+    },
+    {
+      "answer_sha256": "c400f183fa561d2cd0255d4ea78f743edbbcbacf23dadf531946fd6050e446cc",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 65.867,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "937cdf0dac052df78b51abf59b1902f66174235f9c3d3211935716ab2416f619",
+      "semantic_state_receipt_sha256": "e6dd17cca7675b5c0696a2fc024b58b9848869c0294f525e7b8604a4d011efe5",
+      "task_id": "recurrence-frontier_calibration-d28-s727179351311892265"
+    },
+    {
+      "answer_sha256": "503bf586c4d9b8ec829327caa778494bc200df21cda8333f4ff21909698eeb3c",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 66.197,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "b1636195fffdf9aee74785457bf70f0b78d691d49537fd15541751b0f27f5240",
+      "semantic_state_receipt_sha256": "b4f9e9c1b61746845161cbed7d0eeaff7fd8cbdd62c6fcc6ae12fb166a78e082",
+      "task_id": "recurrence-frontier_calibration-d28-s784091815557141346"
+    },
+    {
+      "answer_sha256": "6db632f2ab93e603507011f8c30182d7f2db9bf303e93ac5a2bbf897420f33ce",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 69.516,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "90bfd8ce530b96bc4810f0f0dbc53387d75d0e20d99c5bfa7db0a5a4638dee7c",
+      "semantic_state_receipt_sha256": "33ca08a250d0064d4f4d916342608c4801f974707fc1280b14b7f3c6f4d01ad3",
+      "task_id": "recurrence-frontier_calibration-d28-s54834828583325227"
+    },
+    {
+      "answer_sha256": "a2cf4bae6bcfc059d73b01550a304d001dcda7dc8f918c9eb6b2be2bb81553d3",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 100.444,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "ecf88a7db7f1ad83070fe5200229684e72a9fc9a6f76aa31918c268680e97366",
+      "semantic_state_receipt_sha256": "43ba152fdad53471c4e86b1e5d379ff1490e24c9bea40208a3b39d781f2f7670",
+      "task_id": "recurrence-frontier_calibration-d28-s124746168198236716"
+    },
+    {
+      "answer_sha256": "3653961389ce3a8ba0d558fafc4a11f652f86be892852b0f21e197684267a396",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 68.829,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5fba1c5427ec40ff6831ef957defd03f56bbf11a31ad2265d86f3df4ede99e75",
+      "semantic_state_receipt_sha256": "7c2b2b68a3917e3c59915a028120c15ba3bfe8d1ad7db76406aab22febd37b99",
+      "task_id": "recurrence-frontier_calibration-d28-s743009794803496371"
+    },
+    {
+      "answer_sha256": "a357bbb6765a544e48a9ab4aee4c0540563963bd63081411231960aaeb87c6b5",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 70.712,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "750b7929b3d3880c009f64c7876d43fd619396f5d4623a53f1977ba804a28f83",
+      "semantic_state_receipt_sha256": "7e699e81a47cecdf08e465de1b7ed14284ed564d15dadea98b1cdb5947109c5b",
+      "task_id": "recurrence-frontier_calibration-d28-s648890125061350251"
+    },
+    {
+      "answer_sha256": "b9c39ca47349db5b487994865ecdffaa35513486a2bcb3ac08d604ccf70400f5",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 83.934,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "4d2b415ca7509fd78908a1d72bd8f246508c9e78469b1f3e684f3eab2934ec07",
+      "semantic_state_receipt_sha256": "944cb70c60f4c1103cb901d60f435a895b7b3c971bebc1203d6c89213b5f99e4",
+      "task_id": "recurrence-frontier_calibration-d28-s1035192480196213819"
+    },
+    {
+      "answer_sha256": "9125a0013d52ad1c86599db47c683aca276c76b078438e2bb9436e40d4190845",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 73.22,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "58fbb9bcfb5fbc15ba49b6322b033643885303818855b28af4d2ae642d7bd75e",
+      "semantic_state_receipt_sha256": "e7045106262f86e32798f1d8b1a7a241afe3f7f0c3c5005f35981846888b0eed",
+      "task_id": "recurrence-frontier_calibration-d28-s541124256394159715"
+    },
+    {
+      "answer_sha256": "93d1f6aacf1f954179e4c6499eb5b869c2135b0213769066f55d93da1c2004e4",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 71.177,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "1e4cea1a7c3ecdca482652170431010a63d7a3ef04f7c8624160d74795a9ece0",
+      "semantic_state_receipt_sha256": "0276f38c0b487986c0f58a4bc74f637cda72b603ce2b61371188973cce166f3f",
+      "task_id": "recurrence-frontier_calibration-d28-s180824986491203656"
+    },
+    {
+      "answer_sha256": "3451e55b6e7a21f82b2849626cecdc1f8d86cdaa87c700e5f19517464a760a08",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 75.512,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "577d5a90d54802a0222886bea89acf9428e6f21e5b438fae27d9eabc278f2304",
+      "semantic_state_receipt_sha256": "a286b3566c587c70e37026f1572843f7c5332124deef5dd1145976eaec7e0689",
+      "task_id": "recurrence-frontier_calibration-d28-s817602451579355891"
+    },
+    {
+      "answer_sha256": "3a95bd24fd33d8da7e11aaa99f56468307b30fdb529ef34c093c58bc67bfc9cd",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 76.551,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "1ad3a6bf702c6fb6042f17f36d53032058608dd0072be858d508c3cd465d1c53",
+      "semantic_state_receipt_sha256": "759d90229dd1a2d706b9e51a2a7f04e512cb7837289099a21d181a7191005d7f",
+      "task_id": "recurrence-frontier_calibration-d28-s107146714019567195"
+    },
+    {
+      "answer_sha256": "5b718428bb0306cb4adca598f9de873fac2cdbec344ec453e4991c8c96697666",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 94.11,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5392b136841877e0e499b96dcb161f3b95a7b679afcbac5f8cb7177aca3414a4",
+      "semantic_state_receipt_sha256": "6a56a59afbcb126cf6502f909ee281cc7c663c2a3f796d3df041ae9eb15897ce",
+      "task_id": "recurrence-frontier_calibration-d28-s425216369769054011"
+    },
+    {
+      "answer_sha256": "ba28d48805a03140024099f558ce54c5fb66f07412c3e0ea005a3920644f992d",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 71.455,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "e2c217f6cfbea1aa97c0e6790c842329340c97c26c9e95052f5401ed73c3c8ef",
+      "semantic_state_receipt_sha256": "d619243315d4a93e687a8b6f6d65df75e636f9506d7a42618f9719f8fa8b7170",
+      "task_id": "recurrence-frontier_calibration-d28-s123772825548466952"
+    },
+    {
+      "answer_sha256": "41fd65665165f06e1e8eebe40e668e683b1367e5bea4a20b7ca389830284fccd",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 76.541,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "9825f0c8efe64ade18b23db279bb8387eb8e0973f07b0d1c3b57a4fde4c5889c",
+      "semantic_state_receipt_sha256": "a876d108b33e80dd69eb3ceb9cffaed16e2d10ca686b7d4441b21de237b264e0",
+      "task_id": "recurrence-frontier_calibration-d28-s569129861373216534"
+    },
+    {
+      "answer_sha256": "f3d47eb9d3da69fac667a248883e31afd5cbda9b586445ed5f18e797afa04955",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 93.343,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "8464d65f695e2f1b0b5ec787d59c313e1df767693597b46f4738d8eceed903f4",
+      "semantic_state_receipt_sha256": "a1e5f92359fb5633828b161e570ec914ed52cda77ab3497e47269e668f049016",
+      "task_id": "recurrence-frontier_calibration-d28-s602018552277587189"
+    },
+    {
+      "answer_sha256": "c05949e1db9fbdb2bae9a6dc4101a2a62cb45931b6dfdfbafb7ff19c7ea9c939",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 108.033,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "038529a1d3a0e657cbf2a9caef96a1343b128d07d71113fb10ed96fa66d13778",
+      "semantic_state_receipt_sha256": "d70f4d94141b8c98c7113d0a4e47371d483f90d4231fda0a5d97eae397c37c00",
+      "task_id": "recurrence-frontier_calibration-d28-s718791711755590430"
+    },
+    {
+      "answer_sha256": "1bdec6cf5ec8554f829bc80c191b65cbfa999c1ba3ffd4530322c319dbd1a370",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 77.002,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "de12975c6484cd2545f868dd0d61de6a94063779e37e0c160a638e5d27f77256",
+      "semantic_state_receipt_sha256": "8cd342edf93edbeb44e2b70d93c38a0b1d6369d5b5d0155429290700b12dc29c",
+      "task_id": "recurrence-frontier_calibration-d28-s563525317812813312"
+    },
+    {
+      "answer_sha256": "cc675a6a6fc165a935e6d1ec39a1c8b4d94da120321e17b4c0963f38e75251ce",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 73.73,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "99063ee29f9e0343f6c0949abf3cb4e93ecf08a8bced880155b262020e10e204",
+      "semantic_state_receipt_sha256": "b13569f971f9041ff3a6d6e227998bcc05bb3b2109a9c472adc9b773dae85776",
+      "task_id": "recurrence-frontier_calibration-d28-s617693866176660335"
+    },
+    {
+      "answer_sha256": "8086834281988b12e73df83a9dfa9b5d761d67047a06869e9ebccae0457785a3",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 74.191,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "39a3f3560ab27f35718d285adf4ec764d0b1733d97b7459f8decfb5981d3018e",
+      "semantic_state_receipt_sha256": "7822c6e2a9fda5c4cced676ab676436b14dfe9b56b9e65c9ca57090ae287b8c9",
+      "task_id": "recurrence-frontier_calibration-d28-s146851100540470293"
+    },
+    {
+      "answer_sha256": "a79f0cb53b75ac7322dd89bc5f39d9fe45ffa7bb85af733f6e44e63df7d81998",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 82.385,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "50356e7c237c0cff5ff7f8cf5595d34f3f2df1acf1396533088f63b8249ab6a1",
+      "semantic_state_receipt_sha256": "e5c1710228c64156752f3e365c80ebb76a07cc0b0ff59cc87e44f83f0ed60ef6",
+      "task_id": "recurrence-frontier_calibration-d28-s538283436217837503"
+    },
+    {
+      "answer_sha256": "b2554c4c293222640071fee9062d742c4db7c5e032958be2f5f30309e80e5bce",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 103.136,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5a73c316818084043b0f52a78a053296fe06ed01e3e423f228a9da5891e9e4fc",
+      "semantic_state_receipt_sha256": "4af79b427bcc6381e70dd4dd8e3d54853aa8154c0862415ccda853c0a7aebbed",
+      "task_id": "recurrence-frontier_calibration-d28-s84849961091508903"
+    },
+    {
+      "answer_sha256": "64e7e3a436fd044a21aa9daaf3c686199ae08ec6664f4a1f68cf0563dffb7779",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 74.012,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "16fb903cc5bef6eedb3d125db84f15b01536e6775118d6ce54b76b590bd95b06",
+      "semantic_state_receipt_sha256": "dff3386ad6e569ac2216e925a5c724a7041ba8ec7aaf8625e93d37bd04f99922",
+      "task_id": "recurrence-frontier_calibration-d28-s1131647944957647310"
+    },
+    {
+      "answer_sha256": "9ee0fbf77313b0bc8e957bd70e1e0b1a4d15736dcd27e09f05197786fda282cc",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 74.622,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "e16191f0cb3404b0e9a7069e02f89e8a03c6831e7806429c65ed6538821dc750",
+      "semantic_state_receipt_sha256": "03c1be81d5d19e724d60a18d47457238450011c539922a9a6cd65ab5e07e4a5b",
+      "task_id": "recurrence-frontier_calibration-d28-s928337815594946474"
+    },
+    {
+      "answer_sha256": "240631f4005c486fb5ed4790cf1aee8f708739d9c21ea2e6075f7099c6e896bc",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 74.615,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0c42c78a5b0509cf98727c76cf4859df954d809f72eb260dce3e30baf3376c42",
+      "semantic_state_receipt_sha256": "c990415721ca0885c7df01437263d9715e2ff166898b7c147cf4b684f10bbdfe",
+      "task_id": "recurrence-frontier_calibration-d28-s765383592976798391"
+    },
+    {
+      "answer_sha256": "9e1220ff98c4fbcd9c5d98cae665248fb93ae0b79b35f1fb9ac5a9ea3319dc32",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 74.682,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "c9ed17fb0a22313ddda44e21571ac807598e9f0a595234307dd823affa170d95",
+      "semantic_state_receipt_sha256": "91b661da3e9f489cb935d75ba9c1e3da98d4bcadcbf83f3a9c717d74ea4f81d6",
+      "task_id": "recurrence-frontier_calibration-d28-s732591496739147038"
+    },
+    {
+      "answer_sha256": "9125a0013d52ad1c86599db47c683aca276c76b078438e2bb9436e40d4190845",
+      "depth": 28,
+      "family": "frontier_calibration",
+      "latency_ms": 75.831,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "673314a4865229d56bfc2b2c7e99b306faafb1d7b954ff1d60a073acacb2de39",
+      "semantic_state_receipt_sha256": "b068407c3e9a89f7ed77e4f11e339e82a63623a684e32f4bddb06b67d99069a8",
+      "task_id": "recurrence-frontier_calibration-d28-s252071091470581232"
+    },
+    {
+      "answer_sha256": "578bf0f3dae4ac008779f776212c7afca2b93c7673d2bf60a14aa036f92e9df0",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 32.544,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "cdd9e9692fdca15f9304bb34ffa5b64fe7af7c326ee8bddf442b20ef2d199510",
+      "semantic_state_receipt_sha256": "5a4787ac77cf801404733babdbfd40e946fa0d7763e1f57505683e05a84eacd7",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s905364292339260920"
+    },
+    {
+      "answer_sha256": "95dbcc752b2a7aed0f9058712e2bbf837d07bfd45ca0a155a0b3bfa3d051f54a",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 25.991,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0bb9fe38600a892eedec0c321ac1e926a4781057c1e3c770e6474e4488fdd705",
+      "semantic_state_receipt_sha256": "41e0671457bc3015b998b1420b57c50da00af185a245f4ad219c52cd7dede861",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s816637300245704766"
+    },
+    {
+      "answer_sha256": "748ccc98bbcc308c6cf8eb59cf0cef8de38872fabe54df03f7aef1348d4b7fd0",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 34.501,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6d37b2f473c1ca46d2c5991b93d9c25e16364c998609c1aacb5976889a0ac3eb",
+      "semantic_state_receipt_sha256": "3f61ea5453907a24fee2d3e63a246fe78215377c8358a9114180fd112b119bb0",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s684048394956806996"
+    },
+    {
+      "answer_sha256": "342222dabdf6ab89d6b5e8da0e7c1f59c4044564c075f864388a7e8df0af2fba",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 33.813,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0cc9cba1a4f5e7de4b4ad4830fce55cb72afea771f3317d1ae9cc65f04f59eb5",
+      "semantic_state_receipt_sha256": "93299caec3d395e235e9c760f7a535ae721abdd2dbf51408fb5737b318eadc78",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s390897937127332948"
+    },
+    {
+      "answer_sha256": "ea6f2d4cb20ce2c7af73ad34546d6f390508c54985039771abd90642763d516e",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 27.935,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "8c4688709717959398f883451cede8524d32c9c87dc5aba1b15dc2cae871fd38",
+      "semantic_state_receipt_sha256": "26be4e56eb7fd69e9acf58fd2660202b657dbb54900b5b8834ab65c40893a06c",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s552116921889802819"
+    },
+    {
+      "answer_sha256": "52eb355699c824285a08764acdc9de4abaf17b87751e64101c3c1b6748cf8ddb",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 25.435,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "1142a1fe183987a47ce87e469bc883d30f2a8f92ae87b058a5994e024cfe3546",
+      "semantic_state_receipt_sha256": "d243807a71ed21672fd1b1e470841d6dedd76881e3e8db95cd1571a6632e94f0",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s546582464337502023"
+    },
+    {
+      "answer_sha256": "176564c569c5aaa9a85fe8a6bd44b0e163932a436f8694e0b222679bc706c31e",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 25.586,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6cd5b439e4b8173a2bcb867ba2aa3bb8f94452a1b1b065a4787692f1ce1d7f57",
+      "semantic_state_receipt_sha256": "6261c1936eb900fddc7c0cdd6bdfc4b874031fbb8aa8d05b575325df58b5ba10",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s215053233881609490"
+    },
+    {
+      "answer_sha256": "963a966285913b2b2b86c9dd8c5effd9dfa427e359bd3326ce44918073d5be00",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 24.752,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6a183c072d607666737cf11c241dfe007babfc0214f7b1afa73a2165c1876e3f",
+      "semantic_state_receipt_sha256": "ced290519528a2f26801bc1e52d2bf42b3016112206d565c4abffd2302d142a7",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s434913500241758532"
+    },
+    {
+      "answer_sha256": "5bbfc8937119718b0e335f7b05b1ecd3b4c5e46df1ae09b77cff8295eb785da0",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 26.808,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "a7494dbd80187ef788a743f76c839ccf921711a8d627cdd5f6aa2250b40f7176",
+      "semantic_state_receipt_sha256": "af93d7feb3be062981e8c724e3afbe31a8f615e96c244701f4f2ddd3f34f6e13",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1130247369493482015"
+    },
+    {
+      "answer_sha256": "b03422b06d7c7458f7ac21da45b28d01c1a64eac7de484d575c1dc16d717bc0e",
+      "depth": 20,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 29.423,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "9a61b9830f1dfa058b3d5a96b99a3774743d9b2db5c12825672ac2a1013e4d5a",
+      "semantic_state_receipt_sha256": "a5677cbd05bef043343a4e268d483d77ebc7c0a11ad5b3ff671c4a217d70c903",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s929941568877491091"
+    },
+    {
+      "answer_sha256": "d371217f4e938962bc7fcfc5b54dea917205a84c81a9b60324d05f910d090610",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 35.19,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "639506e9e81c0f65121315c99a147380a0b47c16e8a625f2068b5333b4741778",
+      "semantic_state_receipt_sha256": "caff49dd7da6edb06f3840d986143a91702896b90f840c47445ef69f015e6192",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1051635805662493413"
+    },
+    {
+      "answer_sha256": "c43fa1739f4b45a5c487c7d6cac5f23d2b4fb363f027ac9c247498c4bd68938d",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 53.011,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "ab01dab7f9f249faefb3f3b65f69960478b98a7716a42697cdede7ddcae4dfb2",
+      "semantic_state_receipt_sha256": "394b974a6f067b9cc2359ac67dcdb9b20c8c9c9e4927740db6f91460ec7a5afc",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s5678098876890493"
+    },
+    {
+      "answer_sha256": "ebfc527c0f146421f20e9dbe56b95ae8e537beda152eb153ca30e4abe0ff984c",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 37.252,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5143fdf6166cbfdf62a86bc4e4c1c86f50f4e40b89c4d30816ff2fb0b077a557",
+      "semantic_state_receipt_sha256": "415e0b7a4dc0158c45983d3fb6184dd83fc65438268f11f81077ec4610379239",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s207105877145266977"
+    },
+    {
+      "answer_sha256": "ef9514c665aba5f94fac4df26c7e24da540de4fcc36b85d813775ba0ee3602a3",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 29.993,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "315f8fb110e7057303d189945bbdbe5f056b529fd65209cb3d741157e8adcff5",
+      "semantic_state_receipt_sha256": "da750f01a25c38dd47a319645054741bbff4e25281eaf77547d8bfde524f7b88",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s644878042312592908"
+    },
+    {
+      "answer_sha256": "00d71fc30d0bf53bbca5e16cc9a576c72df3563aa7bb30afd9c35fce1b698ecc",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 30.807,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5af3b82a0a9dc1d87e48aa544ea33ee260e3e3dc75463f9eaa9888244837096a",
+      "semantic_state_receipt_sha256": "61a77765037a8e1b66cddf2f1ace57d85de4e8249cb24cf186f529437bc30a33",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s385445544710140485"
+    },
+    {
+      "answer_sha256": "6f712f487cbfdde709b4fa9f942773d604bb21a5ddb1de6f2d71cca404ee323b",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 29.313,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "e01b5c9edc346d62a644de0ac2a15712629652f06c57a86ac3302ca6314b5683",
+      "semantic_state_receipt_sha256": "1462584960dde09e1e59df2074504d5dfd22aeddc246ef00b9264d54b2a128b5",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s429207308143379585"
+    },
+    {
+      "answer_sha256": "4924f485889ab1bcbd5dba53eab0fa95dc5e0664c60839945683981c7f1f4b49",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 35.835,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "9356b1653cf8349e164c9599e8e117e22230765611d5d1e9bd40c41580adbd1e",
+      "semantic_state_receipt_sha256": "f8cf06806cf81dbbce179e50d065c1937527f816fd8a5b562e3cf4720860d903",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s40064713173347348"
+    },
+    {
+      "answer_sha256": "01fe5cdb4a421ebcc6b4af1d3379262ffce02ddc795c5d9ba653d0d0db793a76",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 33.078,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "26a5578acf7bb1cd310077243d748ee63edb4d189c4ad86717ccd59f7c3a890e",
+      "semantic_state_receipt_sha256": "271c0eb7c3ede9fe9528004cb96bc91b85a439aabb21263b9261d9019272d7b7",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1103182974232667812"
+    },
+    {
+      "answer_sha256": "5dbed5f7687af6301052a17a413c9d5e178299fc94adc3fcf1fa58a30c131977",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 35.903,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "18c61202aaf0defd998a5cbfac08538360c71d332cfe54acc2ff0a9510a735f9",
+      "semantic_state_receipt_sha256": "75a5a1b091a407fd14bb5caa0147a73e003ea2893f88c64ad0e3f5197b46c7d4",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s447320115757490228"
+    },
+    {
+      "answer_sha256": "6018dccd56c03e0617cf5d3de60f44f84494884e034362bb22ba17236f45dee3",
+      "depth": 24,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 37.065,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d0b86b0abac229fa9b0101857380135cbc5354a04173c028f856b69b558a92be",
+      "semantic_state_receipt_sha256": "b50a337da9fe1f93da416ebac09b4039ebdaf2a149fcc4205a343d88b5c1f3c8",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s513966967922237844"
+    },
+    {
+      "answer_sha256": "00ac2c48543dfdfe0afd157f8364177a47609c716dcd6f0135538eaf9b60142f",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 40.471,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "8980dff2f8e4b68d2175ad3377ccab32724c289226b58af1fdda29bd0ae91129",
+      "semantic_state_receipt_sha256": "0e3ebfbaf88c0463b1bc54040c79cc5d1eebdb4f6c7621f8cd4a4b0d1e0486c3",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s542038801727197925"
+    },
+    {
+      "answer_sha256": "fd41adaf1299f4bedb8a305a253aed4bcd960a6f00e3a28bc59bf498c81bc54c",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 53.024,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d9651933827e3134f6c820de02f4c09d1c8fe295665e7cb5bba679119d65b786",
+      "semantic_state_receipt_sha256": "369c6cf2e470ba281340da782b0541645e28cf8d1a156fcc26799d4c25466040",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s81360220091316955"
+    },
+    {
+      "answer_sha256": "bce50ca1b92b99ec1473fbcead0310972467712098d0eba9918c94e9cf5b10ec",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 33.828,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "84bcf76a4e23192be9a1781566dcb1027b04a4ecd8a540122a39ee774e00b300",
+      "semantic_state_receipt_sha256": "1bafd2cd3536a0a13e2912dfe15741026843f5f91d33be227122b5e824a42c6d",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s652347198065060075"
+    },
+    {
+      "answer_sha256": "09d593a443af6ab60bb8b52bbfa48e8fdcfadd80adf40b3db09d36577445ef2d",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 35.324,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6da9fb1d4188af96afc55cc0fd3dda88bc92773a6a4a30209c4714f48c3783f7",
+      "semantic_state_receipt_sha256": "91bd1427895d4f9b1f6c9b0c4c73f59f7246f7d09678589a8665f1e36cc6e025",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s706514487917403862"
+    },
+    {
+      "answer_sha256": "07cbc855bf54a82ff64a45386a2e594ed40e5e1935b1adbbe5e9e41a7bcb4cdf",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 39.456,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "6e54ea44a2311e0aa976d24e2f84afcab54de9c2112ff1c815950fa290f01217",
+      "semantic_state_receipt_sha256": "fb9feae1fdcaf98f0e5f1c298e3f8d186b7fd93d5c366dd4f9af0d63b1ad5f61",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s871469330143535750"
+    },
+    {
+      "answer_sha256": "89dec9304da4d503481975c21462a579375e93468ffb8670d9596e6bebacc354",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 47.25,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "11856f67f1d80f8908f526cbb7d4fd7a4c057770eb316b9b65d16322d1082b87",
+      "semantic_state_receipt_sha256": "e9024cc0dadc7e033387134a3166497030d5abf7cbd47378693f9428da8b134f",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s888737330506751019"
+    },
+    {
+      "answer_sha256": "aec7263bb47d4e6956ec0f09faa7b6a842dd2ec0f32295e9ff101a1c87f2e090",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 53.102,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "fbac54286c9c5059a706153781a26f3099e0f687d11d893bc341f58c512e56f1",
+      "semantic_state_receipt_sha256": "cd1bb2ab9d17e3d1c06d38a669263a667dc9c9b688cdbaf492612def49d4ffca",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s63310614795196335"
+    },
+    {
+      "answer_sha256": "9756cc8e8201c34b680a36ae29cfafe25e988644d1c63163a8895ed478e37097",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 37.781,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "1cdbf15293f7f6d1373e66b3b38f426deced836410cf6ef4a023cbc321aa1fc2",
+      "semantic_state_receipt_sha256": "466372b9fa008b13006efdfde37ec9859657a4089488f14633999b16dd2e2ee5",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s877188949043466436"
+    },
+    {
+      "answer_sha256": "53879719b5f8e58ecae3f44051915d2e37f1f9282ff518cacc478c38c160c304",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 41.229,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "46d297b0c76acf268f5b3ef897afdb5006c2aa605e804eac6fdea267daefc52a",
+      "semantic_state_receipt_sha256": "eed00cc9c2ca9a1641bc415a8b1241fba4bf0164f6e6c0ee419ab5734ef3d248",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s712659045408087772"
+    },
+    {
+      "answer_sha256": "2184a264b2cf73d50fa72ed52ad3bc6a6852df5692d929c1077dad15c9b8a6b8",
+      "depth": 28,
+      "family": "frontier_misleading_premise",
+      "latency_ms": 55.552,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "512cefa9d96735cb664717ac4a478d860d1ae062922e07cbd17959a5d5520322",
+      "semantic_state_receipt_sha256": "bc7748a1e483d9cd8313de25397cbe705f9ea127f746fca7bd310020102b74f5",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s45736840696804000"
+    },
+    {
+      "answer_sha256": "56a4b36ba76353434671ad36b75b080d70f96d39bef4e4d16713d0845229d870",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.98,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "e4229e9afa998e73a3ec84dcc0a9b6674fc0ec397a3f79b37d2287c78a8fffef",
+      "semantic_state_receipt_sha256": "0fe6015cc7ade9d00fb38a2ffcbc3519716818a56706caaf4bf46bde5e7de87c",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s781880249461644921"
+    },
+    {
+      "answer_sha256": "1e4862d55b1b42395dbff1fe1c6544b9453a8ec1a29ceb9cbd5277f1e2b57f1c",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.151,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "5735c488745261f9106ea17ee7e4e7fca727d7f375c518ae053383ef01cc5fda",
+      "semantic_state_receipt_sha256": "6d4658e162e0773cf9609f406ea7bbc90260e55bc9ed95743717ea407e875660",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s61744490172054072"
+    },
+    {
+      "answer_sha256": "33661bc36b973e7f35b79acf9c833ee2e4b6c302c79610eb36bb10ded71b4ad6",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.411,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "785058f38736cfe092bfd37362ffb05cfb73b9e24fc8cfdc729c5f1ec03e7152",
+      "semantic_state_receipt_sha256": "3115fa2dec463cdadb3a5505e1d246b5d863d239659e7a08f091d4ee54be7b0f",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s191393163254908675"
+    },
+    {
+      "answer_sha256": "0f3493f152e159cc0f991b3a9b057895826c963cd463a77b2e9909b5086e0ed2",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.253,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "df4c0f7b6434c422e1e7aae11261e002423a3923c85bbecb3faf17c754c037ab",
+      "semantic_state_receipt_sha256": "21dd652a20fc4d6698b9bf590bb617ba629978bebc23efa40d253b7ab4d1ba60",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1003010053902509189"
+    },
+    {
+      "answer_sha256": "edfb1112316dada7f6fb3ce6826932dfafbea79f02d6cff888df0f4b60d8020a",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.391,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "7f4ed019c56c00b8113ea1c983007dace360c55e2e0786b0dbab4375d857c85c",
+      "semantic_state_receipt_sha256": "4c73b030d7cc27773f14d22480a982990b4b763702ad8a58f78d61303b1b0aa5",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s229929836010365465"
+    },
+    {
+      "answer_sha256": "a24bf9252bed3db9a4776f51b61b9eb3823b53f7900575eddddad70e1e77708e",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 13.649,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d457a2807ed815dccfa48ba1f1a976847144e9ac5fd7432da418dc4302ff1af1",
+      "semantic_state_receipt_sha256": "6bf3ecc861efb4a9f2db552b5900d954bbb56059eb51ab7f305dbe014f2a36e6",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s441501445781695138"
+    },
+    {
+      "answer_sha256": "9185a12ec98aaa321d6c4856193a89c85709be9886c7104a838d651d140fec05",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.314,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "b1d1251ca35cfafd464ece2d251f61c011bdad5c60568d4480fe0a0f4e2e5df5",
+      "semantic_state_receipt_sha256": "83c6280fa35978e94f02eabf60142d70acd44350d0fba1636e9c75ae67f18d78",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s300582114700267335"
+    },
+    {
+      "answer_sha256": "5bbdcad9c8557c6e264f02ddf1d4ad29a4026463062a5fce5a11e63704f34756",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.209,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0c549f168ab72018e7fc697d5431a8a3c581d1cf0f02a93b0c0ca4fdec6ed1c5",
+      "semantic_state_receipt_sha256": "f14dbd653a094bcb445c5275006e919142ab986a4770adeff39c917fcf54166f",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s154516688377499487"
+    },
+    {
+      "answer_sha256": "e7415b2398adb9fc06aa200f1c4aadfcadd5a550dc58c8699cbbf9b3d66f3b3c",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 15.062,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "85ad2fb0acf78e31361e3cfdc84e18dbbe466e23e8050e557cbc5b0e589c96b5",
+      "semantic_state_receipt_sha256": "6b5197fda03fc52e69d87fbe018914a631acafa2048806816fd7c21ea8387ba9",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s72530398547022325"
+    },
+    {
+      "answer_sha256": "2be94022a1c714a75251b9578f8d5233a8d7b1f1c780610aeefad783cd0a1bf9",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.838,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "3bf4933a020a6824176de31afb01dfb3354a8d9df6f56dd627f8e9c408568991",
+      "semantic_state_receipt_sha256": "5d50d692359da2e0722fd5523d56c6620aafcb46410ac142861b7d00a080f58f",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s166740539330632352"
+    },
+    {
+      "answer_sha256": "abf2e3252dabcaf6eb2936474d736008c9e42e9d27c8dc04e9d26b92331e35bd",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 14.865,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "7d33ce5c3b812a6aad0ec973be0c2da6cd5342fa3629a7d697c21f210257e17a",
+      "semantic_state_receipt_sha256": "eb8957eff6e315ef5e421b14188ab0ccd6741d2a9c20bf79ed0e407181056375",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s946598202290540621"
+    },
+    {
+      "answer_sha256": "ba5c283258e179b7152ee0e2d67b783ba817c3af7394dc6198ae117cb9e91b4e",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 13.67,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d1311ac508c2a3c34e06338a6f484d9ad3f9f29272aba11241f3f80a194c92f1",
+      "semantic_state_receipt_sha256": "bef30742718c9209100c9ae6f989cad9b0af139034f2bc3c2c4a8765969cb07e",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s956142972426756875"
+    },
+    {
+      "answer_sha256": "13065533cebfc01a405ba6547bf47021b69c95dcdb1b99443c9b3b78f63b257e",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.703,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "c74cd351ec1048497159d4343efbc396b71ea5b17463bd302a9c91b886057f1d",
+      "semantic_state_receipt_sha256": "6e70d2d50f12a67f5df2db7a50373244215b88a564f5468eca8279ad919032f4",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s105452150082153943"
+    },
+    {
+      "answer_sha256": "c6c1c98da5a59c5e8c7e3bf97ad75e3990a0d8afafd2fa091d910c2c86b36ace",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 20.601,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d8804fd2adfa4993762bb62e7bae39d4552e216c999bc1f323fffae4f464f7f4",
+      "semantic_state_receipt_sha256": "3529f1626e852a752d2da50a80c5667c98ad904e6edcaf06cbdde425448ba6dd",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s594955579343276395"
+    },
+    {
+      "answer_sha256": "e74a1bc5b81aa4348057125336d85bb37bd721df50125bf82ba93a526d775cde",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 19.859,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "204d312935adac98b364a44ae2087502519059929272ca8fd5d612d7e9fe38c7",
+      "semantic_state_receipt_sha256": "42a3c459adbabfc9ecff15b2a541d7b28b9ce30675c346c1d83767bf9f2ddf8d",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s879165768238788444"
+    },
+    {
+      "answer_sha256": "5c1bf9b33c5caa929f024364218dbd61ba4191a738d3d99a0359f7fac86462b9",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 15.661,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "f2e6b5fcee0159c2f78302d1437f4c45ed4183a0cc36ff4e9a72ff65455fec85",
+      "semantic_state_receipt_sha256": "0c4ac0fb1345b1a4dcde2385deeb3bae5736c87d296bdab866fca92e4b96a2b2",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1071220785323837559"
+    },
+    {
+      "answer_sha256": "8e99bb26f0baf29f513c3e47b8507f5c3f9899d6e2d0e4feac5aaf7d201a4b61",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 13.377,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "21b5072e4fb45eb1cd6318721cf60c2b627c05d5968fd814b9b9d4821e385979",
+      "semantic_state_receipt_sha256": "bc597d0d641470f34acb3e5a750cbca68db8352403389e36c5c81b32023005a6",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s302085235661320288"
+    },
+    {
+      "answer_sha256": "66b4a6e5122de15966750fbb591c6c50d2020cd985355ac786be63c9ff77de59",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 13.375,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "f7fff9e1582548e0c37cfba6fd2c2a4afbef653cb4d5814e2db47452958a8719",
+      "semantic_state_receipt_sha256": "4ac7dfcea5f1ea2b9bc3e72c1916f1a180089aad8ca503bfc64b26191b5261de",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1003040971573973519"
+    },
+    {
+      "answer_sha256": "f9a19e70ca8bc0b17691cf7fe81615f415209336fc9a5ab16bb4b42f1df44396",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 13.502,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "0cf12bf44afc330362659d0019b12b19c1a18b54f9c10f5ed79d4b5967611606",
+      "semantic_state_receipt_sha256": "b24da01720621ab503fae780ea5d1e40bbd27b2b3f0a0e127b16c4cffe3aaa9d",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1081850179912380322"
+    },
+    {
+      "answer_sha256": "35ceea3ad92632a3a9d0010cc3f23b3dc2694004cf1ec70f1825278263c145b3",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.565,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "dab9426290e0a311794f190ff52db4f301d1cd66f40bcb90ae442ce905cf607d",
+      "semantic_state_receipt_sha256": "887c7f4b999c7e71b86c5bab3f97fad1bd6773316ef698316b714bca2285d2b3",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s298132925476787062"
+    },
+    {
+      "answer_sha256": "2021b805d908bb43a6bdd655af9c1a7bd2032609f62a8f9653f6c2b6e8868b9a",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 17.544,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "275032decba68fb44f58f7f532e17ff46beb1262d330ff863db1785f9f6b0b14",
+      "semantic_state_receipt_sha256": "11a2409c1e2a91fc49fb737e07c389f54876b47a036ab9d787dac1506fa00e94",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s113496512110931079"
+    },
+    {
+      "answer_sha256": "da27577a6961e4d6645d02dcd8ae6146de420f99d9d7b8879eed9b94663ff462",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 18.511,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "dab83a5423b264ba849d6023a5373e5fcc97ab92fe2e01895d742c5c227346af",
+      "semantic_state_receipt_sha256": "9e8a5bc02d2ea812161099737b50e3600a4c83df1ced81c75cbd4197d60c68a4",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s325046365520271345"
+    },
+    {
+      "answer_sha256": "a38869ef7d0433002d8eaff4caafbf22fd87060862d8bf157aceecef4b661658",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 25.602,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "959cd006be4d6c3f185ffc2db0166b01466e4a85c43c546fc448b27e2874aee5",
+      "semantic_state_receipt_sha256": "6956c836c86f3191a9f415f3392e770cbbe0225934185190ce7ebe30d05206ad",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s587766689481628655"
+    },
+    {
+      "answer_sha256": "b99a85d0ced091765546ed0f284e381190a4c66f339dc7180b51b08f9815406d",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 25.756,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "be97cccba64d49b60eb89a16e1170e1ccd108b7d2d3135ae9a32ec8f521eb2df",
+      "semantic_state_receipt_sha256": "7b32ba3b69a9364e22b4f468c26856af8c7221d0036163b9993c6899cfc2d4ed",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388439187127656999"
+    },
+    {
+      "answer_sha256": "6e46501a67b94f69c730b6a3740a53e975d4b0b1124c8324d6d0e3298b385b19",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.111,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "007fb4712c008407f3dd2c3663215bf8b2a7759a8231ce394fa436474460e989",
+      "semantic_state_receipt_sha256": "7e1fc2556b3badf425b9362e1a3b97fdae02ac57cc6c3b1c18ed9047bc48c77d",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s817114448727177260"
+    },
+    {
+      "answer_sha256": "ea48d2d48792eae167b9b557ce43ea46938b9f6e01e3fcddd7ecbccf362df12d",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.13,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "93d6a52506a533922c0d8d86b58a615943de06dc8bac1556c4414bc7a8df3b20",
+      "semantic_state_receipt_sha256": "8847a1ef8760ca81bec4f3b5767f2081469bd0a4be789cc968018413242195eb",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s567056086993771007"
+    },
+    {
+      "answer_sha256": "ba0d7f9000a725bf7ce4e5abf15be3e09bf1a2ef6ed328b424476d3012bd1b84",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.092,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "bb68842f1772187abb14d7fa68d156a533c554f9912b113631e38a330dd7c8ef",
+      "semantic_state_receipt_sha256": "db7d010a3b8d965f734a7055066505dd42308f6b8dec18a39e6808e82e206955",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s366601795430745852"
+    },
+    {
+      "answer_sha256": "bf05471d9d1c5e3d612a2b7dcb3f29ffb933afc04c8ebc03cd02fb0cd12a318d",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 16.715,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "91eb3db1e2aadd7f81776156eec00f2edb4c468e84c652b6a8b97f580c738615",
+      "semantic_state_receipt_sha256": "5876d55b74522e8c4ef067157a6a73127a2d04f3a83b74dc334d9222a12c1cb8",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s472418822742904915"
+    },
+    {
+      "answer_sha256": "4562cc18da5aef5ce242ed3f24617b7c78c35e0bbd2a81245e9dda87c5eaed54",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 15.933,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "d8de2e8822a5a327a4a496d0170cf8a8cbc75d481d244426419b2adfc4cac022",
+      "semantic_state_receipt_sha256": "4208c9da5c916faa50732fa0846f7bf3208f9a1e5ab4b4e02d8509eb9c2a4caf",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s955078485848584915"
+    },
+    {
+      "answer_sha256": "9288811d5fff5aaf05c6d774932a7eeedabe5371f7aa5b6dfc72701d53c3844d",
+      "depth": 14,
+      "family": "frontier_scientific_inference",
+      "latency_ms": 15.515,
+      "lesion_disrupted": true,
+      "runtime_receipt_sha256": "33cdf55594a45ef743c070556f64c2875e1ba5867166c1f14aeb7142fcb5875d",
+      "semantic_state_receipt_sha256": "a5de1d22bc978f2e2ba90264f3a5b169b0461ad7f67adc3054f0e6441a7be60e",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s265423840338664196"
+    }
+  ],
+  "rows_sha256": "9ae2e0ccc54cf45f9fc8f7dda7563bf4432282d3f55bb5e812f40dc1ba69293b",
+  "schema": "aura.semantic_neural_runtime_verification.v2",
+  "seed": 2026081561,
+  "task_count": 120,
+  "tasks_per_difficulty": 10,
+  "unsupported_language_refused": true,
+  "verification_receipt_sha256": "6f5e405880a7b4dc031935208ed3264a6fd32cc8380d20fef0641fb705264ede",
+  "verified": true,
+  "verifier_source_sha256": "49d1e9f70ce1bf901c9b9341276eb798bfb34bce7b997d1678c73c32d27b6357"
+}
