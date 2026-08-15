@@ -1,0 +1,40 @@
+{
+  "schema": "aura.latent_cortex.typed_transition_curriculum_verdict.v1",
+  "campaign_id": "cp493-typed-transition-curriculum-1p5b-20260814",
+  "campaign_source_commit": "17c6392cb1a4546e3c5e5bab9b0bc4562269944e",
+  "campaign_config_sha256": "a025ca90fad07b53aaf3b8418f883b73eb8a2ccdd47f9e4be108010677389488",
+  "dataset_identity_sha256": "4ff5e3ff4231eb134cf35afa54bac2e20be9a89032f1f26ac13de94a84ab0681",
+  "model_manifest_sha256": "71c040465070cf9b0068ca6f7bc26581443ae5fb46937e85e109212b3fb80092",
+  "terminal_checkpoint": {
+    "step": 144,
+    "checkpoint_sha256": "c817a5a97884f7f01cfcb610fb981d84d5d35953a03d0a4a26eff52c3565f680",
+    "receipt_sha256": "b3cb8d915039ecf86c124e6bff577998660bd0e27ee377468676205f6789fcac"
+  },
+  "decision_evaluation": {
+    "step": 128,
+    "examples": 24,
+    "t1_state_accuracy": 0.8916666731238365,
+    "t1_state_value_exact_accuracy": 0.5,
+    "t16_state_accuracy": 0.6718750127280751,
+    "t16_state_value_exact_accuracy": 0.14322916666666666,
+    "best_depth": "T1",
+    "best_deep_relative_gain": -0.09483490960262188,
+    "best_heldout_relative_gain": -0.12356920377635437,
+    "trained_depth_helps": false,
+    "heldout_depth_helps": false,
+    "state_teacher_forcing_probability": 1.0
+  },
+  "interim_futility_gate": {
+    "one_step_exact_readiness_bar": 0.95,
+    "passed": false,
+    "operator_stopped_after_durable_checkpoint": true,
+    "detached_terminal_receipt_sha256": "71e78821813d771256d1b950a8fcdc679bd09baa5beec270639071e686c6e03a",
+    "termination_signal": 15,
+    "launchd_label_removed": true,
+    "process_group_empty": true
+  },
+  "verdict": "indirect_transition_curriculum_futile_at_interim_gate",
+  "conclusion": "The held exact-state interval did not recover the typed processor on the fresh doubled dataset. At step 128, one-step exact state was 0.50 and deep exact state was 0.1432 while added depth remained harmful. Continuing to step 512 was not authorized. The durable step-144 checkpoint is preserved for exact bootstrap identity, but it is not an admitted process checkpoint.",
+  "next_mechanism": "Train the typed categorical processor directly from verified state transitions and independently compiled public actions, without constructing transformer, answer-readout or answer-token graphs. Require local exact-trace convergence, then evaluate autonomous unseen transitions before restoring answer emission.",
+  "claim_boundary": "Negative bounded 1.5B mechanism result only; no answer-level, resident-32B, fusion, frontier or WOW Signal authority."
+}

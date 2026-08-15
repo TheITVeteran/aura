@@ -117,6 +117,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "recovery",
     }
@@ -439,6 +440,21 @@ def test_extended_transition_acquisition_holds_teacher_before_autonomous_rollin(
     assert arguments[arguments.index("--state-teacher-forcing-hold-fraction") + 1] == (
         "0.375"
     )
+
+
+def test_direct_transition_acquisition_removes_transformer_graph() -> None:
+    training = _profile_training("process_public_transition_direct_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["public_action_program"] is True
+    assert training["direct_transition_processor"] is True
+    assert training["process_curriculum"] == "transition_only"
+    assert training["process_transformer_gradient_scale"] == 0.0
+    assert training["process_query_gradient_scale"] == 0.0
+    assert training["state_warmup_steps"] == training["max_steps"] == 1024
+    assert training["state_teacher_forcing_probability"] == 0.0
+    assert training["state_teacher_forcing_final_probability"] == 0.0
+    assert "--direct-transition-processor" in arguments
 
 
 def test_process_completion_signed_config_is_controller_admitted(

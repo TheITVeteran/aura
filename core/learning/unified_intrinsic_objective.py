@@ -956,6 +956,93 @@ def unified_process_training_loss(
     }
 
 
+def unified_typed_transition_processor_loss(
+    controller: UnifiedRecurrentController,
+    plan: RecurrentDepthPlan,
+    *,
+    transition_trace: Any,
+    transition_program: Any,
+    public_action_values: Sequence[Sequence[int]],
+) -> tuple[Any, dict[str, Any]]:
+    """Train exact categorical transition algebra without a transformer graph.
+
+    The verified state trace remains training-only supervision. Actions come
+    from the independently compiled public prompt program, matching the
+    teacher-free runtime surface. The objective reaches only typed transition
+    memory and processor tensors; it cannot turn the frozen transformer or
+    readout into a parallel answer producer.
+    """
+
+    if transition_trace is None or transition_program is None:
+        raise ValueError("direct transition training requires verified process evidence")
+    targets = state_targets_from_trace(transition_trace, plan.iterations)
+    action_targets = action_targets_from_program(transition_program, plan.iterations)
+    public_actions = tuple(tuple(int(value) for value in row) for row in public_action_values)
+    if public_actions != action_targets.values:
+        raise ValueError("public transition actions differ from the verified program")
+
+    action_history: list[Any] = []
+    losses: list[Any] = []
+    correct = mx.zeros((), dtype=mx.float32)
+    required = mx.zeros((), dtype=mx.float32)
+    prior_values = targets.initial_values
+    for action_values, next_values, masks in zip(
+        public_actions,
+        targets.values,
+        targets.masks,
+        strict=True,
+    ):
+        state_probabilities = controller.exact_probabilities(
+            prior_values,
+            slots=controller.config.state_slots,
+            cardinality=controller.config.state_cardinality,
+        )
+        action_probabilities = controller.exact_probabilities(
+            action_values,
+            slots=controller.config.action_slots,
+            cardinality=controller.config.action_cardinality,
+        )
+        action_history.append(action_probabilities)
+        history_memory = controller._typed_transition_memory(action_history)
+        logits = controller.typed_transition_processor_logits(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+        )
+        labels = mx.array((next_values,), dtype=mx.int32)
+        mask = mx.array((masks,), dtype=mx.float32)
+        token_losses = nn.losses.cross_entropy(
+            logits.astype(mx.float32),
+            labels,
+            reduction="none",
+        )
+        denominator = mx.maximum(mx.sum(mask), 1.0)
+        losses.append(mx.sum(token_losses * mask) / denominator)
+        predictions = mx.argmax(logits, axis=-1)
+        correct = correct + mx.sum((predictions == labels).astype(mx.float32) * mask)
+        required = required + mx.sum(mask)
+        prior_values = next_values
+    if not losses:
+        raise ValueError("direct transition training has no active transitions")
+    loss = mx.mean(mx.stack(losses))
+    accuracy = correct / mx.maximum(required, 1.0)
+    return loss, {
+        "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
+        "objective": "verified_typed_transition_processor",
+        "depth": plan.iterations,
+        "transitions": len(losses),
+        "state_accuracy": float(accuracy.item()),
+        "public_action_program": True,
+        "public_actions_are_correctness_authority": False,
+        "verified_state_teacher_available": True,
+        "teacher_available_at_inference": False,
+        "answer_tokens_exposed": False,
+        "transformer_graph_constructed": False,
+        "readout_graph_constructed": False,
+        "total": float(loss.item()),
+    }
+
+
 __all__ = [
     "UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA",
     "UnifiedIntrinsicTrainingSpec",
@@ -970,4 +1057,5 @@ __all__ = [
     "unified_answer_trajectory",
     "unified_intrinsic_training_loss",
     "unified_process_training_loss",
+    "unified_typed_transition_processor_loss",
 ]

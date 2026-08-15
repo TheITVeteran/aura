@@ -30,6 +30,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
     unified_process_training_loss,
+    unified_typed_transition_processor_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     UnifiedRecurrenceConfig,
@@ -566,6 +567,101 @@ def test_public_actions_train_learned_transition_with_exact_microcode_removed() 
             public_action_values=public_actions,
             microcode_lesion=True,
         )
+
+
+def test_direct_transition_objective_reaches_only_categorical_processor() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+    public_actions = action_targets_from_program(program, 3).values
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_typed_transition_processor_loss(
+            candidate,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=public_actions,
+        )[0]
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+
+    assert float(loss.item()) > 0.0
+    assert float(mx.max(mx.abs(flat["transition_processor_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["state_transition_output"]))) == 0.0
+    _loss, receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(3),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+    )
+    assert receipt["transformer_graph_constructed"] is False
+    assert receipt["readout_graph_constructed"] is False
+    assert receipt["answer_tokens_exposed"] is False
+
+
+def test_direct_transition_objective_learns_exact_trace() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+    public_actions = action_targets_from_program(program, 3).values
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_typed_transition_processor_loss(
+            candidate,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=public_actions,
+        )[0]
+
+    initial_loss, initial_receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(3),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+    )
+    legacy_before = mx.array(controller.state_transition_output)
+    optimizer = optim.Adam(learning_rate=0.01)
+    for _step in range(120):
+        loss, gradients = nn.value_and_grad(controller, objective)(controller)
+        optimizer.update(controller, gradients)
+        mx.eval(loss, controller.parameters(), optimizer.state)
+    final_loss, final_receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(3),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+    )
+    mx.eval(initial_loss, final_loss, legacy_before, controller.state_transition_output)
+
+    assert float(final_loss.item()) < float(initial_loss.item()) * 0.05
+    assert final_receipt["state_accuracy"] > initial_receipt["state_accuracy"]
+    assert final_receipt["state_accuracy"] == 1.0
+    assert mx.array_equal(controller.state_transition_output, legacy_before).item()
 
 
 def test_process_objective_reaches_scoped_transformer_tissue() -> None:

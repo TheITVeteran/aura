@@ -49563,3 +49563,41 @@ These controls authorize matched causal adjudication only after an intact
 checkpoint first shows useful exact transition behavior. They do not
 themselves establish a gain, resident-32B transfer, fusion, frontier reasoning
 or a `WOW Signal`.
+
+## Checkpoint 2026-08-14-495: Train The Transition Processor Before The Cortex
+
+CP493 reached its declared step-128 futility gate under a still fully exact-
+state input distribution. On its fresh doubled holdout, T1 exact-value state
+accuracy was `0.50`, T16 exact-value state accuracy was `0.1432`, the best
+depth remained T1 and the best held-out relative gain was `-0.1236`. The
+extended teacher hold therefore did not repair acquisition. The exact launchd
+job was removed, its process group was terminated after durable step 144, and
+the negative evidence is frozen in
+`artifacts/closeout/latent_cortex/cp493_typed_transition_curriculum_verdict.json`.
+It was deliberately stopped at the gate rather than spending another 384
+steps on a rejected objective.
+
+The outside reviews converged on a stronger separation than CP493 provided:
+learn exact process dynamics before asking the frozen language model or answer
+bridge to use them. A new direct transition objective now consumes only the
+verified training trace and the independently compiled public action tape. It
+constructs categorical state, action and recurrent-history tensors and trains
+the typed state-register processor directly. It does not construct a
+transformer, readout or answer-token graph, and its campaign identity records
+that boundary.
+
+The direct-acquisition profile holds transformer and query gradient scales at
+zero, exposes no answer-bridge phase, uses no inference-time state teacher,
+checkpoints every 32 steps and evaluates autonomous unseen transitions every
+128 steps. A bounded mechanism contract proves that the objective reaches the
+new processor but not the legacy transition head. A stronger optimization
+contract learns an exact three-transition trace to `1.0` categorical accuracy,
+reduces loss below five percent of its initial value, and leaves the legacy
+transition matrix bit-identical.
+
+This checkpoint proves only that the isolated processor can acquire an exact
+transition relation and that the source-bound campaign can train it without a
+parallel answer solver. The next campaign must clear `0.95` one-step exactness,
+retain correctness under autonomous recurrence and improve unseen deep
+transitions. Processor/history lesions, answer emission and resident-32B work
+remain blocked until those gates pass.

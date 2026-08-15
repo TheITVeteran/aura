@@ -72,6 +72,7 @@ PROFILES: Final = frozenset(
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "recovery",
     }
@@ -231,6 +232,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "process_query_gradient_scale": 0.0,
         "analytic_action_readout_fit": False,
         "public_action_program": False,
+        "direct_transition_processor": False,
         "analytic_action_readout_ridge": 0.001,
         "analytic_action_readout_margin": 8.0,
         "max_gradient_norm": 0.5,
@@ -445,6 +447,44 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "wired_limit_gb": 28.0,
             "max_minutes": 240.0,
         }
+    if profile == "process_public_transition_direct_acquisition":
+        process_steps = 1024
+        return {
+            **common,
+            "window_tissue_mode": "scoped_lora",
+            "lora_targets": "q_proj,o_proj,v_proj",
+            "task_source": "frontier_process",
+            "families": "mathematics,coding,calibration,misleading_premise",
+            "task_depths": "3,5,9,10",
+            "train_depths": "1,3,5,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 16,
+            "holdout_per_cell": 6,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 4,
+            "process_family_batch_mode": "balanced_families",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "public_action_program": True,
+            "direct_transition_processor": True,
+            "state_teacher_forcing_probability": 0.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 128,
+            "checkpoint_every": 32,
+            "state_learning_rate": 0.0005,
+            "max_gradient_norm": 1.0,
+            "seed": 2026081501,
+            "init_seed": 2026081402,
+            "memory_fraction": 0.35,
+            "memory_limit_gb": 24.0,
+            "wired_limit_gb": 28.0,
+            "max_minutes": 120.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -640,6 +680,7 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
     boolean_flags = {
         "analytic_action_readout_fit": "--analytic-action-readout-fit",
         "public_action_program": "--public-action-program",
+        "direct_transition_processor": "--direct-transition-processor",
     }
     if set(training) != set(flag_names) | set(boolean_flags):
         _fail("training_profile_contract_drift")
@@ -759,6 +800,7 @@ def _freeze_campaign(
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "recovery",
     }
@@ -904,6 +946,7 @@ def _freeze_campaign(
                     "process_family_acquisition",
                     "process_neural_acquisition",
                     "process_public_transition_acquisition",
+                    "process_public_transition_direct_acquisition",
                     "process_public_transition_extended_acquisition",
                 }
                 else 14.0 * 3600.0

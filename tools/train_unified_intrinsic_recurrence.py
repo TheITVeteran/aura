@@ -69,6 +69,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     unified_answer_and_recurrent_trajectory,
     unified_intrinsic_training_loss,
     unified_process_training_loss,
+    unified_typed_transition_processor_loss,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     ACTION_LITERAL_BINDING_PARAMETER_NAMES,
@@ -4314,6 +4315,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--direct-transition-processor",
+        action="store_true",
+        help=(
+            "train verified categorical state/action/history transitions without "
+            "constructing a transformer graph"
+        ),
+    )
+    parser.add_argument(
         "--analytic-action-readout-ridge",
         type=float,
         default=1e-3,
@@ -4536,6 +4545,16 @@ def main() -> int:
     ):
         raise ValueError(
             "public action program requires a supported transition-only frontier campaign"
+        )
+    if args.direct_transition_processor and (
+        not args.public_action_program
+        or args.process_curriculum != "transition_only"
+        or args.answer_bridge_steps != 0
+        or args.process_transformer_gradient_scale != 0.0
+        or args.process_query_gradient_scale != 0.0
+    ):
+        raise ValueError(
+            "direct transition processor requires public transition-only controller training"
         )
     if (
         not math.isfinite(args.analytic_action_readout_ridge)
@@ -5034,6 +5053,12 @@ def main() -> int:
             "process_family_batch_mode": args.process_family_batch_mode,
             "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
             "process_query_gradient_scale": args.process_query_gradient_scale,
+            "direct_transition_processor": {
+                "enabled": args.direct_transition_processor,
+                "objective": "verified_state_public_action_history_to_next_state",
+                "transformer_graph_constructed": False,
+                "readout_graph_constructed": False,
+            },
             "public_action_program": {
                 "enabled": args.public_action_program,
                 "source": "public_objective_literals_and_order_only",
@@ -5683,6 +5708,18 @@ def main() -> int:
                                         cohort_public_actions
                                     ),
                                 ) -> Any:
+                                    if args.direct_transition_processor:
+                                        if public_actions is None:
+                                            raise RuntimeError(
+                                                "direct transition processor has no public actions"
+                                            )
+                                        return unified_typed_transition_processor_loss(
+                                            candidate.controller,
+                                            state_spec.plan_at(max(state_spec.train_depths)),
+                                            transition_trace=transition_trace,
+                                            transition_program=transition_program,
+                                            public_action_values=public_actions,
+                                        )[0]
                                     return unified_process_training_loss(
                                         candidate.model,
                                         objective_prompt,
