@@ -88,6 +88,10 @@ def _identity_receipt(**overrides):
         "checkpoint_file_count": 8,
         "params_unchanged": True,
         "fast_weights_applied": False,
+        # A real receipt is a dataclass and always carries this field, so a
+        # stub that omits it is simulating a client that never reported
+        # whether it TRIED to attach.
+        "fast_weights_attach_attempted": False,
         "fast_weights_erased": None,
         "worker_identity": dict(_WORKER_IDENTITY),
         "episode_affective_steering_applied": True,
@@ -306,6 +310,10 @@ def _attach_nonadmitted_fast_weight_receipt(
     receipt.update(
         {
             "fast_weights_applied": False,
+            # A real receipt is a dataclass and always carries this field.
+            # Omitting it here simulated a client that never reported whether
+            # it TRIED to attach, which the contract rightly refuses.
+            "fast_weights_attach_attempted": False,
             "fast_weights_erased": None,
             "fast_weights_layers": 0,
             "fast_weight_optimization_attempts": 0,

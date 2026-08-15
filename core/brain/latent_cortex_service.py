@@ -3285,13 +3285,32 @@ class LatentCortexService:
                     == "not_admitted_high_confidence_evidence_absent"
                 )
                 if not_admitted:
-                    if (
-                        receipt.get("fast_weights_applied") is not False
-                        or receipt.get("fast_weights_attach_attempted") is not False
-                        or receipt.get("fast_weights_layers") != 0
-                        or receipt.get("fast_weight_optimization_attempts") != 0
-                        or receipt.get("fast_weight_optimized_steps") != 0
-                        or receipt.get("fast_weight_rejected_steps") != 0
+                    # An ineligible episode must have left the weights alone.
+                    # Absence and denial are DIFFERENT failures: a receipt that
+                    # never mentions the attach attempt has not proved the
+                    # model was untouched, but it has not confessed to
+                    # touching it either, and one error name for both sends
+                    # whoever reads it looking for a mutation that never
+                    # happened.
+                    mutation_fields = (
+                        ("fast_weights_applied", False),
+                        ("fast_weights_attach_attempted", False),
+                        ("fast_weights_layers", 0),
+                        ("fast_weight_optimization_attempts", 0),
+                        ("fast_weight_optimized_steps", 0),
+                        ("fast_weight_rejected_steps", 0),
+                    )
+                    absent = [
+                        field for field, _ in mutation_fields if field not in receipt
+                    ]
+                    if absent:
+                        errors.append(
+                            "fast_weight_ineligible_episode_receipt_incomplete:"
+                            + ",".join(sorted(absent))
+                        )
+                    if any(
+                        field in receipt and receipt[field] != quiet
+                        for field, quiet in mutation_fields
                     ):
                         errors.append("fast_weight_ineligible_episode_mutated_model")
                 else:
