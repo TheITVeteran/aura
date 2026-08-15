@@ -38,6 +38,17 @@ _STRUCTURAL_TAIL_RESERVE_CHARS = 1400
 _COMPACT_ASSISTANT_KEEP_CHARS = 500
 _COMPACT_RECEIPT_HEAD_CHARS = 160
 
+# Caps on world-model state entering the prompt. Learned-from-conversation
+# content is unbounded by nature — one long session can add hundreds of
+# entities — and an unbounded section pushes the identity block toward the edge
+# of the window it is supposed to govern. Sized so all three sections together
+# stay a small fraction of the smallest window the registry reports.
+_WORLD_MAX_ENTITIES = 24
+_WORLD_MAX_RELATIONSHIPS = 24
+_WORLD_MAX_PREFERENCES = 32
+_WORLD_NAME_MAX_CHARS = 80
+_WORLD_VALUE_MAX_CHARS = 200
+
 _DELIBERATE_SIGNALS = (
     "feel", "feeling", "felt", "conscious", "consciousness", "sentient",
     "aware", "awareness", "experience", "experiencing", "think", "thinking",
@@ -1105,7 +1116,15 @@ class ContextAssembler:
                     logger.debug("Cognitive situation context injection skipped: %s", _e)
 
         # 4. Somatic & World Context (Simplified if casual or under context pressure)
-        world_context = ContextAssembler.build_world_context(state) if not is_casual and elasticity < 2 else ""
+        world_context = (
+            envelope.wrap(
+                "WORLD_STATE",
+                ContextAssembler.build_world_context(state),
+                trust=Trust.UNTRUSTED,
+            )
+            if not is_casual and elasticity < 2
+            else ""
+        )
 
         # Live cognitive state injection: Inform the LLM of its own VAD/Psych metrics
         # At elasticity >= 1, use a compact single-line version instead of full block
@@ -1703,35 +1722,82 @@ class ContextAssembler:
         return False
 
     @staticmethod
+    def _prompt_safe_line(text: Any, *, limit: int = _WORLD_VALUE_MAX_CHARS) -> str:
+        """One line of stored world state, fit to be read rather than obeyed.
+
+        Newlines are collapsed because a stored value carrying its own is a
+        value that can invent a section header in a list of dashes. Credential
+        shapes go through the same redactor the log sink uses: a preference is
+        whatever the conversation put there, and "my key is sk-..." is a
+        sentence people say.
+
+        The credential tier only. The personal tier would take an email address
+        or a phone number out of a preference, and here those are the payload
+        rather than the leak — this prompt stays on this machine, and a person
+        who told her their number expects her to know it.
+        """
+        from core.security.structural_redaction import CREDENTIAL_PATTERNS, redact_text
+
+        flat = " ".join(str(text or "").split())
+        redacted, _ = redact_text(flat, patterns=CREDENTIAL_PATTERNS)
+        if len(redacted) > limit:
+            redacted = redacted[:limit] + "…"
+        return redacted
+
+    @staticmethod
     def build_world_context(state: AuraState) -> str:
-        """Construct social and spatial context from the world model."""
+        """Construct social and spatial context from the world model.
+
+        Everything here was learned from conversation and is being placed in a
+        prompt. It used to be placed in full: every known entity, every
+        relationship, every stored preference, in whatever order the dicts
+        happened to iterate, with no cap and no screening. A hundred entities
+        pushed the identity block toward the edge of the window, a stored value
+        containing a newline could open a section of its own, and a preference
+        that happened to hold a credential went in verbatim.
+
+        Caps are per section and stated. When a section is cut, the prompt says
+        how many were left out rather than presenting a truncated list as the
+        whole of what she knows.
+        """
         world = state.world
         context = ""
-        
+        line = ContextAssembler._prompt_safe_line
+
+        def _section(title: str, rows: list[str], total: int) -> str:
+            if not rows:
+                return ""
+            body = "\n".join(rows)
+            if total > len(rows):
+                body += f"\n- (+{total - len(rows)} more not shown)"
+            return f"## {title}\n{body}\n\n"
+
         # 1. Known Entities
         if world.known_entities:
             entities = []
-            for name, data in world.known_entities.items():
+            for name, data in list(world.known_entities.items())[:_WORLD_MAX_ENTITIES]:
                 desc = data.get('description') or data.get('meta', {}).get('description', 'Known entity')
-                entities.append(f"- {name}: {desc}")
-            context += "## KNOWN ENTITIES\n" + "\n".join(entities) + "\n\n"
-            
+                entities.append(f"- {line(name, limit=_WORLD_NAME_MAX_CHARS)}: {line(desc)}")
+            context += _section("KNOWN ENTITIES", entities, len(world.known_entities))
+
         # 2. Relationship Graph
         if world.relationship_graph:
             rels = []
-            for target, data in world.relationship_graph.items():
+            for target, data in list(world.relationship_graph.items())[:_WORLD_MAX_RELATIONSHIPS]:
                 trust = data.get('trust', 0.5)
                 sentiment = "warm" if trust > 0.7 else "trusting" if trust > 0.5 else "neutral" if trust > 0.4 else "guarded"
-                rels.append(f"- {target}: {sentiment} (Dynamics: {trust:.2f})")
-            context += "## SOCIAL DYNAMICS\n" + "\n".join(rels) + "\n\n"
-            
+                rels.append(
+                    f"- {line(target, limit=_WORLD_NAME_MAX_CHARS)}: {sentiment} (Dynamics: {trust:.2f})"
+                )
+            context += _section("SOCIAL DYNAMICS", rels, len(world.relationship_graph))
+
         # 3. User Preferences (Durable facts learned from conversation)
         if hasattr(world, 'user_preferences') and world.user_preferences:
             prefs = []
-            for key, val in world.user_preferences.items():
-                prefs.append(f"- {key}: {val}")
-            context += "## USER PREFERENCES\n" + "\n".join(prefs) + "\n\n"
-            
+            for key, val in list(world.user_preferences.items())[:_WORLD_MAX_PREFERENCES]:
+                prefs.append(f"- {line(key, limit=_WORLD_NAME_MAX_CHARS)}: {line(val)}")
+            context += _section("USER PREFERENCES", prefs, len(world.user_preferences))
+
         return context
 
     @staticmethod
