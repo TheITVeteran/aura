@@ -172,6 +172,10 @@ reachability:
 	@echo "🕸  Counting modules nothing reaches (ratchet: only shrinks)..."
 	@$(PYTHON) tools/lint_module_reachability.py
 
+script-targets:
+	@echo "📜 Checking that shell scripts name paths that exist..."
+	@$(PYTHON) tools/check_script_targets.py
+
 layering:
 	@echo "🏛  Checking architectural layering (DEPS include rules)..."
 	@$(PYTHON) tools/check_layering.py
@@ -364,7 +368,7 @@ smoke:
 	@$(PYTHON) -m pytest $(SMOKE_TEST_TARGETS)
 	@echo "✅ Smoke suite passed"
 
-quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit model-load-audit resource-observation-audit integration-liveness architecture-map compile lint governance-lint security typecheck smoke
+quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit shutdown-contract-audit gate-skill-closure-audit model-lane-contract-audit skill-catalog-audit skill-runtime-route-audit skill-portability-audit skill-readiness-audit model-load-audit resource-observation-audit integration-liveness architecture-map script-targets compile lint governance-lint security typecheck smoke
 	@echo "🏁 Quality gates passed"
 
 decisive:
