@@ -50009,3 +50009,27 @@ frontier, global-fusion and `WOW Signal` claims. A regression test prevents
 either `1.5B` or `32B` from being hardcoded into this model-agnostic protocol.
 The uncommitted positive artifact is superseded rather than re-signed. An exact
 clean-source rerun is required before resident promotion.
+
+## Checkpoint 2026-08-15-534: Preserve The Clean Resident Decode Result
+
+The exact CP533 eight-arm protocol was rerun from clean source commit
+`d511c161be442bafc218c5989e51ffcb6e474291` against the resident
+`Qwen2.5-32B-Instruct-4bit`. Its configuration and weight-index hashes are
+`c027829d800805358d67ac87819a3754fd8240be973f7147840651310fd30ae3`
+and `7b6da9b2b1f3ebd698ae15f9fcf6ba3099e742ec07e5d383f28b7cb77a4d16db`.
+The completed artifact records 240 model decodes over 30 fresh tasks.
+
+Treatment was exact on `30/30`. True ordinary decode and the matched structural
+wire baseline were each `0/30`. Initialization-matched tissue, no-write,
+no-read, reset-memory and matched-wrong-state controls were also each `0/30`.
+Treatment therefore converted all 30 ordinary-decode failures with no
+regressions, and every declared memory lesion removed the gain. The artifact
+receipt is `8109dbe0e78651c55130b081639a1fbece53e49532087dcc8984a1ca03aa3b2b`.
+
+A pre-commit independent reconstruction accepted all task, state, response,
+arm, gain-set and source/model identities. Its dirty-source flag is expected
+because this result was still untracked during that check. CP534 preserves the
+immutable measured artifact; a clean-source independent certificate and
+registered resident claim remain the next gate. This is bounded resident-32B
+causal transfer evidence, not open-domain or multi-domain reasoning, permanent
+weight fusion, frontier performance, or `WOW Signal`.

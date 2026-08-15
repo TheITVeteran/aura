@@ -294,3 +294,28 @@ boundary that refers to the cryptographically bound `model_identity`. A
 regression contract forbids `1.5B` and `32B` in that boundary. The raw positive
 run remains diagnostic only and is intentionally not checked in. The same
 eight-arm protocol must be rerun from clean CP533 before any resident claim.
+
+## CP534 addendum
+
+The clean CP533 resident-32B rerun completed all 240 model measurements over 30
+fresh tasks. Treatment was exact on 30/30. True ordinary decode, matched-wire
+decode, initialization-matched tissue, no-write, no-read, reset-memory and
+matched-wrong-state controls were each 0/30. The treatment converted all 30
+ordinary failures without regressing a success; every declared lesion removed
+the gain.
+
+The artifact binds clean measured source commit
+`d511c161be442bafc218c5989e51ffcb6e474291`, resident configuration hash
+`c027829d800805358d67ac87819a3754fd8240be973f7147840651310fd30ae3`,
+weight-index hash
+`7b6da9b2b1f3ebd698ae15f9fcf6ba3099e742ec07e5d383f28b7cb77a4d16db`
+and receipt
+`8109dbe0e78651c55130b081639a1fbece53e49532087dcc8984a1ca03aa3b2b`.
+Independent pre-commit reconstruction accepted the evidence; CP534 preserves
+the immutable measured artifact so the verifier can now issue a clean-source
+certificate.
+
+This closes the bounded resident model transfer measurement. It does not close
+independent certification, semantic multi-domain recurrence, powered broad
+replication, global runtime authority, permanent weight fusion, frontier
+reasoning or `WOW Signal`.
