@@ -49449,3 +49449,39 @@ attachment and matched processor/history lesions.
 CP486 is a negative bounded 1.5B mechanism result. It does not authorize an
 answer-level gain claim, resident-32B transfer, fusion, frontier reasoning or
 `WOW Signal`.
+
+## Checkpoint 2026-08-14-489: Make State Transitions Compute Typed Interactions
+
+CP486 proved that gated ordered history improves state retention while exact
+execution still collapses with depth. The remaining transition head combined
+state, action and history mostly through additive projections before one
+nonlinearity. It therefore had to discover operand selection, field binding
+and multiplicative transition algebra inside the same narrow activation.
+
+The recurrent controller now has a dedicated typed state-register processor.
+Committed categorical state and action values enter through an identity-
+preserving one-hot representation when rank permits and deterministic Fourier
+features otherwise. Independent typed projections expose current state, two
+action views and recurrent history. The processor explicitly supplies
+state-action, action-action, state-history and three-way action/history
+products to a register-specific nonlinear core before producing categorical
+state logits. It remains a learned processor: no target answer, private trace
+or task-specific result enters the forward path.
+
+The processor attaches through an exact-zero output projection. Bootstrap
+accepts only the complete new tensor family, refuses partial or active
+attachments, records every tensor digest and preserves every parent tensor.
+Transition optimization owns the new parameters. An independent processor
+lesion removes only this contribution without switching interpreters or
+removing the existing history tape.
+
+Contracts cover exact no-op attachment, categorical state/action/history
+sensitivity, independent lesion behavior, deterministic parameter identity,
+bootstrap inventory and activity refusal, full legacy-parent extension,
+gradient ownership and trust-bound clipping. The recurrence, objective and
+trainer suites pass `175/175`; compilation, Ruff and diff integrity pass.
+
+This checkpoint establishes a higher-capacity trainable transition mechanism,
+not a capability result. A source-bound 1.5B acquisition campaign must exceed
+CP486 on exact unseen processes and then survive matched processor and history
+lesions before answer-level or resident-32B work resumes.

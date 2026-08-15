@@ -80,6 +80,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
     TRANSITION_MEMORY_PARAMETER_NAMES,
+    TRANSITION_PROCESSOR_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
     unified_recurrent_hidden_states,
@@ -1110,6 +1111,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.state_literal_copy_logit",
             "controller.state_action_projection",
             "controller.transition_memory_",
+            "controller.transition_processor_",
         )
     ):
         return "typed_state_transition"
@@ -3281,6 +3283,12 @@ def _bootstrap_bundle_from_checkpoint(
             child_values,
         )
     )
+    bundle_values, transition_processor_extension = (
+        _merge_bootstrap_transition_processor_extension(
+            bundle_values,
+            child_values,
+        )
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -3330,6 +3338,8 @@ def _bootstrap_bundle_from_checkpoint(
         result["action_literal_binding_extension"] = action_literal_binding_extension
     if transition_memory_extension is not None:
         result["transition_memory_extension"] = transition_memory_extension
+    if transition_processor_extension is not None:
+        result["transition_processor_extension"] = transition_processor_extension
     return result
 
 
@@ -3750,6 +3760,57 @@ def _merge_bootstrap_transition_memory_extension(
         "behavior_before_training_preserved": True,
         "field_order": list(ACTION_SLOT_NAMES),
         "state_register_order": list(STATE_SLOT_NAMES),
+        "future_action_visible": False,
+        "private_transition_trace_visible": False,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
+def _merge_bootstrap_transition_processor_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach the typed state/action processor as an exact parent no-op."""
+
+    expected = {f"controller.{name}" for name in TRANSITION_PROCESSOR_PARAMETER_NAMES}
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap transition-processor inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap transition-processor source differs"
+            )
+        value = child_values[name]
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    output_name = "controller.transition_processor_output"
+    if bool(mx.any(migrated[output_name] != 0)):
+        raise RuntimeError(
+            "unified recurrence bootstrap transition processor is not a no-op"
+        )
+    return migrated, {
+        "schema": "aura.unified_intrinsic.transition_processor_extension.v1",
+        "migration_rule": (
+            "parent_exact_plus_zero_output_typed_state_action_history_processor"
+        ),
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "category_identity": "exact_one_hot_or_deterministic_fourier",
+        "state_register_order": list(STATE_SLOT_NAMES),
+        "action_field_order": list(ACTION_SLOT_NAMES),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
         "new_tensor_names": sorted(expected),

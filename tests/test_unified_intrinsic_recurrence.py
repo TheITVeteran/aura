@@ -1125,6 +1125,122 @@ def test_typed_transition_memory_preserves_field_identity_and_order() -> None:
     assert not bool(mx.allclose(forward, field_swapped))
 
 
+def test_typed_transition_processor_attaches_as_exact_noop() -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    logits = controller.typed_transition_processor_logits(state, action, None)
+
+    mx.eval(logits)
+    assert logits.shape == state.shape
+    assert bool(mx.all(logits == 0))
+
+
+def test_typed_transition_processor_preserves_state_action_and_history_identity() -> None:
+    controller = _controller()
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(119),
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    changed_state = controller.exact_probabilities(
+        (0, 8, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    changed_action = controller.exact_probabilities(
+        (8, 1, 2, 0, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    history = mx.random.normal(
+        (1, controller.config.state_slots, controller.config.correction_rank),
+        key=mx.random.key(120),
+    )
+
+    baseline = controller.typed_transition_processor_logits(state, action, history)
+    state_changed = controller.typed_transition_processor_logits(
+        changed_state, action, history
+    )
+    action_changed = controller.typed_transition_processor_logits(
+        state, changed_action, history
+    )
+    history_changed = controller.typed_transition_processor_logits(
+        state, action, history + 1.0
+    )
+
+    mx.eval(baseline, state_changed, action_changed, history_changed)
+    assert not bool(mx.allclose(baseline, state_changed))
+    assert not bool(mx.allclose(baseline, action_changed))
+    assert not bool(mx.allclose(baseline, history_changed))
+
+
+def test_typed_transition_processor_has_an_independent_lesion() -> None:
+    controller = _controller()
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(121),
+    )
+    problem = mx.random.normal((1, 7, 64), key=mx.random.key(122))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(123))
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    action_state = controller.commit_action_probabilities(action)
+
+    intact = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=action_state,
+        state_probabilities=state,
+        action_probabilities=action,
+        action_probability_history=(action,),
+        microcode_lesion=True,
+    )
+    lesioned = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=action_state,
+        state_probabilities=state,
+        action_probabilities=action,
+        action_probability_history=(action,),
+        microcode_lesion=True,
+        transition_processor_lesion=True,
+    )
+
+    mx.eval(intact, lesioned)
+    assert not bool(mx.allclose(intact, lesioned))
+
+
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
     controller = _controller()
     candidate = mx.zeros((1, 12, 64), dtype=mx.float32)

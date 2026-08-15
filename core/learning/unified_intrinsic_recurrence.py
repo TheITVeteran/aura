@@ -142,6 +142,16 @@ TRANSITION_MEMORY_PARAMETER_NAMES: Final = (
     "transition_memory_depth",
     "transition_memory_output",
 )
+TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
+    "transition_processor_state_projection",
+    "transition_processor_action_left",
+    "transition_processor_action_right",
+    "transition_processor_history_projection",
+    "transition_processor_interaction_up",
+    "transition_processor_interaction_bias",
+    "transition_processor_interaction_down",
+    "transition_processor_output",
+)
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
     "identity",
     "unsigned_radix_low",
@@ -389,6 +399,17 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x54524D45),
             num=10,
+        )
+        (
+            key_transition_processor_state,
+            key_transition_processor_action_left,
+            key_transition_processor_action_right,
+            key_transition_processor_history,
+            key_transition_processor_up,
+            key_transition_processor_down,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x54505243),
+            num=6,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -712,6 +733,87 @@ class UnifiedRecurrentController(nn.Module):
                 config.action_slots,
                 config.correction_rank,
                 config.correction_rank,
+            ),
+            dtype=mx.float32,
+        )
+        # Preserve exact categorical identity before learning the transition
+        # algebra. The old state head added independently projected state and
+        # action summaries, forcing one tanh to discover every operand
+        # interaction. This processor receives deterministic category features
+        # and exposes state/action/history products explicitly. Its final head
+        # starts at exact zero, so attaching it cannot change parent behavior.
+        processor_scale = 1.0 / math.sqrt(config.correction_rank)
+        self.transition_processor_state_projection = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.correction_rank,
+                    config.correction_rank,
+                ),
+                key=key_transition_processor_state,
+            ).astype(mx.float32)
+            * processor_scale
+        )
+        processor_action_shape = (
+            config.state_slots,
+            config.action_slots,
+            config.correction_rank,
+            config.correction_rank,
+        )
+        self.transition_processor_action_left = (
+            mx.random.normal(
+                processor_action_shape,
+                key=key_transition_processor_action_left,
+            ).astype(mx.float32)
+            / math.sqrt(config.action_slots * config.correction_rank)
+        )
+        self.transition_processor_action_right = (
+            mx.random.normal(
+                processor_action_shape,
+                key=key_transition_processor_action_right,
+            ).astype(mx.float32)
+            / math.sqrt(config.action_slots * config.correction_rank)
+        )
+        self.transition_processor_history_projection = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.correction_rank,
+                    config.correction_rank,
+                ),
+                key=key_transition_processor_history,
+            ).astype(mx.float32)
+            * processor_scale
+        )
+        processor_width = 4 * config.correction_rank
+        interaction_width = 9 * config.correction_rank
+        self.transition_processor_interaction_up = (
+            mx.random.normal(
+                (config.state_slots, interaction_width, processor_width),
+                key=key_transition_processor_up,
+            ).astype(mx.float32)
+            / math.sqrt(interaction_width)
+        )
+        self.transition_processor_interaction_bias = mx.zeros(
+            (config.state_slots, processor_width),
+            dtype=mx.float32,
+        )
+        self.transition_processor_interaction_down = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    processor_width,
+                    config.correction_rank,
+                ),
+                key=key_transition_processor_down,
+            ).astype(mx.float32)
+            / math.sqrt(processor_width)
+        )
+        self.transition_processor_output = mx.zeros(
+            (
+                config.state_slots,
+                config.correction_rank,
+                config.state_cardinality,
             ),
             dtype=mx.float32,
         )
@@ -1896,6 +1998,128 @@ class UnifiedRecurrentController(nn.Module):
             self.transition_memory_output,
         )
 
+    def _categorical_identity_features(self, probabilities: Any) -> Any:
+        """Encode committed categories without learning away their identity."""
+
+        if len(probabilities.shape) != 3:
+            raise ValueError("typed categorical probabilities differ")
+        cardinality = int(probabilities.shape[-1])
+        rank = self.config.correction_rank
+        if rank >= cardinality:
+            padding = mx.zeros(
+                (*probabilities.shape[:-1], rank - cardinality),
+                dtype=probabilities.dtype,
+            )
+            return mx.concatenate((probabilities, padding), axis=-1).astype(mx.float32)
+        categories = mx.arange(cardinality, dtype=mx.float32)[:, None]
+        dimensions = mx.arange(rank, dtype=mx.float32)[None, :]
+        frequencies = mx.floor(dimensions / 2.0) + 1.0
+        angles = (
+            2.0
+            * math.pi
+            * categories
+            * frequencies
+            / float(cardinality)
+        )
+        even = (mx.arange(rank) % 2) == 0
+        basis = mx.where(even[None, :], mx.sin(angles), mx.cos(angles))
+        return mx.einsum(
+            "bnc,cr->bnr",
+            probabilities.astype(mx.float32),
+            basis,
+        )
+
+    def typed_transition_processor_logits(
+        self,
+        state_probabilities: Any,
+        action_probabilities: Any,
+        history_memory: Any | None,
+    ) -> Any:
+        """Compute one register transition from typed state, action and history."""
+
+        if state_probabilities.shape[1:] != (
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ) or action_probabilities.shape[1:] != (
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("typed transition processor categories differ")
+        if int(state_probabilities.shape[0]) != int(action_probabilities.shape[0]):
+            raise ValueError("typed transition processor batch differs")
+        if history_memory is None:
+            history_memory = mx.zeros(
+                (
+                    int(state_probabilities.shape[0]),
+                    self.config.state_slots,
+                    self.config.correction_rank,
+                ),
+                dtype=mx.float32,
+            )
+        if history_memory.shape != (
+            int(state_probabilities.shape[0]),
+            self.config.state_slots,
+            self.config.correction_rank,
+        ):
+            raise ValueError("typed transition processor history differs")
+
+        state_identity = self._categorical_identity_features(state_probabilities)
+        action_identity = self._categorical_identity_features(action_probabilities)
+        state = mx.einsum(
+            "bsi,sio->bso",
+            state_identity,
+            self.transition_processor_state_projection,
+        )
+        action_left = mx.einsum(
+            "bai,saio->bso",
+            action_identity,
+            self.transition_processor_action_left,
+        )
+        action_right = mx.einsum(
+            "bai,saio->bso",
+            action_identity,
+            self.transition_processor_action_right,
+        )
+        history = mx.einsum(
+            "bsi,sio->bso",
+            history_memory.astype(mx.float32),
+            self.transition_processor_history_projection,
+        )
+        interactions = mx.concatenate(
+            (
+                state,
+                action_left,
+                action_right,
+                history,
+                state * action_left,
+                state * action_right,
+                action_left * action_right,
+                state * history,
+                action_left * action_right * history,
+            ),
+            axis=-1,
+        )
+        expanded = nn.gelu(
+            mx.einsum(
+                "bsi,sio->bso",
+                interactions,
+                self.transition_processor_interaction_up,
+            )
+            + self.transition_processor_interaction_bias[None, :, :]
+        )
+        processed = nn.gelu(
+            mx.einsum(
+                "bsi,sio->bso",
+                expanded,
+                self.transition_processor_interaction_down,
+            )
+        )
+        return mx.einsum(
+            "bsr,src->bsc",
+            processed,
+            self.transition_processor_output,
+        )
+
     def state_transition_logits(
         self,
         problem_evidence: Any,
@@ -1908,11 +2132,15 @@ class UnifiedRecurrentController(nn.Module):
         action_probabilities: Any | None = None,
         action_probability_history: Sequence[Any] | None = None,
         microcode_lesion: bool = False,
+        transition_processor_lesion: bool = False,
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
 
-        if type(microcode_lesion) is not bool:
-            raise TypeError("microcode lesion flag must be bool")
+        if (
+            type(microcode_lesion) is not bool
+            or type(transition_processor_lesion) is not bool
+        ):
+            raise TypeError("transition lesion flags must be bools")
 
         if (
             len(problem_evidence.shape) != 3
@@ -1942,6 +2170,7 @@ class UnifiedRecurrentController(nn.Module):
         )
         depth = self.depth_features(step) @ self.state_transition_depth
         features = mx.tanh(context + self_state + depth[None, None, :])
+        typed_memory = None
         if action_probability_history is not None:
             if not action_probability_history or any(
                 tuple(item.shape)
@@ -2008,6 +2237,16 @@ class UnifiedRecurrentController(nn.Module):
             features,
             self.state_transition_output,
         ) + self.state_transition_bias
+        if (
+            not transition_processor_lesion
+            and state_probabilities is not None
+            and action_probabilities is not None
+        ):
+            learned_logits = learned_logits + self.typed_transition_processor_logits(
+                state_probabilities,
+                action_probabilities,
+                typed_memory,
+            )
         if microcode_lesion:
             return learned_logits
         if state_probabilities is None or action_probabilities is None:
@@ -3237,6 +3476,7 @@ class UnifiedRecurrentController(nn.Module):
             *ACTION_LITERAL_BINDING_PARAMETER_NAMES,
             "state_action_projection",
             *TRANSITION_MEMORY_PARAMETER_NAMES,
+            *TRANSITION_PROCESSOR_PARAMETER_NAMES,
             "literal_value_embeddings",
             "literal_grounding_logit",
             "state_literal_copy_logit",
@@ -3276,6 +3516,20 @@ class UnifiedRecurrentController(nn.Module):
                 "private_transition_trace_visible": False,
                 "bootstrap_contract": "zero_output_exact_parent_noop",
                 "output_active": bool(mx.any(self.transition_memory_output != 0)),
+            },
+            "state_transition_processor": {
+                "architecture": "typed_categorical_higher_order_register_processor",
+                "category_identity": "exact_one_hot_or_deterministic_fourier",
+                "interactions": [
+                    "state_action",
+                    "action_action",
+                    "state_history",
+                    "action_action_history",
+                ],
+                "bootstrap_contract": "zero_output_exact_parent_noop",
+                "output_active": bool(mx.any(self.transition_processor_output != 0)),
+                "lesionable": True,
+                "private_transition_trace_visible": False,
             },
             "numeric_observation": {
                 "max_value": self.config.numeric_observation_max_value,
@@ -3408,6 +3662,7 @@ def unified_recurrent_hidden_states(
     family_action_lesion: bool = False,
     action_literal_binding_lesion: bool = False,
     microcode_lesion: bool = False,
+    transition_processor_lesion: bool = False,
     transition_history_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
@@ -3427,6 +3682,7 @@ def unified_recurrent_hidden_states(
         or type(family_action_lesion) is not bool
         or type(action_literal_binding_lesion) is not bool
         or type(microcode_lesion) is not bool
+        or type(transition_processor_lesion) is not bool
         or type(transition_history_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
@@ -3686,6 +3942,7 @@ def unified_recurrent_hidden_states(
                         else action_probability_history
                     ),
                     microcode_lesion=microcode_lesion,
+                    transition_processor_lesion=transition_processor_lesion,
                 )
                 next_state_probabilities = (
                     controller.straight_through_probabilities(state_logits)
@@ -4092,6 +4349,7 @@ __all__ = [
     "MAX_PROCESS_INTEGER",
     "PROCESS_RADIX",
     "TRANSITION_MEMORY_PARAMETER_NAMES",
+    "TRANSITION_PROCESSOR_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",
