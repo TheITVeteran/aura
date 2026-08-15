@@ -50,6 +50,67 @@ _CONSTITUTIVE_ORIGINS = frozenset({
 _NUCLEUS_MODEL_TYPES = frozenset({"brainstem", "cortex"})
 
 
+#: Sequences that end a stream. ChatML role markers are the important ones: a
+#: model that starts writing the next turn was streaming it to the consumer as
+#: its own answer, because nothing looked.
+_STREAM_STOP_SEQUENCES = (
+    "<|im_end|>",
+    "<|im_start|>",
+    "\nuser:",
+    "\nUser:",
+    "\nsystem:",
+    "\nSystem:",
+)
+
+#: How many chunks may sit unread before the producer waits. An unbounded queue
+#: let a fast model outrun a slow consumer and retain every chunk it had ever
+#: produced.
+_STREAM_QUEUE_HIGH_WATER = 64
+_STREAM_BACKPRESSURE_SLEEP_S = 0.01
+
+#: Longest assistant prefill a caller may supply. It is an opening, not an
+#: answer, and it was previously unbounded.
+_MAX_PREFILL_CHARS = 2000
+
+#: Wall-clock bounds on one generation. The GPU sentinel bounds how long a call
+#: waits to START; nothing bounded how long it could then run.
+_DEFAULT_GENERATION_BUDGET_S = 180.0
+_MIN_GENERATION_BUDGET_S = 5.0
+_MAX_GENERATION_BUDGET_S = 900.0
+
+
+def _bounded_prefill(value: Any) -> str:
+    """A caller-supplied assistant prefill, made safe to interpolate.
+
+    ``prefill`` went from kwargs straight into the ChatML assistant turn with
+    no type check and no length bound: a non-string raised inside prompt
+    formatting, and a large one consumed the window before the model saw the
+    user's message. A prefill is an OPENING, so it is bounded like one.
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text[:_MAX_PREFILL_CHARS]
+
+
+def _accepted_generation_budget_s(requested: Any) -> float:
+    """Wall-clock bound on one generation, clamped to what is servable."""
+    try:
+        seconds = float(requested)
+    except (TypeError, ValueError):
+        return _DEFAULT_GENERATION_BUDGET_S
+    if not math.isfinite(seconds) or seconds <= 0.0:
+        return _DEFAULT_GENERATION_BUDGET_S
+    return max(_MIN_GENERATION_BUDGET_S, min(seconds, _MAX_GENERATION_BUDGET_S))
+
+
+def _stream_stop_index(emitted: str) -> int | None:
+    """Where the stream should stop, if a stop sequence has appeared."""
+    cuts = [emitted.find(seq) for seq in _STREAM_STOP_SEQUENCES]
+    hits = [c for c in cuts if c >= 0]
+    return min(hits) if hits else None
+
+
 def _with_requested_lane(kwargs: dict[str, Any], model: str | None) -> dict[str, Any]:
     """Carry the caller's requested model into lane selection.
 
@@ -676,7 +737,7 @@ class NucleusManager(LLMProvider):
                         final_prompt = self._format_prompt(
                             p,
                             s,
-                            prefill=kwargs.get("prefill"),
+                            prefill=_bounded_prefill(kwargs.get("prefill")),
                         )
 
                         return generate(
@@ -690,10 +751,36 @@ class NucleusManager(LLMProvider):
                     finally:
                         sentinel.release()
 
-            response = await run_owned_model_thread_call(
-                _generate_locked,
-                operation_name=f"nucleus-{model_type}-generate",
-            )
+            # After the 60s sentinel acquisition, generation and token
+            # iteration had no wall-clock bound at all: a wedged model call
+            # held the non-preemptible lane for as long as it took, and the
+            # caller waited with it. mlx generation cannot be interrupted
+            # mid-call, so this cannot kill the work — what it can do is stop
+            # the caller waiting forever, say so, and mark the lane, which is
+            # the difference between a slow answer and a runtime that has
+            # silently stopped answering.
+            budget = _accepted_generation_budget_s(kwargs.get("deadline_s"))
+            try:
+                response = await asyncio.wait_for(
+                    run_owned_model_thread_call(
+                        _generate_locked,
+                        operation_name=f"nucleus-{model_type}-generate",
+                    ),
+                    timeout=budget,
+                )
+            except TimeoutError:
+                entry = self._ensure_model_entry(model_type)
+                entry["last_error"] = f"generation exceeded {budget:.0f}s"
+                _record_nucleus_degradation(
+                    TimeoutError(f"nucleus {model_type} generation exceeded {budget:.0f}s"),
+                    action=(
+                        "stopped waiting on a generation that had not returned; the model "
+                        "thread is not preemptible and may still be unwinding"
+                    ),
+                    severity="degraded",
+                    extra={"model": model_type, "origin": origin, "phase": "text_generate"},
+                )
+                return "[NUCLEUS ERROR] Generation exceeded its time budget."
             return response.strip()
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
             entry = self._ensure_model_entry(model_type)
@@ -762,7 +849,9 @@ class NucleusManager(LLMProvider):
             from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
             with self._model_thread_context(model_type) as (model_entry, model, tokenizer):
                 p, s = self._apply_anchor(prompt, system_prompt, model_type)
-                full_prompt = self._format_prompt(p, s, prefill=kwargs.get("prefill"))
+                full_prompt = self._format_prompt(
+                    p, s, prefill=_bounded_prefill(kwargs.get("prefill"))
+                )
                 tokens = mx.array(tokenizer.encode(full_prompt))
 
                 # A cache belongs to this exact model instance and operation.
@@ -802,6 +891,7 @@ class NucleusManager(LLMProvider):
 
                 try:
                     cache = model_entry.get("cache")
+                    emitted = ""
                     for response in generate_step(
                         model,
                         tokenizer,
@@ -822,6 +912,18 @@ class NucleusManager(LLMProvider):
                             yield "... [Pausing for sensory reflex] ..."
                             break
 
+                        # The stream yielded raw text until EOS with no stop
+                        # sequences and no role-continuation check, so a model
+                        # that began writing the next turn ("<|im_start|>user")
+                        # streamed that to the consumer as its own answer.
+                        emitted += response.text
+                        cut = _stream_stop_index(emitted)
+                        if cut is not None:
+                            tail = emitted[:cut][len(emitted) - len(response.text) :]
+                            if tail:
+                                yield tail
+                            break
+
                         yield response.text
                         if response.count >= max_tokens:
                             yield "\n\n[MAX_TOKENS_REACHED]"
@@ -838,20 +940,51 @@ class NucleusManager(LLMProvider):
         queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
+        def _post(item: Any) -> None:
+            """Hand one item to the consumer, or give up on the consumer.
+
+            call_soon_threadsafe raises once the loop is closed. That happened
+            inside the sentinel post as readily as inside a chunk post, so a
+            consumer that went away could leave the worker unable to say it had
+            finished — and the next consumer of this queue blocked on get().
+            """
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+            except RuntimeError:
+                stop_event.set()
+
         def _thread_worker():
+            # The sentinel is posted in `finally`. The handler used to catch
+            # four exception classes, so an OSError, an ImportError, a
+            # TimeoutError, a cancellation or a closed loop exited the thread
+            # without enqueueing None — and the consumer's `await queue.get()`
+            # waited forever for a producer that had already died.
             try:
                 for chunk in _stream_gen():
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
-                loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    if stop_event.is_set():
+                        break
+                    _post(chunk)
+                    # Backpressure. put_nowait into an unbounded queue let a
+                    # fast model outrun a slow consumer and retain every chunk
+                    # it had ever produced. Pausing the producer costs latency;
+                    # not pausing it cost memory without a ceiling.
+                    while (
+                        queue.qsize() >= _STREAM_QUEUE_HIGH_WATER
+                        and not stop_event.is_set()
+                    ):
+                        time.sleep(_STREAM_BACKPRESSURE_SLEEP_S)
+            except BaseException as e:  # noqa: BLE001 — the sentinel must be posted
                 _record_nucleus_degradation(
-                    e,
+                    e if isinstance(e, Exception) else RuntimeError(str(e) or type(e).__name__),
                     action="ended stream from worker thread with explicit nucleus error marker",
                     extra={"model": model_type, "origin": origin, "phase": "stream_worker"},
                 )
                 logger.error("Nucleus stream thread failed: %s", e)
-                loop.call_soon_threadsafe(queue.put_nowait, f"[NUCLEUS ERROR] {e}")
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                _post(f"[NUCLEUS ERROR] {type(e).__name__}")
+                if isinstance(e, BaseException) and not isinstance(e, Exception):
+                    raise
+            finally:
+                _post(None)
 
         # Run in executor to avoid blocking the loop
         worker_task = fire_and_forget(
