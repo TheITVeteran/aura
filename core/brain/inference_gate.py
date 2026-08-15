@@ -9639,11 +9639,25 @@ class InferenceGate:
                 context["trust_level"] = getattr(_trust_level, "name", str(_trust_level))
                 if hasattr(state, "cognition") and hasattr(state.cognition, "modifiers"):
                     state.cognition.modifiers["trust_level"] = _trust_level
+                    from core.runtime.principal_context import (
+                        current_relational_principal,
+                        relational_principal_scope_is_bound,
+                    )
+
                     state.cognition.modifiers["trust_level_binding"] = {
                         "session_id": str(context.get("session_id", "") or ""),
                         "origin": str(origin or ""),
                         "recognized_at": time.time(),
                         "level": getattr(_trust_level, "name", str(_trust_level)),
+                        # Whose recognition this was, taken from the
+                        # request-scoped principal rather than from anything in
+                        # the shared state. The assembler re-reads the same
+                        # context var and refuses elevation when the two
+                        # disagree, so a fabricated modifier has to also be
+                        # running inside the right principal scope, which state
+                        # construction cannot arrange.
+                        "principal": current_relational_principal(),
+                        "principal_scope_bound": relational_principal_scope_is_bound(),
                     }
 
                 # Block tool use for untrusted sessions

@@ -49,6 +49,30 @@ _WORLD_MAX_PREFERENCES = 32
 _WORLD_NAME_MAX_CHARS = 80
 _WORLD_VALUE_MAX_CHARS = 200
 
+_BLACK_BOX_RECEIPT_SCHEMA = "aura.context_assembler.black_box_receipt.v1"
+
+#: Section titles that carry textual state — the exact thing the black-box
+#: condition exists to keep out of the prompt. Checked against the assembled
+#: prompt, so the condition is a measurement rather than a claim. Titles, not
+#: prose: they are what this module writes, so they are what it can look for
+#: without guessing at the model's phrasing.
+#:
+#: Every entry is copied from a literal this module actually emits, and a test
+#: asserts that. A first draft of this tuple guessed "## SOMATIC" and
+#: "## PHENOMENAL"; neither string is written anywhere, so both were markers
+#: that could never match — a check that always passes, which is the failure
+#: this receipt exists to prevent.
+_BLACK_BOX_STATE_MARKERS = (
+    "## AURA NOW",
+    "## CURRENT VIBE",
+    "## CURRENT STATE",
+    "## COGNITIVE TELEMETRY",
+    "## FELT THOUGHT",
+    "## META-AWARENESS",
+    "## BODY AWARENESS (PROPRIOCEPTION)",
+    "[CURRENT FUNCTIONAL STATE]",
+)
+
 _DELIBERATE_SIGNALS = (
     "feel", "feeling", "felt", "conscious", "consciousness", "sentient",
     "aware", "awareness", "experience", "experiencing", "think", "thinking",
@@ -83,6 +107,12 @@ class ContextAssembler:
         state, but the LLM does not get textual descriptions of mood,
         neurochemistry, phi, somatic telemetry, or phenomenal reports. This is
         the black-box condition required by the causal-exclusion critique.
+
+        Turning the condition ON is a request. Whether it HELD is a separate
+        question, answered by :meth:`black_box_receipt` against the prompt that
+        was actually built — an experiment that reads this boolean is reading a
+        caller's intention, and a condition proven by the flag that requests it
+        proves nothing about the run.
         """
         try:
             mods = getattr(state, "response_modifiers", {}) or {}
@@ -92,6 +122,42 @@ class ContextAssembler:
             pass  # no-op: intentional
         return os.environ.get("AURA_BLACK_BOX_STEERING", "").strip().lower() in {
             "1", "true", "yes", "on"
+        }
+
+    @classmethod
+    def black_box_receipt(cls, state: AuraState, prompt: str) -> dict[str, Any]:
+        """What the black-box condition actually did to this prompt.
+
+        The condition was a caller modifier or an environment variable and
+        nothing more: any state construction could claim it, and no artifact
+        recorded whether the state text it is supposed to exclude was in fact
+        excluded. A causal-exclusion result rests entirely on that exclusion
+        having happened, so it is measured here against the assembled prompt
+        rather than asserted by whatever asked for it.
+        """
+        requested = cls._black_box_steering_enabled(state)
+        mods = getattr(state, "response_modifiers", {}) or {}
+        if isinstance(mods, dict) and (
+            mods.get("black_box_steering") or mods.get("no_state_prompt_leakage")
+        ):
+            source = "response_modifier"
+        elif requested:
+            source = "environment"
+        else:
+            source = "not_requested"
+
+        text = str(prompt or "")
+        leaked = sorted(
+            marker for marker in _BLACK_BOX_STATE_MARKERS if marker in text
+        )
+        return {
+            "schema": _BLACK_BOX_RECEIPT_SCHEMA,
+            "requested": requested,
+            "source": source,
+            "held": bool(requested and not leaked),
+            "leaked_markers": leaked,
+            "checked_markers": list(_BLACK_BOX_STATE_MARKERS),
+            "prompt_sha256": ContextAssembler._content_digest(text),
         }
 
     @staticmethod
@@ -1288,16 +1354,46 @@ class ContextAssembler:
                 recognized_at > 0.0
                 and (time.time() - recognized_at) <= _TRUST_BINDING_MAX_AGE_S
             )
-            elevated_trust = fresh and _trust_level in (
+            # Freshness alone only stops a level being INHERITED. Anything that
+            # can write response modifiers can write a recent timestamp too, so
+            # the binding also has to name the principal recognition was granted
+            # to, and that name has to match the principal this request is
+            # actually running under — a context variable, not shared state.
+            # State construction can fabricate the modifier; it cannot arrange
+            # to be executing inside the right principal scope.
+            from core.runtime.principal_context import (
+                current_relational_principal,
+                relational_principal_scope_is_bound,
+            )
+
+            bound_principal = ""
+            if isinstance(binding, dict):
+                bound_principal = str(binding.get("principal", "") or "")
+            live_principal = current_relational_principal()
+            principal_matches = bool(
+                relational_principal_scope_is_bound()
+                and live_principal
+                and bound_principal == live_principal
+            )
+            elevated_trust = (
+                fresh
+                and principal_matches
+                and _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED)
+            )
+            if not elevated_trust and _trust_level in (
                 TrustLevel.SOVEREIGN,
                 TrustLevel.TRUSTED,
-            )
-            if not fresh and _trust_level in (TrustLevel.SOVEREIGN, TrustLevel.TRUSTED):
+            ):
+                reason = (
+                    "no fresh request binding"
+                    if not fresh
+                    else "binding principal does not match this request's principal"
+                )
                 record_degradation(
                     "context_assembler.trust",
-                    RuntimeError("elevated trust level has no fresh request binding"),
+                    RuntimeError(f"elevated trust level refused: {reason}"),
                     severity="warning",
-                    action="used guest prompt policy for an unbound elevated trust level",
+                    action="used guest prompt policy for an unverified elevated trust level",
                 )
         except (ImportError, AttributeError, TypeError, ValueError) as exc:
             record_degradation(
