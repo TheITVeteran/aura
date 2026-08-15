@@ -19,13 +19,16 @@ import re
 import secrets
 import statistics
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from core.brain.canonical_json import canonical_json_bytes
+from core.brain.canonical_json import (
+    CANONICAL_JSON_PROFILE,
+    canonical_json_bytes,
+)
 
 PROTOCOL_VERSION = 5
 MAX_CHALLENGE_LIFETIME_S = 3_600.0
@@ -36,6 +39,11 @@ MAX_CHALLENGE_CLOCK_SKEW_S = 30.0
 # a promise nobody has to keep on any schedule is not one. The same hour the
 # revealed challenge is allowed to live is the bound on how long it may wait.
 MAX_CHALLENGE_COMMIT_AGE_S = 3_600.0
+# A release attestation was valid forever: issued_at_unix only had to be finite
+# and non-negative, so a compromised or long-obsolete release key kept vouching
+# for source identity indefinitely. Ninety days is the interval a release is
+# expected to be re-attested within; a revoked key is refused outright.
+MAX_RELEASE_ATTESTATION_AGE_S = 90.0 * 24.0 * 3_600.0
 # Protocol bounds on the trend test. Callers supply these, so they are the
 # knobs an interested party would turn to manufacture eligibility: a zero
 # run floor, a negative effect floor, or an alpha above one all make
@@ -83,6 +91,11 @@ MATCHED_BUDGET: dict[str, Any] = {
 PROTOCOL_MANIFEST_BODY: dict[str, Any] = {
     "schema": PROTOCOL_MANIFEST_SCHEMA,
     "protocol_version": PROTOCOL_VERSION,
+    # Every digest and signature in this protocol is taken over bytes produced
+    # by one canonicalization. Naming it means a verifier in another language
+    # can tell whether it agrees, instead of discovering a disagreement as a
+    # failed signature.
+    "canonical_json_profile": CANONICAL_JSON_PROFILE,
     "budget": MATCHED_BUDGET,
     "execution": {
         "fresh_generation_process": True,
@@ -452,8 +465,7 @@ def validate_effective_runtime_manifest(raw: Any) -> dict[str, Any]:
             raise ValueError(f"effective runtime {field_name} is malformed")
         for digest in values:
             require_sha256(digest, field_name=field_name)
-    if not isinstance(manifest.get("modifiers"), dict):
-        raise ValueError("effective runtime modifiers are malformed")
+    _validate_runtime_modifiers(manifest.get("modifiers"))
     if manifest.get("cache_policy") != {
         "prompt_cache": "disabled",
         "result_cache": "disabled",
@@ -478,11 +490,56 @@ def validate_effective_runtime_manifest(raw: Any) -> dict[str, Any]:
     return manifest
 
 
+# The modifiers a matched run may declare, and the ONLY values they may hold.
+# The field previously had to be a dict and nothing else, so arbitrary
+# steering, retrieval, prompt injection, hidden adapters, feature flags and
+# non-finite values could ride in it while materially changing generation —
+# under a budget that pins temperature and top-p exactly. A modifier is by
+# definition something that changes the function both sides are supposed to
+# share, so each admitted key exists to declare that an extra lane is OFF.
+MATCHED_RUNTIME_MODIFIERS: dict[str, Any] = {
+    "contrastive_decoding": False,
+    "recurrent_loops": 1,
+}
+
+
+def _validate_runtime_modifiers(raw: Any) -> None:
+    """Require exactly the matched modifier set, at exactly its matched values."""
+
+    if not isinstance(raw, dict):
+        raise ValueError("effective runtime modifiers are malformed")
+    if set(raw) != set(MATCHED_RUNTIME_MODIFIERS):
+        undeclared = sorted(set(raw) - set(MATCHED_RUNTIME_MODIFIERS))
+        missing = sorted(set(MATCHED_RUNTIME_MODIFIERS) - set(raw))
+        raise ValueError(
+            "effective runtime modifier set is not the matched one"
+            + (f"; undeclared: {','.join(undeclared[:4])}" if undeclared else "")
+            + (f"; missing: {','.join(missing[:4])}" if missing else "")
+        )
+    for key, expected in MATCHED_RUNTIME_MODIFIERS.items():
+        value = raw[key]
+        # `1 == True` in Python, so the type has to be checked before equality
+        # or a boolean passes for a loop count and the reverse.
+        if type(value) is not type(expected) or value != expected:
+            raise ValueError(
+                f"effective runtime modifier {key} is not the matched value"
+            )
+
+
 def validate_source_identity(
     raw: Any,
     *,
     trusted_release_keys: Mapping[str, str] | None = None,
+    revoked_release_keys: Iterable[str] | None = None,
+    verification_time_unix: float | None = None,
 ) -> dict[str, Any]:
+    """Validate a signed source identity and its release attestation.
+
+    ``verification_time_unix`` is what turns the attestation's issue time into
+    a validity window: without a clock there is nothing to compare against, so
+    the age check is skipped rather than guessed. ``revoked_release_keys`` is
+    the revocation list the protocol had no place for at all.
+    """
     if not isinstance(raw, dict) or raw.get("schema") != SOURCE_IDENTITY_SCHEMA:
         raise ValueError("frontier source identity schema is invalid")
     required = {
@@ -529,11 +586,25 @@ def validate_source_identity(
     ):
         if release_payload.get(field_name) != identity.get(field_name):
             raise ValueError("source identity contradicts its release attestation")
-    _require_finite(
+    issued_at = _require_finite(
         release_payload.get("issued_at_unix"),
         field_name="release attestation issue time",
         minimum=0,
     )
+    if revoked_release_keys and str(
+        release_envelope.get("signer", {}).get("signer_id") or ""
+    ) in set(revoked_release_keys):
+        raise ValueError("release attestation was signed by a revoked key")
+    if verification_time_unix is not None:
+        now = _require_finite(
+            verification_time_unix,
+            field_name="release verification time",
+            minimum=0,
+        )
+        if now - issued_at > MAX_RELEASE_ATTESTATION_AGE_S:
+            raise ValueError("release attestation is past the protocol validity window")
+        if issued_at - now > MAX_CHALLENGE_CLOCK_SKEW_S:
+            raise ValueError("release attestation is dated in the future")
     attestation_digest = require_sha256(
         identity.get("release_attestation_sha256"), field_name="release attestation"
     )
@@ -735,11 +806,19 @@ def validate_task_spec(
         "issued_at_unix",
     }:
         raise ValueError("task specification fields are invalid")
-    if (
-        payload.get("battery_version") != battery_version
-        or payload.get("seed") != seed
-        or payload.get("per_class") != per_class
+    # Type before equality: `1 == True` in Python, so a bool seed or per_class
+    # compared equal to an int and passed a check meant to pin the instance.
+    for field_name, expected in (
+        ("seed", seed),
+        ("per_class", per_class),
     ):
+        value = payload.get(field_name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"task specification {field_name} is not a valid integer")
+        if value != expected:
+            raise ValueError("task specification battery instance mismatch")
+    declared_version = payload.get("battery_version")
+    if not isinstance(declared_version, str) or declared_version != battery_version:
         raise ValueError("task specification battery instance mismatch")
     validate_protocol_manifest(payload.get("protocol_manifest"))
     if payload.get("protocol_manifest_sha256") != PROTOCOL_MANIFEST_SHA256:
@@ -751,6 +830,10 @@ def validate_task_spec(
     )
     if issued < float(challenge["revealed_at_unix"]):
         raise ValueError("task specification predates challenge reveal")
+    # The spec had to follow the reveal and could otherwise be issued at any
+    # time — including after the challenge it pins had already expired.
+    if issued > float(challenge["expires_at_unix"]):
+        raise ValueError("task specification was issued after the challenge expired")
     verifier = payload.get("verifier_identity")
     if not isinstance(verifier, dict) or set(verifier) != {
         "verifier_id",
@@ -1501,6 +1584,48 @@ def make_index_entry(
     return {**body, "entry_sha256": sha256_json(body)}
 
 
+def _validate_index_entry_semantics(entry: Mapping[str, Any]) -> None:
+    """The values a trend is computed from have to be values."""
+
+    # The evidence-class VOCABULARY belongs to the ledger that owns these
+    # entries (frontier_gap), which already compares each entry against its own
+    # stored class. What this layer can require is that both fields are real
+    # identifiers rather than nulls, numbers or empty strings.
+    evidence_class = entry.get("evidence_class")
+    if not isinstance(evidence_class, str) or not evidence_class.strip():
+        raise ValueError("evidence index entry has no evidence class")
+    battery_version = entry.get("battery_version")
+    if not isinstance(battery_version, str) or not battery_version.strip():
+        raise ValueError("evidence index entry has no battery version")
+    at = _require_finite(entry.get("at"), field_name="evidence index timestamp", minimum=0)
+    del at
+    challenge_id = entry.get("challenge_id")
+    if challenge_id is not None:
+        # A challenge id is canonical text, not a digest: it is issued by the
+        # evaluator in the commit payload and validated as text there.
+        _require_canonical_text(challenge_id, field_name="evidence index challenge")
+    score = _require_finite(
+        entry.get("overall_candidate_score"), field_name="evidence index score"
+    )
+    # A score is a proportion of the battery and a gap is a difference of two
+    # such proportions. Anything outside those ranges is not a measurement this
+    # protocol produced, whatever produced it.
+    if not 0.0 <= score <= 1.0:
+        raise ValueError("evidence index candidate score is outside [0, 1]")
+    gap = entry.get("overall_gap")
+    if gap is not None:
+        gap_value = _require_finite(gap, field_name="evidence index gap")
+        if not -1.0 <= gap_value <= 1.0:
+            raise ValueError("evidence index gap is outside [-1, 1]")
+    effective_n = entry.get("effective_n")
+    if (
+        isinstance(effective_n, bool)
+        or not isinstance(effective_n, int)
+        or effective_n <= 0
+    ):
+        raise ValueError("evidence index effective sample count is invalid")
+
+
 def validate_index_chain(
     entries: Any,
     *,
@@ -1545,6 +1670,10 @@ def validate_index_chain(
             else:
                 raise ValueError("evidence index hash chain is broken")
         require_sha256(entry.get("evidence_sha256"), field_name="evidence blob")
+        # Hashes made the entry self-consistent; nothing checked what it SAID.
+        # A self-consistent malformed entry fed arbitrary finite gaps straight
+        # into the trend, which is the one number this index exists to produce.
+        _validate_index_entry_semantics(entry)
         if entry.get("comparison_stratum_sha256") is not None:
             require_sha256(
                 entry.get("comparison_stratum_sha256"), field_name="comparison stratum"
@@ -1559,6 +1688,65 @@ def validate_index_chain(
         # Recorded rather than raised: refusing would delete real history.
         normalized[0] = {**normalized[0], "_unanchored_legacy_head": True}
     return normalized
+
+
+# Every trend call recomputes significance over the CURRENT ledger, and it can
+# be called after each new run. Without a spending rule, waiting for a
+# favourable window is free: at nominal 0.05, repeatedly testing a pure-noise
+# series reaches "significant" far more often than one time in twenty. The
+# ledger has no preregistered horizon, so the correction has to come from the
+# number of opportunities the data itself represents — one per measured run.
+_SEQUENTIAL_ALPHA_FLOOR = 1e-6
+
+
+def sequential_looks(measured_runs: int, minimum_runs: int) -> int:
+    """How many times this series could have been tested and stopped.
+
+    A trend cannot be evaluated before the minimum run count, so the first
+    opportunity is at ``minimum_runs`` and there is one more per run after
+    that. This is computable from the data, unlike a preregistered horizon,
+    and it is exactly the number of chances an analyst had to stop on a
+    favourable window.
+    """
+
+    return max(1, int(measured_runs) - int(minimum_runs) + 1)
+
+
+def sequential_alpha(alpha: float, looks: int) -> float:
+    """Bonferroni-style alpha spending over the looks the data permits.
+
+    Not a substitute for preregistration — that has to be a campaign decision,
+    and the receipt says so — but it stops a nominal 0.05 from being spent
+    again on every run and called the same 0.05. At the minimum run count
+    there has been exactly one look, so the nominal level is unchanged and the
+    correction tightens only as the series grows.
+    """
+
+    return max(_SEQUENTIAL_ALPHA_FLOOR, float(alpha) / max(1, int(looks)))
+
+
+def _serial_dependence(gaps: Sequence[float]) -> float | None:
+    """Lag-1 autocorrelation of the regression residuals' own series.
+
+    The regression treats insertion index as time and the bootstrap resamples
+    run positions, both of which assume the runs are exchangeable. An adaptive
+    improvement campaign is the opposite of exchangeable: each run follows a
+    change made because of the last one. This does not correct for it — it
+    measures whether the assumption is visibly violated, so a reader is not
+    left assuming it held.
+    """
+
+    if len(gaps) < 3:
+        return None
+    mean = statistics.fmean(gaps)
+    centred = [value - mean for value in gaps]
+    denominator = sum(value * value for value in centred)
+    if denominator <= 0:
+        return None
+    numerator = sum(
+        centred[index] * centred[index + 1] for index in range(len(centred) - 1)
+    )
+    return numerator / denominator
 
 
 def analyze_gap_trend(
@@ -1738,11 +1926,35 @@ def analyze_gap_trend(
             "permutation_two_sided_p": round(permutation_p, 8),
             "permutation_samples": permutation_count,
             "effect_threshold_met": gaps[-1] - gaps[0] <= -minimum_effect,
+            # Alpha is SPENT across the looks the ledger permits rather than
+            # charged in full on every call.
+            "sequential_alpha": round(
+                sequential_alpha(alpha, sequential_looks(len(gaps), minimum_runs)),
+                10,
+            ),
+            "sequential_looks": sequential_looks(len(gaps), minimum_runs),
             "significance_threshold_met": (
-                permutation_p < alpha
+                permutation_p
+                < sequential_alpha(
+                    alpha, sequential_looks(len(gaps), minimum_runs)
+                )
                 and math.isfinite(bootstrap_ci[1])
                 and bootstrap_ci[1] < 0.0
             ),
+            # What the inference ASSUMED, measured. A campaign that changes the
+            # system between runs is not an exchangeable series, and a reader
+            # who cannot see that will read the interval as if it were.
+            "inference_assumptions": {
+                "run_order_treated_as_time": True,
+                "exchangeability_assumed": True,
+                "residual_lag1_autocorrelation": (
+                    round(value, 6)
+                    if (value := _serial_dependence(gaps)) is not None
+                    else None
+                ),
+                "preregistered_horizon": False,
+                "stopping_rule": "alpha_spent_over_measured_runs",
+            },
         }
     )
     eligible = bool(

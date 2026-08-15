@@ -256,3 +256,265 @@ def test_no_clock_still_means_no_freshness_verdict():
 def test_the_budget_stays_a_single_pinned_object(field):
     """Every validator reads MATCHED_BUDGET; a second copy would drift."""
     assert field in MATCHED_BUDGET
+
+
+# ─────────────────────────── the index says what the trend reads
+
+
+def _entry(**overrides):
+    body = {
+        "schema": evidence.EVIDENCE_ENTRY_SCHEMA,
+        "previous_entry_sha256": evidence.EVIDENCE_CHAIN_GENESIS,
+        "evidence_sha256": "a" * 64,
+        "evidence_class": "aura.frontier_gap.capability_measurement",
+        "at": 1_700_000_000.0,
+        "battery_version": "v5",
+        "challenge_id": "challenge-1",
+        "comparison_stratum_sha256": "b" * 64,
+        "overall_gap": -0.1,
+        "overall_candidate_score": 0.8,
+        "effective_n": 20,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_a_well_formed_entry_passes_the_semantic_check():
+    evidence._validate_index_entry_semantics(_entry())
+
+
+@pytest.mark.parametrize("score", [-0.5, 1.5])
+def test_a_score_outside_the_battery_range_is_refused(score):
+    with pytest.raises(ValueError, match="candidate score is outside"):
+        evidence._validate_index_entry_semantics(
+            _entry(overall_candidate_score=score)
+        )
+
+
+@pytest.mark.parametrize("gap", [-2.0, 2.0])
+def test_a_gap_outside_two_proportions_is_refused(gap):
+    """A gap is a difference of two proportions; anything else is not a
+    measurement this protocol produced."""
+    with pytest.raises(ValueError, match="gap is outside"):
+        evidence._validate_index_entry_semantics(_entry(overall_gap=gap))
+
+
+def test_a_missing_gap_is_allowed():
+    evidence._validate_index_entry_semantics(_entry(overall_gap=None))
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "twenty"])
+def test_an_invalid_effective_n_is_refused(value):
+    with pytest.raises(ValueError, match="effective sample count"):
+        evidence._validate_index_entry_semantics(_entry(effective_n=value))
+
+
+def test_an_entry_with_no_evidence_class_is_refused():
+    with pytest.raises(ValueError, match="no evidence class"):
+        evidence._validate_index_entry_semantics(_entry(evidence_class=""))
+
+
+def test_an_entry_with_no_battery_version_is_refused():
+    with pytest.raises(ValueError, match="no battery version"):
+        evidence._validate_index_entry_semantics(_entry(battery_version=None))
+
+
+def test_a_negative_timestamp_is_refused():
+    with pytest.raises(ValueError):
+        evidence._validate_index_entry_semantics(_entry(at=-1.0))
+
+
+def test_the_chain_runs_the_semantic_check():
+    source = inspect.getsource(evidence.validate_index_chain)
+
+    assert "_validate_index_entry_semantics(entry)" in source
+
+
+# ─────────────────────────── the trend says what it assumed
+
+
+def _trend(gaps):
+    entries = [
+        {
+            "overall_gap": gap,
+            "comparison_stratum_sha256": "a" * 64,
+            "challenge_id": f"challenge-{index}",
+            "effective_n": 20,
+        }
+        for index, gap in enumerate(gaps)
+    ]
+    return evidence.analyze_gap_trend(entries)
+
+
+def test_the_first_look_spends_the_nominal_alpha():
+    """A correction that forecloses the minimum case is not a correction."""
+    assert evidence.sequential_looks(5, 5) == 1
+    assert evidence.sequential_alpha(0.05, 1) == pytest.approx(0.05)
+
+
+def test_alpha_tightens_as_the_series_grows():
+    assert evidence.sequential_looks(10, 5) == 6
+    assert evidence.sequential_alpha(0.05, 6) < 0.05
+
+
+def test_the_spending_rule_never_reaches_zero():
+    assert evidence.sequential_alpha(0.05, 10_000_000) > 0
+
+
+def test_a_five_run_closing_series_is_still_eligible():
+    trend = _trend([0.50, 0.42, 0.34, 0.26, 0.18])
+
+    assert trend["sequential_looks"] == 1
+    assert trend["claim_eligible"] is True
+
+
+def test_the_trend_publishes_what_it_assumed():
+    trend = _trend([0.50, 0.42, 0.34, 0.26, 0.18])
+    assumptions = trend["inference_assumptions"]
+
+    assert assumptions["run_order_treated_as_time"] is True
+    assert assumptions["exchangeability_assumed"] is True
+    assert assumptions["preregistered_horizon"] is False
+    assert assumptions["stopping_rule"] == "alpha_spent_over_measured_runs"
+
+
+def test_serial_dependence_is_measured_not_assumed_away():
+    """An adaptive campaign is the opposite of exchangeable: each run follows
+    a change made because of the last one."""
+    trend = _trend([0.50, 0.42, 0.34, 0.26, 0.18])
+
+    assert trend["inference_assumptions"]["residual_lag1_autocorrelation"] is not None
+
+
+def test_a_flat_series_has_no_measurable_dependence():
+    assert evidence._serial_dependence([0.3, 0.3, 0.3]) is None
+
+
+def test_too_few_points_report_no_dependence():
+    assert evidence._serial_dependence([0.3, 0.2]) is None
+
+
+# ─────────────────────────── a release cannot vouch forever
+
+
+def test_the_attestation_has_a_validity_window():
+    assert evidence.MAX_RELEASE_ATTESTATION_AGE_S > 0
+
+
+def test_the_window_and_revocation_are_enforced():
+    source = inspect.getsource(evidence.validate_source_identity)
+
+    assert "past the protocol validity window" in source
+    assert "dated in the future" in source
+    assert "signed by a revoked key" in source
+
+
+def test_no_clock_still_means_no_age_verdict():
+    parameters = inspect.signature(evidence.validate_source_identity).parameters
+
+    assert parameters["verification_time_unix"].default is None
+    assert parameters["revoked_release_keys"].default is None
+
+
+# ─────────────────────────── the task spec pins its own scalars
+
+
+def test_the_spec_checks_types_before_equality():
+    """`1 == True` in Python, so a boolean seed compared equal to an int and
+    passed a check meant to pin the battery instance."""
+    source = inspect.getsource(evidence.validate_task_spec)
+
+    assert "isinstance(value, bool) or not isinstance(value, int)" in source
+    assert "is not a valid integer" in source
+
+
+def test_the_spec_must_precede_challenge_expiry():
+    source = inspect.getsource(evidence.validate_task_spec)
+
+    assert "issued after the challenge expired" in source
+
+
+# ─────────────────────────── modifiers are the matched set
+
+
+def test_the_matched_modifier_set_is_pinned():
+    assert evidence.MATCHED_RUNTIME_MODIFIERS == {
+        "contrastive_decoding": False,
+        "recurrent_loops": 1,
+    }
+
+
+def test_the_matched_set_passes():
+    evidence._validate_runtime_modifiers(dict(evidence.MATCHED_RUNTIME_MODIFIERS))
+
+
+def test_an_undeclared_modifier_is_refused():
+    modifiers = dict(evidence.MATCHED_RUNTIME_MODIFIERS)
+    modifiers["hidden_retrieval"] = True
+
+    with pytest.raises(ValueError, match="undeclared: hidden_retrieval"):
+        evidence._validate_runtime_modifiers(modifiers)
+
+
+def test_a_missing_modifier_is_refused():
+    with pytest.raises(ValueError, match="missing:"):
+        evidence._validate_runtime_modifiers({"recurrent_loops": 1})
+
+
+def test_a_modifier_off_its_matched_value_is_refused():
+    modifiers = dict(evidence.MATCHED_RUNTIME_MODIFIERS)
+    modifiers["recurrent_loops"] = 4
+
+    with pytest.raises(ValueError, match="not the matched value"):
+        evidence._validate_runtime_modifiers(modifiers)
+
+
+def test_a_boolean_cannot_pass_for_a_loop_count():
+    modifiers = dict(evidence.MATCHED_RUNTIME_MODIFIERS)
+    modifiers["recurrent_loops"] = True
+
+    with pytest.raises(ValueError, match="not the matched value"):
+        evidence._validate_runtime_modifiers(modifiers)
+
+
+def test_a_non_mapping_modifier_block_is_refused():
+    with pytest.raises(ValueError, match="modifiers are malformed"):
+        evidence._validate_runtime_modifiers(["contrastive_decoding"])
+
+
+# ─────────────────────────── the signature bytes have a named profile
+
+
+def test_the_canonicalization_profile_is_named():
+    from core.brain.canonical_json import (
+        CANONICAL_JSON_CONTRACT,
+        CANONICAL_JSON_PROFILE,
+    )
+
+    assert CANONICAL_JSON_PROFILE
+    assert CANONICAL_JSON_CONTRACT["profile"] == CANONICAL_JSON_PROFILE
+
+
+def test_the_contract_admits_it_is_not_a_cross_language_standard():
+    from core.brain.canonical_json import CANONICAL_JSON_CONTRACT
+
+    assert CANONICAL_JSON_CONTRACT["cross_language_standard"] is None
+    assert CANONICAL_JSON_CONTRACT["known_divergences"]
+
+
+def test_the_protocol_manifest_pins_the_profile():
+    from core.brain.canonical_json import CANONICAL_JSON_PROFILE
+
+    assert evidence.PROTOCOL_MANIFEST["canonical_json_profile"] == CANONICAL_JSON_PROFILE
+
+
+def test_changing_the_profile_would_change_the_protocol_digest():
+    """That is the point: a canonicalization change becomes a version bump
+    rather than a silent divergence."""
+    body = {
+        key: value
+        for key, value in evidence.PROTOCOL_MANIFEST.items()
+        if key != "manifest_sha256"
+    }
+    assert evidence.sha256_json(body) == evidence.PROTOCOL_MANIFEST_SHA256
+    assert "canonical_json_profile" in body
