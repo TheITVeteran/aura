@@ -50686,3 +50686,23 @@ producer/verifier/surface contracts pass `24/24`; canonical smoke passes
 `110/110`. The next run is a small combined 1.5B preflight. A clean result freezes
 the exact resident launch; a failure returns to local engineering without ever
 loading Aura's 32B.
+
+## Checkpoint 2026-08-15-565: Combined Preflight Clears the Resident Launch
+
+The exact combined profile completed `120` 1.5B decodes over 24 fresh tasks in
+42.21 seconds. Treatment decoded `24/24`; ordinary, syntax-matched wire,
+family-targeted coefficient-lesion and same-family wrong-state controls each
+decoded `0/24`. All four domains and all three alternate scientific surfaces
+were represented. Treatment converted every ordinary failure and regressed
+none.
+
+The independent verifier regenerated and regraded the mixed cohort, replayed
+canonical and adapted receipt paths separately, and verified the complete
+`122`-event journal. It accepted 24 gains and zero regressions with one-sided
+exact `p=5.960464477539063e-8`; verification receipt
+`ebe5ff9ff25899c5ebaea84bd7ee437753ffc4b6f492add1b228cfca9ab86dbd`.
+
+All local construction and preflight gates are now green. The next and only
+authorized 32B use is a fresh 60-task resident replication under this exact
+profile. Its result proceeds directly to fixed adjudication; it must not spawn
+another mechanism-design loop or an undefined additional campaign.

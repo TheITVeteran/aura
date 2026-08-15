@@ -1,0 +1,2224 @@
+{
+  "admitted": true,
+  "arms": {
+    "coefficient_lesion": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 24,
+      "mean_generated_tokens": 31.292,
+      "mean_latency_ms": 304.083,
+      "mean_prompt_tokens": 304.208,
+      "parsed": 22,
+      "parsed_accuracy": 0.916667,
+      "receipt_sha256": "226bcbe38cde0ae4aeebbffb45f71a6cb39361e22cc6e7888c2aac5bc09817d3"
+    },
+    "matched_wire_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 24,
+      "mean_generated_tokens": 27.125,
+      "mean_latency_ms": 257.125,
+      "mean_prompt_tokens": 251.875,
+      "parsed": 24,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "5f925798dd9e08bcb5d33cb71b0f33745be6f2be90166298af140c7d7f9ca510"
+    },
+    "matched_wrong_state": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 24,
+      "mean_generated_tokens": 40.833,
+      "mean_latency_ms": 379.833,
+      "mean_prompt_tokens": 367.625,
+      "parsed": 24,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "2a3f50df8b2a75dd8f07090d4562f7f0fe63ee6614af69cdafb6e26305f950af"
+    },
+    "ordinary_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 24,
+      "mean_generated_tokens": 39.375,
+      "mean_latency_ms": 343.167,
+      "mean_prompt_tokens": 251.875,
+      "parsed": 12,
+      "parsed_accuracy": 0.5,
+      "receipt_sha256": "6151e5d41599ab12060eb33565ff974cb8df195864dc6b6163f55153f371cdbf"
+    },
+    "treatment": {
+      "exact": 24,
+      "exact_accuracy": 1.0,
+      "examples": 24,
+      "mean_generated_tokens": 40.833,
+      "mean_latency_ms": 379.0,
+      "mean_prompt_tokens": 367.625,
+      "parsed": 24,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "f1346ec9f217f974c66e549b145e93fe80795bc0b2dbde084ffd58d03bd25800"
+    }
+  },
+  "claim_boundary": "bounded teacher-free less-constrained scientific surface transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "coefficient_lesion_contract": {
+    "frontier_calibration": {
+      "coefficient_index": 2,
+      "operation": "multiplication",
+      "operation_index": 1
+    },
+    "frontier_coding": {
+      "coefficient_index": 1,
+      "operation": "addition",
+      "operation_index": 0
+    },
+    "frontier_misleading_premise": {
+      "coefficient_index": 2,
+      "operation": "multiplication",
+      "operation_index": 1
+    },
+    "frontier_scientific_inference": {
+      "coefficient_index": 2,
+      "operation": "multiplication",
+      "operation_index": 1
+    }
+  },
+  "difficulties": [
+    1,
+    2,
+    3
+  ],
+  "domains": [
+    "coding",
+    "calibration",
+    "misleading_premise",
+    "scientific_inference"
+  ],
+  "elapsed_seconds": 42.211,
+  "gain_count": 24,
+  "gain_set_sha256": "fcff0cdbdd580b11ff0035965c163cda96a6139d2a9664e8d214650006b1a9b9",
+  "journal_last_decode_receipt_sha256": "614dd6e4c4c88c388e0a1a05f0c3eda0035b16a99db37683bb4204c58cd7d2cc",
+  "journal_path": "/Users/bryan/.aura/live-source/.claude/worktrees/codex-wow-cp400/artifacts/closeout/latent_cortex/cp565_mixed_multidomain_preflight/journal.jsonl",
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "raw_outputs": [
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [[\"by\", 4], [\"cz\", 0], [\"ax\", 6], [\"du\", 0]], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "468de16990bd3fe0bc7f842ba57649f9eb47b2a74d162280fe142775808a9b60",
+          "response": "FINAL_ANSWER: {\"returns\": [[\"by\", 4], [\"cz\", 0], [\"ax\", 6], [\"du\", 0]], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "468de16990bd3fe0bc7f842ba57649f9eb47b2a74d162280fe142775808a9b60",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [[\"by\", 4], [\"cz\", 0], [\"ax\", 6], [\"du\", 0]], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "a3812cdfd5b39d17bcbd3a9f3eba78407f98c0f41ad6065aab1ba5951def8c7c",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "a3812cdfd5b39d17bcbd3a9f3eba78407f98c0f41ad6065aab1ba5951def8c7c",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "a968bf7bb251d18dacfb207419fb54fb3a7af4ce26b431fbed5be0a2572be344",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "a968bf7bb251d18dacfb207419fb54fb3a7af4ce26b431fbed5be0a2572be344",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "8123b2c9173c04f73c8bcbff4a3815dd8d7099ffa8e4a4d4735451e353f4b3f7",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "8123b2c9173c04f73c8bcbff4a3815dd8d7099ffa8e4a4d4735451e353f4b3f7",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d15-s1022592528107575760"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [[\"cz\", 3], [\"ax\", 2], [\"du\", 4]], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "4a9591fd5b2a00ddb93e75abde6e657e9a118cff6428873ed90b9c63a453e310",
+          "response": "FINAL_ANSWER: {\"returns\": [[\"cz\", 3], [\"ax\", 2], [\"du\", 4]], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "4a9591fd5b2a00ddb93e75abde6e657e9a118cff6428873ed90b9c63a453e310",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [[\"cz\", 3], [\"ax\", 2], [\"du\", 4]], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s868451919477818189"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "8123b2c9173c04f73c8bcbff4a3815dd8d7099ffa8e4a4d4735451e353f4b3f7",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "8123b2c9173c04f73c8bcbff4a3815dd8d7099ffa8e4a4d4735451e353f4b3f7",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 6, 7, 6, 4], \"state\": [[\"ax\", -1], [\"cz\", 3]]}, {\"pressure\": [2, 1, 4, 7, 4], \"state\": [[\"cz\", -3], [\"du\", 1]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s868451919477818189"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "a968bf7bb251d18dacfb207419fb54fb3a7af4ce26b431fbed5be0a2572be344",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "a968bf7bb251d18dacfb207419fb54fb3a7af4ce26b431fbed5be0a2572be344",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s868451919477818189"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "27048e547d439cd2a10122a5d636421c0219d7355ca5b457c55299dcabec173b",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "27048e547d439cd2a10122a5d636421c0219d7355ca5b457c55299dcabec173b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d15-s868451919477818189"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d15-s868451919477818189"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [[\"ax\", 0], [\"du\", 0], [\"cz\", 0], [\"by\", 1]], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "780fefb3aaf024f497f3ddcbdd3f923ff21756e1a1e4beb9e0c7124c6e15d9f6",
+          "response": "FINAL_ANSWER: {\"returns\": [[\"ax\", 0], [\"du\", 0], [\"cz\", 0], [\"by\", 1]], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "780fefb3aaf024f497f3ddcbdd3f923ff21756e1a1e4beb9e0c7124c6e15d9f6",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [[\"ax\", 0], [\"du\", 0], [\"cz\", 0], [\"by\", 1]], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "27048e547d439cd2a10122a5d636421c0219d7355ca5b457c55299dcabec173b",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "27048e547d439cd2a10122a5d636421c0219d7355ca5b457c55299dcabec173b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 3, 6, 8, 6], \"state\": [[\"ax\", 3], [\"cz\", 2], [\"du\", 1]]}, {\"pressure\": [3, 0, 1, 4, 7, 6], \"state\": [[\"ax\", -3], [\"by\", 1], [\"du\", 2]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "86f5c68221dc19580b48d9a92a62c317d8d169bb0cd2ea4c6b6caf615afeef7d",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "86f5c68221dc19580b48d9a92a62c317d8d169bb0cd2ea4c6b6caf615afeef7d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "ac5a0ec24290206dee7ec30802618d9a50a26285da2545e54048eaaa34a1bb2a",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "ac5a0ec24290206dee7ec30802618d9a50a26285da2545e54048eaaa34a1bb2a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s126263972086386167"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "ac5a0ec24290206dee7ec30802618d9a50a26285da2545e54048eaaa34a1bb2a",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "ac5a0ec24290206dee7ec30802618d9a50a26285da2545e54048eaaa34a1bb2a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [1, 1, 2, 4, 5, 6], \"state\": [[\"ax\", 3], [\"cz\", -3]]}, {\"pressure\": [2, 3, 5, 7, 5, 4], \"state\": [[\"by\", -1], [\"cz\", -1], [\"du\", -2]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "86f5c68221dc19580b48d9a92a62c317d8d169bb0cd2ea4c6b6caf615afeef7d",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "86f5c68221dc19580b48d9a92a62c317d8d169bb0cd2ea4c6b6caf615afeef7d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "9b38b222c3749a0ae160545e00cd30ca5b9e0c3d4786ad591667bd35f2bc318e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "9b38b222c3749a0ae160545e00cd30ca5b9e0c3d4786ad591667bd35f2bc318e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [[\"ax\", -1], [\"cz\", -4], [\"du\", -2], [\"by\", -5]], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "87c9fcaeb7f2b44cb54908f5768e5dd99e3fcb7cf0b305b2756078698cb3b008",
+          "response": "FINAL_ANSWER: {\"returns\": [[\"ax\", -1], [\"cz\", -4], [\"du\", -2], [\"by\", -5]], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "87c9fcaeb7f2b44cb54908f5768e5dd99e3fcb7cf0b305b2756078698cb3b008",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [[\"ax\", -1], [\"cz\", -4], [\"du\", -2], [\"by\", -5]], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d17-s339214970991741807"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"cz\", \"2\"], \"pressure\": [4]}, {\"state\": [\"ax\", \"-1\"], \"pressure\": [2]}, {\"state\": [\"du\", \"-3\"], \"pressure\": [0]}, {\"state\": [\"by\", \"1\"], \"pressure\": [1]}], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "e6c47b26f3e69b646a78dd8ca3e8fc90cc910b2dd39d917400acbdf900b38663",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"cz\", \"2\"], \"pressure\": [4]}, {\"state\": [\"ax\", \"-1\"], \"pressure\": [2]}, {\"state\": [\"du\", \"-3\"], \"pressure\": [0]}, {\"state\": [\"by\", \"1\"], \"pressure\": [1]}], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "e6c47b26f3e69b646a78dd8ca3e8fc90cc910b2dd39d917400acbdf900b38663",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"cz\", \"2\"], \"pressure\": [4]}, {\"state\": [\"ax\", \"-1\"], \"pressure\": [2]}, {\"state\": [\"du\", \"-3\"], \"pressure\": [0]}, {\"state\": [\"by\", \"1\"], \"pressure\": [1]}], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s8319022519951290"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "9b38b222c3749a0ae160545e00cd30ca5b9e0c3d4786ad591667bd35f2bc318e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "9b38b222c3749a0ae160545e00cd30ca5b9e0c3d4786ad591667bd35f2bc318e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 5, 7, 9, 10, 11, 9], \"state\": [[\"ax\", 2], [\"cz\", 7]]}, {\"pressure\": [3, 6, 7, 9, 7, 9, 6], \"state\": [[\"by\", 1], [\"cz\", 2], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s8319022519951290"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "d5552affec263c7c4ecc6b591f8c45eedbd659dcc915d2aea31562441a9ba52e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "d5552affec263c7c4ecc6b591f8c45eedbd659dcc915d2aea31562441a9ba52e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s8319022519951290"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "942083a2648db2093c2e3a7b296362c7430bbd9baf454b67b24b628ee1870d2e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "942083a2648db2093c2e3a7b296362c7430bbd9baf454b67b24b628ee1870d2e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s8319022519951290"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d19-s8319022519951290"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "942083a2648db2093c2e3a7b296362c7430bbd9baf454b67b24b628ee1870d2e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "942083a2648db2093c2e3a7b296362c7430bbd9baf454b67b24b628ee1870d2e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [3, 4, 5, 6, 6, 8, 7], \"state\": [[\"ax\", -4], [\"by\", 2], [\"cz\", -1]]}, {\"pressure\": [2, 4, 7, 9, 11, 8, 9], \"state\": [[\"ax\", -4], [\"by\", 1], [\"du\", 4]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s1075782372585799485"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "d5552affec263c7c4ecc6b591f8c45eedbd659dcc915d2aea31562441a9ba52e",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "d5552affec263c7c4ecc6b591f8c45eedbd659dcc915d2aea31562441a9ba52e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}, {\"pressure\": [0, 0, 0, 0, 0, 0, 0], \"state\": []}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s1075782372585799485"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "raw_response_sha256": "a3812cdfd5b39d17bcbd3a9f3eba78407f98c0f41ad6065aab1ba5951def8c7c",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+          "response_sha256": "a3812cdfd5b39d17bcbd3a9f3eba78407f98c0f41ad6065aab1ba5951def8c7c",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"pressure\": [2, 5, 8, 7, 9], \"state\": [[\"ax\", 3], [\"by\", 3], [\"cz\", 3]]}, {\"pressure\": [1, 4, 3, 6, 9], \"state\": [[\"ax\", 3], [\"cz\", -3], [\"du\", -3]]}], \"time_complexity\": \"O(n^2)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s1075782372585799485"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: \n",
+          "raw_response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "response": "FINAL_ANSWER: \n",
+          "response_sha256": "dc839364dc0fee35ffb89e94f6fd3c0189337fa59b95bf9aa8f316b626a4e762",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d19-s1075782372585799485"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"ax\", \"-4\"], \"pressure\": [3]}, {\"state\": [\"cz\", \"-2\"], \"pressure\": [3]}, {\"state\": [\"du\", \"0\"], \"pressure\": [3]}, {\"state\": [\"by\", \"2\"], \"pressure\": [3]}], \"time_complexity\": \"O(n)\"}",
+          "raw_response_sha256": "229ab05884089dd2943b1cb53f2c55c1525ea13a4d7764c079336531e5a6bd87",
+          "response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"ax\", \"-4\"], \"pressure\": [3]}, {\"state\": [\"cz\", \"-2\"], \"pressure\": [3]}, {\"state\": [\"du\", \"0\"], \"pressure\": [3]}, {\"state\": [\"by\", \"2\"], \"pressure\": [3]}], \"time_complexity\": \"O(n)\"}",
+          "response_sha256": "229ab05884089dd2943b1cb53f2c55c1525ea13a4d7764c079336531e5a6bd87",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"returns\": [{\"state\": [\"ax\", \"-4\"], \"pressure\": [3]}, {\"state\": [\"cz\", \"-2\"], \"pressure\": [3]}, {\"state\": [\"du\", \"0\"], \"pressure\": [3]}, {\"state\": [\"by\", \"2\"], \"pressure\": [3]}], \"time_complexity\": \"O(n)\"}",
+      "task_id": "recurrence-frontier_coding-d19-s1075782372585799485"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+          "raw_response_sha256": "0e207cadef80bb581dbc25635c88d45dfb56490a8bf0dc85e6e6d0a715f681e1",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+          "response_sha256": "0e207cadef80bb581dbc25635c88d45dfb56490a8bf0dc85e6e6d0a715f681e1",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s380124264628890240"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 4/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 4/9, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "3e83796be1a4d99750d791934afee371f1c56da1d077008e61f0f939750e4494",
+          "response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 4/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 4/9, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "3e83796be1a4d99750d791934afee371f1c56da1d077008e61f0f939750e4494",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 4/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 4/9, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s380124264628890240"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s380124264628890240"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+          "raw_response_sha256": "f20684505b3f7b659ac0bc8cbe51f95b1bc374577eaf251c293320002bb9a679",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+          "response_sha256": "f20684505b3f7b659ac0bc8cbe51f95b1bc374577eaf251c293320002bb9a679",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s380124264628890240"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s380124264628890240"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 3/10. The likelihood ratio is 9/10 for H being true and 3/10 for H being false. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/10, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "583c336bfc1128b83a6146c18b6f2f9f560e7a0855ee5f75f40bd86d53028874",
+          "response": "Before evidence E, the probability of H is 3/10. The likelihood ratio is 9/10 for H being true and 3/10 for H being false. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/10, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "583c336bfc1128b83a6146c18b6f2f9f560e7a0855ee5f75f40bd86d53028874",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 3/10. The likelihood ratio is 9/10 for H being true and 3/10 for H being false. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/10, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s100082744298638739"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "1d0b2db4ed95734e3f743f2d3d280e60c2ce0007da4c9b54ff5339fd84029bce",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "1d0b2db4ed95734e3f743f2d3d280e60c2ce0007da4c9b54ff5339fd84029bce",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s100082744298638739"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+          "raw_response_sha256": "0e207cadef80bb581dbc25635c88d45dfb56490a8bf0dc85e6e6d0a715f681e1",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+          "response_sha256": "0e207cadef80bb581dbc25635c88d45dfb56490a8bf0dc85e6e6d0a715f681e1",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/16\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s100082744298638739"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "1d0b2db4ed95734e3f743f2d3d280e60c2ce0007da4c9b54ff5339fd84029bce",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "1d0b2db4ed95734e3f743f2d3d280e60c2ce0007da4c9b54ff5339fd84029bce",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s100082744298638739"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+          "raw_response_sha256": "7f714ec4feabfd679cddff1b382d3d6d126cd779aa7c4779e0e2f0c3677a7ce8",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+          "response_sha256": "7f714ec4feabfd679cddff1b382d3d6d126cd779aa7c4779e0e2f0c3677a7ce8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s100082744298638739"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s73871045243109043"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+          "raw_response_sha256": "88f1a2cf095286b704ea959784a951fbb374a3d3b1dcf707b49cfa5a90fa9256",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+          "response_sha256": "88f1a2cf095286b704ea959784a951fbb374a3d3b1dcf707b49cfa5a90fa9256",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s73871045243109043"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 3/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "8bcef1fa19d34b177d423e56814c1f518bb7bf4455df6f30bdd913eb363d6e1c",
+          "response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 3/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "8bcef1fa19d34b177d423e56814c1f518bb7bf4455df6f30bdd913eb363d6e1c",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 1/2. The likelihood of E given H is 3/5, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s73871045243109043"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s73871045243109043"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+          "raw_response_sha256": "7f714ec4feabfd679cddff1b382d3d6d126cd779aa7c4779e0e2f0c3677a7ce8",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+          "response_sha256": "7f714ec4feabfd679cddff1b382d3d6d126cd779aa7c4779e0e2f0c3677a7ce8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"3/5\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s73871045243109043"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+          "raw_response_sha256": "88f1a2cf095286b704ea959784a951fbb374a3d3b1dcf707b49cfa5a90fa9256",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+          "response_sha256": "88f1a2cf095286b704ea959784a951fbb374a3d3b1dcf707b49cfa5a90fa9256",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"9/13\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s239356299402997022"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "c675ffdc37196728bce2cd2351fe0a2b0de9674cc0c81f216861d2d331c65251",
+          "response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "c675ffdc37196728bce2cd2351fe0a2b0de9674cc0c81f216861d2d331c65251",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s239356299402997022"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+          "raw_response_sha256": "b706b5e1672a3f0fc0df0702f634112c9080bab52af16e44a31905620051683f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+          "response_sha256": "b706b5e1672a3f0fc0df0702f634112c9080bab52af16e44a31905620051683f",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s239356299402997022"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 1/5. The likelihood of E given H is 9/10, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 9/19, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "31805495ba0b9008e2ba61f398c31065b2ad909e7ca4a6659215cd2f652401e9",
+          "response": "Before evidence E, the probability of H is 1/5. The likelihood of E given H is 9/10, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 9/19, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "31805495ba0b9008e2ba61f398c31065b2ad909e7ca4a6659215cd2f652401e9",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 1/5. The likelihood of E given H is 9/10, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 9/19, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s239356299402997022"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "c675ffdc37196728bce2cd2351fe0a2b0de9674cc0c81f216861d2d331c65251",
+          "response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "c675ffdc37196728bce2cd2351fe0a2b0de9674cc0c81f216861d2d331c65251",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"90_to_100\", \"posterior\": \"1/10\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s239356299402997022"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+          "raw_response_sha256": "e2c647994906e8a3b925d6ac124bf84bf2083a80112aa9f6788fbb84ae2380cb",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+          "response_sha256": "e2c647994906e8a3b925d6ac124bf84bf2083a80112aa9f6788fbb84ae2380cb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s329646979537477709"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 7/10, and the likelihood of E given not H is 1/2. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5 * (7/10) = 21/50, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "4a02380727e0107ec5f97fbb938b4954a98a7e84c202a2e6127d26ca8a81caba",
+          "response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 7/10, and the likelihood of E given not H is 1/2. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5 * (7/10) = 21/50, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "4a02380727e0107ec5f97fbb938b4954a98a7e84c202a2e6127d26ca8a81caba",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 7/10, and the likelihood of E given not H is 1/2. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5 * (7/10) = 21/50, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s329646979537477709"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s329646979537477709"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+          "raw_response_sha256": "b706b5e1672a3f0fc0df0702f634112c9080bab52af16e44a31905620051683f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+          "response_sha256": "b706b5e1672a3f0fc0df0702f634112c9080bab52af16e44a31905620051683f",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"21/31\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s329646979537477709"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"3/5\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "dbce78665de83da372cb386f2e71a6059b4d308d6ea21eff7efbd3a45e3c8b66",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"3/5\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "dbce78665de83da372cb386f2e71a6059b4d308d6ea21eff7efbd3a45e3c8b66",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"3/5\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s329646979537477709"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+          "raw_response_sha256": "f20684505b3f7b659ac0bc8cbe51f95b1bc374577eaf251c293320002bb9a679",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+          "response_sha256": "f20684505b3f7b659ac0bc8cbe51f95b1bc374577eaf251c293320002bb9a679",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"50_to_69\", \"posterior\": \"2/3\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s839556976528914356"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "Before evidence E, the probability of H is 7/10. The likelihood of E given H is 3/5, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "raw_response_sha256": "774be85e4d1e4887dddccbf355f9ed0b030074fca122242002e7d74caf3b7630",
+          "response": "Before evidence E, the probability of H is 7/10. The likelihood of E given H is 3/5, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+          "response_sha256": "774be85e4d1e4887dddccbf355f9ed0b030074fca122242002e7d74caf3b7630",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "Before evidence E, the probability of H is 7/10. The likelihood of E given H is 3/5, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s839556976528914356"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s839556976528914356"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+          "raw_response_sha256": "e2c647994906e8a3b925d6ac124bf84bf2083a80112aa9f6788fbb84ae2380cb",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+          "response_sha256": "e2c647994906e8a3b925d6ac124bf84bf2083a80112aa9f6788fbb84ae2380cb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"confidence_band\": \"90_to_100\", \"posterior\": \"14/15\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s839556976528914356"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 7,
+          "raw_response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "raw_response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+          "response_sha256": "b85ec4e78e69f40b7a0ee792d1dd5d9953c27ea1b460f01f2f32e93c71dd629f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"choice\": \"H\", \"posterior\": \"1/2\", \"confidence_band\": \"50_to_69\"}",
+      "task_id": "recurrence-frontier_calibration-d28-s839556976528914356"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+          "raw_response_sha256": "b7c2a7e1f2936f701f08c97582096f141aa57bbc8c5160deeb395f8aa265189b",
+          "response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+          "response_sha256": "b7c2a7e1f2936f701f08c97582096f141aa57bbc8c5160deeb395f8aa265189b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s313241068011898540"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 4\n}\n```",
+          "raw_response_sha256": "ef0d69912ee02bc44ae9de507ced6f637f0db16071860fb7b5c4fa2a1bf1c2d6",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 4\n}\n```",
+          "response_sha256": "ef0d69912ee02bc44ae9de507ced6f637f0db16071860fb7b5c4fa2a1bf1c2d6",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 4\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s313241068011898540"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+          "raw_response_sha256": "90a669ed4cd123e944075a627e2a660a1081e4e4bea79480aa0f83f324a14c55",
+          "response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+          "response_sha256": "90a669ed4cd123e944075a627e2a660a1081e4e4bea79480aa0f83f324a14c55",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s313241068011898540"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+          "raw_response_sha256": "cabc9e1e5d7fb13ef017c98d890c019cdc0ed75854a4df127163cfbeb530a7a5",
+          "response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+          "response_sha256": "cabc9e1e5d7fb13ef017c98d890c019cdc0ed75854a4df127163cfbeb530a7a5",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s313241068011898540"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": -6, \"actual_winner\": \"P\", \"premise_valid\": false}",
+          "raw_response_sha256": "b4afa4869102ae97c7cfb67858aa7251128a1627bbe29285edd9b4c8c9f36e81",
+          "response": "FINAL_ANSWER: {\"actual_score\": -6, \"actual_winner\": \"P\", \"premise_valid\": false}",
+          "response_sha256": "b4afa4869102ae97c7cfb67858aa7251128a1627bbe29285edd9b4c8c9f36e81",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": -6, \"actual_winner\": \"P\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s313241068011898540"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 1, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+          "raw_response_sha256": "cdb7f2339fb82993154b7ca25ce8bb55c29a89d77473e4057c8f1841b58f7062",
+          "response": "FINAL_ANSWER: {\"actual_score\": 1, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+          "response_sha256": "cdb7f2339fb82993154b7ca25ce8bb55c29a89d77473e4057c8f1841b58f7062",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 1, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s30872251904269418"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+          "raw_response_sha256": "b7c2a7e1f2936f701f08c97582096f141aa57bbc8c5160deeb395f8aa265189b",
+          "response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+          "response_sha256": "b7c2a7e1f2936f701f08c97582096f141aa57bbc8c5160deeb395f8aa265189b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":44,\"actual_winner\":\"T\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s30872251904269418"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+          "raw_response_sha256": "90a669ed4cd123e944075a627e2a660a1081e4e4bea79480aa0f83f324a14c55",
+          "response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+          "response_sha256": "90a669ed4cd123e944075a627e2a660a1081e4e4bea79480aa0f83f324a14c55",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 0, \"premise_valid\": false, \"actual_winner\": null}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s30872251904269418"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+          "raw_response_sha256": "a8bf952caee2774d83d7d2cef9571f1d8f453810b33fbc1b36f631cc9700a18d",
+          "response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+          "response_sha256": "a8bf952caee2774d83d7d2cef9571f1d8f453810b33fbc1b36f631cc9700a18d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s30872251904269418"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 16\n}\n```",
+          "raw_response_sha256": "543843d96f3b37adfc961f32d9a82d389e20d701530c0475f176464b9a4e4638",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 16\n}\n```",
+          "response_sha256": "543843d96f3b37adfc961f32d9a82d389e20d701530c0475f176464b9a4e4638",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 16\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s30872251904269418"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 1\n}\n```",
+          "raw_response_sha256": "4e9395869b191ae1a3c79f7bfc3647fcdcf00d7bb17730ceb45b11a9c41b44e0",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 1\n}\n```",
+          "response_sha256": "4e9395869b191ae1a3c79f7bfc3647fcdcf00d7bb17730ceb45b11a9c41b44e0",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 1\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s194746996361834045"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "raw_response_sha256": "c747a8dbf8f363cc259ec1a5cafd030bb15306c69e17157170f8ff44473c23ee",
+          "response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "response_sha256": "c747a8dbf8f363cc259ec1a5cafd030bb15306c69e17157170f8ff44473c23ee",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s194746996361834045"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+          "raw_response_sha256": "a8bf952caee2774d83d7d2cef9571f1d8f453810b33fbc1b36f631cc9700a18d",
+          "response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+          "response_sha256": "a8bf952caee2774d83d7d2cef9571f1d8f453810b33fbc1b36f631cc9700a18d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":40,\"actual_winner\":\"R\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s194746996361834045"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "raw_response_sha256": "c747a8dbf8f363cc259ec1a5cafd030bb15306c69e17157170f8ff44473c23ee",
+          "response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "response_sha256": "c747a8dbf8f363cc259ec1a5cafd030bb15306c69e17157170f8ff44473c23ee",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 12, \"actual_winner\": \"R\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s194746996361834045"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+          "raw_response_sha256": "86bfef3a280972344b9ccb76b89335c6ad8e0e4aa4e59a542b6a51ad50808447",
+          "response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+          "response_sha256": "86bfef3a280972344b9ccb76b89335c6ad8e0e4aa4e59a542b6a51ad50808447",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s194746996361834045"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 4\n}\n```",
+          "raw_response_sha256": "e4a4ef43b49537c02d737b1b5cc670d756fb10da52599c1980c4826fd9bce25c",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 4\n}\n```",
+          "response_sha256": "e4a4ef43b49537c02d737b1b5cc670d756fb10da52599c1980c4826fd9bce25c",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 4\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1008391147553666927"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+          "raw_response_sha256": "395d4e0c5cfe989948fc69e3456f6c639c89976e36e60e430d5ec9fd28c8bc45",
+          "response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+          "response_sha256": "395d4e0c5cfe989948fc69e3456f6c639c89976e36e60e430d5ec9fd28c8bc45",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"Q\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1008391147553666927"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+          "raw_response_sha256": "86bfef3a280972344b9ccb76b89335c6ad8e0e4aa4e59a542b6a51ad50808447",
+          "response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+          "response_sha256": "86bfef3a280972344b9ccb76b89335c6ad8e0e4aa4e59a542b6a51ad50808447",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":68,\"actual_winner\":\"S\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1008391147553666927"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": -3, \"actual_winner\": \"Q\", \"premise_valid\": true}",
+          "raw_response_sha256": "b10b69bd2e33dba46982d9a5976ad95e29e221c999e0f3a108e65785b7550949",
+          "response": "FINAL_ANSWER: {\"actual_score\": -3, \"actual_winner\": \"Q\", \"premise_valid\": true}",
+          "response_sha256": "b10b69bd2e33dba46982d9a5976ad95e29e221c999e0f3a108e65785b7550949",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": -3, \"actual_winner\": \"Q\", \"premise_valid\": true}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1008391147553666927"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+          "raw_response_sha256": "a7d486e148f4b1f9fcf65bb346e30e835245a252e55dbb54420f78857210c058",
+          "response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+          "response_sha256": "a7d486e148f4b1f9fcf65bb346e30e835245a252e55dbb54420f78857210c058",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1008391147553666927"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "raw_response_sha256": "e59580fddb65e577c335afb219eaf175f90b745a683efa9846d9be32a5d05a39",
+          "response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "response_sha256": "e59580fddb65e577c335afb219eaf175f90b745a683efa9846d9be32a5d05a39",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s909581116468347129"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+          "raw_response_sha256": "c95817d6a633cf759b554037c8cd64367ed5225f59240a227f3d2d1b01545ea6",
+          "response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+          "response_sha256": "c95817d6a633cf759b554037c8cd64367ed5225f59240a227f3d2d1b01545ea6",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s909581116468347129"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"S\",\n  \"actual_score\": 15\n}\n```",
+          "raw_response_sha256": "584e572c70bf7e9824820cd0d9d3b7c09035527b0a94f75913aa0d7216861ed1",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"S\",\n  \"actual_score\": 15\n}\n```",
+          "response_sha256": "584e572c70bf7e9824820cd0d9d3b7c09035527b0a94f75913aa0d7216861ed1",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"S\",\n  \"actual_score\": 15\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s909581116468347129"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "raw_response_sha256": "e59580fddb65e577c335afb219eaf175f90b745a683efa9846d9be32a5d05a39",
+          "response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+          "response_sha256": "e59580fddb65e577c335afb219eaf175f90b745a683efa9846d9be32a5d05a39",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 18, \"actual_winner\": \"R\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s909581116468347129"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+          "raw_response_sha256": "a7d486e148f4b1f9fcf65bb346e30e835245a252e55dbb54420f78857210c058",
+          "response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+          "response_sha256": "a7d486e148f4b1f9fcf65bb346e30e835245a252e55dbb54420f78857210c058",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":43,\"actual_winner\":\"V\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s909581116468347129"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 19, \"premise_valid\": false, \"actual_winner\": \"U\"}",
+          "raw_response_sha256": "091ffe444633df05b3daaabdd4bc172d3beab71ac12d36a5ecfe7274c97f1aa6",
+          "response": "FINAL_ANSWER: {\"actual_score\": 19, \"premise_valid\": false, \"actual_winner\": \"U\"}",
+          "response_sha256": "091ffe444633df05b3daaabdd4bc172d3beab71ac12d36a5ecfe7274c97f1aa6",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 19, \"premise_valid\": false, \"actual_winner\": \"U\"}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1049045450891512707"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+          "raw_response_sha256": "cabc9e1e5d7fb13ef017c98d890c019cdc0ed75854a4df127163cfbeb530a7a5",
+          "response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+          "response_sha256": "cabc9e1e5d7fb13ef017c98d890c019cdc0ed75854a4df127163cfbeb530a7a5",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":46,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1049045450891512707"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 10\n}\n```",
+          "raw_response_sha256": "d61044e03a7bf091ddd3948aad30a95f66d6c9902607c200b2ac0d475476c588",
+          "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 10\n}\n```",
+          "response_sha256": "d61044e03a7bf091ddd3948aad30a95f66d6c9902607c200b2ac0d475476c588",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 10\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1049045450891512707"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"P\", \"premise_valid\": false}",
+          "raw_response_sha256": "5ed83e7b63d822567cf766657fb7e1d8a7c7be825362301d480555923340441d",
+          "response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"P\", \"premise_valid\": false}",
+          "response_sha256": "5ed83e7b63d822567cf766657fb7e1d8a7c7be825362301d480555923340441d",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\": 19, \"actual_winner\": \"P\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1049045450891512707"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+          "raw_response_sha256": "c95817d6a633cf759b554037c8cd64367ed5225f59240a227f3d2d1b01545ea6",
+          "response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+          "response_sha256": "c95817d6a633cf759b554037c8cd64367ed5225f59240a227f3d2d1b01545ea6",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"actual_score\":54,\"actual_winner\":\"P\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1049045450891512707"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+          "raw_response_sha256": "0e5d5d9fc0792e3083c3705aea9338e7234b1a821029c794de4a20ed41cfcf18",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+          "response_sha256": "0e5d5d9fc0792e3083c3705aea9338e7234b1a821029c794de4a20ed41cfcf18",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s540422043334193546"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"56\", \"predicted_downstream\": 56}",
+          "raw_response_sha256": "8c6653be469103df4930b3120f1cafc021dcd60beff3d997c029159f13ec60cb",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"56\", \"predicted_downstream\": 56}",
+          "response_sha256": "8c6653be469103df4930b3120f1cafc021dcd60beff3d997c029159f13ec60cb",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"56\", \"predicted_downstream\": 56}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s540422043334193546"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 52}",
+          "raw_response_sha256": "19b7934e3c6eb805533b323fd23e3b0fbee0be5f065cd6bc95cf7a55ba6c6675",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 52}",
+          "response_sha256": "19b7934e3c6eb805533b323fd23e3b0fbee0be5f065cd6bc95cf7a55ba6c6675",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 52}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s540422043334193546"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+          "raw_response_sha256": "6c4481730b0700d16b775a7f82b319f80035fd3535d9a5076081c4c90ac9db85",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+          "response_sha256": "6c4481730b0700d16b775a7f82b319f80035fd3535d9a5076081c4c90ac9db85",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s540422043334193546"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\":52}",
+          "raw_response_sha256": "1393c1e6cee1b9ef279b5d9e320d9861833f146e37be59d9b2166a88881598a5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":52}",
+          "response_sha256": "1393c1e6cee1b9ef279b5d9e320d9861833f146e37be59d9b2166a88881598a5",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":52}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s540422043334193546"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+          "raw_response_sha256": "2a8589820f81301c088abe8398ce34e7ac0f9c0abf72e316fe47239a64cce4f3",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+          "response_sha256": "2a8589820f81301c088abe8398ce34e7ac0f9c0abf72e316fe47239a64cce4f3",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s845203175257876054"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"Faron\", \"mediator\": \"Aeron\", \"downstream\": \"Brin\", \"predicted_downstream\": 4}",
+          "raw_response_sha256": "a3732ae8ecc1ddcd1925644fa423471cbcfc9cc53eec51c989d7209e91cafc73",
+          "response": "FINAL_ANSWER: {\"root\": \"Faron\", \"mediator\": \"Aeron\", \"downstream\": \"Brin\", \"predicted_downstream\": 4}",
+          "response_sha256": "a3732ae8ecc1ddcd1925644fa423471cbcfc9cc53eec51c989d7209e91cafc73",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"Faron\", \"mediator\": \"Aeron\", \"downstream\": \"Brin\", \"predicted_downstream\": 4}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s845203175257876054"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"faron\"}",
+          "raw_response_sha256": "bc583b89d62ee913108232005235bcdec79a50a6b387f01a6ea9e8c3ebc30b57",
+          "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"faron\"}",
+          "response_sha256": "bc583b89d62ee913108232005235bcdec79a50a6b387f01a6ea9e8c3ebc30b57",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s845203175257876054"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+          "raw_response_sha256": "0e5d5d9fc0792e3083c3705aea9338e7234b1a821029c794de4a20ed41cfcf18",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+          "response_sha256": "0e5d5d9fc0792e3083c3705aea9338e7234b1a821029c794de4a20ed41cfcf18",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 114, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s845203175257876054"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"brin\"}",
+          "raw_response_sha256": "c9a9fb460628948bd0b53ff5bc3374ec08d79fbf9314190b87dad07959515459",
+          "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"brin\"}",
+          "response_sha256": "c9a9fb460628948bd0b53ff5bc3374ec08d79fbf9314190b87dad07959515459",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"aeron\", \"mediator\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s845203175257876054"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"\", \"downstream\": \"cressa\", \"predicted_downstream\": 63}",
+          "raw_response_sha256": "599db93c64661a009a9d47a69c6b65256ea930393f3c765a176eca4c946f6346",
+          "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"\", \"downstream\": \"cressa\", \"predicted_downstream\": 63}",
+          "response_sha256": "599db93c64661a009a9d47a69c6b65256ea930393f3c765a176eca4c946f6346",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"\", \"downstream\": \"cressa\", \"predicted_downstream\": 63}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s174122659988759022"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"root\": \"elara\", \"mediator\": \"brin\"}",
+          "raw_response_sha256": "28da357017d2de6f51325d1a3b506b2550fd0228c4c753e5b3336ff0ac7554f5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"root\": \"elara\", \"mediator\": \"brin\"}",
+          "response_sha256": "28da357017d2de6f51325d1a3b506b2550fd0228c4c753e5b3336ff0ac7554f5",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"root\": \"elara\", \"mediator\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s174122659988759022"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+          "raw_response_sha256": "2a8589820f81301c088abe8398ce34e7ac0f9c0abf72e316fe47239a64cce4f3",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+          "response_sha256": "2a8589820f81301c088abe8398ce34e7ac0f9c0abf72e316fe47239a64cce4f3",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 103, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s174122659988759022"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"mediator\": \"brin\", \"root\": \"elara\"}",
+          "raw_response_sha256": "2ac214b8eb12475a97a43ea0e69f31badbe14e3f0bb5ae462fbf8b9d103d7799",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"mediator\": \"brin\", \"root\": \"elara\"}",
+          "response_sha256": "2ac214b8eb12475a97a43ea0e69f31badbe14e3f0bb5ae462fbf8b9d103d7799",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"predicted_downstream\": 63, \"mediator\": \"brin\", \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s174122659988759022"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+          "raw_response_sha256": "e62890bb009c347844207b59b4083167102217842e718799b519e52096d74e1e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+          "response_sha256": "e62890bb009c347844207b59b4083167102217842e718799b519e52096d74e1e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s174122659988759022"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+          "raw_response_sha256": "df0d17728a8b729f2b30cc728ceafbd5d9eea781f0e227e52d1b2db47db53599",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+          "response_sha256": "df0d17728a8b729f2b30cc728ceafbd5d9eea781f0e227e52d1b2db47db53599",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s188675939384554340"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+          "raw_response_sha256": "e62890bb009c347844207b59b4083167102217842e718799b519e52096d74e1e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+          "response_sha256": "e62890bb009c347844207b59b4083167102217842e718799b519e52096d74e1e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 87, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s188675939384554340"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\":63}",
+          "raw_response_sha256": "6963eae4bf23db5e901ef4c5bc903778e835b478c4c37bf47bd7371e3286046d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":63}",
+          "response_sha256": "6963eae4bf23db5e901ef4c5bc903778e835b478c4c37bf47bd7371e3286046d",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":63}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s188675939384554340"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "raw_response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s188675939384554340"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"63\", \"predicted_downstream\": 63}",
+          "raw_response_sha256": "a59b3f7d71ca0cb9c429da0dc1540bdf919a550b656d63024d9851a65726f379",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"63\", \"predicted_downstream\": 63}",
+          "response_sha256": "a59b3f7d71ca0cb9c429da0dc1540bdf919a550b656d63024d9851a65726f379",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"63\", \"predicted_downstream\": 63}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s188675939384554340"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "7edc358b27ddc081f4c4bc5ce19e00e7494c0fec5ba7a1cd32585b6a92e5bf9c",
+          "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "response_sha256": "7edc358b27ddc081f4c4bc5ce19e00e7494c0fec5ba7a1cd32585b6a92e5bf9c",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "raw_response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "7edc358b27ddc081f4c4bc5ce19e00e7494c0fec5ba7a1cd32585b6a92e5bf9c",
+          "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "response_sha256": "7edc358b27ddc081f4c4bc5ce19e00e7494c0fec5ba7a1cd32585b6a92e5bf9c",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "raw_response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 27}",
+          "raw_response_sha256": "eaf6cc1bfbdc073ef4003e7019f3328f6267c603053c368398b9e17dbae1cf3d",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 27}",
+          "response_sha256": "eaf6cc1bfbdc073ef4003e7019f3328f6267c603053c368398b9e17dbae1cf3d",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 27}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+          "raw_response_sha256": "6c4481730b0700d16b775a7f82b319f80035fd3535d9a5076081c4c90ac9db85",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+          "response_sha256": "6c4481730b0700d16b775a7f82b319f80035fd3535d9a5076081c4c90ac9db85",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 100, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"elara\", \"downstream\": \"faron\", \"predicted_downstream\": 27}",
+          "raw_response_sha256": "23e1c62eef8860b302337883d811010d5f89f1c987c7d23759c2a1f66f485fc4",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"elara\", \"downstream\": \"faron\", \"predicted_downstream\": 27}",
+          "response_sha256": "23e1c62eef8860b302337883d811010d5f89f1c987c7d23759c2a1f66f485fc4",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"elara\", \"downstream\": \"faron\", \"predicted_downstream\": 27}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 70, \"root\": \"elara\", \"mediator\": \"faron\"}",
+          "raw_response_sha256": "0491fadd790aa8a3d8419773d1a706f5393e71b978db39be637d415f4ae4da84",
+          "response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 70, \"root\": \"elara\", \"mediator\": \"faron\"}",
+          "response_sha256": "0491fadd790aa8a3d8419773d1a706f5393e71b978db39be637d415f4ae4da84",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 70, \"root\": \"elara\", \"mediator\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "raw_response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 103, \"mediator\": \"elara\", \"root\": \"BASE\"}",
+          "raw_response_sha256": "222d27fc7cf90de372f64329ce6f6d4f54e3999f4dcf2c793fc7b978f8273cef",
+          "response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 103, \"mediator\": \"elara\", \"root\": \"BASE\"}",
+          "response_sha256": "222d27fc7cf90de372f64329ce6f6d4f54e3999f4dcf2c793fc7b978f8273cef",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"BASE+4\", \"predicted_downstream\": 103, \"mediator\": \"elara\", \"root\": \"BASE\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    }
+  ],
+  "receipt_sha256": "6805491f6fafccc22ce19956633ca7c9ffdb2b479e21ee4b57adeab450ab79e7",
+  "regression_count": 0,
+  "regression_set_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "resident_manifest_identity": null,
+  "schema": "aura.rlc.semantic_neural_decode_canary.v1",
+  "seed": 2026081570,
+  "source_commit": "9a657e393796ad86ab710f3c39ca58a57fd362a3",
+  "source_sha256s": {
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json": "00c9d18cb25f7687eecac7389236d0a40e8ff798b428c7497242638591ec1769",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors": "059e811c0d9e1fbfd76f1a513636c713962a500f5692d4e914bd96d1372405b7",
+    "core/brain/llm/latent_cortex/frontier_tasks.py": "bef80d1a49ce9d062544dbf29a89d11f018751a85658e1d4ce44b0d7c1020780",
+    "core/brain/llm/latent_cortex/semantic_neural_decode_context.py": "affc4bc3cbf017454b50441e5c8fc7c9494f63bc8c72e0f8605f27c69c582abc",
+    "core/brain/llm/latent_cortex/semantic_surface_adapter.py": "31cd151ea864449795c4fcc8751fe9eccdb771e520efb541709bacf066807b24",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py": "141a3d16aa891be182b30c38707a3f15c208734574e5af32459a8f25ac105a72",
+    "core/brain/llm/unified_recurrent_transfer_decode.py": "7bc2d7e0fe741b0760775a39449b33db506b0a6fd76cb9e3667951d9a67b4a78",
+    "core/learning/frontier_process_supervision.py": "f4beb455da1c3cb8e77a3c17afd2a3f5c6cee8d127b60e47c4e99e038d7902bf",
+    "core/learning/public_frontier_action_compiler.py": "32da5f3169ea75003b1aeea0a7fdcb072a9ee138968eae42c0fb75f57f973592",
+    "core/learning/recurrent_action_schema.py": "9e64dff7ac586c62bc3cc519694cd5b579a6fac020ad631ea31a5d7e6e0b0904",
+    "core/learning/recurrent_state_schema.py": "56101d04275a76bc4106b7c7d2365e60d777abc759e8734218885830b7a2b79d",
+    "core/learning/semantic_neural_controls.py": "890305b703704de20d004f69cd2bd9a87cea29c3975c00bab3de5a90e8b3b689",
+    "core/learning/semantic_neural_machine.py": "c3defb6ca618f8617363cc16f8f311111c890eb10b331c6b3dfbec5479e6c382",
+    "tools/run_semantic_neural_decode_canary.py": "00b394320c1a8a4328a7400eacaec769d20adb169cb196420a0274e1f7384eee"
+  },
+  "surface_adapter_receipt_sha256s": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "17889fc2cc8e6b91cdaa79880f938cedfbe97d39596023e8d3ea77ba1f7e69c8",
+    "7e8b458a1e47e1d83371fd9e98c718e68c3ea50200476e3e610380011d27cb79",
+    "75f25e913af6d95e2575503a047a43f7d4d443bab1ba30fd5f7e30ddbf5fa1c8",
+    "d8e2695dbd4a10eb0f9549bd31833e788d9d7162b8ec95641cedea7ff8589276",
+    "c451a6eea0d59dc8f5e02a86339a48920f724e35ef1a2bb3398e538e131ef3c2",
+    "9c1d469dd15509bb484e5427b6579d20b838a89f08416b006ba830226ecd7812"
+  ],
+  "surface_profile": "mixed_multidomain_v1",
+  "task_count": 24,
+  "tasks_per_difficulty": 2,
+  "treatment_state_receipt_sha256s": [
+    "acf2f9fbb594a55380adef2c891117eb55a1a191d483e478de65531a3cd192a9",
+    "c5cb4696bc6fef6c9d08ac97499fbac32f16c766634108e6ed37e6e8b1568b7f",
+    "3124cb33a7ba4964240c0060b252d02c5210eadd9fa3b262106063aad9750d59",
+    "f5cb31e86166d57e0052102e3bc36d8adb65bd794c0b3aa51d50e3db2483de6f",
+    "d52b5976d0e82b90665a4a8a21ff098226b413598d39d7ce23663272043fac6a",
+    "2ab3914e13515b747bbf5a203a31a520abc99f4f8b504f8fcaf55bf3ec4fd8d5",
+    "a40994699a323792fff73b9ef668fc07ce65aafd2dc60550e38e3b18b36dd8cb",
+    "0244309a3b18e433f4039bdabbbac8844ef7815d59487de0375498fcc463c51a",
+    "93f936b086858450e429199723bec13435d14d6bbf58aa917d65b007a55a5a77",
+    "29b1fc4b6d9a853ee85927ff779c7cfb9c8833cf41f3269bd18cac756d747429",
+    "b06b1d9e5ffc72656f7cf30da1fcfc2afd82bfe2af485b1e4dad9e403ac91c14",
+    "31110d58c243d90e6b1aefe7ee0cda8d243f10e81e7b2b802c855e478170a983",
+    "d89123a9b672d9eef10f68c9e12813370b8f26b0a5af9dc56e56b26ce3226e3a",
+    "2a1eee36703dfc35153487cff2172c5e3b62567f17d63c5708f8999c6030a7a6",
+    "fe3f570ec25786005d7db5d0022b6fdeec409ada2221d5c71f10a369fd316b79",
+    "e53ee68793e1d02d9328e9aea0e0f91a0715008afc73631e649a4931a186d131",
+    "a572f7345725624a4b59aaca1efd50e6a5bba9c1413a7e77dd53b53e95faa5d5",
+    "3b3aeee898c497d21178642bff63629ca12f5e19a441892537ddebb687110932",
+    "c5f9878cd44cf72560d9bb426de0c3cbff032baef7818f33066748b80ca3fa41",
+    "300af90e3dece0d6b4467b997cf868bd0c68a004973bd8420698780f925717f4",
+    "4fb1e26f639e239afe79bc01a667401f5a5117a569ca2ae46c7878cefd9a89e6",
+    "326b9e2cf0417c3f48d9520f91f3a5243874a85960da2ddda8645156ad85095b",
+    "d3b877c28ba7c376ee963fd1c88bed0e6c7a56e6f9e70bb1bd1dd4427ef9158c",
+    "ac47bf5119b7ab37e5ba208f4e13164beac627bb36a5b0147ee469a88eb6a16a"
+  ]
+}
