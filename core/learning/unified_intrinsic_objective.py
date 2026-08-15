@@ -828,6 +828,8 @@ def unified_process_training_loss(
     state_teacher_forcing_probability: float,
     state_weight: float = 1.0,
     component: str = "joint",
+    public_action_values: Sequence[Sequence[int]] | None = None,
+    microcode_lesion: bool = False,
 ) -> tuple[Any, dict[str, Any]]:
     """Train the autonomous typed process without constructing answer graphs.
 
@@ -856,6 +858,8 @@ def unified_process_training_loss(
         raise ValueError("process state weight must be inside (0, 10]")
     targets = state_targets_from_trace(transition_trace, plan.iterations)
     action_targets = action_targets_from_program(transition_program, plan.iterations)
+    if public_action_values is not None and component in {"action", "action_workspace"}:
+        raise ValueError("public actions bypass the learned action component")
     initial_state_logits: list[Any] = []
     action_logits: list[Any] = []
     state_logits: list[Any] = []
@@ -871,9 +875,13 @@ def unified_process_training_loss(
         action_logit_trajectory=action_logits,
         initial_state_logit_trajectory=initial_state_logits,
         state_teacher_values=targets.values,
-        action_teacher_values=action_targets.values,
+        action_teacher_values=(
+            None if public_action_values is not None else action_targets.values
+        ),
+        public_action_values=public_action_values,
         initial_state_teacher_values=targets.initial_values,
         state_teacher_forcing_probability=state_teacher_forcing_probability,
+        microcode_lesion=microcode_lesion,
         process_only=True,
         detach_problem_evidence=False,
     )
@@ -891,16 +899,25 @@ def unified_process_training_loss(
         initial_state_logits[0],
         targets,
     )
-    action_loss, action_accuracy, action_step_accuracy = structured_action_loss(
-        action_logits,
-        action_targets,
-    )
+    if public_action_values is None:
+        action_loss, action_accuracy, action_step_accuracy = structured_action_loss(
+            action_logits,
+            action_targets,
+        )
+    else:
+        action_loss = mx.zeros(())
+        action_accuracy = None
+        action_step_accuracy = ()
     component_losses = {
         "initializer": initial_loss,
         "action": action_loss,
         "action_workspace": action_loss,
         "transition": state_loss,
-        "joint": (state_loss + initial_loss + action_loss) / 3.0,
+        "joint": (
+            (state_loss + initial_loss) / 2.0
+            if public_action_values is not None
+            else (state_loss + initial_loss + action_loss) / 3.0
+        ),
     }
     process_loss = component_losses[component]
     return float(state_weight) * process_loss, {
@@ -921,6 +938,9 @@ def unified_process_training_loss(
         "state_step_accuracy": list(state_step_accuracy),
         "action_step_accuracy": list(action_step_accuracy),
         "teacher_forcing_probability": state_teacher_forcing_probability,
+        "public_action_program": public_action_values is not None,
+        "public_actions_are_correctness_authority": False,
+        "exact_microcode_available": not microcode_lesion,
         "answer_tokens_exposed": False,
         "answer_or_coda_graph_constructed": False,
         "problem_evidence_gradient": "scoped_transformer_enabled",

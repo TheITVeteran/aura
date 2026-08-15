@@ -918,6 +918,108 @@ def test_typed_action_lesion_rejects_teacher_contamination() -> None:
         )
 
 
+def test_public_action_program_executes_without_becoming_teacher_forcing() -> None:
+    model = _model()
+    controller = _controller()
+    public_actions = (
+        (0, 7, 32, 32, 32, 32, 32, 0),
+        (1, 5, 13, 32, 32, 32, 32, 1),
+    )
+    intact_states: list[object] = []
+    lesioned_states: list[object] = []
+    _final, _trajectory, telemetry = unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=2),
+        controller,
+        state_slot_start=4,
+        state_probability_trajectory=intact_states,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        public_action_values=public_actions,
+        state_teacher_forcing_probability=1.0,
+    )
+    unified_recurrent_hidden_states(
+        model,
+        TOKENS,
+        RecurrentDepthPlan(2, 6, iterations=2),
+        controller,
+        state_slot_start=4,
+        state_probability_trajectory=lesioned_states,
+        initial_state_teacher_values=(0, 0, 0, 0, 0),
+        public_action_values=public_actions,
+        state_teacher_forcing_probability=1.0,
+        typed_action_lesion=True,
+    )
+
+    intact = tuple(
+        int(value) for value in mx.argmax(intact_states[-1][0], axis=-1).tolist()
+    )
+    lesioned = tuple(
+        int(value) for value in mx.argmax(lesioned_states[-1][0], axis=-1).tolist()
+    )
+    assert intact == (2, 12, 0, 0, 1)
+    assert lesioned != intact
+    assert telemetry.receipt()["teacher_available"] is False
+
+
+def test_public_actions_cannot_alias_private_action_teacher() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        unified_recurrent_hidden_states(
+            _model(),
+            TOKENS,
+            RecurrentDepthPlan(2, 6, iterations=1),
+            _controller(),
+            state_slot_start=4,
+            public_action_values=((0, 1, 32, 32, 32, 32, 32, 1),),
+            action_teacher_values=((0, 1, 32, 32, 32, 32, 32, 1),),
+        )
+
+
+def test_microcode_lesion_forces_the_learned_transition_surface() -> None:
+    controller = _controller()
+    problem = mx.random.normal((1, 7, 64), key=mx.random.key(114))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(115))
+    state = controller.exact_probabilities(
+        (0, 0, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (0, 9, 32, 32, 32, 32, 32, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    action_state = controller.commit_action_probabilities(action)
+    exact = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=action_state,
+        state_probabilities=state,
+        action_probabilities=action,
+    )
+    learned = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=action_state,
+        state_probabilities=state,
+        action_probabilities=action,
+        microcode_lesion=True,
+    )
+    mx.eval(exact, learned)
+    assert tuple(int(value) for value in mx.argmax(exact[0], axis=-1).tolist()) == (
+        1,
+        9,
+        0,
+        0,
+        1,
+    )
+    assert not bool(mx.array_equal(exact, learned))
+
+
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
     controller = _controller()
     candidate = mx.zeros((1, 12, 64), dtype=mx.float32)

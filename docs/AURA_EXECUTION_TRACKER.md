@@ -49139,3 +49139,39 @@ proven narrow tissue to the new broad opcode vocabulary while preserving the
 parent everywhere else. It does not prove broad behavioral gain, resident-32B
 improvement, fusion, frontier performance or `WOW Signal`. The next action
 remains the bounded 1.5B adaptation and frozen four-arm canary.
+
+## Checkpoint 2026-08-14-470: Replace Memorized Process Actions With Public Operands
+
+CP463 through CP469 localized the broad recurrent-process failure instead of
+establishing a gain. CP465 made every unseen initial state exact. CP467's
+nonlinear workspace readout still solved `0/21` unseen processes. CP469 then
+fit every one of 1,781 training action fields exactly from a structured public
+signature, but again solved `0/21` unseen processes. The acquisition surface
+was therefore sufficient to memorize examples and insufficient to represent
+task-disjoint program semantics. None of those results authorizes fusion,
+resident transfer, frontier performance, or `WOW Signal`.
+
+The replacement path separates public parsing from learned execution. A new
+answer-blind compiler accepts only the public prompt and family and emits raw
+operand order for mathematics, stateful code traces, Bayesian calibration and
+premise auditing. Its API cannot receive verifier answers or private traces;
+across all three difficulties and multiple seeds its instructions exactly
+match the independently produced private teaching actions. Derived counts,
+states, scores, winners and answers are absent. Unsupported answer-bearing
+traversal, science and planning encodings fail closed until their raw program
+representations are implemented.
+
+The recurrent forward now accepts this stream as public input separately from
+teacher forcing. A typed-action lesion removes it. A second lesion disables the
+exact microcode so transition loss and autonomous admission exercise learned
+recurrent transition tissue. The campaign profile
+`process_public_transition_acquisition` binds those conditions into source,
+dataset, parent-checkpoint and launch identity and evaluates unseen tasks with
+the same exact executor absent. Focused contracts pass `260/260`; canonical
+smoke passes `104/104`; Ruff, compilation and diff integrity pass.
+
+This checkpoint proves the new mechanism is executable, answer-blind,
+teacher-distinct, lesionable and launchable. It does not yet prove that the
+learned transition generalizes. Next is its bounded 1.5B acquisition and unseen
+admission. If that clears, the remaining three public program families and the
+teacher-removed answer bridge follow before powered and resident replication.

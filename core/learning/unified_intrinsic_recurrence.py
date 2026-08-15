@@ -1672,8 +1672,12 @@ class UnifiedRecurrentController(nn.Module):
         state_probabilities: Any | None = None,
         action_probabilities: Any | None = None,
         action_probability_history: Sequence[Any] | None = None,
+        microcode_lesion: bool = False,
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
+
+        if type(microcode_lesion) is not bool:
+            raise TypeError("microcode lesion flag must be bool")
 
         if (
             len(problem_evidence.shape) != 3
@@ -1724,6 +1728,8 @@ class UnifiedRecurrentController(nn.Module):
             features,
             self.state_transition_output,
         ) + self.state_transition_bias
+        if microcode_lesion:
+            return learned_logits
         if state_probabilities is None or action_probabilities is None:
             return learned_logits
         microcode_logits, recognized = self.microcode_transition_logits(
@@ -3092,6 +3098,7 @@ def unified_recurrent_hidden_states(
     answer_binding_feature_trajectory: list[tuple[Any, Any, Any]] | None = None,
     state_teacher_values: Sequence[Sequence[int]] | None = None,
     action_teacher_values: Sequence[Sequence[int]] | None = None,
+    public_action_values: Sequence[Sequence[int]] | None = None,
     initial_state_teacher_values: Sequence[int] | None = None,
     state_teacher_forcing_probability: float = 0.0,
     typed_action_lesion: bool = False,
@@ -3099,6 +3106,7 @@ def unified_recurrent_hidden_states(
     action_feedback_lesion: bool = False,
     family_action_lesion: bool = False,
     action_literal_binding_lesion: bool = False,
+    microcode_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
     detach_problem_evidence: bool = True,
@@ -3116,6 +3124,7 @@ def unified_recurrent_hidden_states(
         or type(action_feedback_lesion) is not bool
         or type(family_action_lesion) is not bool
         or type(action_literal_binding_lesion) is not bool
+        or type(microcode_lesion) is not bool
         or type(process_tape_lesion) is not bool
         or type(process_only) is not bool
         or type(detach_problem_evidence) is not bool
@@ -3144,6 +3153,7 @@ def unified_recurrent_hidden_states(
                 state_slot_start,
                 state_teacher_values,
                 action_teacher_values,
+                public_action_values,
                 initial_state_teacher_values,
             )
         ) or adaptive_halt or soft_memory_writes:
@@ -3156,6 +3166,10 @@ def unified_recurrent_hidden_states(
         raise ValueError("initial state teacher requires typed state slots")
     if action_teacher_values is not None and state_slot_start is None:
         raise ValueError("action teacher requires typed state slots")
+    if public_action_values is not None and state_slot_start is None:
+        raise ValueError("public actions require typed state slots")
+    if public_action_values is not None and action_teacher_values is not None:
+        raise ValueError("public actions and private action teacher are mutually exclusive")
     if typed_action_lesion and action_teacher_values is not None:
         raise ValueError("typed action lesion cannot accompany an action teacher")
     if typed_action_lesion and state_slot_start is None:
@@ -3176,6 +3190,8 @@ def unified_recurrent_hidden_states(
         raise ValueError("state teacher roll-in is shorter than the recurrence plan")
     if action_teacher_values is not None and len(action_teacher_values) < plan.iterations:
         raise ValueError("action teacher is shorter than the recurrence plan")
+    if public_action_values is not None and len(public_action_values) < plan.iterations:
+        raise ValueError("public action program is shorter than the recurrence plan")
     if (
         isinstance(state_teacher_forcing_probability, bool)
         or not isinstance(state_teacher_forcing_probability, (int, float))
@@ -3322,6 +3338,12 @@ def unified_recurrent_hidden_states(
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
                 )
+                if public_action_values is not None:
+                    action_probabilities = controller.exact_probabilities(
+                        public_action_values[iteration],
+                        slots=controller.config.action_slots,
+                        cardinality=controller.config.action_cardinality,
+                    )
                 if typed_action_lesion:
                     action_probabilities = controller.exact_probabilities(
                         (ACTION_NULL,) * (controller.config.action_slots - 1) + (0,),
@@ -3356,6 +3378,7 @@ def unified_recurrent_hidden_states(
                     state_probabilities=state_probabilities,
                     action_probabilities=action_probabilities,
                     action_probability_history=action_probability_history,
+                    microcode_lesion=microcode_lesion,
                 )
                 next_state_probabilities = (
                     controller.straight_through_probabilities(state_logits)

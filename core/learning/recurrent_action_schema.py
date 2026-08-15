@@ -205,6 +205,31 @@ def _canonical_instruction(
     return instruction
 
 
+def canonical_instruction_from_public_fields(
+    family: str,
+    field_names: tuple[str, ...],
+    action: tuple[int, ...],
+    *,
+    step: int,
+    terminal: int,
+) -> tuple[int, ...]:
+    """Compile public operands into the canonical recurrent instruction.
+
+    The public process compiler deliberately shares this projection with the
+    private supervision path.  Keeping one projection prevents an inference-
+    only instruction dialect while the compiler's API excludes state traces,
+    verifier answers, and other teaching evidence.
+    """
+
+    return _canonical_instruction(
+        family,
+        field_names,
+        action,
+        step=step,
+        terminal=terminal,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class RecurrentActionTargets:
     """Fixed-width categorical actions for one verified transition program."""
@@ -345,4 +370,5 @@ __all__ = [
     "RecurrentActionTargets",
     "action_targets_from_program",
     "action_value_semantic_label",
+    "canonical_instruction_from_public_fields",
 ]

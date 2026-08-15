@@ -433,6 +433,74 @@ def test_process_objective_can_train_each_causal_component_exclusively() -> None
         )
 
 
+def test_public_actions_train_learned_transition_with_exact_microcode_removed() -> None:
+    model = _model()
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+    public_actions = action_targets_from_program(program, 3).values
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_process_training_loss(
+            model,
+            TOKENS,
+            candidate,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            state_teacher_forcing_probability=1.0,
+            component="transition",
+            public_action_values=public_actions,
+            microcode_lesion=True,
+        )[0]
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+    assert float(loss.item()) > 0.0
+    assert float(mx.max(mx.abs(flat["state_transition_output"]))) > 0.0
+    assert float(mx.max(mx.abs(flat["action_output"]))) == 0.0
+    _loss, receipt = unified_process_training_loss(
+        model,
+        TOKENS,
+        controller,
+        _spec().plan_at(3),
+        transition_trace=trace,
+        transition_program=program,
+        state_teacher_forcing_probability=1.0,
+        component="transition",
+        public_action_values=public_actions,
+        microcode_lesion=True,
+    )
+    assert receipt["public_action_program"] is True
+    assert receipt["public_actions_are_correctness_authority"] is False
+    assert receipt["exact_microcode_available"] is False
+    assert receipt["action_accuracy"] is None
+
+    with pytest.raises(ValueError, match="bypass"):
+        unified_process_training_loss(
+            model,
+            TOKENS,
+            controller,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            state_teacher_forcing_probability=1.0,
+            component="action",
+            public_action_values=public_actions,
+            microcode_lesion=True,
+        )
+
+
 def test_process_objective_reaches_scoped_transformer_tissue() -> None:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,

@@ -86,6 +86,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "process_completion_acquisition",
         "process_family_acquisition",
         "process_neural_acquisition",
+        "process_public_transition_acquisition",
         "recovery",
     }
     if profile in bootstrap_profiles:
@@ -372,6 +373,23 @@ def test_process_analytic_acquisition_writes_training_only_readout() -> None:
     assert arguments[arguments.index("--process-curriculum") + 1] == (
         "transition_only"
     )
+
+
+def test_public_transition_acquisition_removes_answer_and_microcode_authority() -> None:
+    training = _profile_training("process_public_transition_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["families"] == (
+        "mathematics,coding,calibration,misleading_premise"
+    )
+    assert training["public_action_program"] is True
+    assert training["process_curriculum"] == "transition_only"
+    assert training["process_family_batch_size"] == 4
+    assert training["process_family_batch_mode"] == "balanced_families"
+    assert training["state_warmup_steps"] == training["max_steps"] == 128
+    assert training["answer_bridge_steps"] == 0
+    assert "--public-action-program" in arguments
+    assert "--analytic-action-readout-fit" not in arguments
 
 
 def test_process_completion_signed_config_is_controller_admitted(

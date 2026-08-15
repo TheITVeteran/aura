@@ -30,6 +30,9 @@ from core.learning.frontier_process_supervision import (  # noqa: E402
     frontier_process_task_battery,
 )
 from core.learning.intrinsic_recurrence import _run, checkpointed_window  # noqa: E402
+from core.learning.public_frontier_action_compiler import (  # noqa: E402
+    compile_public_frontier_actions,
+)
 from core.learning.recurrent_action_schema import (  # noqa: E402
     ACTION_SLOT_NAMES,
     OP_FRONTIER_AUDIT,
@@ -119,6 +122,7 @@ TRAINING_SOURCE_FILES = (
     "core/learning/depth_conditioned_lora.py",
     "core/learning/frontier_process_supervision.py",
     "core/learning/intrinsic_recurrence.py",
+    "core/learning/public_frontier_action_compiler.py",
     "core/learning/protected_memory.py",
     "core/learning/recurrence_curriculum.py",
     "core/learning/recurrent_answer_emission.py",
@@ -2052,6 +2056,9 @@ def _capture_autonomous_process(
     bundle: UnifiedTrainingBundle,
     prompt: Any,
     plan: Any,
+    *,
+    public_action_values: tuple[tuple[int, ...], ...] | None = None,
+    microcode_lesion: bool = False,
 ) -> dict[str, Any]:
     """Capture one prefix-only autonomous process execution without decoding."""
 
@@ -2067,15 +2074,34 @@ def _capture_autonomous_process(
         initial_state_logit_trajectory=initial_state_logits,
         state_logit_trajectory=state_logits,
         action_logit_trajectory=action_logits,
+        public_action_values=public_action_values,
+        microcode_lesion=microcode_lesion,
     )
     if len(initial_state_logits) != 1:
         raise RuntimeError("autonomous process emitted no initial state decision")
     mx.eval(initial_state_logits[0], *state_logits, *action_logits)
+    if public_action_values is not None:
+        action_logits = [
+            bundle.controller.exact_probabilities(
+                row,
+                slots=bundle.controller.config.action_slots,
+                cardinality=bundle.controller.config.action_cardinality,
+            )
+            for row in public_action_values
+        ]
+        mx.eval(*action_logits)
     return {
         "initial_state_logits": initial_state_logits[0],
         "state_logits": tuple(state_logits),
         "action_logits": tuple(action_logits),
     }
+
+
+def _public_actions_for_task(task: Any, depth: int) -> tuple[tuple[int, ...], ...]:
+    """Compile the task's public prompt without opening verifier evidence."""
+
+    program = compile_public_frontier_actions(str(task.prompt), str(task.family))
+    return program.values_for_iterations(depth)
 
 
 def _answer_bridge_teacher_policy(
@@ -2582,6 +2608,8 @@ def _evaluate_process_admission(
     tasks: list[Any],
     spec: UnifiedIntrinsicTrainingSpec,
     bridge: str,
+    *,
+    public_action_program: bool = False,
 ) -> dict[str, Any]:
     """Require exact teacher-removed state/action execution on every unseen task."""
 
@@ -2602,10 +2630,20 @@ def _evaluate_process_admission(
     with recurrence_adapter_scope(start=None, stop=None):
         for task in selected:
             prompt, _answer = encode_example(tokenizer, task, bridge)
-            capture = _capture_autonomous_process(
-                bundle,
-                prompt,
-                spec.plan_at(depth),
+            capture = (
+                _capture_autonomous_process(
+                    bundle,
+                    prompt,
+                    spec.plan_at(depth),
+                    public_action_values=_public_actions_for_task(task, depth),
+                    microcode_lesion=True,
+                )
+                if public_action_program
+                else _capture_autonomous_process(
+                    bundle,
+                    prompt,
+                    spec.plan_at(depth),
+                )
             )
             evidence = _process_evidence_from_capture(task, depth, capture)
             rows.append(
@@ -2621,6 +2659,8 @@ def _evaluate_process_admission(
     body = {
         "schema": "aura.unified_intrinsic.process_admission.v1",
         "teacher_available": False,
+        "public_action_program": public_action_program,
+        "exact_microcode_available": not public_action_program,
         "depth": depth,
         "cells": len(cells),
         "tasks": len(rows),
@@ -4082,6 +4122,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--public-action-program",
+        action="store_true",
+        help=(
+            "parse answer-blind public operands and train/evaluate the learned "
+            "transition with exact microcode removed"
+        ),
+    )
+    parser.add_argument(
         "--analytic-action-readout-ridge",
         type=float,
         default=1e-3,
@@ -4284,6 +4332,20 @@ def main() -> int:
     ):
         raise ValueError(
             "analytic action readout fitting requires bootstrapped transition-only acquisition"
+        )
+    if args.public_action_program and (
+        args.task_source != "frontier_process"
+        or args.process_curriculum != "transition_only"
+        or args.state_warmup_steps != args.max_steps
+        or args.answer_bridge_steps != 0
+        or any(
+            family
+            not in {"mathematics", "coding", "calibration", "misleading_premise"}
+            for family in (value.strip() for value in args.families.split(",") if value.strip())
+        )
+    ):
+        raise ValueError(
+            "public action program requires a supported transition-only frontier campaign"
         )
     if (
         not math.isfinite(args.analytic_action_readout_ridge)
@@ -4780,6 +4842,12 @@ def main() -> int:
             "process_family_batch_mode": args.process_family_batch_mode,
             "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
             "process_query_gradient_scale": args.process_query_gradient_scale,
+            "public_action_program": {
+                "enabled": args.public_action_program,
+                "source": "public_objective_literals_and_order_only",
+                "verifier_answer_available": False,
+                "exact_microcode_available": False,
+            },
             "analytic_action_readout": {
                 "enabled": args.analytic_action_readout_fit,
                 "method": (
@@ -5389,6 +5457,14 @@ def main() -> int:
                                     cohort_task,
                                     bridge,
                                 )
+                                cohort_public_actions = (
+                                    _public_actions_for_task(
+                                        cohort_task,
+                                        max(state_spec.train_depths),
+                                    )
+                                    if args.public_action_program
+                                    else None
+                                )
 
                                 def process_objective(
                                     candidate: UnifiedTrainingBundle,
@@ -5397,6 +5473,9 @@ def main() -> int:
                                     transition_program: Any = cohort_task.transition_program,
                                     component: str = process_policy["component"],
                                     teacher_probability: float = state_teacher_probability,
+                                    public_actions: tuple[tuple[int, ...], ...] | None = (
+                                        cohort_public_actions
+                                    ),
                                 ) -> Any:
                                     return unified_process_training_loss(
                                         candidate.model,
@@ -5408,6 +5487,8 @@ def main() -> int:
                                         state_teacher_forcing_probability=teacher_probability,
                                         state_weight=state_spec.state_weight,
                                         component=component,
+                                        public_action_values=public_actions,
+                                        microcode_lesion=args.public_action_program,
                                     )[0]
 
                                 cohort_loss, cohort_gradient = nn.value_and_grad(
@@ -5641,6 +5722,7 @@ def main() -> int:
                 holdout,
                 spec,
                 bridge,
+                public_action_program=args.public_action_program,
             )
             if args.answer_bridge_steps == 0 and step >= args.max_steps
             else None
