@@ -590,8 +590,8 @@ def test_semantic_masked_copy_write_canary_binds_structural_authority() -> None:
     assert training["state_schema"] == "semantic_v2"
     assert training["transition_processor_mode"] == "masked_copy_write"
     assert training["transition_copy_prior_logit_bias"] == 0.01
-    assert training["seed"] == 2026081513
-    assert training["init_seed"] == 2026081514
+    assert training["seed"] == 2026081517
+    assert training["init_seed"] == 2026081518
     assert training["transition_replay_mode"] == "disabled"
     assert training["max_steps"] == training["state_warmup_steps"] == 192
     assert "process_semantic_masked_copy_write_canary" not in BOOTSTRAP_PROFILES

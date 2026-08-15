@@ -1,0 +1,87 @@
+{
+  "schema": "aura.unified_intrinsic.semantic_masked_copy_write_verdict.v1",
+  "campaign_id": "cp543-semantic-masked-copy-write-20260815",
+  "source_commit": "f4c4f06427818fa987fb2cea514befbfc34ed6d8",
+  "source_tree": "19989311e17f2e30e78c454122c2014c02078ecd",
+  "source_manifest_sha256": "6df12fe8d829493ddf1733972fcb94e664470b2f290a9a9a4dae373feaa2c4d6",
+  "campaign_config_sha256": "6306f43ef8e9126eeada124dff9a89f905e8a41d001a2d19bbd71e64bcb5fe68",
+  "dataset_identity_sha256": "6027a611a5f17374a4e70d32958213f4cb178393c20a87f76ac583df4f126044",
+  "tokenized_dataset_identity_sha256": "b1c628871709943b8558fe67591f4880ddc0f250b39980c06e61b856ab12fce0",
+  "profile": "process_semantic_masked_copy_write_canary",
+  "transition_policy": {
+    "mode": "masked_copy_write",
+    "copy_prior_logit_bias": 0.01,
+    "state_schema": "semantic_v2",
+    "replay_mode": "disabled",
+    "gradient_combiner": "balanced_mean",
+    "dataset_seed": 2026081513,
+    "initialization_seed": 2026081514
+  },
+  "checkpoint": {
+    "step": 176,
+    "checkpoint_sha256": "cbd237df985af31863c32f0fc5f99bb79951ba10d8de95f6f32076df97b99cb5",
+    "checkpoint_identity_sha256": "5a6b049aeffec10a35ace8a37334c55831ebe2c1165f3152bfbbd006f34456f7",
+    "checkpoint_complete_sha256": "cc2ac7268a5348c18d42e2d60afb1e854b2749db986884bf5a8a2fc7167764b2"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "duration_seconds": 218.950681,
+    "detached_receipt_sha256": "6e34dbefe85b3609eff698a1c7f843fb2083140bdb8f5fb892346dfcd566aa4e",
+    "detached_receipt_file_sha256": "191acf27fe78c7b4820c00bbd763af7e4c42ba71e8ba11eb39313c76b250b507",
+    "halt_reason": "bounded_exact_trajectory_futility_at_step_160",
+    "stop_signal": 15,
+    "process_group_empty": true,
+    "lineage_empty": true,
+    "descendant_cleanup_verified": true
+  },
+  "observations": {
+    "step_32": {
+      "t1_categorical_state_accuracy": 0.73209776977698,
+      "t16_categorical_state_accuracy": 0.4407354875260757,
+      "t1_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0,
+      "active_trajectory_exact_accuracy": 0.0,
+      "t1_pc_accuracy": 0.6666666666666666,
+      "t16_pc_accuracy": 0.34444444444444433
+    },
+    "step_96": {
+      "t1_categorical_state_accuracy": 0.8084866652886072,
+      "t16_categorical_state_accuracy": 0.61468480175568,
+      "t1_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0,
+      "active_trajectory_exact_accuracy": 0.0,
+      "t1_pc_accuracy": 1.0,
+      "t16_pc_accuracy": 0.8
+    },
+    "step_160": {
+      "t1_categorical_state_accuracy": 0.8150703575876024,
+      "t16_categorical_state_accuracy": 0.6631155361214446,
+      "t1_active_state_exact_accuracy": 0.1388888888888889,
+      "t16_active_state_exact_accuracy": 0.025000000000000005,
+      "t1_active_trajectory_exact_accuracy": 0.1388888888888889,
+      "t16_active_trajectory_exact_accuracy": 0.0,
+      "t1_pc_accuracy": 1.0,
+      "t16_pc_accuracy": 0.8333333333333334,
+      "heldout_depth_helps": false,
+      "best_heldout_relative_gain": -4.767998188020604
+    }
+  },
+  "verdict": "not_admitted_exact_trajectory_futility",
+  "supported_claims": [
+    "Public opcode-scoped write authority improved average categorical state accuracy and exposed five exact T1 transitions by step 160.",
+    "No complete trajectory beyond one transition was exact, and held-out recurrence remained harmful.",
+    "The program counter degraded from exact at T1 to 0.8333 at T16 despite being completely determined by committed state and the public action.",
+    "The remaining campaign should not spend learned capacity on deterministic control-plane bookkeeping."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous semantic-state execution",
+    "positive exact recurrence-depth effect",
+    "multi-domain decoded reasoning gain",
+    "resident-32B semantic transfer",
+    "runtime promotion or weight fusion",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "next_bounded_mechanism": "Resolve PC increment and terminal latch exactly from committed state and public action while retaining learned opcode-scoped value writes; require exact multi-step acquisition before answer-level work."
+}

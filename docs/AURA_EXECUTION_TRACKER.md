@@ -50181,3 +50181,51 @@ will receive structural write authority: learned tissue may choose values only
 for registers that the current instruction can mutate, while every other
 register is copied exactly. Exact T1 acquisition remains the first continuation
 gate.
+
+## Checkpoint 2026-08-15-542: Give Public Opcodes Structural Write Authority
+
+The transition processor now runs under an opcode-qualified write mask. Learned
+tissue may propose values only for registers that the current canonical public
+instruction can mutate; all other registers are copied exactly from committed
+state. Semantic simulation updates only its selected balance pair after a case
+is established and may clear all balance pairs only on an observable case
+change. Calibration and premise-audit writes are similarly stage-qualified.
+
+The trainer's interim transition evaluation is now model-free: it replays exact
+public actions from exact initial state through the deployed controller policy
+without loading the language model. This reduced each bounded evaluation from
+minutes to seconds without changing the later requirement for real-model answer
+emission and resident evidence. Focused recurrence, objective, trainer and
+campaign contracts passed `263/263`; post-rebase smoke passed `110/110`.
+
+## Checkpoint 2026-08-15-543: Masked Writes Help, But Control Drift Still Wins
+
+The fresh masked-write campaign ran from immutable source `f4c4f0642` in one
+healthy detached attempt. By step 160, T1 categorical state accuracy reached
+`0.8151`, five of 36 T1 transitions were exact, and T16 categorical accuracy
+reached `0.6631`. That is measurable acquisition beyond CP541's zero-exact
+result, but it is not executable recurrence: every T3-through-T16 complete
+trajectory remained wrong and the best held-out depth effect was negative.
+
+The diagnostic separated another structural defect. Program position was exact
+at T1 but fell to `0.8333` at T16 even though the next PC is simply the committed
+PC plus one and the terminal latch is declared by the public action. Learned
+value tissue was being asked to regenerate deterministic control-plane state.
+The campaign was stopped at its bounded futility point, with step-176 checkpoint,
+stop signal and empty process lineage frozen in
+`artifacts/closeout/latent_cortex/cp543_semantic_masked_copy_write_verdict.json`.
+
+## Checkpoint 2026-08-15-544: Make Recurrent Control State Exact
+
+For recognized public instructions, masked copy-write now constructs PC and
+terminal logits from exact committed-state/action transitions after learned
+value writes. Neither control slot appears in learned write authority. Unknown
+opcodes remain exact identity and invalid states remain absorbing. Adversarial
+processor tests prove learned logits cannot override either control fact.
+
+This does not encode a task answer or execute a semantic operation. It removes
+two zero-information guesses from every recurrence step while preserving the
+actual claim under test: whether learned recurrent tissue can compute the
+opcode-qualified value-register transition. The continuation profile uses fresh
+dataset and initialization seeds; exact multi-step state acquisition remains the
+next gate before decoded-answer training.

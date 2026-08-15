@@ -2783,6 +2783,52 @@ class UnifiedRecurrentController(nn.Module):
                     writable_logits,
                     copied_logits,
                 )
+                # Program position and termination are control-plane facts,
+                # not task semantics.  For a recognized public instruction the
+                # next PC and terminal latch are fully determined by the
+                # committed state and action.  Asking learned tissue to infer
+                # them introduces geometric trajectory failures while adding
+                # no reasoning capacity.  Value registers remain learned.
+                state_values = mx.argmax(state_probabilities, axis=-1).astype(
+                    mx.int32
+                )
+                action_values = mx.argmax(action_probabilities, axis=-1).astype(
+                    mx.int32
+                )
+                opcode = action_values[:, 0]
+                recognized = (
+                    (opcode >= OP_COPY_VALUE)
+                    & (opcode <= OP_FRONTIER_AUDIT)
+                    & (opcode != ACTION_NULL)
+                )
+                next_pc = mx.minimum(
+                    state_values[:, 0] + 1,
+                    self.config.state_cardinality - 1,
+                )
+                control_values = mx.concatenate(
+                    (
+                        next_pc[:, None],
+                        state_values[:, 1:-1],
+                        action_values[:, 7, None],
+                    ),
+                    axis=1,
+                )
+                categories = mx.arange(self.config.state_cardinality)[None, None, :]
+                control_logits = mx.log(
+                    mx.maximum(
+                        (control_values[..., None] == categories).astype(mx.float32),
+                        1e-6,
+                    )
+                )
+                slots = mx.arange(self.config.state_slots)[None, :]
+                control_authority = recognized[:, None] & (
+                    (slots == 0) | (slots == self.config.state_slots - 1)
+                )
+                resolved = mx.where(
+                    control_authority[..., None],
+                    control_logits,
+                    resolved,
+                )
         else:
             if legacy_logits is None:
                 raise ValueError("residual transition processor requires legacy logits")
@@ -2831,13 +2877,11 @@ class UnifiedRecurrentController(nn.Module):
             action[:, index] for index in range(1, 7)
         )
         slots = mx.arange(self.config.state_slots)[None, :]
-        recognized = (
-            (opcode >= OP_COPY_VALUE)
-            & (opcode <= OP_FRONTIER_AUDIT)
-            & (opcode != ACTION_NULL)
-        )
-        writable = recognized[:, None] & (
-            (slots == 0) | (slots == self.config.state_slots - 1)
+        # PC and done are resolved by the structural control plane after learned
+        # value writes. They are deliberately absent from learned authority.
+        writable = mx.zeros(
+            (state_probabilities.shape[0], self.config.state_slots),
+            dtype=mx.bool_,
         )
 
         scalar = (opcode >= OP_COPY_VALUE) & (opcode <= OP_BOOL_XOR)

@@ -13,6 +13,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from core.learning.intrinsic_recurrence import RecurrentDepthPlan  # noqa: E402
 from core.learning.protected_memory import MemoryLayout  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
+    ACTION_NULL,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_TRAVERSE,
 )
@@ -1419,9 +1420,9 @@ def test_masked_copy_write_only_changes_publicly_writable_registers() -> None:
         controller.typed_transition_processor_logits = original
 
     mx.eval(resolved)
-    # PC, declared destination value1 and terminal are writable. The other two
-    # value registers remain exact copies despite a stronger learned proposal.
-    assert tuple(mx.argmax(resolved[0], axis=-1).tolist()) == (1, 7, 12, 13, 1)
+    # PC and terminal are exact public control transitions, declared destination
+    # value1 is learned, and other value registers remain exact copies.
+    assert tuple(mx.argmax(resolved[0], axis=-1).tolist()) == (1, 7, 12, 13, 0)
 
 
 def test_semantic_write_authority_tracks_selected_balance_and_case_reset() -> None:
@@ -1445,19 +1446,102 @@ def test_semantic_write_authority_tracks_selected_balance_and_case_reset() -> No
         return tuple(bool(value) for value in mask[0].tolist())
 
     assert authority(3, 1) == (
+        False,
+        True,
+        False,
+        False,
         True,
         True,
         False,
         False,
-        True,
-        True,
         False,
         False,
         False,
-        False,
-        True,
     )
-    assert authority(4, 1) == (True,) * 11
+    assert authority(4, 1) == (
+        False,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        True,
+        False,
+    )
+
+
+def test_masked_copy_write_control_plane_ignores_adversarial_processor() -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (5, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    categories = mx.arange(controller.config.state_cardinality)[None, None, :]
+    adversarial = 8.0 * (
+        categories == mx.array(((31, 31, 31, 31, 0),), dtype=mx.int32)[..., None]
+    ).astype(mx.float32)
+    original = controller.typed_transition_processor_logits
+    controller.typed_transition_processor_logits = lambda *_args, **_kwargs: adversarial
+    try:
+        resolved = controller.resolve_transition_processor_logits(
+            None,
+            state,
+            action,
+            None,
+            transition_processor_mode="masked_copy_write",
+            transition_copy_prior_logit_bias=0.01,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    mx.eval(resolved)
+    values = tuple(mx.argmax(resolved[0], axis=-1).tolist())
+    assert values[0] == 6
+    assert values[-1] == 1
+
+
+def test_masked_copy_write_unknown_opcode_is_exact_identity() -> None:
+    controller = _controller()
+    values = (5, 7, 11, 13, 0)
+    state = controller.exact_probabilities(
+        values,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (ACTION_NULL, 1, 2, 3, 4, 5, 6, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    categories = mx.arange(controller.config.state_cardinality)[None, None, :]
+    candidate = 8.0 * (
+        categories == mx.array(((31, 31, 31, 31, 1),), dtype=mx.int32)[..., None]
+    ).astype(mx.float32)
+    original = controller.typed_transition_processor_logits
+    controller.typed_transition_processor_logits = lambda *_args, **_kwargs: candidate
+    try:
+        resolved = controller.resolve_transition_processor_logits(
+            None,
+            state,
+            action,
+            None,
+            transition_processor_mode="masked_copy_write",
+            transition_copy_prior_logit_bias=0.01,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    mx.eval(resolved)
+    assert tuple(mx.argmax(resolved[0], axis=-1).tolist()) == values
 
 
 def test_cross_register_transition_tissue_is_zero_attached_then_causal() -> None:
