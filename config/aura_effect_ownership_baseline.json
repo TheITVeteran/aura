@@ -3273,6 +3273,14 @@
       "scope": "<module>.STaRReasoner._flush_accepted"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/star_reasoner.py",
+      "scope": "<module>.STaRReasoner._flush_quarantine"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15882,6 +15890,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "136b46ce4a5ede10d1cb31a0a3cfcc463aec3e9d045ce2dc14a7c46d2de8faa2",
+  "inventory_sha256": "810fbbe3df9889fa971e50744509fefbad875d11d638efca05e6b671f2357270",
   "schema_version": 1
 }
