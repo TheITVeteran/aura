@@ -51,10 +51,9 @@ OP_SET_SCALAR: Final = 27
 OP_PAIR_COPY: Final = 28
 OP_PAIR_EUCLID_STEP: Final = 29
 OP_PAIR_PRODUCT: Final = 30
-MAX_RECURRENT_OPCODE: Final = OP_PAIR_PRODUCT
-SEMANTIC_MICRO_OPCODES: Final = frozenset(
-    range(OP_PAIR_SET, MAX_RECURRENT_OPCODE + 1)
-)
+OP_CAUSAL_CHAIN: Final = 31
+MAX_RECURRENT_OPCODE: Final = OP_CAUSAL_CHAIN
+SEMANTIC_MICRO_OPCODES: Final = frozenset(range(OP_PAIR_SET, MAX_RECURRENT_OPCODE + 1))
 SEMANTIC_MICRO_ACTION_FIELD_NAMES: Final = (
     "micro_opcode",
     "arg0",
@@ -80,6 +79,7 @@ _SEMANTIC_MICRO_ARGUMENT_COUNTS: Final = {
     OP_PAIR_COPY: 2,
     OP_PAIR_EUCLID_STEP: 2,
     OP_PAIR_PRODUCT: 3,
+    OP_CAUSAL_CHAIN: 6,
 }
 
 _OPCODE_LABELS: Final = {
@@ -114,13 +114,18 @@ _OPCODE_LABELS: Final = {
     OP_PAIR_COPY: "copy one radix pair",
     OP_PAIR_EUCLID_STEP: "advance one radix-pair Euclidean reduction step",
     OP_PAIR_PRODUCT: "multiply two immediate values into a radix pair",
+    OP_CAUSAL_CHAIN: "integrate one public causal-chain observation",
 }
 
 
 def action_value_semantic_label(slot_name: str, value: int) -> str:
     """Give the frozen prelude a meaningful label for each instruction category."""
 
-    if slot_name not in ACTION_SLOT_NAMES or type(value) is not int or not 0 <= value < ACTION_CARDINALITY:
+    if (
+        slot_name not in ACTION_SLOT_NAMES
+        or type(value) is not int
+        or not 0 <= value < ACTION_CARDINALITY
+    ):
         raise ValueError("action semantic label coordinate is invalid")
     if value == ACTION_NULL:
         return f"Canonical instruction field {slot_name} is unused"
@@ -260,6 +265,7 @@ def _canonical_instruction(
             "frontier_coding",
             "frontier_calibration",
             "frontier_misleading_premise",
+            "frontier_scientific_inference",
         }
         and field_names == SEMANTIC_MICRO_ACTION_FIELD_NAMES
     ):
@@ -271,9 +277,7 @@ def _canonical_instruction(
     else:
         raise ValueError("structured action has no canonical micro-instruction")
     instruction = (opcode, *arguments, terminal)
-    if opcode == ACTION_NULL or any(
-        not 0 <= value <= ACTION_NULL for value in instruction
-    ):
+    if opcode == ACTION_NULL or any(not 0 <= value <= ACTION_NULL for value in instruction):
         raise ValueError("canonical micro-instruction is outside the vocabulary")
     return instruction
 
@@ -439,6 +443,7 @@ __all__ = [
     "OP_FRONTIER_SIMULATE",
     "OP_FRONTIER_TRAVERSE",
     "MAX_RECURRENT_OPCODE",
+    "OP_CAUSAL_CHAIN",
     "OP_PAIR_ADD",
     "OP_PAIR_DIV",
     "OP_PAIR_COPY",

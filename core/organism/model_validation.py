@@ -2612,6 +2612,9 @@ def _qualified_recurrent_foreground_contract_holds() -> bool:
     from core.learning.frontier_process_supervision import (
         frontier_process_task_battery,
     )
+    from core.learning.public_frontier_action_compiler import (
+        compile_public_frontier_actions,
+    )
     from core.learning.recurrence_curriculum import (
         khop_reachability,
         modular_chain,
@@ -2634,7 +2637,7 @@ def _qualified_recurrent_foreground_contract_holds() -> bool:
         ):
             return False
     semantic_tasks = frontier_process_task_battery(
-        ("coding", "calibration", "misleading_premise"),
+        ("coding", "calibration", "misleading_premise", "scientific_inference"),
         (1,),
         1,
         seed=2026081559,
@@ -2644,7 +2647,8 @@ def _qualified_recurrent_foreground_contract_holds() -> bool:
         if (
             admission is None
             or admission.family != task.family
-            or admission.task_depth != task.depth
+            or admission.task_depth
+            != len(compile_public_frontier_actions(task.prompt, task.family).values)
         ):
             return False
     if admit_qualified_recurrent_objective(

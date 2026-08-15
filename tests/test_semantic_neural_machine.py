@@ -11,7 +11,7 @@ from core.learning.semantic_neural_machine import SemanticNeuralMachine
 
 def _fresh_tasks(*, seed: int, per_cell: int = 1):
     return frontier_process_task_battery(
-        ("coding", "calibration", "misleading_premise"),
+        ("coding", "calibration", "misleading_premise", "scientific_inference"),
         (1, 2, 3),
         per_cell,
         seed=seed,

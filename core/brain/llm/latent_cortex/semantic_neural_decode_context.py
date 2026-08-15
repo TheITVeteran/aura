@@ -21,7 +21,12 @@ from core.learning.semantic_neural_machine import SemanticNeuralMachine
 SEMANTIC_NEURAL_DECODE_STATE_SCHEMA: Final = "aura.semantic_neural_decode_state.v1"
 SEMANTIC_NEURAL_DECODE_CONTEXT_SCHEMA: Final = "aura.semantic_neural_decode_context.v1"
 SUPPORTED_FAMILIES: Final = frozenset(
-    {"frontier_coding", "frontier_calibration", "frontier_misleading_premise"}
+    {
+        "frontier_coding",
+        "frontier_calibration",
+        "frontier_misleading_premise",
+        "frontier_scientific_inference",
+    }
 )
 
 
@@ -59,7 +64,8 @@ class SemanticNeuralDecodeState:
             or self.states[-1][-1] != 1
             or self.action_program_receipt.get("verifier_answer_available") is not False
             or self.action_program_receipt.get("private_state_trace_available") is not False
-            or self.action_program_receipt.get("receipt_sha256") != _sha(
+            or self.action_program_receipt.get("receipt_sha256")
+            != _sha(
                 {
                     key: value
                     for key, value in self.action_program_receipt.items()
@@ -82,9 +88,7 @@ class SemanticNeuralDecodeState:
             "family": self.family,
             "state_trajectory_sha256": _sha(self.states),
             "semantic_result_sha256": _sha(self.semantic_result),
-            "action_program_receipt_sha256": self.action_program_receipt[
-                "receipt_sha256"
-            ],
+            "action_program_receipt_sha256": self.action_program_receipt["receipt_sha256"],
             "transition_receipt_sha256s": [
                 receipt["receipt_sha256"] for receipt in self.transition_receipts
             ],
@@ -128,9 +132,7 @@ def _coding_result(
         returns.append(
             {
                 "state": [
-                    [name, value]
-                    for name, value in zip(names, balances, strict=True)
-                    if value != 0
+                    [name, value] for name, value in zip(names, balances, strict=True) if value != 0
                 ],
                 "pressure": pressure,
             }
@@ -173,6 +175,36 @@ def _premise_result(
     }
 
 
+def _scientific_result(
+    machine: SemanticNeuralMachine,
+    operands: dict[str, Any],
+    terminal: tuple[int, ...],
+) -> dict[str, Any]:
+    labels = operands["labels"]
+    root_index, mediator_index, downstream_index = terminal[1:4]
+    if (
+        terminal[9] != 6
+        or len({root_index, mediator_index, downstream_index}) != 3
+        or any(not 0 <= index < len(labels) for index in terminal[1:4])
+    ):
+        raise RuntimeError("semantic scientific state has no admitted causal chain")
+    root = labels[root_index]
+    mediator = labels[mediator_index]
+    downstream = labels[downstream_index]
+    if (
+        root != operands["root"]
+        or mediator != operands["mediator"]
+        or downstream != operands["downstream"]
+    ):
+        raise RuntimeError("semantic scientific state disagrees with public interventions")
+    return {
+        "root": root,
+        "mediator": mediator,
+        "downstream": downstream,
+        "predicted_downstream": machine.decode_unsigned_pair(terminal[4], terminal[5]),
+    }
+
+
 def execute_semantic_neural_decode_state(
     objective: str,
     family: str,
@@ -199,6 +231,8 @@ def execute_semantic_neural_decode_state(
         else _calibration_result(active, trajectory[-1])
         if family == "frontier_calibration"
         else _premise_result(active, operands, trajectory[-1])
+        if family == "frontier_misleading_premise"
+        else _scientific_result(active, operands, trajectory[-1])
     )
     return SemanticNeuralDecodeState(
         objective_sha256=hashlib.sha256(objective.encode("utf-8")).hexdigest(),

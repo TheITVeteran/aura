@@ -1,7 +1,7 @@
 """Exact public ingress for domain-qualified recurrent controller tissue.
 
-The qualified controller is not a general chat policy.  It may serve only the
-three public grammars named by its activation.  This module recognizes those
+The qualified controller is not a general chat policy. It may serve only the
+public grammars named by its activation. This module recognizes those
 grammars without an answer channel, reproduces the exact prompt-token boundary
 used by training and evaluation, and renders only worker-authorized values.
 """
@@ -18,12 +18,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
 
-QUALIFIED_RECURRENT_INGRESS_SCHEMA: Final = (
-    "aura.unified_intrinsic.qualified_ingress.v1"
-)
-QUALIFIED_RECURRENT_RESULT_SCHEMA: Final = (
-    "aura.unified_intrinsic.qualified_foreground_result.v1"
-)
+QUALIFIED_RECURRENT_INGRESS_SCHEMA: Final = "aura.unified_intrinsic.qualified_ingress.v1"
+QUALIFIED_RECURRENT_RESULT_SCHEMA: Final = "aura.unified_intrinsic.qualified_foreground_result.v1"
 QUALIFIED_ANSWER_BRIDGE: Final = "\n\nFINAL_ANSWER: "
 _HEX: Final = frozenset("0123456789abcdef")
 
@@ -41,9 +37,7 @@ _REGISTER_PROMPT = re.compile(
     r"\ATrace three registers from r0=(?P<r0>[0-9]+), r1=(?P<r1>[0-9]+), "
     r"r2=(?P<r2>[0-9]+)\. Apply in order: (?P<operations>"
     r"r[0-2]=\(r[0-2]\+[1-3]\*r[0-2]\+[1-7]\) mod 29"
-    r"(?:; r[0-2]=\(r[0-2]\+[1-3]\*r[0-2]\+[1-7]\) mod 29)*)\. End"
-    + _TERMINAL
-    + r"\Z"
+    r"(?:; r[0-2]=\(r[0-2]\+[1-3]\*r[0-2]\+[1-7]\) mod 29)*)\. End" + _TERMINAL + r"\Z"
 )
 _REGISTER_ACTION = re.compile(
     r"r(?P<destination>[0-2])=\(r(?P<left>[0-2])\+(?P<multiplier>[1-3])\*"
@@ -58,6 +52,7 @@ _SEMANTIC_PARSER_IDS: Final = {
     "frontier_coding": "semantic_coding_canonical.v1",
     "frontier_calibration": "semantic_calibration_canonical.v1",
     "frontier_misleading_premise": "semantic_premise_canonical.v1",
+    "frontier_scientific_inference": "semantic_scientific_canonical.v1",
 }
 _QUALIFIED_FAMILIES: Final = frozenset({*_RESULT_KEYS, *_SEMANTIC_PARSER_IDS})
 
@@ -188,12 +183,7 @@ def admit_qualified_recurrent_objective(
 ) -> QualifiedRecurrentAdmission | None:
     """Recognize only the exact public grammars certified for serving."""
 
-    if (
-        not isinstance(prompt, str)
-        or not prompt
-        or prompt != prompt.strip()
-        or "\x00" in prompt
-    ):
+    if not isinstance(prompt, str) or not prompt or prompt != prompt.strip() or "\x00" in prompt:
         return None
     khop = _KHOP_PROMPT.fullmatch(prompt)
     register = _REGISTER_PROMPT.fullmatch(prompt)
@@ -348,6 +338,24 @@ async def execute_qualified_recurrent_objective(
                 ),
                 "admission": admission.receipt(),
             }
+        activation_receipt = status.get("receipt")
+        allowed_families = (
+            activation_receipt.get("allowed_families")
+            if isinstance(activation_receipt, Mapping)
+            else None
+        )
+        if (
+            not isinstance(allowed_families, Sequence)
+            or isinstance(allowed_families, (str, bytes, bytearray))
+            or admission.family not in allowed_families
+        ):
+            return {
+                "eligible": True,
+                "attempted": False,
+                "ok": False,
+                "reason": "semantic_neural_family_not_activated",
+                "admission": admission.receipt(),
+            }
         state = await asyncio.wait_for(
             asyncio.to_thread(
                 execute_semantic_neural_decode_state,
@@ -357,7 +365,6 @@ async def execute_qualified_recurrent_objective(
             timeout=max(1.0, min(30.0, timeout_s)),
         )
         text = render_semantic_neural_answer(state)
-        activation_receipt = status.get("receipt")
         if not isinstance(activation_receipt, Mapping):
             raise RuntimeError("semantic_neural_activation_receipt_unavailable")
         body = {

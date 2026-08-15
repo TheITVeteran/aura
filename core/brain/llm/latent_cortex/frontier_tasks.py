@@ -977,13 +977,27 @@ def _generate_scientific_inference(seed: int, difficulty: int) -> FrontierTask:
     downstream_step = rng.randint(2, 5)
     query_step = rng.randint(3, 5)
     predicted = downstream_base + query_step * mediator_gain * downstream_gain
+    baselines = {
+        root: root_base,
+        mediator: mediator_base,
+        downstream: downstream_base,
+    }
+    baseline_order = list(labels)
+    rng.shuffle(baseline_order)
+    root_edges = [
+        (mediator, root_step * mediator_gain),
+        (downstream, root_step * mediator_gain * downstream_gain),
+    ]
+    rng.shuffle(root_edges)
     prompt = (
         "Fresh causal-inference task. Three measured variables have baseline values "
-        f"{root}={root_base}, {mediator}={mediator_base}, {downstream}={downstream_base}. "
+        f"{baseline_order[0]}={baselines[baseline_order[0]]}, "
+        f"{baseline_order[1]}={baselines[baseline_order[1]]}, "
+        f"{baseline_order[2]}={baselines[baseline_order[2]]}. "
         "Independent interventions produced these changes relative to baseline: "
-        f"setting {root} up by {root_step} changed {mediator} by "
-        f"+{root_step * mediator_gain} and {downstream} by "
-        f"+{root_step * mediator_gain * downstream_gain}; setting {mediator} up by "
+        f"setting {root} up by {root_step} changed {root_edges[0][0]} by "
+        f"+{root_edges[0][1]} and {root_edges[1][0]} by "
+        f"+{root_edges[1][1]}; setting {mediator} up by "
         f"{mediator_step} left {root} unchanged and changed {downstream} by "
         f"+{mediator_step * downstream_gain}; setting {downstream} up by "
         f"{downstream_step} left both other variables unchanged. Assume deterministic "

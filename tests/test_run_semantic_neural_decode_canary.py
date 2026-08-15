@@ -119,6 +119,7 @@ def test_semantic_neural_decode_prefill_contains_only_public_syntax():
         "frontier_coding": 'FINAL_ANSWER: {"returns":',
         "frontier_calibration": 'FINAL_ANSWER: {"choice":',
         "frontier_misleading_premise": 'FINAL_ANSWER: {"actual_score":',
+        "frontier_scientific_inference": 'FINAL_ANSWER: {"downstream":',
     }.items():
         rendered = bytes(_wire_prefill(tokenizer, family)).decode("ascii")
         assert rendered == expected

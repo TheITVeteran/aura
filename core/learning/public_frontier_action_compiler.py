@@ -21,6 +21,7 @@ from core.learning.recurrent_action_schema import (
     ACTION_CARDINALITY,
     ACTION_NULL,
     ACTION_SLOT_NAMES,
+    OP_CAUSAL_CHAIN,
     OP_PAIR_ADD,
     OP_PAIR_COPY,
     OP_PAIR_DIV,
@@ -28,8 +29,8 @@ from core.learning.recurrent_action_schema import (
     OP_PAIR_MUL_IMMEDIATE,
     OP_PAIR_PRODUCT,
     OP_PAIR_SET,
-    OP_PAIR_SUB_IMMEDIATE,
     OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_PAIR_SUB_IMMEDIATE,
     OP_RANKED_COMMIT,
     OP_RATIO_BAND,
     OP_RATIO_CHOICE,
@@ -65,12 +66,30 @@ _PREMISE_RE = re.compile(
     r"(?P<claim>[A-Z][A-Z0-9_]*) has the highest score",
     re.DOTALL,
 )
+_SCIENTIFIC_RE = re.compile(
+    r"baseline values (?P<a>[a-z][a-z0-9_]*)=(?P<a_value>-?\d+), "
+    r"(?P<b>[a-z][a-z0-9_]*)=(?P<b_value>-?\d+), "
+    r"(?P<c>[a-z][a-z0-9_]*)=(?P<c_value>-?\d+)\. Independent interventions "
+    r"produced these changes relative to baseline: setting "
+    r"(?P<root>[a-z][a-z0-9_]*) up by (?P<root_step>\d+) changed "
+    r"(?P<root_target1>[a-z][a-z0-9_]*) by \+(?P<root_change1>\d+) and "
+    r"(?P<root_target2>[a-z][a-z0-9_]*) by \+(?P<root_change2>\d+); setting "
+    r"(?P<mediator>[a-z][a-z0-9_]*) up by (?P<mediator_step>\d+) left "
+    r"(?P<mediator_unchanged>[a-z][a-z0-9_]*) unchanged and changed "
+    r"(?P<downstream>[a-z][a-z0-9_]*) by \+(?P<mediator_change>\d+); setting "
+    r"(?P<downstream_actor>[a-z][a-z0-9_]*) up by (?P<downstream_step>\d+) "
+    r"left both other variables unchanged\..*?predict the absolute value of "
+    r"(?P<query_target>[a-z][a-z0-9_]*) when (?P<query_root>[a-z][a-z0-9_]*) "
+    r"is set (?P<query_step>\d+) above baseline",
+    re.DOTALL,
+)
 
 _FIELD_NAMES = {
     "frontier_mathematics": ("arg0", "arg1", "arg2", "arg3", "arg4", "arg5"),
     "frontier_coding": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
     "frontier_calibration": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
     "frontier_misleading_premise": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
+    "frontier_scientific_inference": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
 }
 
 
@@ -133,8 +152,7 @@ class PublicFrontierActionProgram:
             or any(
                 len(row) != len(ACTION_SLOT_NAMES)
                 or any(
-                    type(value) is not int or not 0 <= value < ACTION_CARDINALITY
-                    for value in row
+                    type(value) is not int or not 0 <= value < ACTION_CARDINALITY for value in row
                 )
                 for row in self.values
             )
@@ -186,7 +204,11 @@ def _mathematics(prompt: str) -> list[tuple[int, ...]]:
     if match is None:
         raise ValueError("public mathematics objective is invalid")
     values = _literal(match.group("values"), role="mathematics values")
-    if not isinstance(values, list) or not values or any(type(value) is not int for value in values):
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(type(value) is not int for value in values)
+    ):
         raise ValueError("public mathematics values are invalid")
     low_lo, low_hi = _signed_digits(int(match.group("low")))
     high_lo, high_hi = _signed_digits(int(match.group("high")))
@@ -312,11 +334,162 @@ def _premise(prompt: str) -> list[tuple[int, ...]]:
     return actions
 
 
+def _scientific_operands(prompt: str) -> dict[str, Any]:
+    match = _SCIENTIFIC_RE.search(prompt)
+    if match is None:
+        raise ValueError("public scientific objective is invalid")
+    labels = [match.group(name) for name in ("a", "b", "c")]
+    root = match.group("root")
+    mediator = match.group("mediator")
+    downstream = match.group("downstream")
+    if (
+        len(set(labels)) != 3
+        or {root, mediator, downstream} != set(labels)
+        or match.group("mediator_unchanged") != root
+        or match.group("downstream_actor") != downstream
+        or {match.group("root_target1"), match.group("root_target2")} != {mediator, downstream}
+        or match.group("query_root") != root
+        or match.group("query_target") != downstream
+    ):
+        raise ValueError("public scientific causal topology is inconsistent")
+    numeric = {
+        name: int(match.group(name))
+        for name in (
+            "a_value",
+            "b_value",
+            "c_value",
+            "root_step",
+            "root_change1",
+            "root_change2",
+            "mediator_step",
+            "mediator_change",
+            "downstream_step",
+            "query_step",
+        )
+    }
+    if any(
+        not 0 <= numeric[name] <= MAX_PROCESS_INTEGER for name in ("a_value", "b_value", "c_value")
+    ) or any(
+        not 1 <= numeric[name] <= MAX_PROCESS_INTEGER
+        for name in numeric
+        if name not in {"a_value", "b_value", "c_value"}
+    ):
+        raise ValueError("public scientific values exceed the process vocabulary")
+    root_mediator_change = (
+        numeric["root_change1"]
+        if match.group("root_target1") == mediator
+        else numeric["root_change2"]
+    )
+    root_downstream_change = (
+        numeric["root_change1"]
+        if match.group("root_target1") == downstream
+        else numeric["root_change2"]
+    )
+    if (
+        root_mediator_change >= ACTION_NULL
+        or numeric["mediator_change"] >= ACTION_NULL
+        or numeric["root_step"] >= ACTION_NULL
+        or numeric["mediator_step"] >= ACTION_NULL
+        or numeric["query_step"] >= ACTION_NULL
+    ):
+        raise ValueError("public scientific gain numerator exceeds scalar state")
+    if (
+        root_mediator_change % numeric["root_step"]
+        or numeric["mediator_change"] % numeric["mediator_step"]
+    ):
+        raise ValueError("public scientific effects do not define exact gains")
+    mediator_gain = root_mediator_change // numeric["root_step"]
+    downstream_gain = numeric["mediator_change"] // numeric["mediator_step"]
+    if root_downstream_change != numeric["root_step"] * mediator_gain * downstream_gain:
+        raise ValueError("public scientific intervention chain is inconsistent")
+    downstream_baseline = [
+        numeric["a_value"],
+        numeric["b_value"],
+        numeric["c_value"],
+    ][labels.index(downstream)]
+    predicted = downstream_baseline + numeric["query_step"] * mediator_gain * downstream_gain
+    if predicted > MAX_PROCESS_INTEGER:
+        raise ValueError("public scientific prediction exceeds recurrent state capacity")
+    return {
+        "labels": labels,
+        "baselines": [numeric["a_value"], numeric["b_value"], numeric["c_value"]],
+        "root": root,
+        "mediator": mediator,
+        "downstream": downstream,
+        "root_step": numeric["root_step"],
+        "root_edges": [
+            (match.group("root_target1"), numeric["root_change1"]),
+            (match.group("root_target2"), numeric["root_change2"]),
+        ],
+        "mediator_step": numeric["mediator_step"],
+        "mediator_change": numeric["mediator_change"],
+        "downstream_step": numeric["downstream_step"],
+        "query_step": numeric["query_step"],
+    }
+
+
+def _scientific(prompt: str) -> list[tuple[int, ...]]:
+    operands = _scientific_operands(prompt)
+    labels = operands["labels"]
+    root_index = labels.index(operands["root"])
+    actions: list[tuple[int, ...]] = []
+    for edge_index, (target, change) in enumerate(operands["root_edges"]):
+        change_low, change_high = _digits(change)
+        actions.append(
+            _micro(
+                OP_CAUSAL_CHAIN,
+                root_index,
+                labels.index(target),
+                operands["root_step"],
+                change_low,
+                change_high,
+                int(edge_index == 1),
+            )
+        )
+    mediator_change_low, mediator_change_high = _digits(operands["mediator_change"])
+    actions.append(
+        _micro(
+            OP_CAUSAL_CHAIN,
+            labels.index(operands["mediator"]),
+            labels.index(operands["downstream"]),
+            operands["mediator_step"],
+            mediator_change_low,
+            mediator_change_high,
+            1,
+        )
+    )
+    actions.extend(
+        (
+            _micro(
+                OP_CAUSAL_CHAIN,
+                labels.index(operands["downstream"]),
+                3,
+                0,
+                0,
+                0,
+                1,
+            ),
+            _micro(OP_CAUSAL_CHAIN, 3, 3, operands["query_step"], 0, 0, 1),
+        )
+    )
+    for index, baseline in enumerate(operands["baselines"]):
+        low, high = _digits(baseline)
+        actions.extend(
+            (
+                _micro(OP_SET_SCALAR, 7, index),
+                _micro(OP_PAIR_SET, 5, low, high),
+                _micro(OP_CAUSAL_CHAIN, 4, 4, 0, 0, 0, 1),
+            )
+        )
+    return actions
+
+
 _COMPILERS = {
     "frontier_mathematics": _mathematics,
     "frontier_coding": _coding,
     "frontier_calibration": _calibration,
     "frontier_misleading_premise": _premise,
+    "frontier_scientific_inference": _scientific,
 }
 
 
@@ -377,6 +550,8 @@ def public_frontier_operands(public_prompt: str, family: str) -> dict[str, Any]:
             "rows": _literal(match.group("rows"), role="premise rows"),
             "claim": match.group("claim"),
         }
+    if family == "frontier_scientific_inference":
+        return _scientific_operands(public_prompt)
     raise ValueError("frontier family has no semantic operand surface")
 
 
@@ -386,7 +561,11 @@ def compile_public_frontier_raw_actions(
 ) -> tuple[tuple[str, ...], tuple[tuple[int, ...], ...]]:
     """Return the answer-blind source actions before canonical projection."""
 
-    if not isinstance(public_prompt, str) or not public_prompt or public_prompt != public_prompt.strip():
+    if (
+        not isinstance(public_prompt, str)
+        or not public_prompt
+        or public_prompt != public_prompt.strip()
+    ):
         raise ValueError("public frontier prompt is invalid")
     compiler = _COMPILERS.get(family)
     if compiler is None:

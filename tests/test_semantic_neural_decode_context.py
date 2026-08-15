@@ -15,7 +15,7 @@ from core.learning.frontier_process_supervision import frontier_process_task_bat
 
 def test_semantic_neural_decode_state_matches_fresh_answers_without_teacher():
     tasks = frontier_process_task_battery(
-        ("coding", "calibration", "misleading_premise"),
+        ("coding", "calibration", "misleading_premise", "scientific_inference"),
         (1, 2, 3),
         2,
         seed=1548,

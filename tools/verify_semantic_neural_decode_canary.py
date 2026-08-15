@@ -41,8 +41,9 @@ ARMS: Final = (
     "coefficient_lesion",
     "matched_wrong_state",
 )
-DOMAINS: Final = ("coding", "calibration", "misleading_premise")
-DIFFICULTIES: Final = (1, 2, 3)
+LEGACY_DOMAINS: Final = ("coding", "calibration", "misleading_premise")
+SUPPORTED_DOMAINS: Final = (*LEGACY_DOMAINS, "scientific_inference")
+LEGACY_DIFFICULTIES: Final = (1, 2, 3)
 EXPECTED_COEFFICIENT_LESION_CONTRACT: Final = {
     "frontier_coding": {
         "operation": "addition",
@@ -59,12 +60,32 @@ EXPECTED_COEFFICIENT_LESION_CONTRACT: Final = {
         "operation_index": 1,
         "coefficient_index": 2,
     },
+    "frontier_scientific_inference": {
+        "operation": "multiplication",
+        "operation_index": 1,
+        "coefficient_index": 2,
+    },
 }
-SOURCE_PATHS: Final = (
+LEGACY_SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
     "core/brain/llm/unified_recurrent_transfer_decode.py",
     "core/learning/frontier_process_supervision.py",
     "core/learning/public_frontier_action_compiler.py",
+    "core/learning/semantic_neural_machine.py",
+    "tools/run_semantic_neural_decode_canary.py",
+)
+SOURCE_PATHS: Final = (
+    "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
+    "core/brain/llm/latent_cortex/frontier_tasks.py",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py",
+    "core/brain/llm/unified_recurrent_transfer_decode.py",
+    "core/learning/frontier_process_supervision.py",
+    "core/learning/public_frontier_action_compiler.py",
+    "core/learning/recurrent_action_schema.py",
+    "core/learning/recurrent_state_schema.py",
+    "core/learning/semantic_neural_controls.py",
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
@@ -157,10 +178,15 @@ def _verify_resident_manifest(
     return expected
 
 
-def _expected_tasks(seed: int, per_cell: int):
+def _expected_tasks(
+    seed: int,
+    per_cell: int,
+    domains: tuple[str, ...],
+    difficulties: tuple[int, ...],
+):
     return frontier_process_task_battery(
-        DOMAINS,
-        DIFFICULTIES,
+        domains,
+        difficulties,
         per_cell,
         seed=seed,
     )
@@ -175,11 +201,22 @@ def _paired_one_sided_p(gains: int, regressions: int) -> float:
     )
 
 
-def _verify_optional_lesion_contract(payload: dict[str, Any]) -> bool:
+def _family_for_domain(domain: str) -> str:
+    return f"frontier_{domain}"
+
+
+def _verify_optional_lesion_contract(
+    payload: dict[str, Any],
+    domains: tuple[str, ...],
+) -> bool:
     contract = payload.get("coefficient_lesion_contract")
     if contract is None:
         return False
-    if contract != EXPECTED_COEFFICIENT_LESION_CONTRACT:
+    expected = {
+        family: EXPECTED_COEFFICIENT_LESION_CONTRACT[family]
+        for family in map(_family_for_domain, domains)
+    }
+    if contract != expected:
         raise RuntimeError("semantic decode coefficient lesion contract mismatch")
     return True
 
@@ -225,6 +262,10 @@ def _verify_journal(
         "arm_count": len(ARMS),
         "resident_manifest_identity": payload.get("resident_manifest_identity"),
     }
+    if "domains" in payload:
+        expected_start["domains"] = payload["domains"]
+    if "difficulties" in payload:
+        expected_start["difficulties"] = payload["difficulties"]
     if any(started.get(key) != value for key, value in expected_start.items()):
         raise RuntimeError("semantic decode journal campaign identity mismatch")
 
@@ -276,15 +317,17 @@ def verify_canary(
     if not isinstance(payload, dict) or payload.get("schema") != CANARY_SCHEMA:
         raise RuntimeError("semantic decode canary schema mismatch")
     _verify_embedded_receipt(payload, "receipt_sha256")
-    lesion_contract_verified = _verify_optional_lesion_contract(payload)
-
     source_commit = payload.get("source_commit")
     source_sha256s = payload.get("source_sha256s")
     if not isinstance(source_commit, str) or not isinstance(source_sha256s, dict):
         raise RuntimeError("semantic decode source identity is incomplete")
-    if set(source_sha256s) != set(SOURCE_PATHS):
+    source_paths = tuple(source_sha256s)
+    if frozenset(source_paths) not in {
+        frozenset(LEGACY_SOURCE_PATHS),
+        frozenset(SOURCE_PATHS),
+    }:
         raise RuntimeError("semantic decode source manifest mismatch")
-    for path in SOURCE_PATHS:
+    for path in source_paths:
         if source_sha256s[path] != _git_blob_sha(source_commit, path):
             raise RuntimeError(f"semantic decode source hash mismatch: {path}")
 
@@ -309,7 +352,21 @@ def verify_canary(
     per_cell = payload.get("tasks_per_difficulty")
     if type(seed) is not int or type(per_cell) is not int or not 2 <= per_cell <= 20:
         raise RuntimeError("semantic decode task identity is invalid")
-    tasks = _expected_tasks(seed, per_cell)
+    domains_raw = payload.get("domains", LEGACY_DOMAINS)
+    difficulties_raw = payload.get("difficulties", LEGACY_DIFFICULTIES)
+    if (
+        not isinstance(domains_raw, (list, tuple))
+        or not domains_raw
+        or any(domain not in SUPPORTED_DOMAINS for domain in domains_raw)
+        or len(domains_raw) != len(set(domains_raw))
+        or not isinstance(difficulties_raw, (list, tuple))
+        or tuple(difficulties_raw) != LEGACY_DIFFICULTIES
+    ):
+        raise RuntimeError("semantic decode cohort identity is invalid")
+    domains = tuple(domains_raw)
+    difficulties = tuple(difficulties_raw)
+    lesion_contract_verified = _verify_optional_lesion_contract(payload, domains)
+    tasks = _expected_tasks(seed, per_cell, domains, difficulties)
     task_by_id = {task.task_id: task for task in tasks}
     if len(task_by_id) != len(tasks) or payload.get("task_count") != len(tasks):
         raise RuntimeError("semantic decode task cohort is invalid")
@@ -360,19 +417,21 @@ def verify_canary(
 
     ordinary = correctness["ordinary_base"]
     treatment = correctness["treatment"]
-    gains = sorted(task_id for task_id in task_by_id if treatment[task_id] and not ordinary[task_id])
+    gains = sorted(
+        task_id for task_id in task_by_id if treatment[task_id] and not ordinary[task_id]
+    )
     regressions = sorted(
         task_id for task_id in task_by_id if ordinary[task_id] and not treatment[task_id]
     )
     if payload.get("gain_count") != len(gains) or payload.get("gain_set_sha256") != _sha(gains):
         raise RuntimeError("semantic decode gain set mismatch")
-    if payload.get("regression_count") != len(regressions) or payload.get("regression_set_sha256") != _sha(regressions):
+    if payload.get("regression_count") != len(regressions) or payload.get(
+        "regression_set_sha256"
+    ) != _sha(regressions):
         raise RuntimeError("semantic decode regression set mismatch")
 
     replayed_state_receipts = [
-        execute_semantic_neural_decode_state(task.prompt, task.family).receipt()[
-            "receipt_sha256"
-        ]
+        execute_semantic_neural_decode_state(task.prompt, task.family).receipt()["receipt_sha256"]
         for task in tasks
     ]
     if payload.get("treatment_state_receipt_sha256s") != replayed_state_receipts:
@@ -414,6 +473,8 @@ def verify_canary(
         "model_identity": model_identity,
         "resident_manifest_identity": resident_manifest_identity,
         "seed": seed,
+        "domains": domains,
+        "difficulties": difficulties,
         "tasks_per_difficulty": per_cell,
         "task_count": len(tasks),
         "raw_output_count": len(raw_outputs),
@@ -428,9 +489,7 @@ def verify_canary(
         **journal_verification,
         "claim_boundary": verified_claim_boundary,
         "producer_claim_boundary": producer_claim_boundary,
-        "producer_claim_boundary_legacy": (
-            producer_claim_boundary != verified_claim_boundary
-        ),
+        "producer_claim_boundary_legacy": (producer_claim_boundary != verified_claim_boundary),
         "verifier_source_sha256": _file_sha(Path(__file__)),
     }
     return {**body, "verification_receipt_sha256": _sha(body)}

@@ -58,11 +58,25 @@ ARMS: Final = (
     "coefficient_lesion",
     "matched_wrong_state",
 )
+SUPPORTED_DOMAINS: Final = (
+    "coding",
+    "calibration",
+    "misleading_premise",
+    "scientific_inference",
+)
+DIFFICULTIES: Final = (1, 2, 3)
 SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
+    "core/brain/llm/latent_cortex/frontier_tasks.py",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py",
     "core/brain/llm/unified_recurrent_transfer_decode.py",
     "core/learning/frontier_process_supervision.py",
     "core/learning/public_frontier_action_compiler.py",
+    "core/learning/recurrent_action_schema.py",
+    "core/learning/recurrent_state_schema.py",
+    "core/learning/semantic_neural_controls.py",
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
@@ -181,14 +195,12 @@ def _wire_prefill(tokenizer: Any, family: str) -> tuple[int, ...]:
         "frontier_coding": 'FINAL_ANSWER: {"returns":',
         "frontier_calibration": 'FINAL_ANSWER: {"choice":',
         "frontier_misleading_premise": 'FINAL_ANSWER: {"actual_score":',
+        "frontier_scientific_inference": 'FINAL_ANSWER: {"downstream":',
     }
     text = prefixes.get(family)
     if text is None:
         raise ValueError("semantic decode family has no syntax-only prefill")
-    values = tuple(
-        int(token)
-        for token in tokenizer.encode(text, add_special_tokens=False)
-    )
+    values = tuple(int(token) for token in tokenizer.encode(text, add_special_tokens=False))
     if not values:
         raise RuntimeError("semantic decode syntax prefill tokenization is empty")
     return values
@@ -270,6 +282,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--journal", type=Path)
     parser.add_argument("--resident-manifest", type=Path)
+    parser.add_argument(
+        "--domains",
+        nargs="+",
+        choices=SUPPORTED_DOMAINS,
+        default=SUPPORTED_DOMAINS[:3],
+    )
     parser.add_argument("--seed", type=int, default=20_260_815_48)
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
     parser.add_argument("--max-tokens", type=int, default=384)
@@ -292,6 +310,9 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         raise ValueError("semantic decode task count is outside [2, 20]")
     if not 32 <= args.max_tokens <= 384:
         raise ValueError("semantic decode token budget is outside [32, 384]")
+    domains = tuple(args.domains)
+    if not domains or len(domains) != len(set(domains)):
+        raise ValueError("semantic decode domains must be a non-empty unique sequence")
     resident_manifest_identity = (
         _resident_manifest_identity(args.resident_manifest, model_path)
         if args.resident_manifest is not None
@@ -305,8 +326,8 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
 
     started = time.time()
     tasks = frontier_process_task_battery(
-        ("coding", "calibration", "misleading_premise"),
-        (1, 2, 3),
+        domains,
+        DIFFICULTIES,
         args.tasks_per_difficulty,
         seed=args.seed,
     )
@@ -328,6 +349,8 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "event": "campaign_started",
             "source_commit": source_commit,
             "seed": args.seed,
+            "domains": domains,
+            "difficulties": DIFFICULTIES,
             "tasks_per_difficulty": args.tasks_per_difficulty,
             "task_count": len(tasks),
             "arm_count": len(ARMS),
@@ -368,9 +391,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                     "Internal recurrent semantic computation did not produce an "
                     "admissible terminal state after the declared tissue lesion."
                 )
-            wire_prefill = (
-                () if arm == "ordinary_base" else _wire_prefill(tokenizer, task.family)
-            )
+            wire_prefill = () if arm == "ordinary_base" else _wire_prefill(tokenizer, task.family)
             attempts: list[dict[str, Any]] = []
             max_attempts = 3 if selected is not None else 1
             text = ""
@@ -419,9 +440,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                     {
                         "attempt": attempt_index + 1,
                         "raw_response": raw_text,
-                        "raw_response_sha256": hashlib.sha256(
-                            raw_text.encode()
-                        ).hexdigest(),
+                        "raw_response_sha256": hashlib.sha256(raw_text.encode()).hexdigest(),
                         "response": text,
                         "response_sha256": hashlib.sha256(text.encode()).hexdigest(),
                         "prefill_tokens": len(active_prefill),
@@ -492,16 +511,8 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 pass
 
     arms = {arm: _summary(rows, arm) for arm in ARMS}
-    base = {
-        row["task_id"]: bool(row["correct"])
-        for row in rows
-        if row["arm"] == "ordinary_base"
-    }
-    treatment = {
-        row["task_id"]: bool(row["correct"])
-        for row in rows
-        if row["arm"] == "treatment"
-    }
+    base = {row["task_id"]: bool(row["correct"]) for row in rows if row["arm"] == "ordinary_base"}
+    treatment = {row["task_id"]: bool(row["correct"]) for row in rows if row["arm"] == "treatment"}
     gain_set = sorted(key for key, value in treatment.items() if value and not base[key])
     regressions = sorted(key for key, value in treatment.items() if not value and base[key])
     treatment_accuracy = float(arms["treatment"]["exact_accuracy"])
@@ -525,6 +536,8 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         },
         "resident_manifest_identity": resident_manifest_identity,
         "seed": args.seed,
+        "domains": domains,
+        "difficulties": DIFFICULTIES,
         "tasks_per_difficulty": args.tasks_per_difficulty,
         "task_count": len(tasks),
         "arms": arms,
@@ -532,7 +545,10 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "gain_count": len(gain_set),
         "regression_set_sha256": _sha(regressions),
         "regression_count": len(regressions),
-        "coefficient_lesion_contract": SEMANTIC_FAMILY_LESIONS,
+        "coefficient_lesion_contract": {
+            f"frontier_{domain}": SEMANTIC_FAMILY_LESIONS[f"frontier_{domain}"]
+            for domain in domains
+        },
         "treatment_state_receipt_sha256s": [
             state.receipt()["receipt_sha256"] for state in treatment_states
         ],

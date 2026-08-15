@@ -24,16 +24,17 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     FrontierTask,
     generate_task,
 )
+from core.learning.public_frontier_action_compiler import (
+    compile_public_frontier_raw_actions,
+)
 from core.learning.recurrence_curriculum import (
     RecurrenceTrainingTask,
     StructuredTransitionProgram,
     StructuredTransitionTrace,
 )
-from core.learning.public_frontier_action_compiler import (
-    compile_public_frontier_raw_actions,
-)
 from core.learning.recurrent_action_schema import (
     ACTION_NULL,
+    OP_CAUSAL_CHAIN,
     OP_PAIR_ADD,
     OP_PAIR_COPY,
     OP_PAIR_DIV,
@@ -41,8 +42,8 @@ from core.learning.recurrent_action_schema import (
     OP_PAIR_MUL_IMMEDIATE,
     OP_PAIR_PRODUCT,
     OP_PAIR_SET,
-    OP_PAIR_SUB_IMMEDIATE,
     OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_PAIR_SUB_IMMEDIATE,
     OP_RANKED_COMMIT,
     OP_RATIO_BAND,
     OP_RATIO_CHOICE,
@@ -163,12 +164,7 @@ def _semantic_micro_states(
 ) -> list[tuple[int, ...]]:
     """Execute the private reference semantics for answer-blind micro-actions."""
 
-    if (
-        len(initial_state) < 5
-        or initial_state[0] != 0
-        or initial_state[-1] != 0
-        or not actions
-    ):
+    if len(initial_state) < 5 or initial_state[0] != 0 or initial_state[-1] != 0 or not actions:
         raise ValueError("semantic micro-program initial state is invalid")
     states = [initial_state]
     values = list(initial_state[1:-1])
@@ -193,9 +189,8 @@ def _semantic_micro_states(
         return encoded
 
     for step, action in enumerate(actions, 1):
-        if (
-            len(action) != 7
-            or any(type(value) is not int or not 0 <= value < ACTION_NULL for value in action)
+        if len(action) != 7 or any(
+            type(value) is not int or not 0 <= value < ACTION_NULL for value in action
         ):
             raise ValueError("semantic micro-program action is invalid")
         opcode, arg0, arg1, arg2, arg3, arg4, arg5 = action
@@ -239,13 +234,7 @@ def _semantic_micro_states(
             else:
                 percentage = (100 * numerator) // denominator
                 values[arg0] = (
-                    1
-                    if percentage < 50
-                    else 2
-                    if percentage < 70
-                    else 3
-                    if percentage < 90
-                    else 4
+                    1 if percentage < 50 else 2 if percentage < 70 else 3 if percentage < 90 else 4
                 )
         elif opcode == OP_SIGNED_PAIR_ADD_IMMEDIATE:
             delta = signed_decode(arg1)
@@ -272,6 +261,96 @@ def _semantic_micro_states(
             if not 0 <= arg0 < len(values):
                 raise ValueError("semantic scalar destination is invalid")
             values[arg0] = arg1
+        elif opcode == OP_CAUSAL_CHAIN:
+            change = arg3 + PROCESS_RADIX * arg4
+            if arg0 <= 2 and arg1 <= 2:
+                if values[8] == 0:
+                    if arg0 == arg1 or arg5 != 0:
+                        raise ValueError("causal root first edge is invalid")
+                    values[:] = [arg0, arg1, arg2, arg3, arg4, 0, 0, 0, 1]
+                elif values[8] == 1:
+                    if (
+                        arg0 != values[0]
+                        or arg1 in {arg0, values[1]}
+                        or arg2 != values[2]
+                        or arg5 != 1
+                    ):
+                        raise ValueError("causal root second edge is invalid")
+                    values[:] = [
+                        arg0,
+                        values[1],
+                        values[3],
+                        values[4],
+                        arg1,
+                        arg3,
+                        arg4,
+                        arg2,
+                        2,
+                    ]
+                elif values[8] == 2:
+                    if (
+                        arg0 == values[0]
+                        or arg0 not in {values[1], values[4]}
+                        or arg1 == arg0
+                        or arg1 not in {values[1], values[4]}
+                        or arg5 != 1
+                    ):
+                        raise ValueError("causal mediator edge is invalid")
+                    root_mediator_change = (
+                        values[2] + PROCESS_RADIX * values[3]
+                        if arg0 == values[1]
+                        else values[5] + PROCESS_RADIX * values[6]
+                    )
+                    if root_mediator_change >= ACTION_NULL or change >= ACTION_NULL:
+                        raise ValueError("causal gain numerator exceeds scalar state")
+                    values[:] = [
+                        values[0],
+                        arg0,
+                        arg1,
+                        root_mediator_change,
+                        values[7],
+                        change,
+                        arg2,
+                        0,
+                        3,
+                    ]
+                else:
+                    raise ValueError("causal intervention arrived out of order")
+            elif arg0 <= 2 and arg1 == 3:
+                if (
+                    values[8] != 3
+                    or arg0 != values[2]
+                    or any(value != 0 for value in (arg2, arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal downstream null intervention is invalid")
+                values[8] = 4
+            elif arg0 == 3 and arg1 == 3:
+                if (
+                    values[8] != 4
+                    or not 1 <= arg2 < ACTION_NULL
+                    or any(value != 0 for value in (arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal prediction query is invalid")
+                if values[3] % values[4] or values[5] % values[6]:
+                    raise ValueError("causal public effects are not exact")
+                effect = arg2 * (values[3] // values[4]) * (values[5] // values[6])
+                values[3], values[4] = _digits(effect)
+                values[5:8] = [0, 0, 0]
+                values[8] = 5
+            elif arg0 == 4 and arg1 == 4:
+                if (
+                    values[8] not in {5, 6}
+                    or any(value != 0 for value in (arg2, arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal baseline commit is invalid")
+                if values[7] == values[2]:
+                    write_pair(3, pair(3) + pair(5))
+                    values[8] = 6
+            else:
+                raise ValueError("causal chain instruction is invalid")
         else:
             raise ValueError(f"semantic micro-program opcode {opcode} is unsupported")
         if any(not 0 <= value < ACTION_NULL for value in values):
@@ -366,9 +445,7 @@ def _mathematics(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
     states = [(0, 0, 0, 0, 0)]
     low_lo, low_hi = _signed_digits(low)
     high_lo, high_hi = _signed_digits(high)
-    actions: list[tuple[int, ...]] = [
-        (choose, gap, low_lo, low_hi, high_lo, high_hi)
-    ]
+    actions: list[tuple[int, ...]] = [(choose, gap, low_lo, low_hi, high_lo, high_hi)]
     states.append((1, 0, 0, 0, 0))
     final_valid: list[tuple[int, ...]] = []
     for index, value in enumerate(values):
@@ -478,69 +555,41 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
 
 
 def _scientific(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
+    program = _semantic_micro_program(
+        family="frontier_scientific_inference",
+        public_prompt=prompt,
+        field_names=(
+            "pc",
+            "root_index",
+            "mediator_index",
+            "downstream_index",
+            "prediction_lo",
+            "prediction_hi",
+            "scratch_lo",
+            "scratch_hi",
+            "variable_index",
+            "stage",
+            "done",
+        ),
+        initial_state=(0,) * 11,
+    )
+    terminal = program.state_trace.states[-1]
     match = _SCIENCE_RE.search(prompt)
     if match is None:
         raise ValueError("frontier scientific evidence is invalid")
     labels = [match.group("a"), match.group("b"), match.group("c")]
     try:
-        root = labels.index(expected["root"])
-        mediator = labels.index(expected["mediator"])
-        downstream = labels.index(expected["downstream"])
-        prediction_lo, prediction_hi = _signed_digits(expected["predicted_downstream"])
-        baselines = [
-            int(match.group("a_value")),
-            int(match.group("b_value")),
-            int(match.group("c_value")),
-        ]
-        root_step = int(match.group("root_step"))
-        root_mediator_change = int(match.group("root_mediator_change"))
-        root_downstream_change = int(match.group("root_downstream_change"))
-        query_step = int(match.group("query_step"))
-    except (KeyError, TypeError, ValueError):
-        raise ValueError("frontier scientific answer is invalid") from None
-    if (
-        root_step < 1
-        or root_mediator_change % root_step
-        or root_mediator_change < 1
-        or root_downstream_change % root_mediator_change
-    ):
-        raise ValueError("frontier scientific public effects are not exact")
-    mediator_gain = root_mediator_change // root_step
-    downstream_gain = root_downstream_change // root_mediator_change
-    downstream_lo, downstream_hi = _digits(baselines[downstream])
-    public_prediction = (
-        baselines[downstream] + query_step * mediator_gain * downstream_gain
-    )
-    if public_prediction != expected["predicted_downstream"]:
-        raise ValueError("frontier scientific public effects differ from verified answer")
-    actions = [
-        (0, root, 0, 0, 0, 0),
-        (1, root, mediator, 0, 0, 0),
-        (2, root, mediator, downstream, 0, 0),
-        (
-            3,
-            downstream_lo,
-            downstream_hi,
-            query_step,
-            mediator_gain,
-            downstream_gain,
-        ),
-    ]
-    role_pair = root * 3 + mediator
-    states = [
-        (0, 0, 0, 0, 0),
-        (1, root + 1, 0, 0, 0),
-        (2, role_pair + 1, 0, 0, 0),
-        (3, role_pair + 1, 0, 0, 0),
-        (4, role_pair + 1, prediction_lo, prediction_hi, 1),
-    ]
-    return _program(
-        family="frontier_scientific_inference",
-        field_names=("pc", "role_pair", "prediction_lo", "prediction_hi", "done"),
-        states=states,
-        action_field_names=("stage", "arg0", "arg1", "arg2", "arg3", "arg4"),
-        actions=actions,
-    )
+        observed = {
+            "root": labels[terminal[1]],
+            "mediator": labels[terminal[2]],
+            "downstream": labels[terminal[3]],
+            "predicted_downstream": terminal[4] + PROCESS_RADIX * terminal[5],
+        }
+    except (IndexError, TypeError):
+        raise ValueError("frontier scientific terminal state is invalid") from None
+    if terminal[9] != 6 or observed != expected:
+        raise ValueError("frontier scientific process differs from verified answer")
+    return program
 
 
 def _planning(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
@@ -801,9 +850,8 @@ def compile_frontier_process_supervision(task: FrontierTask) -> FrontierProcessS
             values=tuple(values),
         )
         memory_count, memory_witness = work_memory_trace.states[-1].result()
-        if (
-            memory_count != expected.get("count")
-            or memory_witness != tuple(expected.get("witness", ()))
+        if memory_count != expected.get("count") or memory_witness != tuple(
+            expected.get("witness", ())
         ):
             raise RuntimeError("frontier mathematics work memory differs from verifier")
     return FrontierProcessSupervision(

@@ -12,10 +12,7 @@ from tools.verify_semantic_neural_decode_canary import (
     verify_canary,
 )
 
-ARTIFACT = (
-    REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp550_semantic_decode_canary/result.json"
-)
+ARTIFACT = REPO_ROOT / "artifacts/closeout/latent_cortex/cp550_semantic_decode_canary/result.json"
 
 
 def _file_sha(path: Path) -> str:
@@ -63,9 +60,7 @@ def _write_journal(artifact: Path, destination: Path) -> None:
                 "row": {
                     "task_id": raw_output["task_id"],
                     "arm": raw_output["arm"],
-                    "response_sha256": hashlib.sha256(
-                        raw_output["response"].encode()
-                    ).hexdigest(),
+                    "response_sha256": hashlib.sha256(raw_output["response"].encode()).hexdigest(),
                 },
                 "raw_output": raw_output,
             }
@@ -96,9 +91,7 @@ def _write_journal(artifact: Path, destination: Path) -> None:
     )
     completed = json.loads(lines[-1])
     completed["report_receipt_sha256"] = payload["receipt_sha256"]
-    completed_body = {
-        key: value for key, value in completed.items() if key != "receipt_sha256"
-    }
+    completed_body = {key: value for key, value in completed.items() if key != "receipt_sha256"}
     completed["receipt_sha256"] = _sha(completed_body)
     lines[-1] = json.dumps(completed, sort_keys=True)
     artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
@@ -222,16 +215,25 @@ def test_semantic_decode_verifier_independently_checks_declared_lesions(tmp_path
         {key: value for key, value in payload.items() if key != "receipt_sha256"}
     )
     artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-    assert verify_canary(artifact, model_path=model)[
-        "coefficient_lesion_contract_verified"
-    ] is True
+    assert verify_canary(artifact, model_path=model)["coefficient_lesion_contract_verified"] is True
 
-    payload["coefficient_lesion_contract"]["frontier_coding"][
-        "coefficient_index"
-    ] = 2
+    payload["coefficient_lesion_contract"]["frontier_coding"]["coefficient_index"] = 2
     payload["receipt_sha256"] = _sha(
         {key: value for key, value in payload.items() if key != "receipt_sha256"}
     )
     artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="coefficient lesion contract mismatch"):
+        verify_canary(artifact, model_path=model)
+
+
+def test_semantic_decode_verifier_rejects_resealed_undeclared_cohort(tmp_path):
+    artifact, model = _portable_artifact(tmp_path)
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    payload["domains"] = ["coding", "coding"]
+    payload["difficulties"] = [1, 2, 3]
+    payload["receipt_sha256"] = _sha(
+        {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    )
+    artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="cohort identity is invalid"):
         verify_canary(artifact, model_path=model)

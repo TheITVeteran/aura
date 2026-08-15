@@ -13,7 +13,7 @@ from core.learning.semantic_neural_controls import (
 
 def _tasks():
     return frontier_process_task_battery(
-        ("coding", "calibration", "misleading_premise"),
+        ("coding", "calibration", "misleading_premise", "scientific_inference"),
         (1, 2, 3),
         1,
         seed=2026081558,
@@ -42,7 +42,5 @@ def test_family_targeted_lesions_remove_each_supported_execution_path():
         except (RuntimeError, ValueError):
             disrupted[task.family] += 1
         else:
-            disrupted[task.family] += int(
-                observed.semantic_result != expected.semantic_result
-            )
+            disrupted[task.family] += int(observed.semantic_result != expected.semantic_result)
     assert disrupted == {family: 3 for family in SEMANTIC_FAMILY_LESIONS}

@@ -17,6 +17,7 @@ from core.learning.recurrent_action_schema import action_targets_from_program
 _SUPPORTED = (
     "mathematics",
     "coding",
+    "scientific_inference",
     "calibration",
     "misleading_premise",
 )
@@ -84,7 +85,6 @@ def test_public_action_program_exposes_prefixes_and_post_terminal_padding() -> N
     "family",
     (
         "frontier_novel_algorithms",
-        "frontier_scientific_inference",
         "frontier_long_horizon_planning",
     ),
 )

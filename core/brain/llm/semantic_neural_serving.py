@@ -16,12 +16,10 @@ SEMANTIC_NEURAL_SERVING_MODE: Final = "qualified_exact_semantic_v1"
 PACKAGE_ID: Final = "cp556-resident-semantic-neural-serving"
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 DEFAULT_ACTIVATION_PATH: Final = (
-    REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp556_semantic_neural_runtime/activation.json"
+    REPO_ROOT / "artifacts/closeout/latent_cortex/cp556_semantic_neural_runtime/activation.json"
 )
 CP555_RESULT_PATH: Final = (
-    REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/result.json"
+    REPO_ROOT / "artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/result.json"
 )
 CP555_VERIFICATION_PATH: Final = (
     REPO_ROOT
@@ -36,9 +34,17 @@ ACTIVATION_SOURCE_FILES: Final = (
     *MEASURED_SOURCE_FILES,
     "core/brain/foreground_latent_runtime.py",
     "core/brain/latent_cortex_service.py",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
+    "core/brain/llm/latent_cortex/frontier_tasks.py",
+    "core/brain/llm/latent_cortex/persistence.py",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py",
     "core/brain/llm/qualified_recurrent_ingress.py",
     "core/brain/llm/semantic_neural_serving.py",
     "core/learning/semantic_neural_controls.py",
+    "core/learning/recurrent_action_schema.py",
+    "core/learning/recurrent_state_schema.py",
+    "core/learning/systematic_neural_alu_training.py",
     "core/phases/response_generation_unitary.py",
 )
 ALLOWED_FAMILIES: Final = (
@@ -83,9 +89,7 @@ def _read_bounded_json(path: Path, *, maximum_bytes: int) -> tuple[dict[str, Any
     try:
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        raise RuntimeError(
-            f"semantic serving evidence JSON is invalid: {path.name}"
-        ) from None
+        raise RuntimeError(f"semantic serving evidence JSON is invalid: {path.name}") from None
     if not isinstance(payload, dict):
         raise RuntimeError(f"semantic serving evidence is not an object: {path.name}")
     return payload, raw
@@ -96,16 +100,14 @@ def _identity_for_model(model_path: Path) -> dict[str, str]:
     return {
         "path": str(resolved),
         "config_sha256": _file_sha(resolved / "config.json"),
-        "weights_index_sha256": _file_sha(
-            resolved / "model.safetensors.index.json"
-        ),
+        "weights_index_sha256": _file_sha(resolved / "model.safetensors.index.json"),
     }
 
 
 def _identity_for_manifest(manifest_path: Path) -> dict[str, Any]:
     payload, raw = _read_bounded_json(manifest_path, maximum_bytes=64 * 1024)
-    active_path = Path(str(payload.get("active_model_path") or "")).expanduser().resolve(
-        strict=True
+    active_path = (
+        Path(str(payload.get("active_model_path") or "")).expanduser().resolve(strict=True)
     )
     return {
         "path": str(manifest_path.expanduser().resolve(strict=True)),
@@ -151,24 +153,17 @@ def _verify_cp555_evidence(
     )
     result_body = {key: value for key, value in result.items() if key != "receipt_sha256"}
     verification_body = {
-        key: value
-        for key, value in verification.items()
-        if key != "verification_receipt_sha256"
+        key: value for key, value in verification.items() if key != "verification_receipt_sha256"
     }
     if (
         result.get("receipt_sha256") != _sha(result_body)
-        or verification.get("verification_receipt_sha256")
-        != _sha(verification_body)
+        or verification.get("verification_receipt_sha256") != _sha(verification_body)
         or verification.get("verified") is not True
-        or verification.get("artifact_sha256")
-        != hashlib.sha256(result_raw).hexdigest()
-        or verification.get("artifact_receipt_sha256")
-        != result.get("receipt_sha256")
+        or verification.get("artifact_sha256") != hashlib.sha256(result_raw).hexdigest()
+        or verification.get("artifact_receipt_sha256") != result.get("receipt_sha256")
         or verification.get("gain_count", 0) <= 0
         or verification.get("regression_count") != 0
-        or "resident model bound by" not in str(
-            verification.get("claim_boundary") or ""
-        )
+        or "resident model bound by" not in str(verification.get("claim_boundary") or "")
         or "not open-domain" not in str(verification.get("claim_boundary") or "")
     ):
         raise RuntimeError("CP555 semantic serving evidence is not admissible")
@@ -212,8 +207,7 @@ def build_semantic_neural_activation(
         "active_by_default": True,
         "allowed_families": list(ALLOWED_FAMILIES),
         "source_sha256s": {
-            relative: _file_sha(root / relative)
-            for relative in ACTIVATION_SOURCE_FILES
+            relative: _file_sha(root / relative) for relative in ACTIVATION_SOURCE_FILES
         },
         "model_identity": model_identity,
         "resident_manifest_identity": manifest_identity,
@@ -223,14 +217,10 @@ def build_semantic_neural_activation(
             "result_receipt_sha256": result["receipt_sha256"],
             "verification_path": _relative_evidence_path(root, verification_path),
             "verification_sha256": hashlib.sha256(verification_raw).hexdigest(),
-            "verification_receipt_sha256": verification[
-                "verification_receipt_sha256"
-            ],
+            "verification_receipt_sha256": verification["verification_receipt_sha256"],
             "gain_count": verification["gain_count"],
             "regression_count": verification["regression_count"],
-            "paired_one_sided_exact_p": verification[
-                "paired_one_sided_exact_p"
-            ],
+            "paired_one_sided_exact_p": verification["paired_one_sided_exact_p"],
         },
         "claim_boundary": verification["claim_boundary"],
     }
@@ -262,9 +252,7 @@ def semantic_neural_activation_errors(
         errors.append("activation_sha256")
     root = repo_root.expanduser().resolve(strict=True)
     source_hashes = activation.get("source_sha256s")
-    if not isinstance(source_hashes, dict) or set(source_hashes) != set(
-        ACTIVATION_SOURCE_FILES
-    ):
+    if not isinstance(source_hashes, dict) or set(source_hashes) != set(ACTIVATION_SOURCE_FILES):
         errors.append("source_inventory")
     elif any(
         source_hashes.get(relative) != _file_sha(root / relative)
@@ -287,10 +275,8 @@ def semantic_neural_activation_errors(
                 verification_path=verification_path,
             )
             if (
-                hashlib.sha256(result_raw).hexdigest()
-                != evidence.get("result_sha256")
-                or result.get("receipt_sha256")
-                != evidence.get("result_receipt_sha256")
+                hashlib.sha256(result_raw).hexdigest() != evidence.get("result_sha256")
+                or result.get("receipt_sha256") != evidence.get("result_receipt_sha256")
                 or hashlib.sha256(verification_raw).hexdigest()
                 != evidence.get("verification_sha256")
                 or verification.get("verification_receipt_sha256")

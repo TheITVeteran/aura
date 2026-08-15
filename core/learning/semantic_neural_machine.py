@@ -24,6 +24,7 @@ from core.brain.llm.latent_cortex.systematic_neural_alu import (
 from core.learning.recurrent_action_schema import (
     ACTION_NULL,
     MAX_RECURRENT_OPCODE,
+    OP_CAUSAL_CHAIN,
     OP_PAIR_ADD,
     OP_PAIR_COPY,
     OP_PAIR_DIV,
@@ -31,8 +32,8 @@ from core.learning.recurrent_action_schema import (
     OP_PAIR_MUL_IMMEDIATE,
     OP_PAIR_PRODUCT,
     OP_PAIR_SET,
-    OP_PAIR_SUB_IMMEDIATE,
     OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_PAIR_SUB_IMMEDIATE,
     OP_RANKED_COMMIT,
     OP_RATIO_BAND,
     OP_RATIO_CHOICE,
@@ -278,7 +279,9 @@ class SemanticNeuralMachine:
             values[low], values[low + 1] = self._split_pair(result)
 
         if opcode == OP_PAIR_SET:
-            write_pair(arg0, self._learned_add(arg1, self._learned_raw(_LEARNED_MUL, arg2, PROCESS_RADIX)))
+            write_pair(
+                arg0, self._learned_add(arg1, self._learned_raw(_LEARNED_MUL, arg2, PROCESS_RADIX))
+            )
         elif opcode == OP_PAIR_ADD:
             write_pair(arg0, self._learned_add(pair(arg1), pair(arg2)))
         elif opcode == OP_PAIR_MUL_IMMEDIATE:
@@ -358,6 +361,101 @@ class SemanticNeuralMachine:
             if not 0 <= arg0 < len(values):
                 raise ValueError("semantic neural scalar destination is invalid")
             values[arg0] = arg1
+        elif opcode == OP_CAUSAL_CHAIN:
+            # Public intervention edges arrive before baselines. The machine,
+            # not the compiler, identifies the two-edge root, one-edge
+            # mediator and zero-edge downstream. Arithmetic gains and the
+            # prediction are evaluated only through learned ALU operations.
+            if arg0 <= 2 and arg1 <= 2:
+                change = self.decode_unsigned_pair(arg3, arg4)
+                if values[8] == 0:
+                    if arg0 == arg1 or arg5 != 0:
+                        raise ValueError("causal root first edge is invalid")
+                    values[:] = [arg0, arg1, arg2, arg3, arg4, 0, 0, 0, 1]
+                elif values[8] == 1:
+                    if (
+                        arg0 != values[0]
+                        or arg1 in {arg0, values[1]}
+                        or arg2 != values[2]
+                        or arg5 != 1
+                    ):
+                        raise ValueError("causal root second edge is invalid")
+                    values[:] = [
+                        arg0,
+                        values[1],
+                        values[3],
+                        values[4],
+                        arg1,
+                        arg3,
+                        arg4,
+                        arg2,
+                        2,
+                    ]
+                elif values[8] == 2:
+                    if (
+                        arg0 == values[0]
+                        or arg0 not in {values[1], values[4]}
+                        or arg1 == arg0
+                        or arg1 not in {values[1], values[4]}
+                        or arg5 != 1
+                    ):
+                        raise ValueError("causal mediator edge is invalid")
+                    root_mediator_change = (
+                        self.decode_unsigned_pair(values[2], values[3])
+                        if arg0 == values[1]
+                        else self.decode_unsigned_pair(values[5], values[6])
+                    )
+                    if root_mediator_change >= ACTION_NULL or change >= ACTION_NULL:
+                        raise ValueError("causal gain numerator exceeds scalar state")
+                    values[:] = [
+                        values[0],
+                        arg0,
+                        arg1,
+                        root_mediator_change,
+                        values[7],
+                        change,
+                        arg2,
+                        0,
+                        3,
+                    ]
+                else:
+                    raise ValueError("causal intervention arrived out of order")
+            elif arg0 <= 2 and arg1 == 3:
+                if (
+                    values[8] != 3
+                    or arg0 != values[2]
+                    or any(value != 0 for value in (arg2, arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal downstream null intervention is invalid")
+                values[8] = 4
+            elif arg0 == 3 and arg1 == 3:
+                if (
+                    values[8] != 4
+                    or not 1 <= arg2 < ACTION_NULL
+                    or any(value != 0 for value in (arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal prediction query is invalid")
+                mediator_gain = self._learned_exact_quotient(values[3], values[4])
+                downstream_gain = self._learned_exact_quotient(values[5], values[6])
+                effect = self._learned_raw(_LEARNED_MUL, arg2, mediator_gain)
+                effect = self._learned_raw(_LEARNED_MUL, effect, downstream_gain)
+                values[3], values[4] = self._split_pair(effect)
+                values[5:8] = [0, 0, 0]
+                values[8] = 5
+            elif arg0 == 4 and arg1 == 4:
+                if (
+                    values[8] not in {5, 6}
+                    or any(value != 0 for value in (arg2, arg3, arg4))
+                    or arg5 != 1
+                ):
+                    raise ValueError("causal baseline commit is invalid")
+                if values[7] == values[2]:
+                    write_pair(3, self._learned_add(pair(3), pair(5)))
+                    values[8] = 6
+            else:
+                raise ValueError("causal chain instruction is invalid")
         else:  # pragma: no cover - schema range and opcode registry are closed.
             raise ValueError("semantic neural opcode is unsupported")
 
