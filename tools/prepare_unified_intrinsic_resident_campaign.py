@@ -107,6 +107,15 @@ BOOTSTRAP_PROFILES: Final = frozenset(
         "recovery",
     }
 )
+OPTIONAL_BOOTSTRAP_PROFILES: Final = frozenset(
+    {
+        # A fresh semantic canary establishes its own scientific
+        # initialization.  An exact pinned checkpoint is optional only so the
+        # same experiment can survive a source-only repair without resetting
+        # its optimizer, cursor, or controller tissue.
+        "process_semantic_transition_canary",
+    }
+)
 BOUNDED_ATTEMPT_PROFILES: Final = frozenset(
     {
         "canary",
@@ -138,6 +147,13 @@ class UnifiedResidentPreparationError(RuntimeError):
 
 def _fail(code: str) -> Never:
     raise UnifiedResidentPreparationError(code)
+
+
+def _validate_bootstrap_profile(profile: str, *, present: bool) -> None:
+    if profile in BOOTSTRAP_PROFILES and not present:
+        _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
+    if present and profile not in BOOTSTRAP_PROFILES | OPTIONAL_BOOTSTRAP_PROFILES:
+        _fail("selected_profile_does_not_accept_bootstrap_checkpoint")
 
 
 def _canonical_document(value: Any) -> bytes:
@@ -1019,8 +1035,10 @@ def _freeze_campaign(
     training = _profile_training(profile)
     training_args = _training_cli(training)
 
-    if (profile in BOOTSTRAP_PROFILES) != (bootstrap_output_dir is not None):
-        _fail("selected_profile_requires_exactly_one_bootstrap_checkpoint")
+    _validate_bootstrap_profile(
+        profile,
+        present=bootstrap_output_dir is not None,
+    )
     bootstrap_pin_present = (
         bootstrap_checkpoint_sha256 is not None and bootstrap_step is not None
     )

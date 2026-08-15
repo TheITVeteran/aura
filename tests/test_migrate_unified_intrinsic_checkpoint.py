@@ -78,6 +78,47 @@ def test_controller_digest_is_reconstructed_from_checkpoint_tensors(
     assert _controller_sha256(path, identity) == controller.parameter_sha256()
 
 
+def test_controller_digest_reconstructs_semantic_frontier_topology(
+    tmp_path: Path,
+) -> None:
+    patterns = tuple((opcode, (100 + opcode,)) for opcode in range(9, 16))
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            state_slots=11,
+            initialization_seed=74,
+            numeric_observation_max_value=960,
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    mx.eval(controller.parameters())
+    path = tmp_path / "semantic.safetensors"
+    mx.save_safetensors(
+        str(path),
+        {
+            f"bundle.controller.{name}": value
+            for name, value in tree_flatten(controller.parameters())
+        },
+    )
+    identity = {
+        "controller_rank": 4,
+        "state_slots": 11,
+        "depth_basis_size": 4,
+        "init_seed": 74,
+        "literal_observation_contract": {"digit_token_ids": []},
+        "numeric_observation_contract": {"max_value": 960},
+        "opcode_observation_contract": {"patterns": [], "contexts": []},
+        "frontier_family_observation_contract": {
+            "patterns": [
+                {"opcode": opcode, "token_ids": list(tokens)}
+                for opcode, tokens in patterns
+            ]
+        },
+    }
+    assert _controller_sha256(path, identity) == controller.parameter_sha256()
+
+
 def test_target_identity_changes_only_the_explicit_source_allowlist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -143,6 +184,61 @@ def test_target_identity_changes_only_the_explicit_source_allowlist(
     assert target["identity_sha256"] == canonical_sha256(
         {key: value for key, value in target.items() if key != "identity_sha256"}
     )
+
+
+def test_target_identity_preserves_fresh_scientific_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import migrate_unified_intrinsic_checkpoint as migration
+
+    training_profile_sha256 = canonical_sha256(
+        {
+            "profile": "process_semantic_transition_canary",
+            "training": {},
+            "training_args": [],
+        }
+    )
+    source_identity = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "source_sha256s": {"trainer.py": "a" * 64},
+        "campaign_binding": _campaign(
+            training_profile_sha256=training_profile_sha256
+        ),
+        "bootstrap": None,
+        "initial_controller_sha256": "c" * 64,
+    }
+    source_identity["identity_sha256"] = canonical_sha256(source_identity)
+    monkeypatch.setattr(migration, "TRAINING_SOURCE_FILES", ("trainer.py",))
+    monkeypatch.setattr(
+        migration,
+        "_source_sha256s",
+        lambda _root: {"trainer.py": "d" * 64},
+    )
+    config = {
+        "campaign_id": "cp-test",
+        "config_sha256": "1" * 64,
+        "profile": "process_semantic_transition_canary",
+        "source": {
+            "git": {"root": "/source", "commit": "2" * 40, "tree": "3" * 40},
+            "manifest": {"manifest_sha256": "4" * 64},
+        },
+        "model": {"manifest_sha256": "5" * 64},
+        "runtime": {"identity_sha256": "6" * 64},
+        "dataset": {"identity_sha256": "7" * 64},
+        "tokenizer": {"identity_sha256": "8" * 64},
+        "tokenized_dataset": {"identity_sha256": "9" * 64},
+        "training": {},
+        "training_args": [],
+        "bootstrap": {"stem": "checkpoint_latest"},
+    }
+    target, _differences = _target_identity(
+        source_identity,
+        target_config=config,
+        controller_sha256="1" * 64,
+        allowed_source_changes=frozenset({"trainer.py"}),
+    )
+    assert target["bootstrap"] is None
+    assert target["initial_controller_sha256"] == "c" * 64
 
     with pytest.raises(
         UnifiedIntrinsicMigrationError,

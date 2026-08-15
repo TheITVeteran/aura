@@ -328,6 +328,7 @@ def _controller_config(
     return UnifiedRecurrenceConfig(
         hidden_size=int(model.model.layers[0].input_layernorm.weight.shape[0]),
         correction_rank=int(identity["controller_rank"]),
+        state_slots=int(identity.get("state_slots", 5)),
         depth_basis_size=int(identity["depth_basis_size"]),
         minimum_iterations=1,
         initialization_seed=int(identity["init_seed"]),

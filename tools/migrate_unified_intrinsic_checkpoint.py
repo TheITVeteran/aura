@@ -84,12 +84,28 @@ def _controller_sha256(weights_path: Path, identity: dict[str, Any]) -> str:
     correction = tensors.get("bundle.controller.correction_a")
     if correction is None or len(correction.shape) != 2:
         _fail("migration_controller_shape_invalid")
+    numeric = identity.get("numeric_observation_contract")
+    family = identity.get("frontier_family_observation_contract")
+    family_patterns = (
+        tuple(
+            (int(row["opcode"]), tuple(int(value) for value in row["token_ids"]))
+            for row in family.get("patterns", ())
+        )
+        if isinstance(family, dict)
+        else ()
+    )
     config = UnifiedRecurrenceConfig(
         hidden_size=int(correction.shape[0]),
         correction_rank=int(identity["controller_rank"]),
+        state_slots=int(identity.get("state_slots", 5)),
         depth_basis_size=int(identity["depth_basis_size"]),
         minimum_iterations=1,
         literal_digit_token_ids=tuple(int(value) for value in literal["digit_token_ids"]),
+        numeric_observation_max_value=(
+            int(numeric["max_value"])
+            if isinstance(numeric, dict) and "max_value" in numeric
+            else 32
+        ),
         opcode_token_patterns=tuple(
             (int(row["opcode"]), tuple(int(value) for value in row["token_ids"]))
             for row in opcode["patterns"]
@@ -98,6 +114,7 @@ def _controller_sha256(weights_path: Path, identity: dict[str, Any]) -> str:
             (str(row["name"]), tuple(int(value) for value in row["token_ids"]))
             for row in opcode["contexts"]
         ),
+        frontier_family_token_patterns=family_patterns,
         initialization_seed=int(identity["init_seed"]),
     )
     controller = UnifiedRecurrentController(config)
@@ -152,7 +169,7 @@ def _target_identity(
         if target_binding.get(field) != source_binding.get(field):
             _fail(f"migration_scientific_input_changed:{field}")
     original_bootstrap = source_identity.get("bootstrap")
-    if not isinstance(original_bootstrap, dict):
+    if original_bootstrap is not None and not isinstance(original_bootstrap, dict):
         _fail("migration_source_bootstrap_missing")
     target["source_sha256s"] = target_hashes
     target["campaign_binding"] = target_binding

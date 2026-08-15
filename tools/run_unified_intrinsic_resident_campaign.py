@@ -36,6 +36,7 @@ from tools import run_detached_step as detached  # noqa: E402
 from tools.prepare_unified_intrinsic_resident_campaign import (  # noqa: E402
     BOOTSTRAP_PROFILES,
     CONFIG_SCHEMA,
+    OPTIONAL_BOOTSTRAP_PROFILES,
     PROFILES,
     _profile_training,
     _training_cli,
@@ -318,9 +319,17 @@ def _load_config(path: Path) -> dict[str, Any]:
         "detached_attempts",
         "heartbeat_key",
     }
+    bootstrap_present = isinstance(config.get("bootstrap"), dict)
+    if config["profile"] in BOOTSTRAP_PROFILES and not bootstrap_present:
+        _fail("campaign_bootstrap_invalid")
+    if (
+        bootstrap_present
+        and config["profile"] not in BOOTSTRAP_PROFILES | OPTIONAL_BOOTSTRAP_PROFILES
+    ):
+        _fail("campaign_bootstrap_invalid")
     expected_path_keys = (
         base_path_keys | {"bootstrap_output"}
-        if config["profile"] in BOOTSTRAP_PROFILES
+        if bootstrap_present
         else base_path_keys
     )
     if not isinstance(paths, dict) or set(paths) != expected_path_keys:
@@ -339,7 +348,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "heartbeat_key": root / "heartbeat.key",
         **(
             {"bootstrap_output": inputs / "bootstrap-output"}
-            if config["profile"] in BOOTSTRAP_PROFILES
+            if bootstrap_present
             else {}
         ),
     }
@@ -350,7 +359,7 @@ def _load_config(path: Path) -> dict[str, Any]:
     if path != root / "campaign.json":
         _fail("campaign_config_path_drift")
     bootstrap = config.get("bootstrap")
-    if config["profile"] in BOOTSTRAP_PROFILES:
+    if bootstrap_present:
         if not isinstance(bootstrap, dict):
             _fail("campaign_bootstrap_invalid")
         bootstrap_body = {
@@ -988,7 +997,7 @@ def _trainer_command(
         str(config["config_sha256"]),
         *[str(value) for value in config["training_args"]],
     ]
-    if config["profile"] in BOOTSTRAP_PROFILES:
+    if isinstance(config.get("bootstrap"), dict):
         bootstrap = config["bootstrap"]
         command.extend(
             (

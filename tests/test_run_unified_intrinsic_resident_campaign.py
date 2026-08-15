@@ -14,9 +14,11 @@ from core.learning.frontier_process_supervision import frontier_process_task_bat
 from tools import run_detached_step as detached
 from tools.prepare_unified_intrinsic_resident_campaign import (
     BOOTSTRAP_PROFILES,
+    OPTIONAL_BOOTSTRAP_PROFILES,
     _freeze_bootstrap_checkpoint,
     _profile_training,
     _training_cli,
+    _validate_bootstrap_profile,
     _validate_task_depth_admission,
 )
 from tools.prepare_unified_intrinsic_resident_campaign import (
@@ -532,8 +534,22 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
     assert training["transition_replay_mode"] == "disabled"
     assert training["process_gradient_combiner"] == "mean"
     assert "process_semantic_transition_canary" not in BOOTSTRAP_PROFILES
+    assert "process_semantic_transition_canary" in OPTIONAL_BOOTSTRAP_PROFILES
     assert arguments[arguments.index("--state-schema") + 1] == "semantic_v2"
     assert arguments[arguments.index("--transition-replay-mode") + 1] == "disabled"
+
+
+def test_semantic_transition_canary_accepts_only_optional_exact_continuation() -> None:
+    _validate_bootstrap_profile(
+        "process_semantic_transition_canary",
+        present=False,
+    )
+    _validate_bootstrap_profile(
+        "process_semantic_transition_canary",
+        present=True,
+    )
+    with pytest.raises(RuntimeError, match="does_not_accept"):
+        _validate_bootstrap_profile("canary", present=True)
 
 
 def test_semantic_transition_campaign_requires_signed_local_state_admission(
