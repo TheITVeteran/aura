@@ -97,6 +97,14 @@ def test_frontier_family_contract_compiles_public_initial_state() -> None:
     assert states == ((0, 0, 3, 0, 0), (0, 0, 0, 0, 0), (0, 0, 0, 0, 0))
     assert recognized == (True, True, False)
 
+    semantic_states, semantic_recognized = contract.public_initial_states(
+        ((100, 200, 4, 2, 99, 1, 7, 99, 9),),
+        literals,
+        slots=11,
+    )
+    assert semantic_states == ((0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0),)
+    assert semantic_recognized == (True,)
+
 
 def test_opcode_contract_marks_every_exact_occurrence_without_assigning_relevance() -> None:
     contract = OpcodeObservationContract(
@@ -144,3 +152,11 @@ def test_public_modular_grammar_decodes_initial_state_and_instruction() -> None:
     assert instructions == (
         (OP_ADD_MOD, 3, 5, ACTION_NULL, ACTION_NULL, ACTION_NULL, ACTION_NULL, 1),
     )
+
+    semantic_states, semantic_known = contract.public_initial_states(
+        (row,),
+        literals,
+        slots=11,
+    )
+    assert semantic_known == (True,)
+    assert semantic_states == ((0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0),)

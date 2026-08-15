@@ -203,6 +203,43 @@ def test_public_action_signature_preserves_literals_state_depth_and_family() -> 
     assert not bool(mx.array_equal(signature, next_depth_signature))
 
 
+def test_semantic_controller_initial_state_uses_registered_public_topology() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            state_slots=11,
+            literal_digit_token_ids=tuple(range(10, 20)),
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    token_ids = mx.array([[100, 12, 19]])
+    logits = controller.initial_state_logits(
+        mx.zeros((1, 3, 64), dtype=mx.float32),
+        token_ids,
+    )
+    mx.eval(logits)
+
+    assert logits.shape == (1, 11, controller.config.state_cardinality)
+    assert tuple(int(value) for value in mx.argmax(logits[0], axis=-1).tolist()) == (
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
 def test_action_kernel_capture_matches_runtime_public_signature() -> None:
     patterns = tuple(
         (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))

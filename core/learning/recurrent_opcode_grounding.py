@@ -27,6 +27,7 @@ from core.learning.recurrent_action_schema import (
     OP_REGISTER_AFFINE,
     OP_SUB_MOD,
 )
+from core.learning.recurrent_state_schema import state_slot_names
 
 OPCODE_GROUNDING_SCHEMA: Final = "aura.recurrent_opcode_grounding.v1"
 FRONTIER_FAMILY_GROUNDING_SCHEMA: Final = "aura.frontier_family_grounding.v1"
@@ -64,6 +65,20 @@ _FRONTIER_FAMILY_TEXT: Final = (
     (OP_FRONTIER_AUDIT, "Fresh premise-audit task."),
 )
 _FRONTIER_OPCODES: Final = frozenset(opcode for opcode, _text in _FRONTIER_FAMILY_TEXT)
+
+
+def _public_state(values: Sequence[int], *, slots: int) -> tuple[int, ...]:
+    """Project a public legacy register state into a registered topology."""
+
+    state_slot_names(slots)
+    if len(values) != 5 or slots < len(values):
+        raise ValueError("public initial state topology is invalid")
+    return (
+        int(values[0]),
+        *(int(value) for value in values[1:-1]),
+        *(0 for _index in range(slots - len(values))),
+        int(values[-1]),
+    )
 
 
 def _tokenizer_patterns(
@@ -160,6 +175,8 @@ class FrontierFamilyObservationContract:
         self,
         token_rows: Sequence[Sequence[int]],
         literal_contract: Any,
+        *,
+        slots: int = 5,
     ) -> tuple[tuple[tuple[int, ...], ...], tuple[bool, ...]]:
         """Compile family-defined initial state from public evidence only.
 
@@ -176,12 +193,15 @@ class FrontierFamilyObservationContract:
         ):
             remaining = sum(bool(mask) for mask in masks)
             states.append(
-                (
+                _public_state(
+                    (
                     0,
                     0,
                     remaining if known and opcode == OP_FRONTIER_TRAVERSE else 0,
                     0,
                     0,
+                    ),
+                    slots=slots,
                 )
             )
         return tuple(states), recognized
@@ -348,6 +368,8 @@ class OpcodeObservationContract:
         self,
         token_rows: Sequence[Sequence[int]],
         literal_contract: Any,
+        *,
+        slots: int = 5,
     ) -> tuple[tuple[tuple[int, ...], ...], tuple[bool, ...]]:
         """Decode public initial registers for grammars with exact contracts."""
 
@@ -394,7 +416,7 @@ class OpcodeObservationContract:
                 known = True
             else:
                 known = False
-            states.append(state)
+            states.append(_public_state(state, slots=slots))
             recognized.append(known)
         return tuple(states), tuple(recognized)
 

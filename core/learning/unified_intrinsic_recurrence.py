@@ -2062,6 +2062,7 @@ class UnifiedRecurrentController(nn.Module):
             public_values, recognized = opcode_contract.public_initial_states(
                 token_ids.tolist(),
                 literal_contract,
+                slots=self.config.state_slots,
             )
             exact = self._exact_categorical_logits(
                 public_values,
@@ -2083,7 +2084,9 @@ class UnifiedRecurrentController(nn.Module):
                 max_value=self.config.numeric_observation_max_value,
             )
             public_values, recognized = family_contract.public_initial_states(
-                token_ids.tolist(), literal_contract
+                token_ids.tolist(),
+                literal_contract,
+                slots=self.config.state_slots,
             )
             exact = self._exact_categorical_logits(
                 public_values,
