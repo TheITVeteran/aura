@@ -24,6 +24,8 @@ from core.brain.llm.latent_cortex.answer_contract import (  # noqa: E402
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (  # noqa: E402
     SemanticNeuralDecodeState,
     execute_semantic_neural_decode_state,
+    normalize_semantic_neural_response,
+    render_semantic_neural_answer,
     render_semantic_neural_decode_context,
     render_semantic_neural_decode_correction,
     semantic_result_matches_response,
@@ -147,6 +149,26 @@ def _wire_prefill(tokenizer: Any, family: str) -> tuple[int, ...]:
     if not values:
         raise RuntimeError("semantic decode syntax prefill tokenization is empty")
     return values
+
+
+def _state_prefill(
+    tokenizer: Any,
+    state: SemanticNeuralDecodeState,
+    *,
+    limit: int = 80,
+) -> tuple[int, ...]:
+    """Seed ordering from authenticated state while leaving a decoded suffix."""
+
+    values = tuple(
+        int(token)
+        for token in tokenizer.encode(
+            render_semantic_neural_answer(state),
+            add_special_tokens=False,
+        )
+    )
+    if len(values) < 2:
+        raise RuntimeError("semantic state prefill cannot leave a decoded suffix")
+    return values[: min(limit, len(values) - 1)]
 
 
 def _arm_order(task_id: str) -> tuple[str, ...]:
@@ -299,11 +321,11 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                     "Internal recurrent semantic computation did not produce an "
                     "admissible terminal state after the declared tissue lesion."
                 )
-            active_prefill = (
+            wire_prefill = (
                 () if arm == "ordinary_base" else _wire_prefill(tokenizer, task.family)
             )
             attempts: list[dict[str, Any]] = []
-            max_attempts = 2 if selected is not None else 1
+            max_attempts = 3 if selected is not None else 1
             text = ""
             stopped = False
             prompt_tokens = 0
@@ -311,6 +333,11 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             latency_ms = 0
             serialization_verified: bool | None = None
             for attempt_index in range(max_attempts):
+                active_prefill = (
+                    _state_prefill(tokenizer, selected)
+                    if attempt_index == 2 and selected is not None
+                    else wire_prefill
+                )
                 active_context = (
                     context
                     if attempt_index == 0 or selected is None
@@ -326,6 +353,13 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                     completion_check=lambda values: _complete(tokenizer, values),
                 )
                 text = tokenizer.decode(list(generated), skip_special_tokens=True)
+                raw_text = text
+                wire_normalized = False
+                if selected is not None:
+                    text, wire_normalized = normalize_semantic_neural_response(
+                        selected,
+                        text,
+                    )
                 prompt_tokens += len(prompt)
                 generated_tokens += len(generated) - len(active_prefill)
                 latency_ms += attempt_latency_ms
@@ -337,9 +371,15 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 attempts.append(
                     {
                         "attempt": attempt_index + 1,
+                        "raw_response": raw_text,
+                        "raw_response_sha256": hashlib.sha256(
+                            raw_text.encode()
+                        ).hexdigest(),
                         "response": text,
                         "response_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                        "prefill_tokens": len(active_prefill),
                         "serialization_verified": serialization_verified,
+                        "wire_normalized": wire_normalized,
                     }
                 )
                 if selected is None or serialization_verified:

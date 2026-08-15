@@ -1,0 +1,21 @@
+{
+  "schema": "aura.rlc.semantic_neural_decode_partial_verdict.v1",
+  "source_commit": "57af469dc40f5165f3514c4a601552882119ab8f",
+  "seed": 2026081552,
+  "planned_decode_count": 450,
+  "committed_decode_count": 110,
+  "stopped_early": true,
+  "stop_reason": "treatment row failed both state-grounded serialization attempts",
+  "failed_task_id": "recurrence-frontier_coding-d15-s767619171759158867",
+  "failed_row_receipt_sha256": "30b9db4b022fa942844bbf2260bc18b311e43c4f71e67a64a6ab2a72eefc27fd",
+  "journal_sha256": "c98adf16793ba58b0f7bf69c62edc755dac50d24b1c1459128a4e6c0e98de736",
+  "root_cause": "deterministic greedy serialization reversed two result objects; a second correction decode repeated the same attractor",
+  "repair_evidence": {
+    "state_result_exact": true,
+    "state_prefix_72_tokens_correct": false,
+    "state_prefix_76_tokens_correct": false,
+    "state_prefix_80_tokens_correct": true,
+    "state_prefix_80_tokens_model_generated_suffix": true
+  },
+  "claim_boundary": "stopped partial 1.5B serialization diagnostic only; no replication, resident-32B, broad reasoning, fusion, frontier or WOW authority"
+}

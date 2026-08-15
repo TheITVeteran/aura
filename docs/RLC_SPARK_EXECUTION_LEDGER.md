@@ -5936,3 +5936,12 @@ copy. State-grounded correction repaired that exact task on a second real-model
 decode without consulting its evaluator answer. Per-row receipt-chained
 journaling now preserves raw evidence before terminal adjudication. The full
 fresh matrix must be rerun before resident transfer can proceed.
+
+### 2026-08-15 - CP552 state-prefix fallback closes deterministic copy ordering
+
+The next fresh run stopped after its journal captured a treatment row that
+repeated a reversed-object serialization twice. A bounded prefix sweep over the
+arm's own authenticated state found that 80 tokens crossed the stable bad
+branch while leaving the model to generate the suffix. Exact-object-only token
+overrun normalization closes the adjacent BPE boundary case. The strict full
+replication gate remains pending on a new unseen seed.

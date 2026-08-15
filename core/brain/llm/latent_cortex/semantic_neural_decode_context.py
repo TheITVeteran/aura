@@ -249,6 +249,37 @@ def semantic_result_matches_response(
         return False
 
 
+def normalize_semantic_neural_response(
+    state: SemanticNeuralDecodeState,
+    response: str,
+) -> tuple[str, bool]:
+    """Trim token-boundary overrun only after exact state-object recovery."""
+
+    marker = "FINAL_ANSWER:"
+    if not isinstance(state, SemanticNeuralDecodeState) or not isinstance(response, str):
+        return response, False
+    if response.count(marker) != 1 or not response.startswith(marker):
+        return response, False
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate semantic response key")
+            result[key] = value
+        return result
+
+    decoder = json.JSONDecoder(object_pairs_hook=reject_duplicate_keys)
+    try:
+        parsed, end = decoder.raw_decode(response[len(marker) :].lstrip())
+    except (json.JSONDecodeError, ValueError):
+        return response, False
+    trailing = response[len(marker) :].lstrip()[end:]
+    if not trailing or parsed != state.semantic_result:
+        return response, False
+    return render_semantic_neural_answer(state), True
+
+
 def render_semantic_neural_decode_correction(
     state: SemanticNeuralDecodeState,
 ) -> str:
@@ -261,6 +292,19 @@ def render_semantic_neural_decode_correction(
     )
 
 
+def render_semantic_neural_answer(state: SemanticNeuralDecodeState) -> str:
+    """Canonical wire bytes for bounded prefix stabilization and comparison."""
+
+    if not isinstance(state, SemanticNeuralDecodeState):
+        raise TypeError("semantic neural answer requires a typed state")
+    return "FINAL_ANSWER: " + json.dumps(
+        state.semantic_result,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+
 __all__ = [
     "SEMANTIC_NEURAL_DECODE_CONTEXT_SCHEMA",
     "SEMANTIC_NEURAL_DECODE_STATE_SCHEMA",
@@ -268,5 +312,7 @@ __all__ = [
     "execute_semantic_neural_decode_state",
     "render_semantic_neural_decode_context",
     "render_semantic_neural_decode_correction",
+    "render_semantic_neural_answer",
+    "normalize_semantic_neural_response",
     "semantic_result_matches_response",
 ]

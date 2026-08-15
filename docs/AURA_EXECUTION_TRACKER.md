@@ -50401,3 +50401,24 @@ so a future futile campaign can stop immediately without losing its failed raw
 response. Focused state, runner and verifier contracts pass `11/11`. The next
 gate repeats the full fresh matrix from this clean source; no resident claim is
 authorized by the targeted repair alone.
+
+## Checkpoint 2026-08-15-552: Stop Futile Decode and Cross the Copy Attractor
+
+The new journal exposed a different fresh coding row that remained wrong after
+both state-grounded attempts. The campaign stopped after `110/450` decodes
+instead of spending the full matrix. Its fsynced 111-event chain, exact failed
+responses and bounded verdict are frozen in
+`artifacts/closeout/latent_cortex/cp552_semantic_decode_partial/`.
+
+Both failures reversed the two authenticated result objects. A measured
+state-prefix sweep preserved the bad branch at 72 and 76 tokens; an 80-token
+prefix crossed the branch and the same model generated the remaining suffix
+correctly. This prefix is derived only from each arm's own authenticated state,
+leaves a model-generated suffix, and is available identically to treatment,
+wrong-state and lesioned-state arms on their third attempt. A strict wire
+normalizer also removes a BPE token's trailing overrun only when the first
+complete JSON object exactly equals the authenticated state; it cannot repair a
+wrong object.
+
+The admission rule remains unchanged. A new unseen-seed full replication is
+still required before any resident-32B run.

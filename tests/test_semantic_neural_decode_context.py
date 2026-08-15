@@ -4,6 +4,8 @@ import json
 
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (
     execute_semantic_neural_decode_state,
+    normalize_semantic_neural_response,
+    render_semantic_neural_answer,
     render_semantic_neural_decode_context,
     render_semantic_neural_decode_correction,
     semantic_result_matches_response,
@@ -48,3 +50,22 @@ def test_semantic_neural_decode_serialization_check_uses_state_not_task_oracle()
     correction = render_semantic_neural_decode_correction(state)
     assert encoded in correction
     assert "preceding serialization" in correction
+    assert render_semantic_neural_answer(state) == f"FINAL_ANSWER: {encoded}"
+
+
+def test_semantic_neural_wire_normalization_only_trims_exact_object_overrun():
+    task = frontier_process_task_battery(("coding",), (1,), 1, seed=1553)[0]
+    state = execute_semantic_neural_decode_state(task.prompt, task.family)
+    canonical = render_semantic_neural_answer(state)
+    normalized, changed = normalize_semantic_neural_response(
+        state,
+        canonical + '},{"token_boundary_overrun":',
+    )
+    assert changed is True
+    assert normalized == canonical
+    wrong, changed = normalize_semantic_neural_response(
+        state,
+        'FINAL_ANSWER: {}},{"token_boundary_overrun":',
+    )
+    assert changed is False
+    assert wrong == 'FINAL_ANSWER: {}},{"token_boundary_overrun":'
