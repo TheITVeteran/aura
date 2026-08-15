@@ -1,0 +1,96 @@
+{
+  "canary": {
+    "arms": {
+      "always_write": {
+        "exact": 17,
+        "exact_accuracy": 0.056666666666666664,
+        "examples": 300,
+        "receipt_sha256": "8ed0c98ef477d1d9a8fc0ed8157b72b5dd6e728b432acfcd87cea2022b90685b"
+      },
+      "matched_initialization_control": {
+        "exact": 0,
+        "exact_accuracy": 0.0,
+        "examples": 300,
+        "receipt_sha256": "7cc5dbedc20e65f93dc4e6934cce628b031ffdf9a96e72eb83ab61b7350012fb"
+      },
+      "no_read": {
+        "exact": 0,
+        "exact_accuracy": 0.0,
+        "examples": 300,
+        "receipt_sha256": "6836d03ca1d1b4586e88fd75ed55468e10cf173d2a1d0994d5dcf4f3a2411c38"
+      },
+      "no_write": {
+        "exact": 0,
+        "exact_accuracy": 0.0,
+        "examples": 300,
+        "receipt_sha256": "3e9bc517533792bb44fa2da029876fb1d099cc36d71eaae2381d002394352003"
+      },
+      "reset_memory": {
+        "exact": 0,
+        "exact_accuracy": 0.0,
+        "examples": 300,
+        "receipt_sha256": "6a4d33fda7519b1f59ffa9c5caf308ba893cbc664df041b037425478665927ad"
+      },
+      "rotated_routing": {
+        "exact": 2,
+        "exact_accuracy": 0.006666666666666667,
+        "examples": 300,
+        "receipt_sha256": "f10726f35e36994ee7cd558ce62803e6c0017a36812bcbbf27178be91f232595"
+      },
+      "treatment": {
+        "exact": 300,
+        "exact_accuracy": 1.0,
+        "examples": 300,
+        "receipt_sha256": "a88df9a86954d72a229c90d50dcbf2a3298b9782892276314bf635b763afa22f"
+      }
+    },
+    "claim_boundary": "bounded mathematics memory predicate acquisition and autonomous execution; not free-decoded, resident-32B, broad reasoning, or WOW",
+    "heldout_task_count": 300,
+    "receipt_sha256": "f57e90fc91b1e84525f0c48e5f96a00e2680e34e14eb6cc220ac3cf38686d2ae",
+    "source_commit": "fda4b9f8c963a73d33496b96ad61a136a9c9acda",
+    "source_sha256s": {
+      "core/learning/frontier_process_supervision.py": "ff4db1e22842dbcbd17448858445ab8ac9b855359a5fcde4423886d727699528",
+      "core/learning/recurrent_work_memory.py": "75ce15cc90cab444da5d9d5c51d55bfefa9320abee244b4e0939ed772eb3fc2a",
+      "core/learning/recurrent_work_memory_tissue.py": "07e5728c4df332650f619bf42fc1ef12a52b69f6b25a18c24e11998b53087f3d",
+      "core/learning/recurrent_work_memory_training.py": "8ee9bfbefac5caab33cb854e5843cc844ce2d069a30b51928960324d3cdae8a0",
+      "tools/run_mathematics_memory_canary.py": "a0475db2b3b9e60ecb74e25514c22ee7cee0c1e75b65a903d99facde51da2597"
+    }
+  },
+  "config": {
+    "capacity": 386,
+    "hidden_size": 32,
+    "read_feature_count": 8,
+    "schema": "aura.mathematics_memory_tissue.v1",
+    "seed": 2026081507,
+    "write_feature_count": 10
+  },
+  "manifest_sha256": "2177b6c03c87d05252a07a5c5ebab539e95cec42807cb77f3aefba5d1c0481ad",
+  "schema": "aura.mathematics_memory_artifact.v1",
+  "teacher_removed_runtime": true,
+  "training_receipt": {
+    "final_metrics": {
+      "loss": 0.030937714502215385,
+      "read_accuracy": 1.0,
+      "write_accuracy": 0.9999999403953552
+    },
+    "hidden_size": 32,
+    "initial_metrics": {
+      "loss": 1.4324939250946045,
+      "read_accuracy": 0.7777617573738098,
+      "write_accuracy": 0.4011378586292267
+    },
+    "learning_rate": 0.01,
+    "loss_history_sha256": "ad6822fa5b0d1dc076e665760f187a66aea03dd555d525429fde160bb6711955",
+    "read_example_count": 13868,
+    "receipt_sha256": "bf61eaf42dea26c914e576442be4c72f32679d2f5de3d16757f9220a8edcbeba",
+    "schema": "aura.mathematics_memory_training.v1",
+    "seed": 2026081507,
+    "steps": 400,
+    "supervision_sha256": "5ace6495c4968372a2c80a27c937443cee72f30368e15eb9d424a96dc34696f8",
+    "task_count": 120,
+    "teacher_removed_before_evaluation": true,
+    "write_example_count": 25662
+  },
+  "weights_file": "weights.safetensors",
+  "weights_sha256": "cd7d4cc1f1be1843ffd462309d013131a4d6635fe8922f9dfd7bc553cc8cf483"
+}

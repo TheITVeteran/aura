@@ -173,3 +173,23 @@ representation blocker. It is still not a free-decoded language result, a
 resident-32B result, a multi-domain general reasoning result, or WOW. The next
 gates are durable tissue packaging, independent reload/replay, process-to-answer
 emission, matched ordinary-decode comparison, and fresh replication.
+
+## CP519-CP520 addendum
+
+CP519 adds an atomic safetensor package and strict loader for the learned memory
+tissue. The manifest binds tensor names and shapes, weight bytes, training
+receipt, clean-source file hashes, the 300-task canary receipt, every lesion
+summary, and the bounded claim. A source change, inventory change, evidence
+change, or weight mutation makes the package unloadable.
+
+Because CP519 changed measured runtime code, the older CP518 certificate was not
+reused as promotion authority. A new clean-source run from
+`fda4b9f8c963a73d33496b96ad61a136a9c9acda` reproduced the same 300/300
+treatment result and lesion outcomes. CP520 materializes that exact tissue under
+`core/brain/llm/latent_cortex/assets/mathematics_memory_tissue_v1`. An
+independent reload test replays all 300 fresh tasks exactly; a mutated weight
+file is rejected before execution.
+
+The structured memory mechanism is now durable and independently replayable.
+The claim boundary is unchanged: process-to-answer emission and broader
+reasoning evidence remain open.

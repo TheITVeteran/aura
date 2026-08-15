@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
+import mlx.core as mx
 import pytest
 
 from core.learning.recurrent_work_memory_tissue import (
+    DEFAULT_MATHEMATICS_MEMORY_ARTIFACT,
     MATHEMATICS_MEMORY_EXECUTION_SCHEMA,
     MathematicsMemoryTissue,
     execute_mathematics_memory,
+    load_mathematics_memory_tissue,
 )
 from core.learning.recurrent_work_memory_training import (
     autonomous_execution_metrics,
@@ -113,3 +119,28 @@ def test_wrong_write_lesion_remains_observable_instead_of_being_guarded() -> Non
     )
 
     assert result.count > 0
+
+
+def test_sealed_tissue_reloads_and_replays_the_fresh_registry() -> None:
+    tissue = load_mathematics_memory_tissue()
+    _private_labels, heldout_tasks = build_mathematics_memory_registry(
+        seeds=range(1_000, 1_100),
+        difficulties=(1, 2, 3),
+    )
+
+    metrics = autonomous_execution_metrics(tissue, heldout_tasks)
+
+    assert metrics["exact"] == 300
+    assert metrics["exact_accuracy"] == 1.0
+
+
+def test_sealed_tissue_rejects_weight_tampering(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact"
+    shutil.copytree(DEFAULT_MATHEMATICS_MEMORY_ARTIFACT, artifact)
+    weights = artifact / "weights.safetensors"
+    tensors = mx.load(str(weights))
+    tensors["read_bias"] = tensors["read_bias"] + 0.001
+    mx.save_safetensors(str(weights), tensors)
+
+    with pytest.raises(RuntimeError, match="weights commitment differs"):
+        load_mathematics_memory_tissue(artifact)
