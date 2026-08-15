@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import itertools
 import math
 from collections.abc import Mapping
 from pathlib import Path
@@ -29,8 +30,27 @@ VERIFICATION_CERTIFICATE_SCHEMA = "aura.latent_cortex.standalone_frontier_verifi
 ATTESTATION_REQUEST_SCHEMA = "aura.latent_cortex.independent_attestation_request.v1"
 VERIFICATION_KERNEL_IDENTITY_SCHEMA = "aura.latent_cortex.verification_kernel_identity.v1"
 
-_PIN_FIELDS = {"public_key_b64", "implementation_sha256", "release_sha256"}
-_EXPECTED_PREATTESTATION_REASON = "independent_verifier_trust_pin_missing"
+# CP126 c7a9c1a5 + 48df4291: a pin carries the ORGANIZATION that holds the
+# key. Independence was decided by comparing a signer id against an
+# unauthenticated producer string, so one actor could hold every key and be
+# "independent" of itself by naming itself something else.
+_PIN_FIELDS = {
+    "public_key_b64",
+    "implementation_sha256",
+    "release_sha256",
+    "organization",
+}
+_TRUST_ROLES = ("producers", "task_issuers", "verifiers")
+#: How many independently pinned verifiers, from distinct organizations, must
+#: agree before a frontier claim is admissible. One signature is one
+#: organization's opinion; a release-grade claim is not one opinion.
+MINIMUM_VERIFIER_QUORUM = 2
+#: The one reason an otherwise-complete bundle carries before any verifier
+#: has signed it. Anything else means the evidence is not ready to attest.
+_EXPECTED_PREATTESTATION_REASONS = {
+    "independent_verifier_quorum_missing",
+    "independent_verifier_quorum_not_met",
+}
 _SUPPORTED_COMPARISONS = frozenset(
     {
         "resident_32b_vs_vanilla_same_checkpoint",
@@ -80,10 +100,19 @@ def _validate_pin(raw: Any, *, role: str) -> dict[str, str]:
     release = raw.get("release_sha256")
     if not _is_sha256(implementation) or not _is_sha256(release):
         _fail(f"{role}_trust_pin_invalid")
+    organization = raw.get("organization")
+    if (
+        not isinstance(organization, str)
+        or not organization
+        or organization != organization.strip()
+        or len(organization) > 200
+    ):
+        _fail(f"{role}_trust_pin_invalid")
     return {
         "public_key_b64": public_key,
         "implementation_sha256": implementation,
         "release_sha256": release,
+        "organization": organization,
     }
 
 
@@ -93,6 +122,7 @@ def validate_trust_config(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict) or set(raw) != {
         "schema",
         "verification_kernel_sha256",
+        "producers",
         "task_issuers",
         "verifiers",
     }:
@@ -106,7 +136,7 @@ def validate_trust_config(raw: Any) -> dict[str, Any]:
     if expected_kernel != observed_kernel:
         _fail("verification_kernel_trust_pin_mismatch")
     role_maps: dict[str, dict[str, dict[str, str]]] = {}
-    for role in ("task_issuers", "verifiers"):
+    for role in _TRUST_ROLES:
         entries = raw.get(role)
         if not isinstance(entries, dict) or not entries:
             _fail(f"{role}_trust_set_missing")
@@ -121,14 +151,27 @@ def validate_trust_config(raw: Any) -> dict[str, Any]:
                 _fail(f"{role}_signer_id_invalid")
             validated[signer_id] = _validate_pin(pin, role=role)
         role_maps[role] = validated
-    issuer_ids = set(role_maps["task_issuers"])
-    verifier_ids = set(role_maps["verifiers"])
-    if issuer_ids & verifier_ids:
-        _fail("trust_role_identity_reused")
-    issuer_keys = {pin["public_key_b64"] for pin in role_maps["task_issuers"].values()}
-    verifier_keys = {pin["public_key_b64"] for pin in role_maps["verifiers"].values()}
-    if issuer_keys & verifier_keys:
-        _fail("trust_role_key_reused")
+    ids_by_role = {role: set(role_maps[role]) for role in _TRUST_ROLES}
+    keys_by_role = {
+        role: {pin["public_key_b64"] for pin in role_maps[role].values()}
+        for role in _TRUST_ROLES
+    }
+    orgs_by_role = {
+        role: {pin["organization"] for pin in role_maps[role].values()}
+        for role in _TRUST_ROLES
+    }
+    for first, second in itertools.combinations(_TRUST_ROLES, 2):
+        if ids_by_role[first] & ids_by_role[second]:
+            _fail("trust_role_identity_reused")
+        if keys_by_role[first] & keys_by_role[second]:
+            _fail("trust_role_key_reused")
+        # Separate keys inside one organization are separation on paper. The
+        # point of an independent verifier is a second party, not a second
+        # keypair held by the first.
+        if orgs_by_role[first] & orgs_by_role[second]:
+            _fail("trust_role_organization_reused")
+    if len(orgs_by_role["verifiers"]) < MINIMUM_VERIFIER_QUORUM:
+        _fail("trust_verifier_quorum_unreachable")
     return {
         **role_maps,
         "verification_kernel_sha256": observed_kernel,
@@ -280,6 +323,7 @@ def verify_frontier_evidence_package(
             bundle,
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
+            trusted_producers=trust["producers"],
             # BIND the artifact verification to the certificate. Verifying
             # both independently and AND-ing the results left the core API
             # able to certify a bundle whose raw artifacts were never opened.
@@ -373,7 +417,11 @@ def prepare_independent_attestation_request(
         trust_path=trust_path,
     )
     _validate_supported_comparison(bundle)
-    if "independent_verifier" in bundle:
+    # A partially signed bundle is legitimate: the quorum is collected one
+    # signature at a time, and this helper produces the next one. What it
+    # cannot do is re-issue bytes for a verifier that already signed.
+    existing = bundle.get("independent_verifiers")
+    if existing is not None and not isinstance(existing, list):
         _fail("attestation_prepare_requires_unsigned_bundle")
     try:
         artifact_receipt = verify_raw_artifact_package(
@@ -386,6 +434,7 @@ def prepare_independent_attestation_request(
             bundle,
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
+            trusted_producers=trust["producers"],
             raw_artifact_receipt=artifact_receipt,
         )
     except FrontierArtifactError as exc:
@@ -393,7 +442,8 @@ def prepare_independent_attestation_request(
     reasons = set(str(reason) for reason in preattestation.get("reasons") or [])
     statistical_claim = preattestation.get("statistical_claim")
     if (
-        reasons != {_EXPECTED_PREATTESTATION_REASON}
+        not reasons
+        or not reasons <= _EXPECTED_PREATTESTATION_REASONS
         or not isinstance(statistical_claim, Mapping)
         or statistical_claim.get("tier") != PROVEN
     ):
@@ -401,14 +451,26 @@ def prepare_independent_attestation_request(
     pin = trust["verifiers"].get(verifier_id)
     if pin is None:
         _fail("attestation_verifier_not_trusted")
-    producer_id = str(bundle.get("producer_id") or "")
+    producer_id = str(preattestation.get("verified_producer_id") or "")
+    if not producer_id:
+        _fail("attestation_producer_identity_unverified")
     task_issuer_id = str(preattestation.get("task_issuer_id") or "")
     if verifier_id in {producer_id, task_issuer_id}:
         _fail("attestation_verifier_role_collision")
+    if verifier_id in set(preattestation.get("independent_verifier_ids") or []):
+        _fail("attestation_verifier_already_signed")
     trials = bundle.get("trials")
+    # CP126 6f55ecd3, second site. The certificate requires an attestation to
+    # postdate the last SCORE; this helper builds the bytes a verifier signs,
+    # and it was still measuring from when evaluation began. A verifier
+    # following the documented flow would have produced an attestation the
+    # certificate then rejected — or, before completion times existed, one
+    # signed while the evidence was still being made.
     latest_evidence_at = max(
         max(float(trial.get("task_generated_at") or 0.0) for trial in trials),
         max(float(trial.get("evaluation_started_at") or 0.0) for trial in trials),
+        max(float(trial.get("evaluation_completed_at") or 0.0) for trial in trials),
+        max(float(trial.get("scoring_completed_at") or 0.0) for trial in trials),
     )
     if verified_at_value <= latest_evidence_at:
         _fail("attestation_verified_at_not_after_evidence")

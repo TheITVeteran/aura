@@ -13,6 +13,7 @@ from core.brain.llm.latent_cortex.frontier_artifacts import (
 )
 from core.brain.llm.latent_cortex.frontier_certification import (
     INDEPENDENT_ATTESTATION_SCHEMA,
+    PRODUCER_ATTESTATION_SCHEMA,
     SCHEMA,
     TASK_COMMITMENT_ATTESTATION_SCHEMA,
     _task_manifest_sha256,
@@ -35,33 +36,72 @@ from tests.fixtures.rlc_runtime_integrity import (
     complete_worker_identity,
 )
 
+
+def _public_key(key: Ed25519PrivateKey) -> str:
+    return base64.b64encode(
+        key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ).decode("ascii")
+
+
 _VERIFIER_KEY = Ed25519PrivateKey.generate()
+_SECOND_VERIFIER_KEY = Ed25519PrivateKey.generate()
 _TASK_ISSUER_KEY = Ed25519PrivateKey.generate()
+_PRODUCER_KEY = Ed25519PrivateKey.generate()
 _VERIFIER_ID = "independent-proof-kernel"
+_SECOND_VERIFIER_ID = "second-independent-proof-kernel"
 _TASK_ISSUER_ID = "independent-task-issuer"
+_PRODUCER_ID = "aura-lab"
 _VERIFIER_IMPLEMENTATION = "d" * 64
 _VERIFIER_RELEASE = "0" * 64
+_SECOND_VERIFIER_IMPLEMENTATION = "8" * 64
+_SECOND_VERIFIER_RELEASE = "b" * 64
 _TASK_ISSUER_IMPLEMENTATION = "2" * 64
 _TASK_ISSUER_RELEASE = "3" * 64
-_VERIFIER_PUBLIC_KEY = base64.b64encode(
-    _VERIFIER_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-).decode("ascii")
+_PRODUCER_IMPLEMENTATION = "1" * 64
+_PRODUCER_RELEASE = "4" * 64
+_VERIFIER_PUBLIC_KEY = _public_key(_VERIFIER_KEY)
+_SECOND_VERIFIER_PUBLIC_KEY = _public_key(_SECOND_VERIFIER_KEY)
+_TASK_ISSUER_PUBLIC_KEY = _public_key(_TASK_ISSUER_KEY)
+_PRODUCER_PUBLIC_KEY = _public_key(_PRODUCER_KEY)
+# Four distinct organizations. Separate keypairs inside one organization are
+# separation on paper; the point of an independent verifier is a second party.
 _TRUSTED_VERIFIERS = {
     _VERIFIER_ID: {
         "public_key_b64": _VERIFIER_PUBLIC_KEY,
         "implementation_sha256": _VERIFIER_IMPLEMENTATION,
         "release_sha256": _VERIFIER_RELEASE,
-    }
+        "organization": "proof-kernel-consortium",
+    },
+    _SECOND_VERIFIER_ID: {
+        "public_key_b64": _SECOND_VERIFIER_PUBLIC_KEY,
+        "implementation_sha256": _SECOND_VERIFIER_IMPLEMENTATION,
+        "release_sha256": _SECOND_VERIFIER_RELEASE,
+        "organization": "independent-evaluation-board",
+    },
 }
-_TASK_ISSUER_PUBLIC_KEY = base64.b64encode(
-    _TASK_ISSUER_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-).decode("ascii")
 _TRUSTED_TASK_ISSUERS = {
     _TASK_ISSUER_ID: {
         "public_key_b64": _TASK_ISSUER_PUBLIC_KEY,
         "implementation_sha256": _TASK_ISSUER_IMPLEMENTATION,
         "release_sha256": _TASK_ISSUER_RELEASE,
+        "organization": "held-out-task-custodian",
     }
+}
+_TRUSTED_PRODUCERS = {
+    _PRODUCER_ID: {
+        "public_key_b64": _PRODUCER_PUBLIC_KEY,
+        "implementation_sha256": _PRODUCER_IMPLEMENTATION,
+        "release_sha256": _PRODUCER_RELEASE,
+        "organization": "aura-lab-org",
+    }
+}
+_VERIFIER_KEYS = {
+    _VERIFIER_ID: (_VERIFIER_KEY, _VERIFIER_IMPLEMENTATION, _VERIFIER_RELEASE),
+    _SECOND_VERIFIER_ID: (
+        _SECOND_VERIFIER_KEY,
+        _SECOND_VERIFIER_IMPLEMENTATION,
+        _SECOND_VERIFIER_RELEASE,
+    ),
 }
 
 
@@ -110,6 +150,7 @@ def _trust_config() -> dict:
     return {
         "schema": TRUST_CONFIG_SCHEMA,
         "verification_kernel_sha256": verifier_implementation_sha256(),
+        "producers": _TRUSTED_PRODUCERS,
         "task_issuers": _TRUSTED_TASK_ISSUERS,
         "verifiers": _TRUSTED_VERIFIERS,
     }
@@ -172,31 +213,75 @@ def _refresh_task_commitment(bundle: dict) -> None:
     }
 
 
-def _refresh_attestation(bundle: dict, *, verified_at: float = 2000.0) -> None:
+def _refresh_producer_attestation(bundle: dict, *, produced_at: float = 1900.0) -> None:
+    """The producer signs its own bundle with a pinned key.
+
+    Without this the producer identity was a string the bundle wrote about
+    itself, and a verifier counted as independent by differing from it.
+    """
+    payload = {
+        "producer_id": _PRODUCER_ID,
+        "evidence_payload_sha256": evidence_payload_sha256(bundle),
+        "preregistration_sha256": bundle["preregistration_sha256"],
+        "task_commitment_sha256": bundle["task_commitment_sha256"],
+        "raw_artifact_manifest_sha256": bundle["raw_artifact_manifest_sha256"],
+        "produced_at": produced_at,
+    }
+    bundle["producer_attestation"] = {
+        "schema": PRODUCER_ATTESTATION_SCHEMA,
+        "signed_payload": payload,
+        "signer": {
+            "algorithm": "Ed25519",
+            "signer_id": _PRODUCER_ID,
+            "public_key_b64": _PRODUCER_PUBLIC_KEY,
+            "signature_b64": base64.b64encode(
+                _PRODUCER_KEY.sign(canonical_json_bytes(payload))
+            ).decode("ascii"),
+        },
+    }
+
+
+def _signed_attestation(bundle: dict, verifier_id: str, verified_at: float) -> dict:
+    key, implementation, release = _VERIFIER_KEYS[verifier_id]
     payload = {
         "accepted": True,
         "claim_tier": "PROVEN",
         "producer_id": bundle["producer_id"],
         "evidence_payload_sha256": evidence_payload_sha256(bundle),
         "preregistration_sha256": bundle["preregistration_sha256"],
-        "implementation_sha256": _VERIFIER_IMPLEMENTATION,
-        "verifier_release_sha256": _VERIFIER_RELEASE,
+        "implementation_sha256": implementation,
+        "verifier_release_sha256": release,
         "raw_artifact_manifest_sha256": bundle["raw_artifact_manifest_sha256"],
         "task_commitment_sha256": bundle["task_commitment_sha256"],
         "verified_at": verified_at,
     }
-    bundle["independent_verifier"] = {
+    return {
         "schema": INDEPENDENT_ATTESTATION_SCHEMA,
         "signed_payload": payload,
         "signer": {
             "algorithm": "Ed25519",
-            "signer_id": _VERIFIER_ID,
-            "public_key_b64": _VERIFIER_PUBLIC_KEY,
+            "signer_id": verifier_id,
+            "public_key_b64": _public_key(key),
             "signature_b64": base64.b64encode(
-                _VERIFIER_KEY.sign(canonical_json_bytes(payload))
+                key.sign(canonical_json_bytes(payload))
             ).decode("ascii"),
         },
     }
+
+
+def _refresh_attestation(
+    bundle: dict,
+    *,
+    verified_at: float = 2000.0,
+    verifier_ids: tuple[str, ...] = (_VERIFIER_ID, _SECOND_VERIFIER_ID),
+) -> None:
+    # The producer signature covers the evidence payload, so it is refreshed
+    # first and then excluded from what the verifiers hash.
+    _refresh_producer_attestation(bundle)
+    bundle["independent_verifiers"] = [
+        _signed_attestation(bundle, verifier_id, verified_at)
+        for verifier_id in verifier_ids
+    ]
 
 
 def _raw_artifact_receipt(bundle: dict) -> dict:
@@ -225,6 +310,7 @@ def _certify(bundle: dict, *, raw_artifact_receipt: dict | None = None) -> dict:
         bundle,
         trusted_verifiers=_TRUSTED_VERIFIERS,
         trusted_task_issuers=_TRUSTED_TASK_ISSUERS,
+        trusted_producers=_TRUSTED_PRODUCERS,
         raw_artifact_receipt=(
             _raw_artifact_receipt(bundle)
             if raw_artifact_receipt is None
@@ -513,7 +599,7 @@ def _bundle(
             index += 1
     bundle = {
         "schema": SCHEMA,
-        "producer_id": "aura-lab",
+        "producer_id": _PRODUCER_ID,
         "preregistration": prereg,
         "preregistration_sha256": canonical_sha256(prereg),
         "resident_model": {
@@ -573,14 +659,22 @@ def _bundle(
         },
     }
     _refresh_task_commitment(bundle)
+    # The producer signature is not part of the verifier quorum: an unsigned
+    # bundle is one nobody has attested to yet, and its producer is still a
+    # pinned identity.
+    _refresh_producer_attestation(bundle)
     if include_attestation:
         _refresh_attestation(bundle)
     return bundle
 
 
 __all__ = [
+    "_PRODUCER_ID",
+    "_SECOND_VERIFIER_ID",
     "_TASK_ISSUER_ID",
+    "_TRUSTED_PRODUCERS",
     "_set_outcome",
+    "_signed_attestation",
     "_TASK_ISSUER_PUBLIC_KEY",
     "_TRUSTED_TASK_ISSUERS",
     "_TRUSTED_VERIFIERS",
@@ -591,6 +685,7 @@ __all__ = [
     "_certify",
     "_raw_artifact_receipt",
     "_refresh_attestation",
+    "_refresh_producer_attestation",
     "_refresh_task_commitment",
     "_trust_config",
 ]

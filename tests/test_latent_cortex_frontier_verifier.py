@@ -27,13 +27,16 @@ from core.brain.llm.latent_cortex.frontier_verifier import (
 )
 from core.runtime.subprocess_gateway import SubprocessGateway
 from tests.fixtures.latent_frontier import (
+    _SECOND_VERIFIER_ID,
     _TASK_ISSUER_PUBLIC_KEY,
     _VERIFIER_ID,
     _VERIFIER_KEY,
     _VERIFIER_PUBLIC_KEY,
     _bundle,
     _refresh_attestation,
+    _refresh_producer_attestation,
     _refresh_task_commitment,
+    _signed_attestation,
     _trial_accounting,
     _trust_config,
 )
@@ -73,10 +76,14 @@ def _publish_manifest_and_bundle(package: dict, *, signed: bool) -> None:
     manifest_bytes = canonical_json_bytes(package["manifest"])
     package["manifest_path"].write_bytes(manifest_bytes)
     package["bundle"]["raw_artifact_manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    # The producer signs the manifest digest, so it has to be re-signed once
+    # the manifest is published — signed or not, because an unsigned bundle
+    # means no VERIFIER has attested, not that the producer is anonymous.
+    _refresh_producer_attestation(package["bundle"])
     if signed:
         _refresh_attestation(package["bundle"])
     else:
-        package["bundle"].pop("independent_verifier", None)
+        package["bundle"].pop("independent_verifiers", None)
     _write_json(package["bundle_path"], package["bundle"])
 
 
@@ -244,18 +251,51 @@ def test_attestation_prepare_and_external_signature_complete_the_flow(tmp_path: 
     assert request["schema"] == ATTESTATION_REQUEST_SCHEMA
     assert request["signed_payload"]["claim_tier"] == "PROVEN"
     payload = request["signed_payload"]
-    package["bundle"]["independent_verifier"] = {
-        "schema": INDEPENDENT_ATTESTATION_SCHEMA,
-        "signed_payload": payload,
-        "signer": {
-            "algorithm": "Ed25519",
-            "signer_id": _VERIFIER_ID,
-            "public_key_b64": _VERIFIER_PUBLIC_KEY,
-            "signature_b64": base64.b64encode(
-                _VERIFIER_KEY.sign(canonical_json_bytes(payload))
-            ).decode("ascii"),
-        },
-    }
+    package["bundle"]["independent_verifiers"] = [
+        {
+            "schema": INDEPENDENT_ATTESTATION_SCHEMA,
+            "signed_payload": payload,
+            "signer": {
+                "algorithm": "Ed25519",
+                "signer_id": _VERIFIER_ID,
+                "public_key_b64": _VERIFIER_PUBLIC_KEY,
+                "signature_b64": base64.b64encode(
+                    _VERIFIER_KEY.sign(canonical_json_bytes(payload))
+                ).decode("ascii"),
+            },
+        }
+    ]
+    _write_json(package["bundle_path"], package["bundle"])
+
+    # ONE signature is one organization's opinion. The certificate is not
+    # accepted until the quorum is met, and the prepare helper refuses to
+    # re-issue bytes for a verifier that already signed.
+    assert _verify(package)["accepted"] is False
+    with pytest.raises(
+        FrontierVerificationError, match="attestation_verifier_already_signed"
+    ):
+        prepare_independent_attestation_request(
+            bundle_path=package["bundle_path"],
+            manifest_path=package["manifest_path"],
+            artifact_root=package["root"],
+            trust_path=package["trust_path"],
+            verifier_id=_VERIFIER_ID,
+            verified_at=3000.0,
+        )
+    second = prepare_independent_attestation_request(
+        bundle_path=package["bundle_path"],
+        manifest_path=package["manifest_path"],
+        artifact_root=package["root"],
+        trust_path=package["trust_path"],
+        verifier_id=_SECOND_VERIFIER_ID,
+        verified_at=3000.0,
+    )
+    package["bundle"]["independent_verifiers"].append(
+        _signed_attestation(package["bundle"], _SECOND_VERIFIER_ID, 3000.0)
+    )
+    assert second["signed_payload"]["evidence_payload_sha256"] == payload[
+        "evidence_payload_sha256"
+    ]
     _write_json(package["bundle_path"], package["bundle"])
 
     certificate = _verify(package)
@@ -519,18 +559,51 @@ def test_external_attestation_prepare_and_signature_complete_the_flow(tmp_path: 
     )
 
     payload = request["signed_payload"]
-    package["bundle"]["independent_verifier"] = {
-        "schema": INDEPENDENT_ATTESTATION_SCHEMA,
-        "signed_payload": payload,
-        "signer": {
-            "algorithm": "Ed25519",
-            "signer_id": _VERIFIER_ID,
-            "public_key_b64": _VERIFIER_PUBLIC_KEY,
-            "signature_b64": base64.b64encode(
-                _VERIFIER_KEY.sign(canonical_json_bytes(payload))
-            ).decode("ascii"),
-        },
-    }
+    package["bundle"]["independent_verifiers"] = [
+        {
+            "schema": INDEPENDENT_ATTESTATION_SCHEMA,
+            "signed_payload": payload,
+            "signer": {
+                "algorithm": "Ed25519",
+                "signer_id": _VERIFIER_ID,
+                "public_key_b64": _VERIFIER_PUBLIC_KEY,
+                "signature_b64": base64.b64encode(
+                    _VERIFIER_KEY.sign(canonical_json_bytes(payload))
+                ).decode("ascii"),
+            },
+        }
+    ]
+    _write_json(package["bundle_path"], package["bundle"])
+
+    # ONE signature is one organization's opinion. The certificate is not
+    # accepted until the quorum is met, and the prepare helper refuses to
+    # re-issue bytes for a verifier that already signed.
+    assert _verify(package)["accepted"] is False
+    with pytest.raises(
+        FrontierVerificationError, match="attestation_verifier_already_signed"
+    ):
+        prepare_independent_attestation_request(
+            bundle_path=package["bundle_path"],
+            manifest_path=package["manifest_path"],
+            artifact_root=package["root"],
+            trust_path=package["trust_path"],
+            verifier_id=_VERIFIER_ID,
+            verified_at=3000.0,
+        )
+    second = prepare_independent_attestation_request(
+        bundle_path=package["bundle_path"],
+        manifest_path=package["manifest_path"],
+        artifact_root=package["root"],
+        trust_path=package["trust_path"],
+        verifier_id=_SECOND_VERIFIER_ID,
+        verified_at=3000.0,
+    )
+    package["bundle"]["independent_verifiers"].append(
+        _signed_attestation(package["bundle"], _SECOND_VERIFIER_ID, 3000.0)
+    )
+    assert second["signed_payload"]["evidence_payload_sha256"] == payload[
+        "evidence_payload_sha256"
+    ]
     _write_json(package["bundle_path"], package["bundle"])
 
     certificate = _verify(package)

@@ -33,6 +33,13 @@ INDEPENDENT_ATTESTATION_SCHEMA = (
 TASK_COMMITMENT_ATTESTATION_SCHEMA = (
     "aura.latent_cortex.frontier_gain_task_commitment.v1"
 )
+PRODUCER_ATTESTATION_SCHEMA = (
+    "aura.latent_cortex.frontier_gain_producer_attestation.v1"
+)
+#: A single signature is one organization's opinion. A release-grade frontier
+#: claim needs agreement from independently pinned verifiers who do not share
+#: an organization with each other, the producer, or the task issuer.
+MINIMUM_VERIFIER_QUORUM = 2
 _COMPARISON_KINDS = {
     "resident_32b_vs_vanilla_same_checkpoint",
     "resident_32b_vs_external_frontier",
@@ -52,6 +59,13 @@ def canonical_sha256(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+#: A trust pin now names the organization holding the key. Independence
+#: between roles is an organizational claim, not a key-management one.
+_TRUST_PIN_FIELDS = frozenset(
+    {"public_key_b64", "implementation_sha256", "release_sha256", "organization"}
+)
+
+
 def evidence_payload_sha256(bundle: dict[str, Any]) -> str:
     return canonical_sha256(
         {
@@ -65,6 +79,8 @@ def evidence_payload_sha256(bundle: dict[str, Any]) -> str:
             "raw_artifact_manifest_sha256": bundle.get(
                 "raw_artifact_manifest_sha256"
             ),
+            "task_diversity": bundle.get("task_diversity"),
+            "blinding": bundle.get("blinding"),
             "trials": bundle.get("trials"),
         }
     )
@@ -938,11 +954,7 @@ def _validate_task_commitment(
         )
     except (AttributeError, TypeError, ValueError):
         pin = None
-    if not isinstance(pin, Mapping) or set(pin) != {
-        "public_key_b64",
-        "implementation_sha256",
-        "release_sha256",
-    }:
+    if not isinstance(pin, Mapping) or set(pin) != _TRUST_PIN_FIELDS:
         reasons.append("task_issuer_trust_pin_missing")
         return "", ""
     public_key = pin.get("public_key_b64")
@@ -1103,31 +1115,101 @@ def _validate_blinding(
         reasons.append("blinding_markers_present_in_scorer_inputs")
 
 
-def _validate_independent_attestation(
+def _validate_producer_identity(
     bundle: dict[str, Any],
     *,
     evidence_hash: str,
-    latest_task_generated_at: float,
-    trusted_verifiers: Mapping[str, Mapping[str, str]] | None,
+    trusted_producers: Mapping[str, Mapping[str, str]] | None,
     reasons: list[str],
 ) -> tuple[str, str]:
-    raw = bundle.get("independent_verifier")
-    producer_id = str(bundle.get("producer_id") or "")
-    if not producer_id:
+    """Independence was decided against an unauthenticated string.
+
+    ``producer_id`` was whatever the bundle said it was, and a verifier
+    counted as independent when its signer id differed from that string. One
+    actor holding a trusted verifier key could therefore write any producer
+    name into the bundle and independently verify itself.
+
+    The producer signs its own bundle with a pinned key. Its identity becomes
+    cryptographic, and independence becomes a comparison between two verified
+    signers and the organizations that hold their keys.
+
+    Returns the verified producer id and its organization.
+    """
+    claimed = str(bundle.get("producer_id") or "")
+    if not claimed:
         reasons.append("producer_id_missing")
+    raw = bundle.get("producer_attestation")
+    signer = raw.get("signer") if isinstance(raw, dict) else None
+    signer_id = str(signer.get("signer_id") or "") if isinstance(signer, dict) else ""
+    try:
+        pin = trusted_producers.get(signer_id) if trusted_producers is not None else None
+    except (AttributeError, TypeError, ValueError):
+        pin = None
+    if not isinstance(pin, Mapping) or set(pin) != _TRUST_PIN_FIELDS:
+        reasons.append("producer_trust_pin_missing")
+        return "", ""
+    public_key = pin.get("public_key_b64")
+    if not isinstance(public_key, str) or not _is_sha256(
+        pin.get("implementation_sha256")
+    ):
+        reasons.append("producer_trust_pin_invalid")
+        return "", ""
+    try:
+        _envelope, payload, verified_producer_id = verify_signed_envelope(
+            raw,
+            schema=PRODUCER_ATTESTATION_SCHEMA,
+            trusted_keys={signer_id: public_key},
+            role="latent cortex evidence producer",
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        reasons.append("producer_signature_invalid")
+        return "", ""
+    expected_fields = {
+        "producer_id",
+        "evidence_payload_sha256",
+        "preregistration_sha256",
+        "task_commitment_sha256",
+        "raw_artifact_manifest_sha256",
+        "produced_at",
+    }
+    if (
+        set(payload) != expected_fields
+        or payload.get("producer_id") != verified_producer_id
+        or verified_producer_id != claimed
+        or payload.get("evidence_payload_sha256") != evidence_hash
+        or payload.get("preregistration_sha256")
+        != bundle.get("preregistration_sha256")
+        or payload.get("task_commitment_sha256")
+        != bundle.get("task_commitment_sha256")
+        or payload.get("raw_artifact_manifest_sha256")
+        != bundle.get("raw_artifact_manifest_sha256")
+        or not _finite_number(payload.get("produced_at"), positive=True)
+    ):
+        reasons.append("producer_attestation_invalid")
+        return "", ""
+    return verified_producer_id, str(pin.get("organization") or "")
+
+
+def _validate_independent_attestation(
+    bundle: dict[str, Any],
+    raw: Any,
+    *,
+    evidence_hash: str,
+    latest_task_generated_at: float,
+    producer_id: str,
+    trusted_verifiers: Mapping[str, Mapping[str, str]] | None,
+    reasons: list[str],
+) -> tuple[str, str, str]:
+    """Validate ONE attestation. The quorum is assembled by the caller."""
     signer = raw.get("signer") if isinstance(raw, dict) else None
     signer_id = str(signer.get("signer_id") or "") if isinstance(signer, dict) else ""
     try:
         pin = trusted_verifiers.get(signer_id) if trusted_verifiers is not None else None
     except (AttributeError, TypeError, ValueError):
         pin = None
-    if not isinstance(pin, Mapping) or set(pin) != {
-        "public_key_b64",
-        "implementation_sha256",
-        "release_sha256",
-    }:
+    if not isinstance(pin, Mapping) or set(pin) != _TRUST_PIN_FIELDS:
         reasons.append("independent_verifier_trust_pin_missing")
-        return "", ""
+        return "", "", ""
     public_key = pin.get("public_key_b64")
     implementation_sha256 = pin.get("implementation_sha256")
     release_sha256 = pin.get("release_sha256")
@@ -1137,7 +1219,7 @@ def _validate_independent_attestation(
         or not _is_sha256(release_sha256)
     ):
         reasons.append("independent_verifier_trust_pin_invalid")
-        return "", ""
+        return "", "", ""
     try:
         envelope, payload, verified_signer_id = verify_signed_envelope(
             raw,
@@ -1147,7 +1229,7 @@ def _validate_independent_attestation(
         )
     except (TypeError, ValueError, OverflowError, RecursionError):
         reasons.append("independent_verifier_signature_invalid")
-        return "", ""
+        return "", "", ""
     expected_fields = {
         "accepted",
         "claim_tier",
@@ -1178,14 +1260,15 @@ def _validate_independent_attestation(
         or not _finite_number(payload.get("verified_at"), positive=True)
         or float(payload.get("verified_at") or 0.0) <= latest_task_generated_at
     )
+    organization = str(pin.get("organization") or "")
     if invalid:
         reasons.append("independent_verification_invalid")
-        return verified_signer_id, ""
+        return verified_signer_id, "", organization
     try:
-        return verified_signer_id, canonical_sha256(envelope)
+        return verified_signer_id, canonical_sha256(envelope), organization
     except (TypeError, ValueError, OverflowError, RecursionError):
         reasons.append("independent_attestation_not_canonical_json")
-        return verified_signer_id, ""
+        return verified_signer_id, "", organization
 
 
 def _validate_raw_artifact_receipt(
@@ -1241,6 +1324,7 @@ def verify_frontier_gain_bundle(
     *,
     trusted_verifiers: Mapping[str, Mapping[str, str]] | None = None,
     trusted_task_issuers: Mapping[str, Mapping[str, str]] | None = None,
+    trusted_producers: Mapping[str, Mapping[str, str]] | None = None,
     raw_artifact_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic certificate; never infer missing evidence.
@@ -1763,23 +1847,63 @@ def verify_frontier_gain_bundle(
     except (TypeError, ValueError, OverflowError, RecursionError):
         evidence_hash = ""
         reasons.append("evidence_payload_not_canonical_json")
-    independent_verifier_id, independent_attestation_sha256 = (
-        _validate_independent_attestation(
-            bundle,
-            evidence_hash=evidence_hash,
-            latest_task_generated_at=max(
-                latest_task_generated_at,
-                latest_evaluation_started_at,
-                # Signing after the run began is not review. Attestation has
-                # to postdate the LAST score.
-                latest_scoring_completed_at,
-            ),
-            trusted_verifiers=trusted_verifiers,
-            reasons=reasons,
-        )
+    verified_producer_id, producer_organization = _validate_producer_identity(
+        bundle,
+        evidence_hash=evidence_hash,
+        trusted_producers=trusted_producers,
+        reasons=reasons,
     )
-    if task_issuer_id and task_issuer_id == independent_verifier_id:
+    attestation_deadline = max(
+        latest_task_generated_at,
+        latest_evaluation_started_at,
+        # Signing after the run began is not review. Attestation has to
+        # postdate the LAST score.
+        latest_scoring_completed_at,
+    )
+    raw_attestations = bundle.get("independent_verifiers")
+    if not isinstance(raw_attestations, list) or not raw_attestations:
+        reasons.append("independent_verifier_quorum_missing")
+        raw_attestations = []
+    independent_verifier_ids: list[str] = []
+    independent_attestation_hashes: list[str] = []
+    verifier_organizations: set[str] = set()
+    for raw_attestation in raw_attestations:
+        verifier_id, attestation_sha256, organization = (
+            _validate_independent_attestation(
+                bundle,
+                raw_attestation,
+                evidence_hash=evidence_hash,
+                latest_task_generated_at=attestation_deadline,
+                producer_id=verified_producer_id,
+                trusted_verifiers=trusted_verifiers,
+                reasons=reasons,
+            )
+        )
+        if not verifier_id or not attestation_sha256:
+            continue
+        if verifier_id in independent_verifier_ids:
+            # The same signer twice is one opinion counted twice.
+            reasons.append("independent_verifier_signature_duplicated")
+            continue
+        independent_verifier_ids.append(verifier_id)
+        independent_attestation_hashes.append(attestation_sha256)
+        if organization:
+            verifier_organizations.add(organization)
+    if task_issuer_id and task_issuer_id in independent_verifier_ids:
         reasons.append("independent_roles_reused")
+    if len(verifier_organizations) < MINIMUM_VERIFIER_QUORUM:
+        # Two signatures from one organization are one organization's opinion.
+        reasons.append("independent_verifier_quorum_not_met")
+    if producer_organization and producer_organization in verifier_organizations:
+        reasons.append("verifier_shares_producer_organization")
+    independent_verifier_id = (
+        independent_verifier_ids[0] if independent_verifier_ids else ""
+    )
+    independent_attestation_sha256 = (
+        canonical_sha256(sorted(independent_attestation_hashes))
+        if independent_attestation_hashes
+        else ""
+    )
 
     raw_alpha = prereg.get("alpha")
     alpha = (
@@ -1906,6 +2030,14 @@ def verify_frontier_gain_bundle(
         "evidence_payload_sha256": evidence_hash,
         "independent_verifier_id": independent_verifier_id,
         "independent_attestation_sha256": independent_attestation_sha256,
+        # CP126 48df4291 + c7a9c1a5: who agreed, and from how many
+        # organizations. One signature is one organization's opinion, and the
+        # producer's identity is now cryptographic rather than a string it
+        # wrote about itself.
+        "independent_verifier_ids": sorted(independent_verifier_ids),
+        "independent_verifier_organizations": sorted(verifier_organizations),
+        "verifier_quorum_required": MINIMUM_VERIFIER_QUORUM,
+        "verified_producer_id": verified_producer_id,
         "task_issuer_id": task_issuer_id,
         "task_commitment_attestation_sha256": task_commitment_attestation_sha256,
         "preregistration_sha256": expected_prereg_hash,

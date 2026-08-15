@@ -219,7 +219,9 @@ def test_frontier_certificate_rejects_wrong_trusted_key_and_same_role_signer():
             "control_compute_estimator_mismatch",
         ),
         (
-            lambda b: b["independent_verifier"]["signed_payload"].update(accepted=False),
+            lambda b: b["independent_verifiers"][0]["signed_payload"].update(
+                accepted=False
+            ),
             "independent_verifier_signature_invalid",
         ),
         (
