@@ -49,6 +49,20 @@ _WORLD_MAX_PREFERENCES = 32
 _WORLD_NAME_MAX_CHARS = 80
 _WORLD_VALUE_MAX_CHARS = 200
 
+#: Origins that mean a person is on the other end. Background ticks, dreams
+#: and consolidation runs assemble prompts too, and none of them has anybody
+#: waiting.
+_USER_FACING_ORIGINS = frozenset({
+    "user", "voice", "admin", "external", "gui", "api", "ws", "websocket",
+    "direct", "test", "benchmark",
+})
+
+#: How recently the newest human message must have arrived for the person to
+#: count as still here. Matches the felt-thought recency window's intent: long
+#: enough to cover thinking time, short enough that an abandoned session stops
+#: claiming an audience.
+_USER_PRESENCE_WINDOW_S = 300.0
+
 _BLACK_BOX_RECEIPT_SCHEMA = "aura.context_assembler.black_box_receipt.v1"
 
 #: Section titles that carry textual state — the exact thing the black-box
@@ -253,9 +267,21 @@ class ContextAssembler:
             felt = engine.last(foreground_only=True)
             if felt is None or (time.time() - felt.timestamp) > RECENT_TRACE_WINDOW_S:
                 return ""
+            # A recent timestamp says a measurement exists, not that it belongs
+            # to the reply this line is about to attribute it to. The trace
+            # carries that answer — ingest binds it to a generation id or
+            # records why it could not — so the label says which of the two
+            # this is instead of calling both "last reply (measured)". An
+            # unbound trace is still a real reading of some generation, so it
+            # is reported rather than dropped.
+            subject = (
+                "last reply (measured)"
+                if getattr(felt, "bound", False)
+                else "a recent generation (measured; not bound to this reply)"
+            )
             return (
                 "## FELT THOUGHT\n"
-                f"last reply (measured): fluency={felt.fluency:.2f} "
+                f"{subject}: fluency={felt.fluency:.2f} "
                 f"confidence={felt.felt_confidence:.2f} ambivalence={felt.ambivalence:.2f} "
                 f"strain={felt.strain:.2f}\n\n"
             )
@@ -521,6 +547,37 @@ class ContextAssembler:
             if role in ("user", "assistant"):
                 depth += 1
         return depth
+
+    @staticmethod
+    def _user_is_present(state: AuraState) -> bool:
+        """Whether somebody is on the other end of this turn.
+
+        Two observations the assembler already holds: the origin this turn
+        arrived under, and how long ago the newest user message was written. A
+        background tick is not a person, and a session whose last human message
+        is older than the window is not one either.
+        """
+        cognition = getattr(state, "cognition", None)
+        origin = str(getattr(cognition, "current_origin", "") or "").strip().lower()
+        if origin not in _USER_FACING_ORIGINS:
+            return False
+
+        newest = 0.0
+        for message in reversed(list(getattr(cognition, "working_memory", None) or [])):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role", "")).strip().lower() != "user":
+                continue
+            try:
+                newest = float(message.get("timestamp", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                newest = 0.0
+            break
+        if newest <= 0.0:
+            # A user-facing origin with no timestamped human message is the
+            # first turn of a session, which is presence.
+            return True
+        return (time.time() - newest) <= _USER_PRESENCE_WINDOW_S
 
     @staticmethod
     def _transcript_pressure(state: AuraState) -> float:
@@ -1029,7 +1086,12 @@ class ContextAssembler:
                 tf.compute(
                     working_memory_size=wm_size,
                     working_memory_cap=40,
-                    user_present=True,
+                    # Was the literal True. This block feeds live self-report
+                    # and any causal experiment reading it, so a constant here
+                    # is a fabricated observation in the one place the runtime
+                    # is describing its own situation. Derived from the two
+                    # things the assembler can actually see.
+                    user_present=ContextAssembler._user_is_present(state),
                     conversation_start_time=float(getattr(state.cognition, "session_start_time", 0.0) or 0.0),
                 )
                 temporal_finitude_block = tf.get_context_block()
