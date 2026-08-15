@@ -2222,6 +2222,101 @@ def _gradient_conflict_diagnostics(
     }
 
 
+def _combine_process_gradient_trees(
+    samples: list[Any],
+    labels: list[str],
+    *,
+    mode: str,
+    ownership_group: str,
+) -> tuple[Any, dict[str, Any]]:
+    """Combine task gradients while removing only measured negative conflicts."""
+
+    if (
+        not samples
+        or len(samples) != len(labels)
+        or len(set(labels)) != len(labels)
+        or mode not in {"mean", "pcgrad"}
+        or not ownership_group
+    ):
+        raise ValueError("process gradient combiner cohort differs")
+    if mode == "mean":
+        return _mean_gradient_trees(samples), {
+            "mode": mode,
+            "ownership_group": ownership_group,
+            "projection_count": 0,
+            "projection_events": [],
+            "unowned_parameters_combined_by": "arithmetic_mean",
+        }
+
+    original = [dict(tree_flatten(sample)) for sample in samples]
+    names = [name for name, _value in tree_flatten(samples[0])]
+    if any(list(candidate) != names for candidate in original[1:]):
+        raise ValueError("process gradient combiner topology differs")
+    owned = [
+        name for name in names if _gradient_ownership_group(name) == ownership_group
+    ]
+    if not owned:
+        raise ValueError("process gradient combiner owns no parameters")
+    projected = [dict(candidate) for candidate in original]
+    events: list[dict[str, Any]] = []
+    for left_index in range(len(projected)):
+        for right_index in range(len(original)):
+            if left_index == right_index:
+                continue
+            dot = mx.sum(
+                mx.stack(
+                    [
+                        mx.sum(
+                            projected[left_index][name].astype(mx.float32)
+                            * original[right_index][name].astype(mx.float32)
+                        )
+                        for name in owned
+                    ]
+                )
+            )
+            right_norm_squared = mx.sum(
+                mx.stack(
+                    [
+                        mx.sum(original[right_index][name].astype(mx.float32) ** 2)
+                        for name in owned
+                    ]
+                )
+            )
+            mx.eval(dot, right_norm_squared)
+            dot_value = float(dot.item())
+            norm_value = float(right_norm_squared.item())
+            if dot_value >= 0.0 or norm_value <= 1e-12:
+                continue
+            coefficient = dot / right_norm_squared
+            for name in owned:
+                projected[left_index][name] = (
+                    projected[left_index][name]
+                    - coefficient * original[right_index][name]
+                )
+            events.append(
+                {
+                    "left": labels[left_index],
+                    "right": labels[right_index],
+                    "dot_before": dot_value,
+                    "right_norm_squared": norm_value,
+                }
+            )
+    count = float(len(projected))
+    combined = tree_unflatten(
+        [
+            (name, sum(candidate[name] for candidate in projected) / count)
+            for name in names
+        ]
+    )
+    return combined, {
+        "mode": mode,
+        "ownership_group": ownership_group,
+        "projection_count": len(events),
+        "projection_events": events,
+        "unowned_parameters_combined_by": "arithmetic_mean",
+    }
+
+
 def _cached_answer_binding_features(
     bundle: UnifiedTrainingBundle,
     prompt: Any,
@@ -4775,6 +4870,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--process-gradient-combiner",
+        choices=("mean", "pcgrad"),
+        default="mean",
+        help=(
+            "average family gradients or project measured negative conflicts "
+            "from transition-owned tensors before averaging"
+        ),
+    )
+    parser.add_argument(
         "--process-transformer-gradient-scale",
         type=float,
         default=1.0,
@@ -5040,6 +5144,12 @@ def main() -> int:
     ):
         raise ValueError(
             "balanced process batching requires exactly one example per selected family"
+        )
+    if args.process_gradient_combiner == "pcgrad" and (
+        args.process_family_batch_size < 2 or not args.direct_transition_processor
+    ):
+        raise ValueError(
+            "PCGrad requires a multi-family direct transition processor cohort"
         )
     if not 0.0 <= args.process_transformer_gradient_scale <= 1.0:
         raise ValueError("process transformer gradient scale must be inside [0, 1]")
@@ -5592,6 +5702,7 @@ def main() -> int:
             "process_curriculum": args.process_curriculum,
             "process_family_batch_size": args.process_family_batch_size,
             "process_family_batch_mode": args.process_family_batch_mode,
+            "process_gradient_combiner": args.process_gradient_combiner,
             "process_transformer_gradient_scale": (args.process_transformer_gradient_scale),
             "process_query_gradient_scale": args.process_query_gradient_scale,
             "direct_transition_processor": {
@@ -5936,6 +6047,7 @@ def main() -> int:
                     update_applied = False
                     process_policy: dict[str, Any] | None = None
                     process_gradient_diagnostics: dict[str, Any] | None = None
+                    process_gradient_combiner_receipt: dict[str, Any] | None = None
                     bridge_state_targets = None
                     bridge_action_targets = None
                     bridge_teacher_policy = None
@@ -6369,7 +6481,17 @@ def main() -> int:
                                         ownership_group="typed_state_transition",
                                     )
                                 )
-                            gradients = _mean_gradient_trees(cohort_gradients)
+                            gradients, process_gradient_combiner_receipt = (
+                                _combine_process_gradient_trees(
+                                    cohort_gradients,
+                                    [
+                                        str(item.task_id)
+                                        for item in process_family_batch
+                                    ],
+                                    mode=args.process_gradient_combiner,
+                                    ownership_group="typed_state_transition",
+                                )
+                            )
                         elif phase == "recurrence":
                             loss, gradients = _streamed_recurrent_objective_gradients(
                                 bundle,
@@ -6479,6 +6601,9 @@ def main() -> int:
                     )
                     report["process_gradient_diagnostics"] = (
                         process_gradient_diagnostics
+                    )
+                    report["process_gradient_combiner"] = (
+                        process_gradient_combiner_receipt
                     )
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)

@@ -60,6 +60,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _canonical_sha256,
     _clip_gradient_groups,
     _clip_gradient_norm,
+    _combine_process_gradient_trees,
     _configure_window_tissue,
     _deterministic_student_mix,
     _direct_transition_curriculum_window,
@@ -2753,6 +2754,55 @@ def test_gradient_conflict_diagnostics_report_negative_and_unmeasured_pairs() ->
     assert report["minimum_cosine"] == pytest.approx(-1.0)
     assert report["mean_cosine"] == pytest.approx(-1.0)
     assert sum(pair["measured"] for pair in report["pairs"]) == 1
+
+
+def test_pcgrad_projects_only_owned_negative_conflicts() -> None:
+    left = {
+        "controller": {
+            "transition_processor_output": mx.array([1.0, 0.0]),
+            "transport_bias": mx.array([2.0]),
+        }
+    }
+    right = {
+        "controller": {
+            "transition_processor_output": mx.array([-1.0, 1.0]),
+            "transport_bias": mx.array([4.0]),
+        }
+    }
+
+    combined, receipt = _combine_process_gradient_trees(
+        [left, right],
+        ["math", "coding"],
+        mode="pcgrad",
+        ownership_group="typed_state_transition",
+    )
+    flat = dict(tree_flatten(combined))
+    mx.eval(*flat.values())
+
+    assert receipt["projection_count"] == 2
+    assert flat["controller.transition_processor_output"].tolist() == pytest.approx(
+        [0.25, 0.75]
+    )
+    assert flat["controller.transport_bias"].tolist() == pytest.approx([3.0])
+
+
+def test_mean_process_gradient_combiner_is_exact_mean() -> None:
+    left = {"controller": {"transition_processor_output": mx.array([1.0])}}
+    right = {"controller": {"transition_processor_output": mx.array([3.0])}}
+
+    combined, receipt = _combine_process_gradient_trees(
+        [left, right],
+        ["left", "right"],
+        mode="mean",
+        ownership_group="typed_state_transition",
+    )
+    flat = dict(tree_flatten(combined))
+    mx.eval(*flat.values())
+
+    assert receipt["projection_count"] == 0
+    assert flat["controller.transition_processor_output"].tolist() == pytest.approx(
+        [2.0]
+    )
 
 
 def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:

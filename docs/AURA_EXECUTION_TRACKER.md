@@ -49842,3 +49842,29 @@ parent and refusal of a partial tape extension. The focused evaluator and
 controller set is `74 passed`; repository smoke is `104 passed`. This repairs
 adjudication fidelity. It does not change the in-flight CP505 canary or promote
 its interim measurements to a final claim.
+
+## Checkpoint 2026-08-14-507: Remove Measured Cross-Family Gradient Conflict
+
+CP505 made the interaction between process families observable. Its step-32
+cohort had five negative pairwise gradient cosines out of six for transition-
+owned tensors. By step 64 the mean cosine was positive, but two negative pairs
+remained; step 96 measured three. Ordinary averaging allows those family
+updates to cancel one another even though each family has independent verified
+transition targets.
+
+The trainer now offers a deterministic PCGrad combiner for multi-family direct
+transition cohorts. For each ordered task pair, it measures the dot product in
+the typed-transition ownership group and removes only a negative component
+along the other task's gradient. Non-conflicting components are unchanged,
+unowned parameters still use the arithmetic mean and the existing global norm
+clip remains authoritative after combination. Every projection records both
+task identities, the negative pre-projection dot product and reference norm.
+
+The mean combiner remains the default for existing profiles. The CP503
+compositional canary and full acquisition profiles explicitly select PCGrad in
+their signed training identity. Contracts prove the projection algebra,
+two-sided conflict removal, unchanged unowned gradients and exact legacy mean
+behavior. The focused trainer and campaign set is `135 passed`; repository
+smoke is `104 passed`. CP505 remains source-frozen on the prior mean combiner,
+so this checkpoint is a measured next mechanism rather than an explanation
+retroactively applied to its result.

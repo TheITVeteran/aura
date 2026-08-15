@@ -472,6 +472,7 @@ def test_compositional_transition_acquisition_stages_before_closed_loop() -> Non
     assert training["public_action_program"] is True
     assert training["direct_transition_processor"] is True
     assert training["direct_transition_curriculum"] == "progressive"
+    assert training["process_gradient_combiner"] == "pcgrad"
     assert training["direct_transition_weakest_register_weight"] == pytest.approx(
         0.25
     )
@@ -492,6 +493,7 @@ def test_compositional_transition_canary_exercises_every_stage_quickly() -> None
     arguments = _training_cli(training)
 
     assert training["direct_transition_curriculum"] == "progressive"
+    assert training["process_gradient_combiner"] == "pcgrad"
     assert training["max_steps"] == training["state_warmup_steps"] == 192
     assert training["per_cell"] == 32
     assert training["holdout_per_cell"] == 8
