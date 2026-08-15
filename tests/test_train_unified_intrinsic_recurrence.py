@@ -935,9 +935,30 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
     }
     assert _process_training_policy(3, 8, "transition_only") == {
         "component": "transition",
-        "teacher_forcing_probability": 1.0,
+        "teacher_forcing_probability": pytest.approx(4 / 7),
         "stage_progress": 0.5,
     }
+    assert _process_training_policy(0, 8, "transition_only")[
+        "teacher_forcing_probability"
+    ] == pytest.approx(1.0)
+    assert _process_training_policy(7, 8, "transition_only")[
+        "teacher_forcing_probability"
+    ] == pytest.approx(0.0)
+    assert _process_training_policy(
+        3,
+        8,
+        "transition_only",
+        initial_teacher_probability=0.8,
+        final_teacher_probability=0.2,
+    )["teacher_forcing_probability"] == pytest.approx(0.8 - 3 * 0.6 / 7)
+    with pytest.raises(ValueError, match="teacher-forcing schedule"):
+        _process_training_policy(
+            0,
+            8,
+            "transition_only",
+            initial_teacher_probability=0.2,
+            final_teacher_probability=0.8,
+        )
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")
 

@@ -831,6 +831,9 @@ def _process_training_policy(
     step: int,
     total_steps: int,
     curriculum: str,
+    *,
+    initial_teacher_probability: float = 1.0,
+    final_teacher_probability: float = 0.0,
 ) -> dict[str, Any]:
     """Assign exclusive process objectives before autonomous integration.
 
@@ -847,6 +850,17 @@ def _process_training_policy(
         or not 0 <= step < total_steps
     ):
         raise ValueError("process curriculum coordinates are invalid")
+    if (
+        isinstance(initial_teacher_probability, bool)
+        or isinstance(final_teacher_probability, bool)
+        or not isinstance(initial_teacher_probability, (int, float))
+        or not isinstance(final_teacher_probability, (int, float))
+        or not 0.0
+        <= float(final_teacher_probability)
+        <= float(initial_teacher_probability)
+        <= 1.0
+    ):
+        raise ValueError("process teacher-forcing schedule must decrease inside [0, 1]")
     if curriculum == "joint":
         return {
             "component": "joint",
@@ -868,9 +882,13 @@ def _process_training_policy(
             "stage_progress": (step + 1) / total_steps,
         }
     if curriculum == "transition_only":
+        progress = 0.0 if total_steps == 1 else step / (total_steps - 1)
+        teacher_probability = float(initial_teacher_probability) + progress * (
+            float(final_teacher_probability) - float(initial_teacher_probability)
+        )
         return {
             "component": "transition",
-            "teacher_forcing_probability": 1.0,
+            "teacher_forcing_probability": teacher_probability,
             "stage_progress": (step + 1) / total_steps,
         }
     if curriculum != "factorized" or total_steps < 8:
@@ -5356,6 +5374,12 @@ def main() -> int:
                                 step - args.semantic_warmup_steps,
                                 args.state_warmup_steps,
                                 args.process_curriculum,
+                                initial_teacher_probability=(
+                                    args.state_teacher_forcing_probability
+                                ),
+                                final_teacher_probability=(
+                                    args.state_teacher_forcing_final_probability
+                                ),
                             )
                             state_teacher_probability = process_policy[
                                 "teacher_forcing_probability"
@@ -5556,6 +5580,12 @@ def main() -> int:
                         step - args.semantic_warmup_steps,
                         args.state_warmup_steps,
                         args.process_curriculum,
+                        initial_teacher_probability=(
+                            args.state_teacher_forcing_probability
+                        ),
+                        final_teacher_probability=(
+                            args.state_teacher_forcing_final_probability
+                        ),
                     )["component"]
                 if next_phase != phase or (
                     process_policy is not None

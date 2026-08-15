@@ -49175,3 +49175,28 @@ teacher-distinct, lesionable and launchable. It does not yet prove that the
 learned transition generalizes. Next is its bounded 1.5B acquisition and unseen
 admission. If that clears, the remaining three public program families and the
 teacher-removed answer bridge follow before powered and resident replication.
+
+## Checkpoint 2026-08-14-473: Make Transition Acquisition Rehearse Its Own State
+
+CP472 was terminated at durable step 40 after its step-16 and step-32
+evaluations exposed an invalid training condition. The signed campaign profile
+committed a state-teacher schedule from `1.0` to `0.0`, but the
+`transition_only` curriculum ignored both values and returned `1.0` at every
+step. The transition learned only from exact prior states. Its autonomous
+one-step state accuracy rose from 0.40 to 0.45 while depth-16 accuracy fell from
+0.30 to 0.265 and no unseen process was exact. That is evidence of compounding
+exposure error under an unexercised autonomous state distribution, not evidence
+that the corrected public recurrent program cannot generalize.
+
+Transition-only acquisition now consumes the source-bound schedule and anneals
+it across the complete process phase, including exact tests at both endpoints
+and at an intermediate point. Invalid increasing or out-of-range schedules are
+rejected. The live trainer passes the same values into both the current policy
+and next-stage ownership calculation, so reporting, gradients and optimizer
+ownership cannot silently disagree. Focused contracts, Ruff and compilation
+pass before the aggregate smoke gate.
+
+CP472 remains preserved as negative forensic evidence and is not eligible for
+admission or fusion. The next campaign must start from a new immutable source
+capsule and demonstrate improvement under decreasing teacher authority before
+any answer-bridge or `WOW Signal` claim proceeds.
