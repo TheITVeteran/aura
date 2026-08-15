@@ -262,3 +262,20 @@ memory tissue computes task state which the frozen 1.5B language head can emit
 correctly. It is not yet an independently replayed certificate, open-domain
 reasoning gain, resident-32B transfer, or WOW Signal. Those boundaries remain
 explicit.
+
+## CP531 addendum
+
+CP531 independently reconstructs the CP529 evidence rather than trusting its
+`admitted` field. The verifier regenerated all 30 public tasks, reran treatment
+and every lesion from the sealed tissue, matched 240 state and response
+receipts, rescored every raw output, recomputed arm summaries and gain sets,
+verified historical source blobs at the measured commit, and checked the frozen
+model identity. The clean-source certificate is stored at
+`cp531_mathematics_memory_decode_verification.json`; its receipt is registered
+through `core/organism/model_validation.py` and a mutation-after-resigning test
+proves that the outer receipt alone cannot conceal altered raw evidence.
+
+The independently accepted claim is exact but narrow: bounded teacher-removed
+recurrent-state transfer through the frozen local 1.5B language head. Resident
+32B transfer, multiple reasoning domains, broad generalization, and the WOW
+Signal remain open.

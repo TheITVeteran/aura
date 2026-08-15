@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from core.organism.model_validation import (  # noqa: E402
+    _recurrent_memory_decode_certificate_holds,
+)
 from tools.verify_mathematics_memory_decode_canary import (
     CanaryVerificationError,
     _sha,
@@ -46,3 +49,7 @@ def test_independent_verifier_rejects_resigned_raw_output_mutation(
 
     with pytest.raises(CanaryVerificationError, match="row_evidence_mismatch"):
         verify_canary(mutated, model_path=MODEL)
+
+
+def test_model_validation_claim_is_bound_to_the_verified_certificate() -> None:
+    assert _recurrent_memory_decode_certificate_holds() is True

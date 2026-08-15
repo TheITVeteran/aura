@@ -1176,6 +1176,32 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/brain/llm/latent_cortex/neural_objective_producer.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_memory_tissue_reaches_frozen_language_head",
+            description=(
+                "sealed teacher-removed recurrent work memory converts bounded "
+                "1.5B decode failures under independent replay and causal lesions"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="recurrent_memory_decode_certificate_is_verified",
+                value=True,
+                source=(
+                    "tests/test_verify_mathematics_memory_decode_canary.py and "
+                    "artifacts/closeout/latent_cortex/"
+                    "cp531_mathematics_memory_decode_verification.json"
+                ),
+            ),
+            predict=lambda _m: _recurrent_memory_decode_certificate_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="bounded recurrent memory language-head transfer",
+            ),
+            owner="tools/verify_mathematics_memory_decode_canary.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1345,6 +1371,28 @@ def install_runtime_validation() -> dict[str, Any]:
                 "complete-engine contract independently verifies the emitted JSON. "
                 "This does not establish open-domain transfer, resident-32B gain, "
                 "free-form neural decoding, or a WOW Signal."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "On 30 fresh bounded separated-subset tasks, Aura's sealed recurrent "
+                "work-memory tissue converted every frozen 1.5B ordinary-decode "
+                "failure while matched initialization, wire, state, write, read, "
+                "and reset controls removed the gain."
+            ),
+            test="recurrent_memory_tissue_reaches_frozen_language_head",
+            owner="tools/verify_mathematics_memory_decode_canary.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "An independent verifier reconstructed 30 tasks, 240 measurements, "
+                "all recurrent state receipts, every raw-output score, source/model "
+                "identity, and every evidence receipt. Treatment was 30/30; true "
+                "ordinary decode, matched wire, initialization, wrong-state, write, "
+                "read, and reset controls were 0/30. This is bounded local-1.5B "
+                "transfer, not resident-32B, open-domain, frontier reasoning, or WOW."
             ),
         )
     )
@@ -2298,6 +2346,60 @@ def _recurrent_memory_complete_engine_contract_holds() -> bool:
         and student_rollin.get("student_memory_rollin") is True
         and verdict is not None
         and verdict.get("outcome") == "verified"
+    )
+
+
+def _recurrent_memory_decode_certificate_holds() -> bool:
+    import hashlib
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    certificate_path = (
+        root
+        / "artifacts/closeout/latent_cortex/"
+        "cp531_mathematics_memory_decode_verification.json"
+    )
+    try:
+        certificate = json.loads(certificate_path.read_text(encoding="utf-8"))
+        body = {
+            key: value
+            for key, value in certificate.items()
+            if key != "receipt_sha256"
+        }
+        receipt = hashlib.sha256(
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        artifact_path = root / certificate["artifact_path"]
+        artifact_sha = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        verifier_path = root / "tools/verify_mathematics_memory_decode_canary.py"
+        verifier_sha = hashlib.sha256(verifier_path.read_bytes()).hexdigest()
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    controls = certificate.get("causal_control_exacts")
+    return bool(
+        certificate.get("schema")
+        == "aura.rlc.mathematics_memory_decode_canary_verification.v1"
+        and certificate.get("receipt_sha256") == receipt
+        and certificate.get("artifact_sha256") == artifact_sha
+        and certificate.get("verifier_source_sha256") == verifier_sha
+        and certificate.get("verifier_source_clean") is True
+        and certificate.get("independently_verified") is True
+        and certificate.get("measurement_count") == 240
+        and certificate.get("treatment_exact") == 30
+        and certificate.get("ordinary_base_exact") == 0
+        and certificate.get("matched_wire_base_exact") == 0
+        and isinstance(controls, dict)
+        and len(controls) == 6
+        and set(controls.values()) == {0}
+        and certificate.get("gain_count") == 30
+        and certificate.get("regression_count") == 0
     )
 
 
