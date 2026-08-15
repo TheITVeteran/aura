@@ -414,3 +414,41 @@ def test_the_being_runtime_is_sampled_once_per_assembly(monkeypatch):
     ContextAssembler.build_messages(state, "debug the retrieval pipeline", max_tokens=4096)
 
     assert len(calls) == 1, f"sampled {len(calls)} times in one assembly"
+
+
+def test_cutting_the_users_message_is_disclosed_in_the_same_turn():
+    """A marker in the prompt tells the model the middle is gone. Nothing told
+    her, so she answered a question she had only the ends of and said nothing
+    about it. The reading has to exist before the failure block renders, or the
+    one turn that needed to disclose the cut is the one turn that cannot."""
+    from core.conversation.failure_context import FailureLedger, bind_failure_ledger
+
+    state = AuraState.default()
+    huge = "START-MARKER " + ("filler word " * 4000) + " END-MARKER"
+
+    with bind_failure_ledger(FailureLedger()) as ledger:
+        messages = ContextAssembler.build_messages(state, huge, max_tokens=2048)
+        recorded = list(ledger.records)
+
+    assert messages[-1]["content"] != huge, "the fixture did not exceed the budget"
+    assert "START-MARKER" in messages[-1]["content"]
+    assert "END-MARKER" in messages[-1]["content"]
+
+    window = [f for f in recorded if f.capability == "context_window"]
+    assert window, f"input was cut with no reading she can narrate: {recorded}"
+    facts = window[0].as_facts()
+    assert "characters" in facts
+    assert window[0].still_possible, "a bounded failure with no remaining option"
+
+
+def test_an_input_that_fits_records_nothing():
+    """The disclosure must not fire on every ordinary turn."""
+    from core.conversation.failure_context import FailureLedger, bind_failure_ledger
+
+    state = AuraState.default()
+
+    with bind_failure_ledger(FailureLedger()) as ledger:
+        ContextAssembler.build_messages(state, "what time is it?", max_tokens=8192)
+        recorded = list(ledger.records)
+
+    assert not [f for f in recorded if f.capability == "context_window"]

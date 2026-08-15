@@ -7878,7 +7878,23 @@ def _mlx_worker_loop(
                                     clean_kwargs["draft_model"] = draft_model
 
                                 # Context-window admission before streamed Metal work.
-                                _stream_prompt_tokens = len(tokenizer.encode(str(prompt or "")))
+                                _stream_prompt_text = str(prompt or "")
+                                _stream_prompt_tokens = len(tokenizer.encode(_stream_prompt_text))
+                                # The assembler budgets in characters and has
+                                # no tokenizer — loading one in the process that
+                                # serves conversation is the thing that must not
+                                # happen there. This process just encoded the
+                                # prompt, so it knows both numbers for free.
+                                try:
+                                    from core.brain.llm.token_budget_evidence import (
+                                        observe_prompt_tokenization,
+                                    )
+
+                                    observe_prompt_tokenization(
+                                        len(_stream_prompt_text), _stream_prompt_tokens
+                                    )
+                                except (ImportError, AttributeError, TypeError, ValueError):
+                                    logger.debug("chars-per-token observation skipped")
                                 _stream_reserve = min(max(64, max_tokens), 2048)
                                 if _stream_prompt_tokens + _stream_reserve > effective_context_window:
                                     raise RuntimeError(

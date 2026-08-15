@@ -8,6 +8,7 @@ from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
 from core.brain.llm.continuity_ledger import env_int
+from core.brain.llm.token_budget_evidence import chars_per_token
 from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
 from core.runtime.errors import record_degradation
@@ -1719,7 +1720,17 @@ class ContextAssembler:
             except (ImportError, AttributeError, RuntimeError):
                 max_tokens = 16384
 
-        char_limit = max(2048, int(max_tokens) * 4)  # Rough estimation: 1 token ~= 4 chars
+        # The conversion carries its provenance. Four characters per token is
+        # the English-prose average and this runtime's prompts are not prose:
+        # code, JSON receipts and file paths run nearer two to three, so a
+        # prompt built to fit could be half again over the real window. The
+        # backend drops from the head when that happens, and the head is the
+        # identity lock and the structural constraint block — the prompt keeps
+        # its shape and loses what binds it. The ratio is measured from prompts
+        # the worker actually tokenized when enough have been reported, and
+        # otherwise is a stated, deliberately low assumption that says so once.
+        budget_ratio = chars_per_token()
+        char_limit = max(2048, budget_ratio.tokens_to_chars(int(max_tokens)))
         messages = []
         current_chars = 0
 
@@ -1807,6 +1818,58 @@ class ContextAssembler:
         # apology written into whichever module broke. Appended last so it
         # survives the middle-out truncation below: a failure she is not told
         # about is one she will paper over.
+        # Fitting the current input has to happen before the failure block is
+        # rendered: dropping the middle of what the person just asked is one of
+        # the readings that block exists to carry, and computing it afterwards
+        # meant the one turn that needed to disclose the cut was the one turn
+        # that could not. A marker told the model; nothing told her, so she
+        # answered a question she had only the ends of and said nothing about it.
+        safe_input = _fit_ends(
+            objective_text,
+            user_budget,
+            "\n...[middle of current user input omitted for context budget]...\n",
+        )
+        if safe_input != objective_text:
+            dropped = len(objective_text) - len(safe_input)
+            logger.warning(
+                "Current user input exceeded the %d-character foreground budget; "
+                "preserved its beginning and end (%d characters dropped).",
+                user_budget,
+                dropped,
+            )
+            record_degradation(
+                "context_assembler.input_truncated",
+                RuntimeError(
+                    f"current user input cut to fit: {len(objective_text)} -> "
+                    f"{len(safe_input)} chars"
+                ),
+                severity="warning",
+                action="served the turn from the beginning and end of the message",
+            )
+            try:
+                from core.conversation.failure_context import record_capability_failure
+
+                record_capability_failure(
+                    "context_window",
+                    intent="read the whole message before answering",
+                    cause="message longer than the foreground input budget",
+                    detail=(
+                        f"kept {len(safe_input)} of {len(objective_text)} characters; "
+                        f"the middle {dropped} are not in the prompt"
+                    ),
+                    still_possible=(
+                        "answer from the beginning and end",
+                        "ask for the missing part, or for it in pieces",
+                    ),
+                )
+            except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "context_assembler.input_truncation_disclosure",
+                    exc,
+                    severity="warning",
+                    action="cut the input without a reading she can narrate",
+                )
+
         try:
             from core.conversation.failure_context import pending_failure_context
 
@@ -1831,20 +1894,10 @@ class ContextAssembler:
         messages.append(system_msg)
         current_chars += _estimate_chars(dynamic_system)
 
-        # 2. PRIORITY 2: Current User Input
-        safe_input = _fit_ends(
-            objective_text,
-            user_budget,
-            "\n...[middle of current user input omitted for context budget]...\n",
-        )
+        # 2. PRIORITY 2: Current User Input (fitted above, before the failure
+        # block, so a cut to this turn's message is reportable in this turn).
         input_chars = _estimate_chars(safe_input)
-        if safe_input != objective_text:
-            logger.warning(
-                "Current user input exceeded the %d-character foreground budget; "
-                "preserved its beginning and end.",
-                user_budget,
-            )
-        
+
         # Note: input goes last, but we account for its size now.
 
         # 3. PRIORITY 3: Recent History (Maintain Conversational Thread)
