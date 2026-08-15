@@ -565,6 +565,8 @@ def test_semantic_copy_write_canary_binds_repaired_transition_dynamics() -> None
     assert training["state_schema"] == "semantic_v2"
     assert training["transition_processor_mode"] == "copy_write"
     assert training["transition_copy_prior_logit_bias"] == 0.01
+    assert training["seed"] == 2026081511
+    assert training["init_seed"] == 2026081512
     assert training["process_gradient_combiner"] == "balanced_mean"
     assert training["transition_replay_mode"] == "disabled"
     assert training["max_steps"] == training["state_warmup_steps"] == 256

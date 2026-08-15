@@ -50148,3 +50148,13 @@ evidence, not a relaxed score or post-hoc task selection. The next gate is a
 fresh-source canary: exact T1 acquisition must become reliable, recurrence must
 stop compounding first-step errors, and matched causal lesions must remove any
 gain before work proceeds to decoded answers.
+
+## Checkpoint 2026-08-15-540: Refuse A Replayed Margin Canary
+
+Campaign preparation found that changing the retention margin alone would have
+reused CP538's task seed and controller initialization. That is useful for the
+frozen policy lesion already recorded, but it is not a fresh acquisition test.
+The launch profile now binds new dataset and initialization seeds in addition
+to the measured `0.01` margin. Tests require all three values in the generated
+trainer command, preventing a nominally fresh campaign from silently replaying
+the adjudication set.
