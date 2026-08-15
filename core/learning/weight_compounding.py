@@ -86,6 +86,8 @@ from core.learning.heldout_battery import (
     text_collides_with_battery,
 )
 from core.learning.rsi_lineage import (
+    PROVENANCE_MEASURED,
+    PROVENANCE_UNMEASURED,
     RSIGenerationRecord,
     RSILineageLedger,
     RSILineageVerdict,
@@ -1138,6 +1140,17 @@ class WeightCompoundingLoop:
                 after_score=float(receipt.candidate_accuracy or 0.0),
                 cost_s=float(receipt.elapsed_s or 0.0),
             ),
+            improver_provenance=(
+                PROVENANCE_MEASURED
+                if float(receipt.elapsed_s or 0.0) > 0.0
+                else PROVENANCE_UNMEASURED
+            ),
+            improver_measurement={
+                "baseline_score": float(receipt.incumbent_accuracy or 0.0),
+                "after_score": float(receipt.candidate_accuracy or 0.0),
+                "cost_s": float(receipt.elapsed_s or 0.0),
+                "source": "weight_compounding cycle receipt",
+            },
         )
         try:
             entry = self._ledger.append(record)

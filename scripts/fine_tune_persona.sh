@@ -15,15 +15,20 @@ echo "Requirements: python packages: accelerate, transformers, peft, datasets, b
 echo
 echo "Example command (do not run until you set BASE_MODEL and have accelerate configured):"
 echo
-printf '%s\n' "accelerate launch --num_processes 1 --num_machines 1 --mixed_precision fp16 run_clm.py \"
-printf '%s\n' "  --model_name_or_path \"$BASE_MODEL\" \"
-printf '%s\n' "  --train_file \"$TRAIN_FILE\" \"
-printf '%s\n' "  --do_train \"
-printf '%s\n' "  --output_dir \"$OUTPUT_DIR\" \"
-printf '%s\n' "  --per_device_train_batch_size $BATCH_SIZE \"
-printf '%s\n' "  --learning_rate $LR \"
-printf '%s\n' "  --num_train_epochs $EPOCHS \"
-printf '%s\n' "  --overwrite_output_dir --fp16"
+# Each line ended in \" — an escaped quote, not a line continuation — so the
+# string ran on into the next line and the printed command came out shredded.
+# A quoted heredoc prints the block literally and expands only the variables.
+cat <<EOF
+accelerate launch --num_processes 1 --num_machines 1 --mixed_precision fp16 run_clm.py \\
+  --model_name_or_path "$BASE_MODEL" \\
+  --train_file "$TRAIN_FILE" \\
+  --do_train \\
+  --output_dir "$OUTPUT_DIR" \\
+  --per_device_train_batch_size $BATCH_SIZE \\
+  --learning_rate $LR \\
+  --num_train_epochs $EPOCHS \\
+  --overwrite_output_dir --fp16
+EOF
 
 echo
 echo "If you want a LoRA/PEFT workflow, use a training script that supports peft and add the peft args (r, alpha, target modules)."

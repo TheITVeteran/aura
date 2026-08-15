@@ -31,6 +31,8 @@ from core.learning.recursive_self_improvement import (
     RecursiveSelfImprovementLoop,
 )
 from core.learning.rsi_lineage import (
+    PROVENANCE_AUTHORED,
+    PROVENANCE_MEASURED,
     RSIGenerationRecord,
     RSILineageLedger,
     RSILineageVerdict,
@@ -376,11 +378,29 @@ class RSIGauntlet:
 
     def _check_successor_lab(self) -> None:
         result = SuccessorLab(self.artifact_dir / "successor_lab", seed=3030, tasks_per_generation=30).run()
-        passed = result.verdict.verdict in {"STRONG_RSI", "UNDENIABLE_RSI"} and len(result.records) == 4
+        # The lab shows capability rising as each successor covers a family the
+        # last could not. It cannot show an improver improving, because its
+        # successors are written by a developer — so this used to require
+        # STRONG_RSI or better and got it only from an authored improver
+        # column. What is checkable is that capability rises wherever a
+        # generation adds coverage, and that the improver column says it was
+        # authored rather than measured.
+        capability = [record.after_score for record in result.records]
+        rises = [b > a for a, b in zip(capability, capability[1:])]
+        passed = (
+            len(result.records) == 4
+            and any(rises)
+            and all(record.improver_provenance == PROVENANCE_AUTHORED for record in result.records)
+            and all(
+                record.after_score == record.hidden_eval_score for record in result.records
+            )
+        )
         self._record(
             "multi_generation_successor_lab",
             passed,
-            "G1-G4 successor records show monotone capability and improver scores" if passed else "successor lab did not prove monotone generations",
+            "successor capability rises on measured hidden score, improver declared authored"
+            if passed
+            else "successor lab capability curve did not come from the hidden score",
             result.to_dict(),
         )
 
@@ -392,10 +412,25 @@ class RSIGauntlet:
         ).run(generations=4)
         for record in result.records:
             self.lineage.append(record)
+        capability = [record.after_score for record in result.records]
+        # This check used to require STRONG_RSI or better, which the engine
+        # reached on an improver score containing `0.09 * generation_index`.
+        # What the engine really establishes is a reproducible, externally
+        # custodied, monotone *capability* lineage whose improver score is
+        # measured rather than asserted. Whether that improver score rises is
+        # the experiment's result, not its pass condition — requiring it to
+        # rise is what made the number worth authoring.
         passed = (
-            result.verdict.verdict in {"STRONG_RSI", "UNDENIABLE_RSI"}
-            and len(result.records) == 4
+            len(result.records) == 4
             and all(record.promoted for record in result.records)
+            and all(b > a for a, b in zip(capability, capability[1:]))
+            and all(
+                record.after_score == record.hidden_eval_score for record in result.records
+            )
+            and all(
+                record.improver_provenance == PROVENANCE_MEASURED for record in result.records
+            )
+            and not result.order_invariance_violation
             and all(artifact.complete for artifact in result.artifacts)
             and result.ablation.full_wins
             and result.mirror_ok
@@ -407,7 +442,8 @@ class RSIGauntlet:
         self._record(
             "autonomous_successor_generation",
             passed,
-            "Aura-generated G1-G4 successors improved capability and improver scores under external custody"
+            "Aura-generated G1-G4 successors raised externally custodied capability, "
+            "with improver efficiency measured against a held-out pack"
             if passed
             else "autonomous successor engine did not produce reproducible promoted lineage",
             result.to_dict(),
@@ -504,7 +540,15 @@ class RSIGauntlet:
                 promoted=True,
                 ablation_result="full_gauntlet_beats_no_hot_swap_check",
                 time_to_valid_improvement_s=3.0,
-                improver_score=0.20,
+                # 0.20 and 0.31 sat here, two constants rising in source order
+                # so the lineage verdict saw a monotone improver curve. This
+                # check exercises the ledger and the verdict plumbing; it
+                # measures no improver, and now says so.
+                improver_score=0.0,
+                improver_provenance=PROVENANCE_AUTHORED,
+                improver_measurement={
+                    "reason": "fixture records for the lineage plumbing check"
+                },
             ),
             RSIGenerationRecord(
                 generation_id="Aura-G2",
@@ -518,18 +562,39 @@ class RSIGauntlet:
                 promoted=True,
                 ablation_result="lineage_records_enable_verdict",
                 time_to_valid_improvement_s=2.4,
-                improver_score=0.31,
+                improver_score=0.0,
+                improver_provenance=PROVENANCE_AUTHORED,
+                improver_measurement={
+                    "reason": "fixture records for the lineage plumbing check"
+                },
             ),
         ]
         for record in records:
             self.lineage.append(record)
         loaded = self.lineage.load_records()
         verdict = evaluate_lineage(loaded)
-        passed = len(loaded) >= 2 and verdict.verdict in {"WEAK_RSI", "STRONG_RSI", "UNDENIABLE_RSI"}
+        # What this check can establish is that records survive the round trip
+        # and the verdict reads them. It used to pass only on WEAK_RSI or
+        # better, which made it an assertion that two fixture records the
+        # gauntlet had just written held a rising improver curve — true by
+        # authorship, and it is why the constants above were rising at all.
+        # Whether the improver improves is measured in autonomous_rsi against
+        # a held-out pack, not asserted over a fixture here.
+        round_tripped = [record.to_dict() for record in loaded] == [
+            record.to_dict() for record in records
+        ]
+        passed = (
+            len(loaded) >= 2
+            and round_tripped
+            and bool(verdict.verdict)
+            and bool(verdict.reasons)
+        )
         self._record(
             "successor_lineage_metrics",
             passed,
-            "generation records show increasing capability and improver scores" if passed else "lineage did not demonstrate improvement",
+            "lineage records round-trip and the verdict reads them"
+            if passed
+            else "lineage ledger did not round-trip into a reasoned verdict",
             verdict.to_dict(),
         )
 

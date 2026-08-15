@@ -16,17 +16,21 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from core.learning.hidden_eval_repro import HiddenEvalPack
 from core.learning.rsi_lineage import (
+    PROVENANCE_MEASURED,
+    PROVENANCE_UNMEASURED,
+    ImproverMeasurement,
     RSIGenerationRecord,
     RSILineageLedger,
     RSILineageVerdict,
     evaluate_lineage,
+    order_invariance_violation,
 )
 from core.promotion.dynamic_benchmark import Task
 from core.runtime.atomic_writer import atomic_write_text
@@ -235,22 +239,78 @@ class CustodyEvalResult:
 class ExternalHiddenEvalCustodian:
     """Holds private seeds/answers and exposes only public manifests + scores."""
 
+    #: Separates the held-out seed space from the probe seed space so a
+    #: held-out pack can never coincide with a pack the improver has seen.
+    HELDOUT_SEED_OFFSET = 1_000_003
+
     def __init__(self, *, base_seed: int, answer_salt: str, tasks_per_generation: int = 60):
         self.base_seed = int(base_seed)
         self.answer_salt = str(answer_salt)
         self.tasks_per_generation = int(tasks_per_generation)
+        #: Every scoring call the improver's feedback loop consumed. Part of
+        #: the improver's budget, and counted here rather than by the improver.
+        self.feedback_queries = 0
 
     def issue_pack(self, generation_index: int) -> HiddenEvalPack:
+        """The probe pack. Its aggregate scores are shown to the improver."""
         return HiddenEvalPack(
             seed=self.base_seed + int(generation_index),
             answer_salt=f"{self.answer_salt}:g{generation_index}",
             task_count=self.tasks_per_generation,
         )
 
+    def issue_heldout_pack(self, generation_index: int) -> HiddenEvalPack:
+        """A pack the improver never sees, in any form.
+
+        The improver reads per-kind scores from the probe pack and selects
+        handlers against them, so a delta measured on that same pack partly
+        reflects fitting the feedback it was given. The held-out pack is drawn
+        from a disjoint seed space and its manifest is never passed to
+        `propose`, so the delta on it measures what the successor actually
+        generalises.
+        """
+        return HiddenEvalPack(
+            seed=self.base_seed + self.HELDOUT_SEED_OFFSET + int(generation_index),
+            answer_salt=f"{self.answer_salt}:heldout:g{generation_index}",
+            task_count=self.tasks_per_generation,
+        )
+
+    def measure_improver(
+        self,
+        *,
+        generation_id: str,
+        heldout_pack: HiddenEvalPack,
+        parent_solver: Callable[[Task], Any],
+        successor_solver: Callable[[Task], Any],
+        wall_clock_samples: Sequence[float],
+        feedback_queries: int,
+    ) -> ImproverMeasurement:
+        """Score the improver on work it could not see, per unit it spent.
+
+        The custodian computes this because the improver must not. Note what is
+        absent from the signature: there is no generation index, so the same
+        successor produced from the same budget scores the same wherever it
+        falls in the lineage.
+        """
+        before = self.score(heldout_pack, parent_solver)
+        after = self.score(heldout_pack, successor_solver)
+        return ImproverMeasurement(
+            generation_id=generation_id,
+            heldout_before=before.score,
+            heldout_after=after.score,
+            wall_clock_samples=tuple(float(s) for s in wall_clock_samples),
+            feedback_queries=int(feedback_queries),
+            heldout_pack_id=heldout_pack.pack_id,
+        )
+
     def public_manifest(self, pack: HiddenEvalPack) -> dict[str, Any]:
         return pack.manifest().to_dict()
 
     def score(self, pack: HiddenEvalPack, solver: Callable[[Task], Any]) -> CustodyEvalResult:
+        # Counted here rather than by the caller: a scoring call the improver
+        # induced is part of what it spent, and the improver cannot be trusted
+        # to report its own consumption.
+        self.feedback_queries += 1
         passed = 0
         total = 0
         by_kind_total: dict[str, int] = {}
@@ -313,8 +373,15 @@ class PrimitiveInventionEngine:
 
     def __init__(self):
         self.handler_batch_size = 1
-        self.hypothesis_quality = 0.45
-        self.generation_improver_bonus = 0.0
+
+    def _policy_fingerprint(self) -> str:
+        """Hash of the parameters that decide how this engine proposes.
+
+        Compared across a proposal to answer, factually, whether the improver
+        changed itself. A future engine that tunes its own search will move
+        this hash and earn `improves_improver`; this one cannot.
+        """
+        return _sha({"handler_batch_size": self.handler_batch_size})
 
     def propose(
         self,
@@ -337,11 +404,16 @@ class PrimitiveInventionEngine:
             missing,
             key=lambda kind: (eval_result.by_kind.get(kind, 0.0), HANDLER_ORDER.index(kind)),
         )
-        improves_improver = False
-        if generation_id.endswith("2") and self.handler_batch_size == 1:
-            self.hypothesis_quality = 0.68
-            self.generation_improver_bonus = 0.10
-            improves_improver = True
+        # `improves_improver` is now observed rather than declared: it is true
+        # only when this proposal changed the engine's own proposal policy.
+        # It was set by `generation_id.endswith("2")`, which also raised two
+        # constants feeding the improver score — generation two was recorded as
+        # better at improving because it was generation two.
+        #
+        # This engine's policy is fixed, so the flag is false throughout. That
+        # is the honest reading: the proposal rule that produced G4 is the rule
+        # that produced G1, and nothing here improves the improver.
+        policy_before = self._policy_fingerprint()
         batch = max(1, self.handler_batch_size)
         selected = set(weakness_order if len(weakness_order) <= 2 else weakness_order[:batch])
         if not selected and missing:
@@ -352,6 +424,7 @@ class PrimitiveInventionEngine:
             f"Add handlers for {', '.join(sorted(selected)) or 'no new handlers'} "
             f"because external hidden feedback shows low per-kind scores."
         )
+        improves_improver = self._policy_fingerprint() != policy_before
         return GeneratedStrategy(
             generation_id=generation_id,
             parent_generation_id=parent_generation_id,
@@ -363,30 +436,21 @@ class PrimitiveInventionEngine:
             generation_metadata=metadata,
         )
 
-    def improver_score(
-        self,
-        *,
-        generation_index: int,
-        strategy: GeneratedStrategy,
-        eval_result: CustodyEvalResult,
-        artifact_complete: bool,
-    ) -> float:
-        coverage = min(1.0, len(strategy.handlers) / len(HANDLER_ORDER))
-        feedback = min(1.0, len(eval_result.by_kind) / len(HANDLER_ORDER))
-        artifact = 0.08 if artifact_complete else 0.0
-        machinery_bonus = self.generation_improver_bonus + (
-            0.04 if strategy.improves_improver else 0.0
-        )
-        score = (
-            0.22
-            + 0.09 * generation_index
-            + 0.17 * coverage
-            + 0.10 * feedback
-            + 0.12 * self.hypothesis_quality
-            + artifact
-            + machinery_bonus
-        )
-        return round(min(1.0, score), 6)
+    # There is deliberately no `improver_score` here.
+    #
+    # This class is the improver. A score it computes for itself is an opinion,
+    # and the one that used to live here read
+    #
+    #     0.22 + 0.09 * generation_index + 0.17 * coverage + 0.10 * feedback
+    #          + 0.12 * self.hypothesis_quality + artifact + machinery_bonus
+    #
+    # whose `0.09 * generation_index` guaranteed the rising curve the strong
+    # verdict was looking for, before any successor was generated. Every other
+    # term was a constant this class set on itself.
+    #
+    # The measurement now belongs to `ExternalHiddenEvalCustodian`, which holds
+    # the held-out pack this engine never sees and the clock the harness reads.
+    # See `ExternalHiddenEvalCustodian.measure_improver`.
 
 
 def solve_with_handlers(task: Task, handlers: set[str]) -> Any:
@@ -952,6 +1016,8 @@ class AutonomousRSIResult:
     mirror_ok: bool
     independently_reproduced: bool
     substrate_expansion: dict[str, Any]
+    improver_measurements: list[ImproverMeasurement] = field(default_factory=list)
+    order_invariance_violation: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -964,6 +1030,8 @@ class AutonomousRSIResult:
             "mirror_ok": self.mirror_ok,
             "independently_reproduced": self.independently_reproduced,
             "substrate_expansion": self.substrate_expansion,
+            "improver_measurements": [m.to_dict() for m in self.improver_measurements],
+            "order_invariance_violation": self.order_invariance_violation,
         }
 
 
@@ -971,10 +1039,20 @@ class AutonomousSuccessorEngine:
     """Autonomously generate and freeze G1-G4 successor strategies."""
 
     def __init__(
-        self, artifact_dir: Path | str, *, seed: int = 4401, tasks_per_generation: int = 60
+        self,
+        artifact_dir: Path | str,
+        *,
+        seed: int = 4401,
+        tasks_per_generation: int = 60,
+        improver_budget_samples: int = 5,
     ):
         self.artifact_dir = Path(artifact_dir)
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        # How many times the proposal step is timed. An interval needs at least
+        # three points and a median wants an odd count, so five is the smallest
+        # odd count giving both. Raising it narrows the interval and makes the
+        # noise gate harder to clear, never easier.
+        self.improver_budget_samples = max(3, int(improver_budget_samples))
         self.custodian = ExternalHiddenEvalCustodian(
             base_seed=seed,
             answer_salt=f"external-custody-{seed}",
@@ -1000,40 +1078,63 @@ class AutonomousSuccessorEngine:
         handlers: set[str] = set()
         records: list[RSIGenerationRecord] = []
         artifacts: list[FrozenGenerationArtifact] = []
+        measurements: list[ImproverMeasurement] = []
         previous_pack = self.custodian.issue_pack(0)
         previous_eval = self.custodian.score(previous_pack, lambda task: baseline_solver(task))
-        previous_score = self._capability_score(previous_eval.score, 0.10)
+        previous_score = previous_eval.score
 
         final_pack = previous_pack
         current_source = ""
         for index in range(1, generations + 1):
             generation_id = f"Aura-G{index}"
             pack = self.custodian.issue_pack(index)
+            heldout_pack = self.custodian.issue_heldout_pack(index)
             public_manifest = self.custodian.public_manifest(pack)
-            if index == 1:
-                eval_before = self.custodian.score(pack, lambda task: baseline_solver(task))
-            else:
-                eval_before = self.custodian.score(
-                    pack, lambda task, s=current_source: solve_with_generated_code(task, s)
-                )
 
-            strategy = self.inventor.propose(
-                generation_id=generation_id,
-                parent_generation_id=parent,
-                public_manifest=public_manifest,
-                eval_result=eval_before,
-                current_handlers=set(handlers),
-            )
+            def parent_solver(task: Task, s: str = current_source) -> Any:
+                return baseline_solver(task) if not s else solve_with_generated_code(task, s)
+
+            eval_before = self.custodian.score(pack, parent_solver)
+
+            # The improver's budget: wall time on the proposal and every
+            # scoring call it consumed. Both are read by the harness on a
+            # monotonic clock, never reported by the improver. The proposal is
+            # repeated so the timing carries a spread; one sample cannot tell a
+            # faster improver from a quieter host.
+            queries_before = self.custodian.feedback_queries
+            wall_clock_samples: list[float] = []
+            for _ in range(self.improver_budget_samples):
+                started = time.perf_counter()
+                strategy = self.inventor.propose(
+                    generation_id=generation_id,
+                    parent_generation_id=parent,
+                    public_manifest=public_manifest,
+                    eval_result=eval_before,
+                    current_handlers=set(handlers),
+                )
+                wall_clock_samples.append(time.perf_counter() - started)
+            feedback_queries = self.custodian.feedback_queries - queries_before + 1
+
             eval_after = self.custodian.score(
                 pack, lambda task, s=strategy.source: solve_with_generated_code(task, s)
             )
-            improver_score = self.inventor.improver_score(
-                generation_index=index,
-                strategy=strategy,
-                eval_result=eval_before,
-                artifact_complete=True,
+
+            measurement = self.custodian.measure_improver(
+                generation_id=generation_id,
+                heldout_pack=heldout_pack,
+                parent_solver=parent_solver,
+                successor_solver=lambda task, s=strategy.source: solve_with_generated_code(task, s),
+                wall_clock_samples=wall_clock_samples,
+                feedback_queries=feedback_queries,
             )
-            capability_score = self._capability_score(eval_after.score, improver_score)
+            measurements.append(measurement)
+            improver_score = measurement.efficiency()
+
+            # The capability curve is the measured hidden-eval score, nothing
+            # else. It used to be `0.76 * hidden + 0.24 * improver`, so the
+            # authored improver term entered the capability curve too and 24%
+            # of "capability" was a ramp in the loop counter.
+            capability_score = eval_after.score
             hidden_improved = eval_after.score > eval_before.score
             promoted = (
                 hidden_improved and capability_score > previous_score and eval_after.answer_hash_ok
@@ -1046,7 +1147,9 @@ class AutonomousSuccessorEngine:
                 "after_score": capability_score,
                 "hidden_eval_score": eval_after.score,
                 "improver_score": improver_score,
+                "improver_measurement": measurement.to_dict(),
                 "fresh_hidden_pack": pack.pack_id,
+                "heldout_pack": heldout_pack.pack_id,
             }
             rollback = {"parent_generation_id": parent, "handlers": sorted(handlers)}
             artifact = self.freezer.freeze(
@@ -1069,8 +1172,15 @@ class AutonomousSuccessorEngine:
                 promoted=promoted,
                 rollback_performed=not promoted,
                 ablation_result="pending" if index < generations else "ablation_court",
-                time_to_valid_improvement_s=0.01 * index,
+                # The measured cost of producing this generation. It used to be
+                # `0.01 * index` — a fabricated duration that rose with the
+                # counter, in a field an auditor would read as elapsed time.
+                time_to_valid_improvement_s=round(measurement.wall_clock_s, 6),
                 improver_score=improver_score,
+                improver_provenance=(
+                    PROVENANCE_MEASURED if measurement.measured else PROVENANCE_UNMEASURED
+                ),
+                improver_measurement=measurement.to_dict(),
                 safety_flags=[] if strategy.newly_added_handlers else ["no_new_handler"],
             )
             entry = self.ledger.append(record)
@@ -1090,10 +1200,24 @@ class AutonomousSuccessorEngine:
             final_source=current_source,
             artifact_complete=all(artifact.complete for artifact in artifacts),
         )
-        verdict = evaluate_lineage(records, independently_reproduced=True)
+        # If the metric ever reads lineage position again, this is where it
+        # shows up, and it downgrades the verdict rather than being noted.
+        order_violation = order_invariance_violation(measurements)
+        if order_violation:
+            records = [
+                replace(
+                    record,
+                    improver_provenance=PROVENANCE_UNMEASURED,
+                    tamper_flags=[*record.tamper_flags, order_violation],
+                )
+                for record in records
+            ]
         independently_reproduced = self._reproduce(records)
-        if not independently_reproduced:
-            verdict = evaluate_lineage(records, independently_reproduced=False)
+        verdict = evaluate_lineage(
+            records,
+            independently_reproduced=independently_reproduced,
+            improver_measurements=measurements,
+        )
         substrate_expansion = self._substrate_expansion_evidence(records)
         return AutonomousRSIResult(
             records=records,
@@ -1105,6 +1229,8 @@ class AutonomousSuccessorEngine:
             mirror_ok=self.mirror.verify(),
             independently_reproduced=independently_reproduced,
             substrate_expansion=substrate_expansion,
+            improver_measurements=measurements,
+            order_invariance_violation=order_violation,
         )
 
     def _substrate_expansion_evidence(self, records: list[RSIGenerationRecord]) -> dict[str, Any]:
@@ -1188,9 +1314,12 @@ class AutonomousSuccessorEngine:
         finally:
             self._reproduce = original_reproduce  # type: ignore[method-assign]
 
-    @staticmethod
-    def _capability_score(hidden_score: float, improver_score: float) -> float:
-        return round(0.76 * hidden_score + 0.24 * improver_score, 6)
+    # `_capability_score` is gone. It returned
+    # `0.76 * hidden_score + 0.24 * improver_score`, which mixed the improver
+    # metric into the capability curve — so the two curves `evaluate_lineage`
+    # compares for independence shared a term by construction, and the
+    # authored `0.09 * generation_index` reached the capability curve at
+    # weight 0.24. `after_score` is the custodian's hidden-eval score.
 
 
 __all__ = [

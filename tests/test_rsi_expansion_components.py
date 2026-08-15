@@ -182,15 +182,34 @@ def test_pasted_rsi_test_catalog_covers_every_named_probe():
     assert any(record.test_id == "alignment_break" for record in records)
 
 
-def test_successor_lab_generates_monotone_g1_to_g4_lineage(tmp_path: Path):
+def test_successor_lab_generates_monotone_g1_to_g4_capability(tmp_path: Path):
+    """Capability rises across four hand-written successors. That is all.
+
+    The lab used to assert STRONG_RSI, which it reached because a fourth
+    column in `STRATEGIES` held 0.30/0.50/0.75/0.90 — an "improver curve" that
+    was four numbers typed in ascending order, and which was also mixed into
+    `after_score` at weight 0.20. Nothing here improves an improver: the
+    successors are written by a developer, so the records declare their
+    improver score authored and the verdict stays bounded.
+    """
     result = SuccessorLab(tmp_path, seed=707, tasks_per_generation=30).run()
 
     assert len(result.records) == 4
-    assert result.verdict.verdict == "STRONG_RSI"
     capability = [record.after_score for record in result.records]
-    improver = [record.improver_score for record in result.records]
-    assert all(b > a for a, b in zip(capability, capability[1:], strict=False))
-    assert all(b > a for a, b in zip(improver, improver[1:], strict=False))
+    assert capability == [record.hidden_eval_score for record in result.records]
+
+    # G1 to G3 each solve a family the previous one could not. G3 reaches 1.0
+    # and G4 runs the same `_solve_all` under a different name, so it adds
+    # nothing and is not promoted. The blend hid that: the authored column
+    # rose 0.75 to 0.90, which lifted G4's `after_score` above G3's while the
+    # measured capability of both was identical.
+    assert all(b > a for a, b in zip(capability[:3], capability[1:3], strict=False))
+    assert capability[3] == capability[2] == 1.0
+    assert [record.promoted for record in result.records] == [True, True, True, False]
+
+    assert result.verdict.verdict == "BOUNDED_SELF_OPTIMIZATION"
+    assert any("not measured" in reason for reason in result.verdict.reasons)
+    assert all(record.improver_provenance == "authored" for record in result.records)
     assert Path(result.ledger_path).exists()
 
 
@@ -245,7 +264,6 @@ def test_autonomous_successor_codegen_defaults_to_deterministic_sandbox(monkeypa
 def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: Path):
     result = AutonomousSuccessorEngine(tmp_path, seed=4401, tasks_per_generation=40).run(generations=4)
 
-    assert result.verdict.verdict == "UNDENIABLE_RSI"
     assert len(result.records) == 4
     assert all(record.promoted for record in result.records)
     assert all(artifact.complete for artifact in result.artifacts)
@@ -255,10 +273,29 @@ def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: P
     assert result.substrate_expansion["approved_plan"]["allowed"] is True
     assert result.substrate_expansion["internet_propagation_probe"]["allowed"] is False
 
+    # Capability is the custodian's hidden-eval score and rises across all
+    # four generations, reproducibly. That part was always real.
     capability = [record.after_score for record in result.records]
-    improver = [record.improver_score for record in result.records]
     assert all(b > a for a, b in zip(capability, capability[1:], strict=False))
-    assert all(b > a for a, b in zip(improver, improver[1:], strict=False))
+    assert capability == [record.hidden_eval_score for record in result.records]
+
+    # The improver score is now measured against a held-out pack the engine
+    # never sees, over a budget the harness timed. It was
+    # `0.22 + 0.09 * generation_index + ...`, which made the improver curve
+    # rise before the experiment ran and carried 24% of its own weight into
+    # `after_score`. Measured, the engine applies one fixed proposal rule and
+    # its efficiency does not climb, so the verdict is bounded.
+    assert all(record.improver_provenance == "measured" for record in result.records)
+    assert result.order_invariance_violation == ""
+    assert result.verdict.verdict == "BOUNDED_SELF_OPTIMIZATION"
+    assert any(
+        "improver" in reason for reason in result.verdict.reasons
+    ), result.verdict.reasons
+
+    for measurement in result.improver_measurements:
+        assert measurement.heldout_pack_id
+        assert measurement.wall_clock_samples
+        assert measurement.measured
 
     for artifact in result.artifacts:
         artifact_dir = Path(artifact.directory)

@@ -108,6 +108,7 @@ def l3_claim_summary(
         "handler_coverage_complete": handler_coverage_complete,
     }
     failed_requirements = [name for name, passed in requirements.items() if not passed]
+    records = list(getattr(result, "records", []) or [])
     return {
         "passed": l3_rsi_claim,
         "artifact_valid": True,
@@ -121,6 +122,23 @@ def l3_claim_summary(
         "generated_solver_looks_like_fallback_template": fallback_template,
         "manifest_kinds": sorted(manifest_kinds),
         "strategy_handlers": sorted(strategy_handlers),
+        # Carried into the artifact so a reader can see where the improver
+        # curve came from. The bundle this replaces recorded
+        # [0.578, 0.8696, 0.9536, 1.0] with no indication that the numbers
+        # were produced by a formula containing the generation counter.
+        "improver_provenance": [
+            getattr(record, "improver_provenance", "unmeasured") for record in records
+        ],
+        "improver_measurements": [
+            measurement.to_dict()
+            for measurement in getattr(result, "improver_measurements", []) or []
+        ],
+        "improver_order_invariance_violation": getattr(
+            result, "order_invariance_violation", ""
+        ),
+        "lineage_verdict_reasons": list(
+            getattr(getattr(result, "verdict", None), "reasons", []) or []
+        ),
     }
 
 
@@ -180,14 +198,39 @@ async def run_generation(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]
     print(f"In-process MLX cortex ready: {runtime_info['model']}")
     print(f"Starting Autonomous RSI Generation ({args.generations} generations)...")
 
-    artifact_dir = Path("artifacts/rsi_frozen_generations")
+    # Each run gets its own directory. Every run used to write straight into
+    # artifacts/rsi_frozen_generations, overwriting the frozen G1-G4 artifacts
+    # that the previously published bundle records hashes for — so rerunning
+    # the generator silently made the earlier claim unverifiable, and a
+    # retraction naming those hashes would point at files that had changed
+    # underneath it. The stable path becomes a symlink to the newest run so
+    # existing readers still find current artifacts.
+    runs_root = Path("artifacts/rsi_frozen_generations")
+    artifact_dir = runs_root / "runs" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     engine = AutonomousSuccessorEngine(artifact_dir)
     try:
         result = await asyncio.to_thread(lambda: engine.run(generations=args.generations))
     finally:
         if runtime_info.get("backend") == "mlx":
             await _shutdown_mlx_runtime()
+    _point_latest_at(runs_root, artifact_dir)
+    runtime_info["artifact_dir"] = str(artifact_dir)
     return result, runtime_info
+
+
+def _point_latest_at(runs_root: Path, artifact_dir: Path) -> None:
+    """Repoint `<runs_root>/latest` at this run, leaving earlier runs alone."""
+    latest = runs_root / "latest"
+    try:
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(
+            artifact_dir.resolve(), target_is_directory=True
+        )
+    except OSError as exc:
+        # A missing convenience link must not fail a completed proof run; the
+        # run directory is the artifact and it is already written.
+        print(f"could not update {latest}: {exc}", file=sys.stderr)
 
 def main():
     parser = argparse.ArgumentParser()
