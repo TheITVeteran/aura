@@ -6,19 +6,25 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
+import numpy as np
+from mlx.utils import tree_flatten
+from safetensors.numpy import save as save_safetensors_bytes
 
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task
+from core.brain.llm.latent_cortex.persistence import LatentCortexPersistence
 from core.learning.frontier_process_supervision import (
     compile_frontier_process_supervision,
 )
 from core.learning.recurrent_work_memory import MathematicsWorkMemoryTrace
 from core.learning.recurrent_work_memory_tissue import (
     MathematicsMemoryTissue,
+    build_mathematics_memory_manifest,
     execute_mathematics_memory,
 )
 
@@ -347,6 +353,47 @@ def train_mathematics_memory_tissue(
     return tissue, {**body, "receipt_sha256": _canonical_sha256(body)}
 
 
+def train_and_write_mathematics_memory_artifact(
+    out_dir: Path,
+    *,
+    canary_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Reproduce the admitted tissue and publish one atomic runtime artifact."""
+
+    training, _tasks = build_mathematics_memory_registry(
+        seeds=range(0, 40),
+        difficulties=(1, 2, 3),
+    )
+    tissue, training_receipt = train_mathematics_memory_tissue(
+        training,
+        steps=400,
+        learning_rate=0.01,
+        hidden_size=32,
+        seed=2026081507,
+    )
+    if training_receipt != canary_receipt.get("training"):
+        raise RuntimeError("mathematics memory tissue is not a canary reproduction")
+    tensors = {
+        name: np.asarray(value)
+        for name, value in tree_flatten(tissue.parameters())
+    }
+    weights_payload = save_safetensors_bytes(tensors)
+    manifest = build_mathematics_memory_manifest(
+        weights_sha256=hashlib.sha256(weights_payload).hexdigest(),
+        training_receipt=training_receipt,
+        canary_receipt=canary_receipt,
+    )
+    manifest_payload = (
+        json.dumps(manifest, indent=2, sort_keys=True).encode("ascii") + b"\n"
+    )
+    LatentCortexPersistence().publish_neural_tissue_artifact(
+        out_dir.expanduser().resolve(),
+        weights_payload=weights_payload,
+        manifest_payload=manifest_payload,
+    )
+    return manifest
+
+
 __all__ = [
     "MATHEMATICS_MEMORY_TRAINING_SCHEMA",
     "MathematicsMemoryEvaluationTask",
@@ -355,4 +402,5 @@ __all__ = [
     "build_mathematics_memory_registry",
     "predicate_metrics",
     "train_mathematics_memory_tissue",
+    "train_and_write_mathematics_memory_artifact",
 ]

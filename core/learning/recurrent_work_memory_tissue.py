@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final, Literal
 
 import mlx.core as mx
@@ -22,6 +23,7 @@ from core.learning.recurrent_work_memory import (
 )
 
 MATHEMATICS_MEMORY_TISSUE_SCHEMA: Final = "aura.mathematics_memory_tissue.v1"
+MATHEMATICS_MEMORY_ARTIFACT_SCHEMA: Final = "aura.mathematics_memory_artifact.v1"
 MATHEMATICS_MEMORY_EXECUTION_SCHEMA: Final = (
     "aura.mathematics_memory_execution.v1"
 )
@@ -29,6 +31,10 @@ WRITE_MODES: Final = ("learned", "always", "never")
 READ_MODES: Final = ("learned", "always", "never")
 ROUTING_MODES: Final = ("identity", "rotated")
 MEMORY_MODES: Final = ("active", "reset_each_step")
+DEFAULT_MATHEMATICS_MEMORY_ARTIFACT: Final = (
+    Path(__file__).resolve().parents[1]
+    / "brain/llm/latent_cortex/assets/mathematics_memory_tissue_v1"
+)
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -41,6 +47,14 @@ def _canonical_sha256(value: Any) -> str:
             allow_nan=False,
         ).encode("ascii")
     ).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_public_objective(
@@ -302,6 +316,171 @@ class MathematicsMemoryTissue(nn.Module):
         return digest.hexdigest()
 
 
+def build_mathematics_memory_manifest(
+    *,
+    weights_sha256: str,
+    training_receipt: dict[str, Any],
+    canary_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    if len(weights_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in weights_sha256
+    ):
+        raise ValueError("mathematics memory weights commitment is invalid")
+    training_body = {
+        key: value for key, value in training_receipt.items() if key != "receipt_sha256"
+    }
+    canary_body = {
+        key: value for key, value in canary_receipt.items() if key != "receipt_sha256"
+    }
+    arms = canary_receipt.get("arms")
+    source_identity = canary_receipt.get("source_identity")
+    if (
+        training_receipt.get("schema") != "aura.mathematics_memory_training.v1"
+        or training_receipt.get("receipt_sha256") != _canonical_sha256(training_body)
+        or training_receipt.get("teacher_removed_before_evaluation") is not True
+        or canary_receipt.get("schema") != "aura.mathematics_memory_canary.v1"
+        or canary_receipt.get("receipt_sha256") != _canonical_sha256(canary_body)
+        or canary_receipt.get("admitted") is not True
+        or not isinstance(arms, dict)
+        or arms.get("treatment", {}).get("exact_accuracy") != 1.0
+        or arms.get("matched_initialization_control", {}).get("exact_accuracy")
+        != 0.0
+        or not isinstance(source_identity, dict)
+        or source_identity.get("measured_source_clean") is not True
+        or not isinstance(source_identity.get("source_sha256s"), dict)
+    ):
+        raise ValueError("mathematics memory admission evidence is invalid")
+    arm_summary = {
+        name: {
+            "examples": row["examples"],
+            "exact": row["exact"],
+            "exact_accuracy": row["exact_accuracy"],
+            "receipt_sha256": row["receipt_sha256"],
+        }
+        for name, row in sorted(arms.items())
+    }
+    body = {
+        "schema": MATHEMATICS_MEMORY_ARTIFACT_SCHEMA,
+        "config": {
+            "schema": MATHEMATICS_MEMORY_TISSUE_SCHEMA,
+            "hidden_size": training_receipt["hidden_size"],
+            "seed": training_receipt["seed"],
+            "write_feature_count": MathematicsMemoryTissue.write_feature_count,
+            "read_feature_count": MathematicsMemoryTissue.read_feature_count,
+            "capacity": MATHEMATICS_WORK_MEMORY_CAPACITY,
+        },
+        "weights_file": "weights.safetensors",
+        "weights_sha256": weights_sha256,
+        "teacher_removed_runtime": True,
+        "training_receipt": training_receipt,
+        "canary": {
+            "receipt_sha256": canary_receipt["receipt_sha256"],
+            "source_commit": source_identity["commit"],
+            "source_sha256s": source_identity["source_sha256s"],
+            "heldout_task_count": canary_receipt["heldout_task_count"],
+            "arms": arm_summary,
+            "claim_boundary": canary_receipt["claim_boundary"],
+        },
+    }
+    return {**body, "manifest_sha256": _canonical_sha256(body)}
+
+
+def load_mathematics_memory_tissue(
+    artifact_dir: Path = DEFAULT_MATHEMATICS_MEMORY_ARTIFACT,
+) -> MathematicsMemoryTissue:
+    """Load only tissue backed by a clean-source causal canary."""
+
+    directory = artifact_dir.expanduser().resolve(strict=True)
+    manifest_path = (directory / "manifest.json").resolve(strict=True)
+    if manifest_path.parent != directory:
+        raise RuntimeError("mathematics memory manifest path is invalid")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="ascii"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("mathematics memory manifest is unreadable") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("mathematics memory manifest is not an object")
+    body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    config = manifest.get("config")
+    training_receipt = manifest.get("training_receipt")
+    canary = manifest.get("canary")
+    if (
+        manifest.get("schema") != MATHEMATICS_MEMORY_ARTIFACT_SCHEMA
+        or manifest.get("manifest_sha256") != _canonical_sha256(body)
+        or manifest.get("teacher_removed_runtime") is not True
+        or not isinstance(config, dict)
+        or config.get("schema") != MATHEMATICS_MEMORY_TISSUE_SCHEMA
+        or config.get("write_feature_count")
+        != MathematicsMemoryTissue.write_feature_count
+        or config.get("read_feature_count") != MathematicsMemoryTissue.read_feature_count
+        or config.get("capacity") != MATHEMATICS_WORK_MEMORY_CAPACITY
+        or not isinstance(training_receipt, dict)
+        or not isinstance(canary, dict)
+    ):
+        raise RuntimeError("mathematics memory manifest commitment differs")
+    training_body = {
+        key: value for key, value in training_receipt.items() if key != "receipt_sha256"
+    }
+    arm_summary = canary.get("arms")
+    source_sha256s = canary.get("source_sha256s")
+    repo_root = Path(__file__).resolve().parents[2]
+    if (
+        training_receipt.get("schema") != "aura.mathematics_memory_training.v1"
+        or training_receipt.get("receipt_sha256") != _canonical_sha256(training_body)
+        or training_receipt.get("teacher_removed_before_evaluation") is not True
+        or canary.get("heldout_task_count") != 300
+        or not isinstance(arm_summary, dict)
+        or arm_summary.get("treatment", {}).get("exact_accuracy") != 1.0
+        or arm_summary.get("matched_initialization_control", {}).get(
+            "exact_accuracy"
+        )
+        != 0.0
+        or any(
+            row.get("exact_accuracy", 1.0) >= 1.0
+            for name, row in arm_summary.items()
+            if name != "treatment"
+        )
+        or not isinstance(source_sha256s, dict)
+        or any(
+            not (repo_root / relative).is_file()
+            or _file_sha256(repo_root / relative) != expected
+            for relative, expected in source_sha256s.items()
+        )
+    ):
+        raise RuntimeError("mathematics memory admission evidence differs")
+    weights_path = (directory / str(manifest.get("weights_file"))).resolve(strict=True)
+    if (
+        weights_path.parent != directory
+        or _file_sha256(weights_path) != manifest.get("weights_sha256")
+    ):
+        raise RuntimeError("mathematics memory weights commitment differs")
+    tensors = mx.load(str(weights_path))
+    expected_shapes = {
+        "write_hidden.weight": (config["hidden_size"], 10),
+        "write_hidden.bias": (config["hidden_size"],),
+        "write_output.weight": (1, config["hidden_size"]),
+        "write_output.bias": (1,),
+        "read_scale_raw": (3,),
+        "read_bias": (3,),
+    }
+    if set(tensors) != set(expected_shapes) or any(
+        tuple(tensors[name].shape) != shape for name, shape in expected_shapes.items()
+    ):
+        raise RuntimeError("mathematics memory tensor inventory differs")
+    tissue = MathematicsMemoryTissue(
+        hidden_size=config["hidden_size"],
+        seed=config["seed"],
+    )
+    tissue.write_hidden.weight = tensors["write_hidden.weight"].astype(mx.float32)
+    tissue.write_hidden.bias = tensors["write_hidden.bias"].astype(mx.float32)
+    tissue.write_output.weight = tensors["write_output.weight"].astype(mx.float32)
+    tissue.write_output.bias = tensors["write_output.bias"].astype(mx.float32)
+    tissue.read_scale_raw = tensors["read_scale_raw"].astype(mx.float32)
+    tissue.read_bias = tensors["read_bias"].astype(mx.float32)
+    mx.eval(tissue.parameters())
+    return tissue
+
+
 def _hard_decisions(logits: Any) -> tuple[bool, ...]:
     mx.eval(logits)
     return tuple(bool(value > 0.0) for value in logits.tolist())
@@ -449,6 +628,8 @@ def execute_mathematics_memory(
 
 
 __all__ = [
+    "DEFAULT_MATHEMATICS_MEMORY_ARTIFACT",
+    "MATHEMATICS_MEMORY_ARTIFACT_SCHEMA",
     "MATHEMATICS_MEMORY_EXECUTION_SCHEMA",
     "MATHEMATICS_MEMORY_TISSUE_SCHEMA",
     "MathematicsMemoryExecution",
@@ -458,5 +639,7 @@ __all__ = [
     "READ_MODES",
     "ROUTING_MODES",
     "WRITE_MODES",
+    "build_mathematics_memory_manifest",
     "execute_mathematics_memory",
+    "load_mathematics_memory_tissue",
 ]
