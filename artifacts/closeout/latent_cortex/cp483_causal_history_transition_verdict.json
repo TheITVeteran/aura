@@ -1,0 +1,67 @@
+{
+  "schema": "aura.latent_cortex.causal_history_transition_verdict.v1",
+  "campaign_id": "cp483-causal-history-recovery-1p5b-20260814",
+  "campaign_source_commit": "fac71b7e5f4419c67d4f91f74547f71726029c0f",
+  "campaign_config_sha256": "4a8498450accb672c40d0560d012df510f207d053e74bfd368f8554782942a87",
+  "training_receipt_sha256": "274ae3d684d37272148ea2580c5e438cd31cd9e426a68d1a772fc0a0e958b735",
+  "process_admission_sha256": "7bd89422f2776df3aacc2332489a081e2668ca739890d1ce1123c76dbdcee173",
+  "completion_sha256": "7f3554e65f9b7ca6154ae6ce3960d3bfa3e164eb6f7c46d0f4854b8357055abf",
+  "checkpoint": {
+    "step": 128,
+    "checkpoint_sha256": "75c3eb24ad9c9a3b052fb0444265cb755ca9faaecda8b2d86bfa0bf0c6f0226e",
+    "receipt_sha256": "a5b6fb100ee925dc3e4db5e7f24cee14c3e1e82cbcd4ebf96511a4415f798482"
+  },
+  "elapsed_minutes": 15.108,
+  "verdict": "autonomous_process_not_admitted",
+  "process_admission": {
+    "tasks": 12,
+    "initial_states_exact": 12,
+    "public_action_programs_exact": 12,
+    "complete_processes_exact": 0,
+    "exact_accuracy": 0.0,
+    "exact_microcode_available": false,
+    "teacher_available": false,
+    "ordered_action_history_available": true,
+    "by_family": [
+      {
+        "family": "frontier_calibration",
+        "tasks": 3,
+        "state_accuracy_min": 0.58,
+        "state_accuracy_max": 0.62,
+        "exact_state_steps_total": 1
+      },
+      {
+        "family": "frontier_coding",
+        "tasks": 3,
+        "state_accuracy_min": 0.48,
+        "state_accuracy_max": 0.52,
+        "exact_state_steps_total": 0
+      },
+      {
+        "family": "frontier_mathematics",
+        "tasks": 3,
+        "state_accuracy_min": 0.74,
+        "state_accuracy_max": 0.76,
+        "exact_state_steps_total": 6
+      },
+      {
+        "family": "frontier_misleading_premise",
+        "tasks": 3,
+        "state_accuracy_min": 0.36,
+        "state_accuracy_max": 0.44,
+        "exact_state_steps_total": 0
+      }
+    ]
+  },
+  "depth_ladder": {
+    "best_depth": "T1",
+    "best_deep_relative_gain": -0.06543139262279037,
+    "trained_depth_helps": false,
+    "heldout_depth_helps": false,
+    "t16_state_accuracy": 0.5343750139387945,
+    "t16_state_value_exact_accuracy": 0.11458333333333333
+  },
+  "conclusion": "The ordered history reader made prior actions causally visible and learned coarse control-field regularities, but its shared mean-pooled action summary did not preserve or compose exact typed value semantics. Additional training of this transition topology is not supported by the terminal evidence.",
+  "next_mechanism": "Replace mean-pooled history with slot-preserving gated recurrent transition memory, supervise exact state deltas and retain a matched history-memory lesion.",
+  "claim_boundary": "Negative bounded 1.5B mechanism result only; no answer-level, resident-32B, fusion, frontier, or WOW Signal authority."
+}

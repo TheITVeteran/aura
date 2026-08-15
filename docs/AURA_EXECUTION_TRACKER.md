@@ -49341,3 +49341,30 @@ with lists in the stored identity and still requires all substantive fields,
 source and destination checkpoints, implementation digest, initialization,
 schedule and preservation claims to match. CP481 never advanced beyond its
 unchanged migrated step-8 checkpoint and produced no model verdict.
+
+## Checkpoint 2026-08-14-483: Causal History Is Visible But Does Not Compute
+
+CP483 resumed CP478's exact step-8 tissue under the repaired source-migration
+contract and completed the original 128-step schedule in one detached attempt.
+The terminal checkpoint, completion receipt and process admission are frozen in
+`artifacts/closeout/latent_cortex/cp483_causal_history_transition_verdict.json`.
+
+All 12 unseen initial states and all 12 public action programs were exact with
+teacher authority and exact microcode absent. No complete learned state process
+was exact. At the terminal admission, state-field accuracy ranged from
+`0.74-0.76` for mathematics, `0.58-0.62` for calibration, `0.48-0.52` for
+coding and `0.36-0.44` for premise auditing. The periodic depth ladder also
+rejected the mechanism: T1 remained best, T16 exact-value accuracy was
+`0.1146`, and the best deep relative gain was `-0.0654`.
+
+This separates visibility from computation. CP476 made ordered prior actions
+causally affect the learned transition, but CP483 shows that its mean-pooled
+shared history vector does not retain typed argument identity or implement the
+required value transformations. The next bounded milestone replaces that
+summary with slot-preserving gated recurrent transition memory, trains exact
+state deltas, and retains a matched history-memory lesion. Repeating this
+topology for more steps is not authorized by the evidence.
+
+CP483 is a negative bounded 1.5B mechanism result. It does not establish an
+answer-level gain, authorize resident-32B transfer or fusion, demonstrate
+frontier reasoning, or establish `WOW Signal`.
