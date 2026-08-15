@@ -499,7 +499,7 @@ def adopt_source_migration_identity(
     expected["bootstrap"] = copy.deepcopy(original_bootstrap)
     expected["source_migration_controller_sha256"] = current_controller
     expected["identity_sha256"] = canonical_sha256(expected)
-    if expected != stored_identity:
+    if canonical_bytes(expected) != canonical_bytes(stored_identity):
         raise UnifiedCheckpointError("unified checkpoint source migration identity differs")
     return copy.deepcopy(stored_identity)
 

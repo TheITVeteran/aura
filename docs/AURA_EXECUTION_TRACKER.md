@@ -49325,3 +49325,19 @@ compilation and diff integrity pass before the aggregate smoke gate. This
 checkpoint repairs exact recovery authority only. It does not turn CP478's
 prefix failure into a model result or authorize fusion, resident transfer,
 frontier claims or `WOW Signal`.
+
+## Checkpoint 2026-08-14-482: Compare Migrated Identity Canonically
+
+CP481 passed package and migration validation but failed closed before restoring
+step 8. A bounded diagnostic reconstructed both identities and found one field:
+the live builder retained tuples inside `spec`, while the canonical JSON
+checkpoint necessarily restored those sequences as lists. Their canonical
+bytes and hashes were identical, but the migration verifier used Python
+container equality and rejected the representation change.
+
+The final migrated-identity comparison now uses the same canonical encoding as
+the signed identity contract. A regression mixes tuples in the live identity
+with lists in the stored identity and still requires all substantive fields,
+source and destination checkpoints, implementation digest, initialization,
+schedule and preservation claims to match. CP481 never advanced beyond its
+unchanged migrated step-8 checkpoint and produced no model verdict.

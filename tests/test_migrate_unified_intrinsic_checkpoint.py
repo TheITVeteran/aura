@@ -221,12 +221,14 @@ def test_resume_adopts_only_a_fully_bound_source_migration(
         "campaign_binding": binding,
         "initial_controller_sha256": "1" * 64,
         "bootstrap": {"schema": "resume"},
+        "spec": {"train_depths": (1, 3, 5)},
         "source_sha256s": {"trainer.py": "2" * 64},
     }
     stored = {
         **computed,
         "initial_controller_sha256": "3" * 64,
         "bootstrap": {"schema": "original"},
+        "spec": {"train_depths": [1, 3, 5]},
         "source_migration_controller_sha256": "1" * 64,
     }
     stored["identity_sha256"] = canonical_sha256(stored)
