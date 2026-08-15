@@ -50,7 +50,33 @@ def test_the_other_two_budget_dimensions_are_still_accepted() -> None:
     accepted = _accepted_terminations_source()
 
     assert '"token_limit",' in accepted
-    assert '"wall_reserve",' in accepted
+    assert '"wall_reserve_sentence_grace",' in accepted
+
+
+def test_a_wall_stop_with_no_sentence_boundary_is_not_accepted() -> None:
+    """Raw wall_reserve now means the reserve was crossed mid-clause. The
+    text is a fragment, so it cannot also be a time-bounded answer."""
+    accepted = _accepted_terminations_source()
+
+    assert '"wall_reserve",' not in accepted
+
+
+def test_the_wind_down_decides_which_kind_the_reserve_emits() -> None:
+    import ast
+
+    source = inspect.getsource(engine)
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.IfExp):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        if '"wall_reserve_sentence_grace"' not in rendered:
+            continue
+        assert "sentence_done" in rendered
+        assert '"wall_reserve"' in rendered
+        return
+    raise AssertionError("the wall-reserve termination choice was not found")
 
 
 def test_exhaustion_before_the_first_token_is_not_accepted() -> None:

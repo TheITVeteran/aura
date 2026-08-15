@@ -202,12 +202,54 @@ def knowledge_metadata(item: Mapping[str, Any]) -> dict[str, str | bool]:
     }
 
 
+# The two roles whose contract carries a content commitment, a retrieval
+# receipt and an epistemic-state digest, all verified above.
+ADMITTED_RETRIEVAL_ROLES = frozenset({"memory_observation", "evidence_observation"})
+
+# Evidence kinds that describe the world rather than the person. Anything
+# outside this set is treated as personal context: a memory is episodic by
+# definition, a governed tool observation carries whatever the tool read, and
+# a one-shot nonparametric memory is the interlocutor's own turn.
+IMPERSONAL_EVIDENCE_KINDS = frozenset({"offline_reference", "live_world_observation"})
+
+
+def is_exportable_provenance(item: Mapping[str, Any]) -> bool:
+    """True when this context may be represented in a DURABLE artifact.
+
+    A fast-weight delta seeded from a slot encodes that slot's content, and
+    an exported adapter candidate outlives the episode. Hashing the text in
+    the receipt does not undo that: the weights are the copy. Episodic memory
+    and tool output are personal, so they seed the episode and stop there.
+    """
+
+    if item.get("context_role") == "evidence_observation":
+        return item.get("evidence_kind") in IMPERSONAL_EVIDENCE_KINDS
+    return False
+
+
+def is_admitted_retrieval(item: Mapping[str, Any]) -> bool:
+    """True only for context that came through the typed retrieval contract.
+
+    ``source`` is a free-form string the caller supplies. Reading the literal
+    label "memory" as proof that the text was epistemically admitted let any
+    caller mark arbitrary text as trusted retrieval — and trusted retrieval is
+    the only class permitted to seed fast-weight columns, so the label was
+    authorizing compilation into weights.
+    """
+
+    return item.get("context_role") in ADMITTED_RETRIEVAL_ROLES
+
+
 __all__ = [
+    "ADMITTED_RETRIEVAL_ROLES",
+    "IMPERSONAL_EVIDENCE_KINDS",
     "CognitiveContextError",
     "EVIDENCE_CONTEXT_FIELDS",
     "MAX_COGNITIVE_CONTEXT_CHARS",
     "MAX_COGNITIVE_CONTEXT_ITEMS",
     "MEMORY_CONTEXT_FIELDS",
+    "is_admitted_retrieval",
+    "is_exportable_provenance",
     "knowledge_metadata",
     "normalize_cognitive_context",
 ]

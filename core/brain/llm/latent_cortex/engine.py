@@ -118,7 +118,6 @@ from core.runtime.lockdep import LockRank, checked_lock
 # Cognitive-slot sources whose content is RETRIEVED knowledge (already
 # epistemically admitted) — eligible for compilation into the fast-weight
 # adaptation subspace.
-_RETRIEVAL_SLOT_SOURCES = frozenset({"memory", "one_shot_memory", "reference", "world_model"})
 
 logger = logging.getLogger("Aura.LatentCortex.Engine")
 
@@ -152,6 +151,11 @@ _MAX_TEACHER_TRAJECTORY_TOKENS = 768
 # termination "token_limit_sentence_grace". A truncated tail otherwise
 # fails the product gate as a terminal fragment (CP110 live evidence).
 _SENTENCE_GRACE_TOKENS = 48
+# The erase proof runs a full-stack probe this wide. It is the size of the
+# work the wall-clock reserve exists to protect, so both the affordability
+# check and the reserve are derived from it rather than from a constant
+# somebody picked.
+_FW_ERASE_PROBE_TOKENS = 8
 _SENTENCE_TERMINALS = (".", "!", "?", ".\n", "!\n", "?\n")
 
 
@@ -351,6 +355,13 @@ class LatentCortexEngine:
         # tokenizer, so per engine) and the last final-decode suppression
         # count for the episode receipt.
         self._newline_token_cache: dict[int, bool] = {}
+        # High-water wall clock for one fast-weight cleanup on THIS host.
+        # The reserve was a hard-coded six seconds; a measurement is the
+        # only thing that can make the reserve true on a slower device.
+        self._fw_cleanup_seconds_high_water = 0.0
+        # Wall clock for one full-stack erase probe, measured on the
+        # pre-attach probe so the first episode reserves a real number too.
+        self._fw_probe_seconds_high_water = 0.0
         self._newline_token_ids_cache: tuple[int, ...] | None = None
         self._vocab_size = 0
         self._input_token_ceiling: int | None = None
@@ -1605,6 +1616,7 @@ class LatentCortexEngine:
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         wall_reserve_s: float = 0.0,
+        wall_reserve_forwards: int = 0,
         sentence_grace_tokens: int | None = None,
         contract_grace_tokens: int | None = None,
         token_logprobs_out: list[float] | None = None,
@@ -1860,19 +1872,38 @@ class LatentCortexEngine:
             if budget.exhausted:
                 termination = "budget_exhausted"
                 break
-            if wall_reserve_s > 0.0:
+            if wall_reserve_s > 0.0 or wall_reserve_forwards > 0:
                 # Time-aware sentence wind-down: when the MEASURED decode
                 # rate says another grace window would eat into the cleanup
                 # reserve, finish at the next sentence boundary instead of
                 # cutting mid-clause (CP115: the fixed rate estimate ran hot
                 # on a cold boot and the reserve guillotined token 330).
                 rate_s = max(0.02, (time.monotonic() - decode_started) / max(1, len(out)))
+                # The reserve has to cover the cleanup this host actually
+                # performs. A fixed number of seconds cannot: it is either
+                # slack on a fast device or short on a slow one, and being
+                # short means the erase proof starts work it cannot finish.
+                # The measured decode rate prices the probe's forwards, and
+                # the high-water mark from a completed cleanup prices the
+                # rest.
+                wall_reserve_s = max(
+                    wall_reserve_s,
+                    wall_reserve_forwards * rate_s,
+                    self._fw_probe_seconds_high_water + rate_s,
+                    self._fw_cleanup_seconds_high_water,
+                )
                 winding_down = budget.remaining_wall_s < wall_reserve_s + extension * rate_s
                 if winding_down and sentence_done:
                     termination = "wall_reserve_sentence_grace"
                     break
                 if budget.remaining_wall_s < wall_reserve_s:
-                    termination = "wall_reserve"
+                    # The reserve is hard, but where it lands is not the same
+                    # fact twice. Crossing it AT a sentence boundary is the
+                    # wind-down completing; crossing it mid-clause is a
+                    # fragment, and the two used to share one termination.
+                    termination = (
+                        "wall_reserve_sentence_grace" if sentence_done else "wall_reserve"
+                    )
                     break
             if not budget.can_afford(external_step_lanes, self.n_layers):
                 termination = "budget_unaffordable"
@@ -3094,7 +3125,10 @@ class LatentCortexEngine:
             # subject coverage — judges whether the text stands as an
             # answer, not the budget dimension that ended sampling.
             "wall_reserve_sentence_grace",
-            "wall_reserve",
+            # Raw "wall_reserve" is deliberately absent. It now means the
+            # reserve was crossed with no sentence boundary reached — a known
+            # fragment. The wind-down above emits the accepted kind when the
+            # text actually ends somewhere.
             # A separately generated, exactly round-tripped repair cleared
             # the confidence-bound authority gate and replaced the ordinary
             # neural decode.
@@ -3238,15 +3272,25 @@ class LatentCortexEngine:
         terminal_instruction_tokens: list[int] = []
         terminal_decision = None
         prefill_cost = len(tokens) * self.n_layers
+        contract_required = self.config.decode_contract == "final_answer_v1"
         contract_grace = (
-            self.config.decode_contract_grace_tokens
-            if self.config.decode_contract == "final_answer_v1"
-            else 0
+            self.config.decode_contract_grace_tokens if contract_required else 0
         )
+        # _decode runs limit + extension passes, where the extension is the
+        # contract grace on a contract task and the SENTENCE grace otherwise.
+        # Admission reserved only the contract half, so up to 48 unreserved
+        # full-stack passes ate the fallback, canary and cleanup margin the
+        # admission message says it preserves.
+        sentence_grace = (
+            _SENTENCE_GRACE_TOKENS
+            if decode_sentence_grace_tokens is None
+            else int(decode_sentence_grace_tokens)
+        )
+        decode_extension = int(contract_grace) if contract_required else sentence_grace
         decode_cost = (
             max(
                 0,
-                int(decode_limit) + int(contract_grace) - 1,
+                int(decode_limit) + decode_extension - 1,
             )
             * self.n_layers
         )
@@ -3540,6 +3584,8 @@ class LatentCortexEngine:
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             from core.brain.llm.latent_cortex.cognitive_context import (
+                is_admitted_retrieval,
+                is_exportable_provenance,
                 knowledge_metadata,
             )
 
@@ -3554,6 +3600,16 @@ class LatentCortexEngine:
                     "text_sha256": hashlib.sha256(
                         episode_context_items[row["context_index"]].get("text", "").encode("utf-8")
                     ).hexdigest(),
+                    # Whether this slot may be compiled into weights. It is
+                    # the item's TYPE, verified at ingress, not its label.
+                    "admitted_retrieval": is_admitted_retrieval(
+                        episode_context_items[row["context_index"]]
+                    ),
+                    # Whether content from this slot may outlive the episode
+                    # inside a durable adapter artifact.
+                    "exportable_provenance": is_exportable_provenance(
+                        episode_context_items[row["context_index"]]
+                    ),
                     **knowledge_metadata(episode_context_items[row["context_index"]]),
                 }
                 for row in seeded
@@ -6682,11 +6738,14 @@ class LatentCortexEngine:
                 seed_stat = float(mx.mean(per_position_rms(winner.z)))
                 retrieval_seed_vectors = None
                 seed_source = "retrieval"
+                # Only typed, receipted retrieval may seed the adaptation
+                # subspace. Matching on the source string meant a caller could
+                # label arbitrary text "memory" and have it compiled into the
+                # weights, which is the admission boundary this crosses.
                 retrieval_indices = [
                     int(row["slot"])
                     for row in receipt.cognitive_slots
-                    if row.get("source") in _RETRIEVAL_SLOT_SOURCES
-                    or str(row.get("source") or "").startswith("memory.")
+                    if row.get("admitted_retrieval") is True
                 ]
                 if retrieval_indices:
                     retrieval_seed_vectors = winner.z[0, retrieval_indices, :]
@@ -7908,8 +7967,14 @@ class LatentCortexEngine:
                     progress=progress,
                     # Cleanup time is sacrosanct: with temporary synapses
                     # attached the decode surrenders its tail rather than let
-                    # the wall clock expire before the erase proof.
-                    wall_reserve_s=(6.0 if fast_weights is not None else 0.0),
+                    # the wall clock expire before the erase proof. The
+                    # reserve is stated as the WORK it protects — the erase
+                    # probe's full-stack passes plus the forward that may
+                    # already be in flight — and priced at the measured decode
+                    # rate, so it is right on a slow device too.
+                    wall_reserve_forwards=(
+                        _FW_ERASE_PROBE_TOKENS + 1 if fast_weights is not None else 0
+                    ),
                     token_logprobs_out=token_logprobs_out,
                     sentence_grace_tokens=decode_sentence_grace_tokens,
                     sample_seed=sample_seed,
@@ -8280,6 +8345,7 @@ class LatentCortexEngine:
         learning_state: dict[str, Any] | None = None,
     ) -> None:
         """Best-effort cleanup that never masks the episode's first failure."""
+        cleanup_started = time.monotonic()
         try:
             try:
                 fast_weights.snapshot_for_export()
@@ -8294,7 +8360,9 @@ class LatentCortexEngine:
         finally:
             try:
                 fast_weights.detach()
-                cleanup_overdraft = not budget.can_afford(8, self.n_layers)
+                cleanup_overdraft = not budget.can_afford(
+                    _FW_ERASE_PROBE_TOKENS, self.n_layers
+                )
                 receipt.fast_weights_erased = fast_weights.prove_erase(
                     lambda: self._fw_probe(budget, cleanup=True), baseline
                 )
@@ -8309,6 +8377,10 @@ class LatentCortexEngine:
                     action="refused episode output and requested resident-worker recycle",
                     severity="critical",
                 )
+        self._fw_cleanup_seconds_high_water = max(
+            self._fw_cleanup_seconds_high_water,
+            time.monotonic() - cleanup_started,
+        )
         if receipt.fast_weights_erased is not True:
             receipt.flag("fast_weight_erase_unproven")
         lifecycle = fast_weights.lifecycle
@@ -8388,6 +8460,11 @@ class LatentCortexEngine:
             and lifecycle.optimized_steps > 0
             and len(lifecycle.loss_trail) >= 2
             and lifecycle.loss_trail[-1] < lifecycle.loss_trail[0]
+            # A delta seeded from a slot encodes that slot's content, and an
+            # exported candidate outlives the episode. Hashing the text in
+            # the receipt does not undo that — the weights are the copy — so
+            # personal context seeds the episode and stops there.
+            and self._export_provenance_permits(receipt)
         ):
             try:
                 from core.config import DATA_DIR
@@ -8421,6 +8498,34 @@ class LatentCortexEngine:
                     action="dropped consolidation candidate after export failed",
                     severity="warning",
                 )
+
+    def _export_provenance_permits(self, receipt: EpisodeReceipt) -> bool:
+        """False when any slot compiled into ΔW carried personal context.
+
+        Only admitted retrieval seeds the adaptation subspace, and only
+        impersonal evidence among that may be represented durably. An episode
+        that mixed the two is refused wholesale rather than split, because the
+        delta is a single object and nothing can say which slot a weight came
+        from after the fact.
+        """
+
+        compiled = [
+            row for row in receipt.cognitive_slots if row.get("admitted_retrieval") is True
+        ]
+        if not compiled:
+            return True
+        private = [
+            str(row.get("knowledge_class") or "unclassified")
+            for row in compiled
+            if row.get("exportable_provenance") is not True
+        ]
+        if private:
+            receipt.flag(
+                "fast_weight_export_refused_private_provenance:"
+                f"{','.join(sorted(set(private)))[:120]}"
+            )
+            return False
+        return True
 
     # ── Learned halting attachment (CP234 seam made loadable) ──────────
     def _resolve_halting_head(self):
@@ -9810,9 +9915,12 @@ class LatentCortexEngine:
         reasons converts a slow answer into a critical worker recycle."""
         import mlx.core as mx
 
+        probe_started = time.monotonic()
         inner = self.model.model
         vocab = inner.embed_tokens.weight.shape[0]
-        probe_tokens = mx.array([[i % int(vocab) for i in range(1, 9)]])
+        probe_tokens = mx.array(
+            [[i % int(vocab) for i in range(1, _FW_ERASE_PROBE_TOKENS + 1)]]
+        )
         if cleanup:
             budget.charge_cleanup_overdraft(
                 tokens=8,
@@ -9822,10 +9930,10 @@ class LatentCortexEngine:
                 output_head_tokens=8,
             )
         else:
-            if not budget.can_afford(8, self.n_layers):
+            if not budget.can_afford(_FW_ERASE_PROBE_TOKENS, self.n_layers):
                 raise RuntimeError("compute budget cannot afford fast-weight erase probe")
             budget.charge(
-                tokens=8,
+                tokens=_FW_ERASE_PROBE_TOKENS,
                 layers=self.n_layers,
                 operation="fast_weight_integrity_probe",
                 attention_pairs=8 * 8 * self.n_layers,
@@ -9836,6 +9944,15 @@ class LatentCortexEngine:
             h = layer(h, None, None)
         out = self._logits(h)
         mx.eval(out)
+        # The erase proof runs exactly this probe. Timing the pre-attach one
+        # gives the decode's wall-clock reserve a same-shape measurement of
+        # the work it is protecting, on this host, before it is needed — the
+        # only way a cold engine can reserve a true amount rather than a
+        # number somebody picked.
+        self._fw_probe_seconds_high_water = max(
+            self._fw_probe_seconds_high_water,
+            time.monotonic() - probe_started,
+        )
         return out
 
 

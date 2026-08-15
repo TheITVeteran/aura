@@ -2528,7 +2528,10 @@ class LatentCortexService:
             # a sentence boundary (wind-down). The output-quality gate is
             # the completeness judge either way.
             "wall_reserve_sentence_grace",
-            "wall_reserve",
+            # Raw "wall_reserve" is deliberately absent: the engine now emits
+            # it only when the reserve was crossed with no sentence boundary
+            # reached, which is a known fragment rather than a time-bounded
+            # answer.
             "confidence_bound_replacement",
         }:
             errors.append("decode_incomplete")

@@ -177,7 +177,6 @@ def _evaluate_live_response(
             "eos",
             "token_limit",
             "token_limit_sentence_grace",
-            "wall_reserve",
             "wall_reserve_sentence_grace",
         },
     )
