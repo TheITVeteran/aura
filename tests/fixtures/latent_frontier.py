@@ -15,6 +15,7 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     INDEPENDENT_ATTESTATION_SCHEMA,
     SCHEMA,
     TASK_COMMITMENT_ATTESTATION_SCHEMA,
+    _task_manifest_sha256,
     canonical_sha256,
     evidence_payload_sha256,
     verify_frontier_gain_bundle,
@@ -115,24 +116,19 @@ def _trust_config() -> dict:
 
 
 def _refresh_task_commitment(bundle: dict) -> None:
-    manifest = [
-        {
-            "trial_id": trial["trial_id"],
-            "task_id": trial["task_id"],
-            "domain": trial["domain"],
-            "task_payload_sha256": trial["task_payload_sha256"],
-            "task_generated_at": trial["task_generated_at"],
-        }
-        for trial in bundle["trials"]
-    ]
-    manifest.sort(key=lambda row: row["trial_id"])
-    manifest_sha256 = canonical_sha256(manifest)
+    # The manifest digest comes from the PRODUCTION builder. A fixture that
+    # rebuilt the row shape by hand would keep signing whatever the fixture
+    # thought the manifest was, so widening the real manifest would leave
+    # every test green while the new fields went uncommitted.
+    manifest_sha256 = _task_manifest_sha256(bundle["trials"])
+    diversity_sha256 = canonical_sha256(bundle["task_diversity"])
     task_commitment_sha256 = canonical_sha256(
         {
             "architecture_freeze_sha256": bundle["preregistration"]["architecture_freeze_sha256"],
             "preregistration_sha256": bundle["preregistration_sha256"],
-            "task_count": len(manifest),
+            "task_count": len(bundle["trials"]),
             "task_manifest_sha256": manifest_sha256,
+            "task_diversity_sha256": diversity_sha256,
         }
     )
     payload = {
@@ -140,7 +136,8 @@ def _refresh_task_commitment(bundle: dict) -> None:
         "preregistration_sha256": bundle["preregistration_sha256"],
         "task_commitment_sha256": task_commitment_sha256,
         "task_manifest_sha256": manifest_sha256,
-        "task_count": len(manifest),
+        "task_diversity_sha256": diversity_sha256,
+        "task_count": len(bundle["trials"]),
         "issuer_implementation_sha256": _TASK_ISSUER_IMPLEMENTATION,
         "issuer_release_sha256": _TASK_ISSUER_RELEASE,
         "committed_at": 1200.0,
@@ -516,6 +513,17 @@ def _bundle(
         },
         "raw_artifact_manifest_sha256": "9" * 64,
         "trials": trials,
+        # The issuer's own clustering, committed before evaluation. Each task
+        # is its own family here, so the effective sample equals the trial
+        # count — which is what a genuinely diverse task set looks like.
+        "task_diversity": {
+            "method": "minhash_jaccard_13gram",
+            "similarity_threshold": 0.6,
+            "max_pairwise_similarity": 0.11,
+            "task_families": {
+                trial["task_id"]: f"family-{trial['task_id']}" for trial in trials
+            },
+        },
     }
     _refresh_task_commitment(bundle)
     if include_attestation:

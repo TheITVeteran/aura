@@ -823,10 +823,85 @@ def _task_manifest_sha256(trials: list[Any]) -> str:
                 "domain": trial.get("domain"),
                 "task_payload_sha256": trial.get("task_payload_sha256"),
                 "task_generated_at": trial.get("task_generated_at"),
+                # CP126 6b65ffd0: the manifest committed WHICH tasks would run
+                # and nothing about HOW. Arm order, the scoring configuration,
+                # the decoding seeds, and the tool policies are experimental
+                # design, and every one of them could be chosen after outputs
+                # were known. They are pre-evaluation choices, so the issuer
+                # signs them alongside the tasks.
+                "run_order": trial.get("run_order"),
+                "scorer_config_sha256": trial.get("scorer_config_sha256"),
+                "treatment_tool_policy_sha256": trial.get(
+                    "treatment_tool_policy_sha256"
+                ),
+                "control_tool_policy_sha256": trial.get("control_tool_policy_sha256"),
+                "treatment_decode_policy_sha256": trial.get(
+                    "treatment_decode_policy_sha256"
+                ),
+                "control_decode_policy_sha256": trial.get(
+                    "control_decode_policy_sha256"
+                ),
             }
         )
     rows.sort(key=lambda row: str(row["trial_id"] or ""))
     return canonical_sha256(rows)
+
+
+def _validate_task_diversity(
+    bundle: dict[str, Any], reasons: list[str]
+) -> tuple[dict[str, str], str]:
+    """Distinct task IDs are not distinct tasks.
+
+    The certificate deduplicated on ``task_payload_sha256``, which catches a
+    copy-paste and nothing else. Forty paraphrases of one problem have forty
+    distinct hashes, and each one counts as an independent trial toward the
+    per-domain minimum and toward the paired test. Sample size inflates while
+    the evidence stands still.
+
+    The task issuer therefore clusters its own tasks and commits the result
+    before evaluation: the method, the similarity ceiling it held tasks to,
+    the highest similarity it actually found, and which family each task
+    landed in. The families become the unit of independence downstream.
+
+    Returns the task-to-family map and the receipt digest that the signed
+    commitment has to carry.
+    """
+    receipt = bundle.get("task_diversity")
+    if not isinstance(receipt, dict):
+        reasons.append("task_diversity_receipt_missing")
+        return {}, ""
+    if not str(receipt.get("method") or "").strip():
+        reasons.append("task_diversity_method_missing")
+    threshold = receipt.get("similarity_threshold")
+    observed = receipt.get("max_pairwise_similarity")
+    threshold_valid = _finite_number(threshold) and 0.0 < float(threshold) <= 1.0
+    if not threshold_valid:
+        reasons.append("task_diversity_threshold_invalid")
+    if not _finite_number(observed) or not 0.0 <= float(observed) <= 1.0:
+        reasons.append("task_diversity_similarity_unmeasured")
+    elif threshold_valid and float(observed) > float(threshold):
+        reasons.append("task_similarity_exceeds_threshold")
+    families_raw = receipt.get("task_families")
+    families: dict[str, str] = {}
+    if not isinstance(families_raw, dict) or not families_raw:
+        reasons.append("task_families_missing")
+    else:
+        for task_id, family in families_raw.items():
+            if not isinstance(task_id, str) or not isinstance(family, str):
+                reasons.append("task_families_malformed")
+                families = {}
+                break
+            if not task_id.strip() or not family.strip():
+                reasons.append("task_families_malformed")
+                families = {}
+                break
+            families[task_id] = family
+    try:
+        digest = canonical_sha256(receipt)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        reasons.append("task_diversity_not_canonical_json")
+        return families, ""
+    return families, digest
 
 
 def _validate_task_commitment(
@@ -836,6 +911,7 @@ def _validate_task_commitment(
     *,
     latest_task_generated_at: float,
     earliest_evaluation_started_at: float,
+    task_diversity_sha256: str,
     trusted_task_issuers: Mapping[str, Mapping[str, str]] | None,
     reasons: list[str],
 ) -> tuple[str, str]:
@@ -884,6 +960,10 @@ def _validate_task_commitment(
                 "preregistration_sha256": bundle.get("preregistration_sha256"),
                 "task_count": len(trials),
                 "task_manifest_sha256": manifest_sha256,
+                # The clustering has to be committed before evaluation too.
+                # Clustering afterwards is choosing how many independent
+                # trials there were once the results are in.
+                "task_diversity_sha256": task_diversity_sha256,
             }
         )
     except (TypeError, ValueError, OverflowError, RecursionError):
@@ -894,6 +974,7 @@ def _validate_task_commitment(
         "preregistration_sha256",
         "task_commitment_sha256",
         "task_manifest_sha256",
+        "task_diversity_sha256",
         "task_count",
         "issuer_implementation_sha256",
         "issuer_release_sha256",
@@ -908,6 +989,8 @@ def _validate_task_commitment(
         or payload.get("preregistration_sha256")
         != bundle.get("preregistration_sha256")
         or payload.get("task_manifest_sha256") != manifest_sha256
+        or not task_diversity_sha256
+        or payload.get("task_diversity_sha256") != task_diversity_sha256
         or payload.get("task_commitment_sha256") != expected_commitment
         or bundle.get("task_commitment_sha256") != expected_commitment
         or payload.get("task_count") != len(trials)
@@ -1152,6 +1235,7 @@ def verify_frontier_gain_bundle(
     #: lets a producer keep rescanning until a trial passes, which is choosing
     #: the instrument after seeing the reading.
     contamination_scanners: set[str] = set()
+    task_families, task_diversity_sha256 = _validate_task_diversity(bundle, reasons)
     #: Order accounting over ADMITTED trials, per domain. The global count
     #: previously included rejected trials, so a producer could balance the
     #: run with trials that never reached the grader.
@@ -1401,6 +1485,7 @@ def verify_frontier_gain_bundle(
         else 0.0
     )
     achieved_power: dict[str, float] = {}
+    effective_sample: dict[str, int] = {}
     for domain, observations in paired.items():
         if len(observations) < min_trials:
             reasons.append(f"{domain}:underpowered")
@@ -1408,10 +1493,24 @@ def verify_frontier_gain_bundle(
         # A domain can hold its preregistered trial count and still have lost
         # every disagreement that carried information, and the count alone
         # cannot see that.
-        discordant = sum(
-            1
-            for observation in observations
-            if bool(observation.treatment_success) != bool(observation.control_success)
+        # Independence is counted in FAMILIES, not rows. Forty paraphrases of
+        # one problem are one problem's worth of evidence however many
+        # discordant pairs they generate, so a family contributes at most one.
+        seen_families = {task_families.get(obs.task_id, "") for obs in observations}
+        if "" in seen_families:
+            reasons.append(f"{domain}:task_family_unassigned")
+            seen_families.discard("")
+        effective_sample[domain] = len(seen_families)
+        if len(seen_families) < min_trials:
+            reasons.append(f"{domain}:effective_sample_below_minimum")
+        discordant = len(
+            {
+                task_families.get(observation.task_id, "")
+                for observation in observations
+                if bool(observation.treatment_success)
+                != bool(observation.control_success)
+            }
+            - {""}
         )
         power = (
             _exact_mcnemar_power(discordant, prereg_alpha, prereg_win_share)
@@ -1472,6 +1571,7 @@ def verify_frontier_gain_bundle(
         trials,
         latest_task_generated_at=latest_task_generated_at,
         earliest_evaluation_started_at=earliest_evaluation_started_at,
+        task_diversity_sha256=task_diversity_sha256,
         trusted_task_issuers=trusted_task_issuers,
         reasons=reasons,
     )
@@ -1630,6 +1730,10 @@ def verify_frontier_gain_bundle(
         # CP126 596c9811 + 9e810491: what the surviving sample could actually
         # detect, and whether order is a rival explanation for the gain.
         "achieved_power_by_domain": achieved_power,
+        # CP126 a52cbfbf: distinct task IDs are not distinct tasks. This is
+        # the count after near-duplicates collapse into one family.
+        "effective_sample_by_domain": effective_sample,
+        "task_diversity_sha256": task_diversity_sha256,
         "target_power": prereg_target_power,
         "order_balance_by_domain": {
             domain: dict(counts) for domain, counts in order_by_domain.items()
