@@ -207,7 +207,7 @@ def test_answer_trajectory_can_execute_public_actions_without_microcode() -> Non
     assert float(losses[0].item()) > 0.0
 
 
-def test_answer_trajectory_exposes_transition_history_lesion() -> None:
+def test_answer_trajectory_exposes_transition_processor_and_history_lesions() -> None:
     model = _model()
     controller = _controller(literal_digit_token_ids=tuple(range(10)))
     actions = (
@@ -238,6 +238,7 @@ def test_answer_trajectory_exposes_transition_history_lesion() -> None:
             use_state_slots=True,
             public_action_values=actions,
             microcode_lesion=True,
+            transition_processor_lesion=True,
             transition_history_lesion=True,
             answer_digit_pointer_enabled=False,
         )

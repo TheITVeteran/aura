@@ -49542,3 +49542,24 @@ one-step readiness bar, retain the gain under autonomous roll-in and improve
 unseen deep execution before processor/history lesions or answer emission are
 authorized. It carries no resident-32B, fusion, frontier or `WOW Signal`
 claim.
+
+## Checkpoint 2026-08-14-494: Expose Processor Lesions At The Evidence Boundary
+
+The CP489 processor had an internal lesion switch, but the independent process
+admission and teacher-free decoded-transfer APIs could not request it. A
+positive campaign could therefore be compared with action or tape lesions
+without isolating whether the new state-transition processor caused the gain.
+
+The objective trajectory, autonomous process capture, process admission and
+typed transfer decoder now propagate independent transition-processor and
+transition-history lesions to the recurrent core. Process-admission receipts
+declare both availability and lesion state under a new schema, preventing an
+ablated result from being mistaken for an intact treatment. The default path
+remains bit-for-bit unlesioned; this changes experimental control surfaces,
+not CP493's frozen training mechanism.
+
+Focused trainer, objective and transfer-decode contracts pass `104/104`.
+These controls authorize matched causal adjudication only after an intact
+checkpoint first shows useful exact transition behavior. They do not
+themselves establish a gain, resident-32B transfer, fusion, frontier reasoning
+or a `WOW Signal`.

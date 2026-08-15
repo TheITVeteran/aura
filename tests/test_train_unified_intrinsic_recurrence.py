@@ -2071,6 +2071,8 @@ def test_process_admission_requires_every_unseen_task_without_teacher(
 
     assert calls == 2
     assert report["teacher_available"] is False
+    assert report["transition_processor_available"] is True
+    assert report["transition_processor_lesioned"] is False
     assert report["transition_action_history_available"] is True
     assert report["transition_action_history_lesioned"] is False
     assert report["tasks"] == 2
@@ -2080,7 +2082,7 @@ def test_process_admission_requires_every_unseen_task_without_teacher(
     assert len(report["admission_sha256"]) == 64
 
 
-def test_process_admission_propagates_transition_history_lesion(
+def test_process_admission_propagates_processor_and_history_lesions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bundle, _wiring = _bundle()
@@ -2125,6 +2127,7 @@ def test_process_admission_propagates_transition_history_lesion(
         spec,
         "",
         public_action_program=True,
+        transition_processor_lesion=True,
         transition_history_lesion=True,
     )
 
@@ -2132,9 +2135,12 @@ def test_process_admission_propagates_transition_history_lesion(
         {
             "public_action_values": ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
             "microcode_lesion": True,
+            "transition_processor_lesion": True,
             "transition_history_lesion": True,
         }
     ]
+    assert report["transition_processor_available"] is False
+    assert report["transition_processor_lesioned"] is True
     assert report["transition_action_history_available"] is False
     assert report["transition_action_history_lesioned"] is True
 

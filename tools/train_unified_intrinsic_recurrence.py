@@ -2095,6 +2095,7 @@ def _capture_autonomous_process(
     *,
     public_action_values: tuple[tuple[int, ...], ...] | None = None,
     microcode_lesion: bool = False,
+    transition_processor_lesion: bool = False,
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Capture one prefix-only autonomous process execution without decoding."""
@@ -2113,6 +2114,7 @@ def _capture_autonomous_process(
         action_logit_trajectory=action_logits,
         public_action_values=public_action_values,
         microcode_lesion=microcode_lesion,
+        transition_processor_lesion=transition_processor_lesion,
         transition_history_lesion=transition_history_lesion,
     )
     if len(initial_state_logits) != 1:
@@ -2648,6 +2650,7 @@ def _evaluate_process_admission(
     bridge: str,
     *,
     public_action_program: bool = False,
+    transition_processor_lesion: bool = False,
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Require exact teacher-removed state/action execution on every unseen task."""
@@ -2676,6 +2679,7 @@ def _evaluate_process_admission(
                     spec.plan_at(depth),
                     public_action_values=_public_actions_for_task(task, depth),
                     microcode_lesion=True,
+                    transition_processor_lesion=transition_processor_lesion,
                     transition_history_lesion=transition_history_lesion,
                 )
                 if public_action_program
@@ -2697,10 +2701,12 @@ def _evaluate_process_admission(
             )
     exact = sum(row["process_exact"] for row in rows)
     body = {
-        "schema": "aura.unified_intrinsic.process_admission.v2",
+        "schema": "aura.unified_intrinsic.process_admission.v3",
         "teacher_available": False,
         "public_action_program": public_action_program,
         "exact_microcode_available": not public_action_program,
+        "transition_processor_available": not transition_processor_lesion,
+        "transition_processor_lesioned": transition_processor_lesion,
         "transition_action_history_available": not transition_history_lesion,
         "transition_action_history_lesioned": transition_history_lesion,
         "depth": depth,

@@ -50,6 +50,8 @@ def test_typed_process_decode_uses_slots_without_answer_helpers(
         eos_token_id=None,
         max_tokens=4,
         typed_action_lesion=True,
+        transition_processor_lesion=True,
+        transition_history_lesion=True,
         completion_check=lambda values: len(values) == 2,
     )
 
@@ -60,6 +62,8 @@ def test_typed_process_decode_uses_slots_without_answer_helpers(
     assert all(row["state_slot_start"] == 3 for row in calls)
     assert all(row["answer_digit_pointer_enabled"] is False for row in calls)
     assert all(row["typed_action_lesion"] is True for row in calls)
+    assert all(row["transition_processor_lesion"] is True for row in calls)
+    assert all(row["transition_history_lesion"] is True for row in calls)
     assert all(row["process_tape_lesion"] is False for row in calls)
 
 
