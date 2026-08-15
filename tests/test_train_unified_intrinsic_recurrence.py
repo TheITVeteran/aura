@@ -2371,7 +2371,7 @@ def test_answer_bridge_diagnostic_classifies_process_and_reader_failures(
     )()
     monkeypatch.setattr(
         "tools.train_unified_intrinsic_recurrence.state_targets_from_trace",
-        lambda *_args: target,
+        lambda *_args, **_kwargs: target,
     )
     monkeypatch.setattr(
         "tools.train_unified_intrinsic_recurrence.action_targets_from_program",

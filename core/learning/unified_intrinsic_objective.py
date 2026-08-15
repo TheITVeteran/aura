@@ -22,8 +22,9 @@ from core.learning.recurrent_action_schema import (
 )
 from core.learning.recurrent_state_schema import (
     STATE_CARDINALITY,
-    STATE_SLOT_LOSS_WEIGHTS,
     RecurrentStateTargets,
+    state_slot_loss_weights,
+    state_slot_names,
     state_targets_from_trace,
 )
 from core.learning.unified_intrinsic_recurrence import (
@@ -434,7 +435,9 @@ def structured_state_loss(
             raise ValueError("structured state supervision requires one task per batch")
         labels = mx.array(values, dtype=mx.int32)
         mask = mx.array(masks, dtype=mx.float32)
-        weights = mx.array(STATE_SLOT_LOSS_WEIGHTS, dtype=mx.float32) * mask
+        weights = mx.array(
+            state_slot_loss_weights(len(values)), dtype=mx.float32
+        ) * mask
         per_slot = nn.losses.cross_entropy(
             logits[0],
             labels,
@@ -457,7 +460,9 @@ def structured_initial_state_loss(
         raise ValueError("initial state decision shape differs from the state schema")
     labels = mx.array(targets.initial_values, dtype=mx.int32)
     mask = mx.array(targets.initial_masks, dtype=mx.float32)
-    weights = mx.array(STATE_SLOT_LOSS_WEIGHTS, dtype=mx.float32) * mask
+    weights = mx.array(
+        state_slot_loss_weights(len(targets.initial_values)), dtype=mx.float32
+    ) * mask
     per_slot = nn.losses.cross_entropy(logits[0], labels, reduction="none")
     loss = mx.sum(per_slot * weights) / mx.maximum(mx.sum(weights), 1.0)
     predictions = mx.argmax(logits[0], axis=-1)
@@ -490,8 +495,12 @@ def structured_state_accuracy_breakdown(
         masks = mx.array(masks_row, dtype=mx.float32)
         predictions = mx.argmax(decision[0], axis=-1)
         correct = (predictions == labels).astype(mx.float32)
-        value_mask = masks * mx.array((0.0, 1.0, 1.0, 1.0, 0.0))
-        control_mask = masks * mx.array((1.0, 0.0, 0.0, 0.0, 1.0))
+        value_mask = masks * mx.array(
+            (0.0,) + (1.0,) * (len(masks_row) - 2) + (0.0,)
+        )
+        control_mask = masks * mx.array(
+            (1.0,) + (0.0,) * (len(masks_row) - 2) + (1.0,)
+        )
         value_correct += float(mx.sum(correct * value_mask).item())
         value_total += float(mx.sum(value_mask).item())
         control_correct += float(mx.sum(correct * control_mask).item())
@@ -529,8 +538,8 @@ def structured_state_trajectory_diagnostics(
 
     exact_steps: list[bool] = []
     value_exact_steps: list[bool] = []
-    register_correct = [0] * len(STATE_SLOT_LOSS_WEIGHTS)
-    register_total = [0] * len(STATE_SLOT_LOSS_WEIGHTS)
+    register_correct = [0] * len(targets.initial_values)
+    register_total = [0] * len(targets.initial_values)
     predictions: list[tuple[int, ...]] = []
     for step_index, (decision, labels_row, masks_row) in enumerate(
         zip(logits, targets.values, targets.masks, strict=True)
@@ -606,6 +615,7 @@ def structured_state_trajectory_diagnostics(
         "active_state_exact_accuracy": sum(active_exact) / active_steps,
         "active_value_exact_accuracy": sum(active_value_exact) / active_steps,
         "active_trajectory_exact": all(active_exact),
+        "final_active_state_exact": active_exact[-1],
         "first_error_step": first_error,
         "first_error_fraction": (
             1.0 if first_error is None else (first_error - 1) / active_steps
@@ -636,7 +646,7 @@ def structured_state_trajectory_diagnostics(
                 if register_total[index]
                 else None
             )
-            for index, name in enumerate(("pc", "value0", "value1", "value2", "done"))
+            for index, name in enumerate(state_slot_names(len(targets.initial_values)))
         },
     }
 
@@ -815,7 +825,11 @@ def unified_intrinsic_training_loss(
     per_depth: dict[str, dict[str, Any]] = {}
     for depth in selected_depths:
         depth_targets = (
-            state_targets_from_trace(transition_trace, depth)
+            state_targets_from_trace(
+                transition_trace,
+                depth,
+                state_slots=controller.config.state_slots,
+            )
             if transition_trace is not None
             else None
         )
@@ -1009,7 +1023,11 @@ def unified_process_training_loss(
         or not 0.0 < float(state_weight) <= 10.0
     ):
         raise ValueError("process state weight must be inside (0, 10]")
-    targets = state_targets_from_trace(transition_trace, plan.iterations)
+    targets = state_targets_from_trace(
+        transition_trace,
+        plan.iterations,
+        state_slots=controller.config.state_slots,
+    )
     action_targets = action_targets_from_program(transition_program, plan.iterations)
     if public_action_values is not None and component in {"action", "action_workspace"}:
         raise ValueError("public actions bypass the learned action component")
@@ -1133,7 +1151,11 @@ def unified_typed_transition_processor_loss(
 
     if transition_trace is None or transition_program is None:
         raise ValueError("direct transition training requires verified process evidence")
-    targets = state_targets_from_trace(transition_trace, plan.iterations)
+    targets = state_targets_from_trace(
+        transition_trace,
+        plan.iterations,
+        state_slots=controller.config.state_slots,
+    )
     action_targets = action_targets_from_program(transition_program, plan.iterations)
     public_actions = tuple(tuple(int(value) for value in row) for row in public_action_values)
     if public_actions != action_targets.values:
@@ -1176,7 +1198,7 @@ def unified_typed_transition_processor_loss(
         (
             tuple(float(value) for value in register_weights)
             if register_weights is not None
-            else STATE_SLOT_LOSS_WEIGHTS
+            else state_slot_loss_weights(controller.config.state_slots)
         ),
         dtype=mx.float32,
     )[None, :]

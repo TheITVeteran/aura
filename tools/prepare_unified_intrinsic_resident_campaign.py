@@ -29,6 +29,14 @@ from core.learning import recurrence_curriculum as curriculum  # noqa: E402
 from core.learning.frontier_process_supervision import (  # noqa: E402
     frontier_process_task_battery,
 )
+from core.learning.recurrent_state_schema import (  # noqa: E402
+    SEMANTIC_STATE_SLOT_NAMES,
+    STATE_SLOT_NAMES,
+    state_targets_from_trace,
+)
+from core.learning.transition_identifiability import (  # noqa: E402
+    audit_public_transition_identifiability,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes_if_absent,
     ensure_private_directory,
@@ -77,6 +85,7 @@ PROFILES: Final = frozenset(
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "process_public_transition_factorized_acquisition",
+        "process_semantic_transition_canary",
         "recovery",
     }
 )
@@ -113,6 +122,7 @@ BOUNDED_ATTEMPT_PROFILES: Final = frozenset(
         "process_public_transition_direct_acquisition",
         "process_public_transition_extended_acquisition",
         "process_public_transition_factorized_acquisition",
+        "process_semantic_transition_canary",
     }
 )
 DEFAULT_CAPSULE_ROOT: Final = Path.home() / ".aura/training-capsules"
@@ -246,6 +256,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "families": "khop,modular,register_trace",
         "task_depths": "1,2,4",
         "controller_rank": 64,
+        "state_schema": "legacy_v1",
         "lora_rank": 8,
         "lora_targets": "o_proj,v_proj",
         "state_weight": 6.0,
@@ -275,6 +286,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "direct_transition_curriculum": "closed_loop",
         "direct_transition_weakest_register_weight": 0.0,
         "transition_opcode_expert_routing": "opcode",
+        "transition_replay_mode": "disabled",
         "analytic_action_readout_ridge": 0.001,
         "analytic_action_readout_margin": 8.0,
         "max_gradient_norm": 0.5,
@@ -647,6 +659,48 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "wired_limit_gb": 28.0,
             "max_minutes": 60.0,
         }
+    if profile == "process_semantic_transition_canary":
+        process_steps = 384
+        return {
+            **common,
+            "window_tissue_mode": "controller_only",
+            "state_schema": "semantic_v2",
+            "task_source": "frontier_process",
+            "families": "coding,calibration,misleading_premise",
+            "task_depths": "5,9,10",
+            "train_depths": "1,3,5,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 64,
+            "holdout_per_cell": 12,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 3,
+            "process_family_batch_mode": "balanced_families",
+            "process_gradient_combiner": "mean",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "public_action_program": True,
+            "direct_transition_processor": True,
+            "direct_transition_curriculum": "progressive",
+            "direct_transition_weakest_register_weight": 0.25,
+            "transition_replay_mode": "disabled",
+            "state_teacher_forcing_probability": 0.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 32,
+            "checkpoint_every": 16,
+            "state_learning_rate": 0.0002,
+            "max_gradient_norm": 1.0,
+            "seed": 2026081505,
+            "init_seed": 2026081506,
+            "memory_fraction": 0.30,
+            "memory_limit_gb": 20.0,
+            "wired_limit_gb": 24.0,
+            "max_minutes": 90.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -797,6 +851,7 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "per_cell": "--per-cell",
         "holdout_per_cell": "--holdout-per-cell",
         "controller_rank": "--controller-rank",
+        "state_schema": "--state-schema",
         "lora_rank": "--lora-rank",
         "lora_targets": "--lora-targets",
         "state_weight": "--state-weight",
@@ -823,6 +878,7 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "transition_opcode_expert_routing": (
             "--transition-opcode-expert-routing"
         ),
+        "transition_replay_mode": "--transition-replay-mode",
         "direct_transition_curriculum": "--direct-transition-curriculum",
         "direct_transition_weakest_register_weight": (
             "--direct-transition-weakest-register-weight"
@@ -1030,6 +1086,41 @@ def _freeze_campaign(
             excluded_task_ids=tuple(task.task_id for task in train_tasks),
         )
     _validate_task_depth_admission(training, (*train_tasks, *holdout_tasks))
+    state_register_order = (
+        SEMANTIC_STATE_SLOT_NAMES
+        if training["state_schema"] == "semantic_v2"
+        else STATE_SLOT_NAMES
+    )
+    try:
+        for task in (*train_tasks, *holdout_tasks):
+            state_targets_from_trace(
+                task.transition_trace,
+                1,
+                state_slots=len(state_register_order),
+            )
+    except ValueError as exc:
+        raise UnifiedResidentPreparationError(
+            "training_state_schema_cannot_encode_frozen_tasks"
+        ) from exc
+    transition_identifiability = None
+    if training["state_schema"] == "semantic_v2":
+        transition_report = audit_public_transition_identifiability(
+            train_tasks,
+            holdout_tasks,
+        )
+        transition_admission = transition_report["admission"]
+        if not transition_admission["state_recurrent_transition_admitted"]:
+            _fail("semantic_state_recurrent_transition_not_identifiable")
+        transition_identifiability = {
+            "schema": transition_report["schema"],
+            "report_sha256": transition_report["report_sha256"],
+            "state_recurrent_transition_admitted": True,
+            "public_prefix_replay_admitted": bool(
+                transition_admission["public_prefix_replay_admitted"]
+            ),
+            "families": transition_admission["families"],
+            "claim_boundary": transition_report["claim_boundary"],
+        }
     random.Random(int(training["seed"])).shuffle(train_tasks)
     dataset_identity = freeze_source_dataset(
         inputs / SOURCE_DATASET_FILENAME,
@@ -1087,6 +1178,9 @@ def _freeze_campaign(
         },
         "heartbeat_key_sha256": hashlib.sha256(heartbeat_key).hexdigest(),
         "training": training,
+        "training_admission": {
+            "transition_identifiability": transition_identifiability,
+        },
         "training_args": training_args,
         "watchdog": {
             "poll_interval_s": 15.0,

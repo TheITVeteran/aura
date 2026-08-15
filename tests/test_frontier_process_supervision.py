@@ -30,7 +30,11 @@ from core.learning.recurrent_action_schema import (
     OP_FRONTIER_TRAVERSE,
     action_targets_from_program,
 )
-from core.learning.recurrent_state_schema import state_targets_from_trace
+from core.learning.recurrent_state_schema import (
+    SEMANTIC_STATE_SLOT_NAMES,
+    STATE_SLOT_NAMES,
+    state_targets_from_trace,
+)
 from tools.unified_intrinsic_tokenization_contract import (
     freeze_source_dataset,
     load_source_dataset,
@@ -86,12 +90,26 @@ def test_every_frontier_process_executes_exactly_without_its_teacher(
     source = generate_task(domain, seed=91_700 + difficulty, difficulty=difficulty)
     program = compile_frontier_process_supervision(source).program
     targets = action_targets_from_program(program, program.state_trace.depth)
-    controller = UnifiedRecurrentController(
-        UnifiedRecurrenceConfig(hidden_size=32, correction_rank=4)
+    state_width = (
+        len(SEMANTIC_STATE_SLOT_NAMES)
+        if len(program.state_trace.states[0]) > len(STATE_SLOT_NAMES)
+        else len(STATE_SLOT_NAMES)
     )
-    current = program.state_trace.states[0]
+    state_targets = state_targets_from_trace(
+        program.state_trace,
+        program.state_trace.depth,
+        state_slots=state_width,
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            state_slots=state_width,
+        )
+    )
+    current = state_targets.initial_values
     action_history = []
-    for step, expected in enumerate(program.state_trace.states[1:]):
+    for step, expected in enumerate(state_targets.values):
         state_probabilities = controller.exact_probabilities(
             current,
             slots=controller.config.state_slots,
@@ -159,7 +177,9 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     # never the running winner/score. Planning masks fields not consumed by the
     # executable transition.
     assert all(row[4:7] == (ACTION_NULL,) * 3 for row in novel_targets.values)
-    assert all(row[5:7] == (ACTION_NULL,) * 2 for row in audit_targets.values)
+    # Name rank is a public tie-break operand.  The private running winner and
+    # score remain absent; the final argument is still unused.
+    assert all(row[6] == ACTION_NULL for row in audit_targets.values)
     assert tuple(row[1] for row in audit_targets.values) == tuple(
         range(audit.state_trace.depth)
     )

@@ -505,6 +505,22 @@ def test_compositional_transition_canary_exercises_every_stage_quickly() -> None
     )
 
 
+def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
+    training = _profile_training("process_semantic_transition_canary")
+    arguments = _training_cli(training)
+
+    assert training["state_schema"] == "semantic_v2"
+    assert training["families"] == "coding,calibration,misleading_premise"
+    assert training["window_tissue_mode"] == "controller_only"
+    assert training["public_action_program"] is True
+    assert training["direct_transition_processor"] is True
+    assert training["transition_replay_mode"] == "disabled"
+    assert training["process_gradient_combiner"] == "mean"
+    assert "process_semantic_transition_canary" not in BOOTSTRAP_PROFILES
+    assert arguments[arguments.index("--state-schema") + 1] == "semantic_v2"
+    assert arguments[arguments.index("--transition-replay-mode") + 1] == "disabled"
+
+
 def test_compositional_profiles_share_runner_bootstrap_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

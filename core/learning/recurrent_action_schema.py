@@ -181,20 +181,19 @@ def _canonical_instruction(
         if step == 0:
             arguments[:] = action
     elif family == "frontier_misleading_premise" and field_names == (
-        "winner_index",
+        "row_index",
         "impact",
         "reliability",
         "cost",
-        "score_lo",
-        "score_hi",
+        "name_rank",
+        "reserved",
     ):
         opcode = OP_FRONTIER_AUDIT
         # Execute the public score formula in recurrent state.  The source
         # program contains the running winner and score as verification facts;
         # exposing those values as targets taught the decoder to predict the
         # answer instead of selecting an evidence row and its operands.
-        arguments[0] = step
-        arguments[1:4] = action[1:4]
+        arguments[:5] = action[:5]
     else:
         raise ValueError("structured action has no canonical micro-instruction")
     instruction = (opcode, *arguments, terminal)

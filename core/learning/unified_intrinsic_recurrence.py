@@ -62,6 +62,7 @@ from core.learning.recurrent_opcode_grounding import (
     OpcodeObservationContract,
 )
 from core.learning.recurrent_state_schema import (
+    SEMANTIC_STATE_SLOT_NAMES,
     STATE_CARDINALITY,
     STATE_SLOT_NAMES,
 )
@@ -262,7 +263,10 @@ class UnifiedRecurrenceConfig:
                 raise ValueError(f"{name} must be a positive integer")
         if self.correction_rank > self.hidden_size:
             raise ValueError("correction rank exceeds hidden size")
-        if self.state_slots != len(STATE_SLOT_NAMES):
+        if self.state_slots not in {
+            len(STATE_SLOT_NAMES),
+            len(SEMANTIC_STATE_SLOT_NAMES),
+        }:
             raise ValueError("state slot count differs from the canonical schema")
         if self.state_cardinality != STATE_CARDINALITY:
             raise ValueError("state cardinality differs from the canonical schema")
@@ -1462,7 +1466,8 @@ class UnifiedRecurrentController(nn.Module):
         self.answer_digit_gate_logit = mx.array(4.0, dtype=mx.float32)
         self.literal_grounding_logit = mx.array(-1.1, dtype=mx.float32)
         self.state_literal_copy_logit = mx.array(
-            (-4.0, 0.5, 0.5, 0.5, -4.0), dtype=mx.float32
+            (-4.0, *([0.5] * (config.state_slots - 2)), -4.0),
+            dtype=mx.float32,
         )
         self.initial_state_literal_copy_logit = mx.array(
             self.state_literal_copy_logit
@@ -2922,9 +2927,8 @@ class UnifiedRecurrentController(nn.Module):
         recognized = recognized & (opcode != ACTION_NULL)
 
         pc = mx.minimum(state[:, 0] + 1, self.config.state_cardinality - 1)
-        value0 = state[:, 1]
-        value1 = state[:, 2]
-        value2 = state[:, 3]
+        values = [state[:, index] for index in range(1, self.config.state_slots - 1)]
+        value0, value1, value2 = values[:3]
         arg0, arg1, arg2, arg3, arg4, arg5 = (
             arguments[:, index] for index in range(6)
         )
@@ -2963,6 +2967,7 @@ class UnifiedRecurrentController(nn.Module):
         value0 = mx.where(is_register & (arg0 == 0), register_result, value0)
         value1 = mx.where(is_register & (arg0 == 1), register_result, value1)
         value2 = mx.where(is_register & (arg0 == 2), register_result, value2)
+        values[:3] = (value0, value1, value2)
 
         # Broad process instructions use the same finite categorical machine as
         # the original executable curriculum.  Their private training traces
@@ -2973,9 +2978,9 @@ class UnifiedRecurrentController(nn.Module):
         next_checksum = (
             value2 + (state[:, 0] + 1) * selected_value
         ) % PROCESS_RADIX
-        value0 = mx.where(is_traverse, arg0, value0)
-        value1 = mx.where(is_traverse, mx.maximum(value1 - 1, 0), value1)
-        value2 = mx.where(is_traverse, next_checksum, value2)
+        values[0] = mx.where(is_traverse, arg0, values[0])
+        values[1] = mx.where(is_traverse, mx.maximum(values[1] - 1, 0), values[1])
+        values[2] = mx.where(is_traverse, next_checksum, values[2])
 
         is_enumerate = opcode == OP_FRONTIER_ENUMERATE
         if action_probability_history is not None:
@@ -3048,12 +3053,45 @@ class UnifiedRecurrentController(nn.Module):
             count_four, witness_four = evaluate_combinations(4)
             next_count = mx.where(choose == 3, count_three, count_four)
             next_witness = mx.where(choose == 3, witness_three, witness_four)
-            value0 = mx.where(is_enumerate, next_count % PROCESS_RADIX, value0)
-            value1 = mx.where(is_enumerate, next_count // PROCESS_RADIX, value1)
-            value2 = mx.where(is_enumerate, next_witness, value2)
+            values[0] = mx.where(is_enumerate, next_count % PROCESS_RADIX, values[0])
+            values[1] = mx.where(is_enumerate, next_count // PROCESS_RADIX, values[1])
+            values[2] = mx.where(is_enumerate, next_witness, values[2])
 
         is_simulate = opcode == OP_FRONTIER_SIMULATE
-        if action_probability_history is not None:
+        if len(values) >= 9:
+            same_case = values[0] == arg0
+            for name_index in range(4):
+                lo_index = 1 + (2 * name_index)
+                hi_index = lo_index + 1
+                encoded = mx.where(
+                    same_case,
+                    values[lo_index] + PROCESS_RADIX * values[hi_index],
+                    0,
+                )
+                balance = mx.where(
+                    (encoded % 2) == 0,
+                    encoded // 2,
+                    -((encoded + 1) // 2),
+                )
+                next_balance = balance + (arg2 - 3)
+                next_encoded = mx.where(
+                    next_balance >= 0,
+                    next_balance * 2,
+                    (-next_balance * 2) - 1,
+                )
+                selected_name = is_simulate & (arg1 == name_index)
+                values[lo_index] = mx.where(
+                    selected_name,
+                    next_encoded % PROCESS_RADIX,
+                    mx.where(is_simulate & ~same_case, 0, values[lo_index]),
+                )
+                values[hi_index] = mx.where(
+                    selected_name,
+                    next_encoded // PROCESS_RADIX,
+                    mx.where(is_simulate & ~same_case, 0, values[hi_index]),
+                )
+            values[0] = mx.where(is_simulate, arg0, values[0])
+        elif action_probability_history is not None:
             history = mx.stack(
                 [
                     mx.argmax(mx.stop_gradient(item), axis=-1).astype(mx.int32)
@@ -3076,11 +3114,17 @@ class UnifiedRecurrentController(nn.Module):
                 ),
                 axis=1,
             )
-            active_count = mx.sum(balances != 0, axis=1).astype(mx.int32)
-            pressure = mx.sum(mx.abs(balances), axis=1).astype(mx.int32)
-            value0 = mx.where(is_simulate, arg0, value0)
-            value1 = mx.where(is_simulate, active_count, value1)
-            value2 = mx.where(is_simulate, pressure, value2)
+            values[0] = mx.where(is_simulate, arg0, values[0])
+            values[1] = mx.where(
+                is_simulate,
+                mx.sum(balances != 0, axis=1).astype(mx.int32),
+                values[1],
+            )
+            values[2] = mx.where(
+                is_simulate,
+                mx.sum(mx.abs(balances), axis=1).astype(mx.int32),
+                values[2],
+            )
 
         is_infer = opcode == OP_FRONTIER_INFER
         inferred_role = mx.where(
@@ -3095,28 +3139,28 @@ class UnifiedRecurrentController(nn.Module):
         downstream_base = arg1 + PROCESS_RADIX * arg2
         inferred_prediction = downstream_base + arg3 * arg4 * arg5
         inferred_prediction_encoded = inferred_prediction * 2
-        value0 = mx.where(is_infer, inferred_role, value0)
-        value1 = mx.where(
+        values[0] = mx.where(is_infer, inferred_role, values[0])
+        values[1] = mx.where(
             is_infer & (arg0 == 3),
             inferred_prediction_encoded % PROCESS_RADIX,
-            value1,
+            values[1],
         )
-        value2 = mx.where(
+        values[2] = mx.where(
             is_infer & (arg0 == 3),
             inferred_prediction_encoded // PROCESS_RADIX,
-            value2,
+            values[2],
         )
 
         is_schedule = opcode == OP_FRONTIER_SCHEDULE
         reward = state[:, 2] + PROCESS_RADIX * state[:, 3]
         next_reward = mx.minimum(reward + arg3, MAX_PROCESS_INTEGER)
-        value0 = mx.where(
+        values[0] = mx.where(
             is_schedule,
-            mx.minimum(value0 + arg1, self.config.state_cardinality - 1),
-            value0,
+            mx.minimum(values[0] + arg1, self.config.state_cardinality - 1),
+            values[0],
         )
-        value1 = mx.where(is_schedule, next_reward % PROCESS_RADIX, value1)
-        value2 = mx.where(is_schedule, next_reward // PROCESS_RADIX, value2)
+        values[1] = mx.where(is_schedule, next_reward % PROCESS_RADIX, values[1])
+        values[2] = mx.where(is_schedule, next_reward // PROCESS_RADIX, values[2])
 
         is_calibrate = opcode == OP_FRONTIER_CALIBRATE
         if action_probability_history is not None:
@@ -3153,39 +3197,61 @@ class UnifiedRecurrentController(nn.Module):
                 mx.where(percentage < 70, 1, mx.where(percentage < 90, 2, 3)),
             )
             calibration_step = state[:, 0]
-            value0 = mx.where(
+            values[0] = mx.where(
                 is_calibrate & (calibration_step == 0),
                 reduced_num % PROCESS_RADIX,
-                value0,
+                values[0],
             )
-            value1 = mx.where(
+            values[1] = mx.where(
                 is_calibrate & (calibration_step == 0),
                 reduced_num // PROCESS_RADIX,
-                value1,
+                values[1],
             )
-            value0 = mx.where(
-                is_calibrate & (calibration_step >= 1),
-                reduced_den % PROCESS_RADIX,
-                value0,
-            )
-            value1 = mx.where(
-                is_calibrate & (calibration_step >= 1),
-                reduced_den // PROCESS_RADIX,
-                value1,
-            )
-            value2 = mx.where(
-                is_calibrate & (calibration_step == 1),
-                choose_h.astype(mx.int32) + 1,
-                value2,
-            )
-            value2 = mx.where(
-                is_calibrate & (calibration_step >= 2),
-                confidence_band.astype(mx.int32) + 1,
-                value2,
-            )
+            if len(values) >= 6:
+                values[2] = mx.where(
+                    is_calibrate & (calibration_step == 0),
+                    reduced_den % PROCESS_RADIX,
+                    values[2],
+                )
+                values[3] = mx.where(
+                    is_calibrate & (calibration_step == 0),
+                    reduced_den // PROCESS_RADIX,
+                    values[3],
+                )
+                values[4] = mx.where(
+                    is_calibrate & (calibration_step == 1),
+                    choose_h.astype(mx.int32) + 1,
+                    values[4],
+                )
+                values[5] = mx.where(
+                    is_calibrate & (calibration_step >= 2),
+                    confidence_band.astype(mx.int32) + 1,
+                    values[5],
+                )
+            else:
+                values[0] = mx.where(
+                    is_calibrate & (calibration_step >= 1),
+                    reduced_den % PROCESS_RADIX,
+                    values[0],
+                )
+                values[1] = mx.where(
+                    is_calibrate & (calibration_step >= 1),
+                    reduced_den // PROCESS_RADIX,
+                    values[1],
+                )
+                values[2] = mx.where(
+                    is_calibrate & (calibration_step == 1),
+                    choose_h.astype(mx.int32) + 1,
+                    values[2],
+                )
+                values[2] = mx.where(
+                    is_calibrate & (calibration_step >= 2),
+                    confidence_band.astype(mx.int32) + 1,
+                    values[2],
+                )
 
         is_audit = opcode == OP_FRONTIER_AUDIT
-        encoded_score = value1 + PROCESS_RADIX * value2
+        encoded_score = values[1] + PROCESS_RADIX * values[2]
         current_score = mx.where(
             (encoded_score % 2) == 0,
             encoded_score // 2,
@@ -3197,23 +3263,32 @@ class UnifiedRecurrentController(nn.Module):
             candidate_score * 2,
             (-candidate_score * 2) - 1,
         )
-        candidate_wins = (state[:, 0] == 0) | (candidate_score > current_score)
-        value0 = mx.where(
+        candidate_wins = (
+            (values[4] == 0)
+            | (candidate_score > current_score)
+            | ((candidate_score == current_score) & (arg4 < values[3]))
+            if len(values) >= 5
+            else (state[:, 0] == 0) | (candidate_score > current_score)
+        )
+        values[0] = mx.where(
             is_audit & candidate_wins,
             arg0,
-            value0,
+            values[0],
         )
-        value1 = mx.where(
+        values[1] = mx.where(
             is_audit & candidate_wins,
             candidate_encoded % PROCESS_RADIX,
-            value1,
+            values[1],
         )
-        value2 = mx.where(
+        values[2] = mx.where(
             is_audit & candidate_wins,
             candidate_encoded // PROCESS_RADIX,
-            value2,
+            values[2],
         )
-        next_values = mx.stack((pc, value0, value1, value2, terminal), axis=1)
+        if len(values) >= 5:
+            values[3] = mx.where(is_audit & candidate_wins, arg4, values[3])
+            values[4] = mx.where(is_audit, 1, values[4])
+        next_values = mx.stack((pc, *values, terminal), axis=1)
         categories = mx.arange(self.config.state_cardinality)[None, None, :]
         exact = (next_values[..., None] == categories).astype(mx.float32)
         return mx.log(mx.maximum(exact, 1e-6)), recognized

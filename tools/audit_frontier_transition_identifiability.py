@@ -98,6 +98,12 @@ def main() -> int:
         "full_prefix_ambiguities": report["audit"]["overall"][
             "state_full_public_prefix"
         ]["ambiguous_keys"],
+        "state_recurrent_transition_admitted": report["admission"][
+            "state_recurrent_transition_admitted"
+        ],
+        "public_prefix_replay_admitted": report["admission"][
+            "public_prefix_replay_admitted"
+        ],
         "admitted": report["admission"]["admitted"],
     }
     print(json.dumps(summary, sort_keys=True))

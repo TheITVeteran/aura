@@ -246,7 +246,17 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
     if not isinstance(cases, list) or len(cases) != len(returns):
         raise ValueError("frontier coding cases are invalid")
     names = sorted({event[0] for case in cases for event in case})
-    states = [(0, 0, 0, 0, 0)]
+    if len(names) > 4:
+        raise ValueError("frontier coding process exceeds its four balance registers")
+
+    def balance_registers(values: dict[str, int]) -> tuple[int, ...]:
+        encoded: list[int] = []
+        for name in names:
+            encoded.extend(_signed_digits(values.get(name, 0)))
+        encoded.extend((0, 0) * (4 - len(names)))
+        return tuple(encoded)
+
+    states = [(0, 0, *balance_registers({}), 0)]
     actions: list[tuple[int, ...]] = []
     balances: dict[str, int] = {}
     step = 0
@@ -273,7 +283,7 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
                     int(event_index + 1 == len(case)),
                 )
             )
-            states.append((step, case_index, len(balances), pressure, 0))
+            states.append((step, case_index, *balance_registers(balances), 0))
         expected_return = returns[case_index]
         expected_state = [[name, balances[name]] for name in sorted(balances)]
         if expected_return != {"state": expected_state, "pressure": pressures}:
@@ -281,7 +291,19 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
     states[-1] = (*states[-1][:-1], 1)
     return _program(
         family="frontier_coding",
-        field_names=("pc", "case_index", "active_count", "pressure", "done"),
+        field_names=(
+            "pc",
+            "case_index",
+            "balance0_lo",
+            "balance0_hi",
+            "balance1_lo",
+            "balance1_hi",
+            "balance2_lo",
+            "balance2_hi",
+            "balance3_lo",
+            "balance3_hi",
+            "done",
+        ),
         states=states,
         action_field_names=(
             "case_index",
@@ -436,14 +458,23 @@ def _calibration(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
         (0, 0, 0, 0, 0, 0),
     ]
     states = [
-        (0, 0, 0, 0, 0),
-        (1, num_lo, num_hi, 0, 0),
-        (2, den_lo, den_hi, choice + 1, 0),
-        (3, den_lo, den_hi, band + 1, 1),
+        (0, 0, 0, 0, 0, 0, 0, 0),
+        (1, num_lo, num_hi, den_lo, den_hi, 0, 0, 0),
+        (2, num_lo, num_hi, den_lo, den_hi, choice + 1, 0, 0),
+        (3, num_lo, num_hi, den_lo, den_hi, choice + 1, band + 1, 1),
     ]
     return _program(
         family="frontier_calibration",
-        field_names=("pc", "value_lo", "value_hi", "decision", "done"),
+        field_names=(
+            "pc",
+            "numerator_lo",
+            "numerator_hi",
+            "denominator_lo",
+            "denominator_hi",
+            "choice",
+            "confidence_band",
+            "done",
+        ),
         states=states,
         action_field_names=(
             "prior_numerator",
@@ -465,8 +496,9 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
     if not isinstance(rows, list) or not rows:
         raise ValueError("frontier premise rows are invalid")
     best_index = 0
+    names = sorted(row["name"] for row in rows)
     best_score = -10_000
-    states = [(0, 0, 0, 0, 0)]
+    states = [(0, 0, 0, 0, 0, 0, 0)]
     actions: list[tuple[int, ...]] = []
     for index, row in enumerate(rows):
         score = row["impact"] * row["reliability"] - row["cost"]
@@ -477,15 +509,25 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
         best_lo, best_hi = _signed_digits(best_score)
         actions.append(
             (
-                best_index,
+                index,
                 row["impact"],
                 row["reliability"],
                 row["cost"],
-                best_lo,
-                best_hi,
+                names.index(row["name"]),
+                0,
             )
         )
-        states.append((index + 1, best_index, best_lo, best_hi, int(index + 1 == len(rows))))
+        states.append(
+            (
+                index + 1,
+                best_index,
+                best_lo,
+                best_hi,
+                names.index(rows[best_index]["name"]),
+                1,
+                int(index + 1 == len(rows)),
+            )
+        )
     winner = rows[best_index]["name"]
     if winner != expected.get("actual_winner") or best_score != expected.get("actual_score"):
         raise ValueError("frontier premise process differs from verified answer")
@@ -493,15 +535,23 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
         raise ValueError("frontier premise validity differs from verified answer")
     return _program(
         family="frontier_misleading_premise",
-        field_names=("pc", "winner_index", "score_lo", "score_hi", "done"),
+        field_names=(
+            "pc",
+            "winner_index",
+            "score_lo",
+            "score_hi",
+            "winner_name_rank",
+            "has_winner",
+            "done",
+        ),
         states=states,
         action_field_names=(
-            "winner_index",
+            "row_index",
             "impact",
             "reliability",
             "cost",
-            "score_lo",
-            "score_hi",
+            "name_rank",
+            "reserved",
         ),
         actions=actions,
     )

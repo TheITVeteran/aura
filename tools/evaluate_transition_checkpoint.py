@@ -68,6 +68,7 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
         UnifiedRecurrenceConfig(
             hidden_size=int(memory_input.shape[1]),
             correction_rank=int(identity["controller_rank"]),
+            state_slots=int(identity.get("state_slots", 5)),
             minimum_iterations=1,
             initialization_seed=int(identity["init_seed"]),
         )
@@ -146,7 +147,11 @@ def _evaluate_task(
     program = task.transition_program
     if trace is None or program is None:
         raise ValueError("transition evaluation task has no process evidence")
-    targets = state_targets_from_trace(trace, depth)
+    targets = state_targets_from_trace(
+        trace,
+        depth,
+        state_slots=controller.config.state_slots,
+    )
     actions = action_targets_from_program(program, depth).values
     state = controller.exact_probabilities(
         targets.initial_values,
@@ -228,7 +233,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         raise ValueError("transition checkpoint evaluation has no rows")
     active = tuple(
         "active_state_exact_accuracy active_value_exact_accuracy "
-        "active_trajectory_exact first_error_fraction"
+        "active_trajectory_exact final_active_state_exact first_error_fraction"
     .split())
     report = {name: sum(float(row[name]) for row in rows) / len(rows) for name in active}
     report["first_error_histogram"] = dict(
@@ -255,6 +260,47 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if counts["wrong_predecessors"]
         else None
     )
+    recovery_rows = [row for row in rows if row["recovery_observable"]]
+    report["recovery_observation_count"] = len(recovery_rows)
+    report["recovered_after_first_error"] = (
+        sum(bool(row["recovered_after_first_error"]) for row in recovery_rows)
+        / len(recovery_rows)
+        if recovery_rows
+        else None
+    )
+    report["sustained_recovery_after_first_error"] = (
+        sum(
+            bool(row["sustained_recovery_after_first_error"])
+            for row in recovery_rows
+        )
+        / len(recovery_rows)
+        if recovery_rows
+        else None
+    )
+    terminal_rows = [row for row in rows if row["terminal_stability_observable"]]
+    report["terminal_stability_observation_count"] = len(terminal_rows)
+    report["terminal_correct_stability"] = (
+        sum(bool(row["terminal_correct_stable"]) for row in terminal_rows)
+        / len(terminal_rows)
+        if terminal_rows
+        else None
+    )
+    report["terminal_self_stability"] = (
+        sum(bool(row["terminal_self_stable"]) for row in terminal_rows)
+        / len(terminal_rows)
+        if terminal_rows
+        else None
+    )
+    register_names = tuple(rows[0]["per_register_accuracy"])
+    register_accuracy = {}
+    for name in register_names:
+        observed = [
+            float(row["per_register_accuracy"][name])
+            for row in rows
+            if row["per_register_accuracy"][name] is not None
+        ]
+        register_accuracy[name] = sum(observed) / len(observed) if observed else None
+    report["per_register_accuracy"] = register_accuracy
     return report
 
 

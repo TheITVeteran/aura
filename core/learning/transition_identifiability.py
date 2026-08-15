@@ -14,7 +14,7 @@ from core.learning.recurrent_action_schema import action_targets_from_program
 from core.learning.recurrent_state_schema import state_targets_from_trace
 
 TRANSITION_IDENTIFIABILITY_SCHEMA: Final = (
-    "aura.unified_intrinsic.transition_identifiability.v1"
+    "aura.unified_intrinsic.transition_identifiability.v2"
 )
 
 
@@ -191,12 +191,45 @@ def audit_public_transition_identifiability(
     }
     train_local = {(row.family, row.state, row.action) for row in train}
     holdout_local = {(row.family, row.state, row.action) for row in holdout}
+    train_local_targets: dict[
+        tuple[str, tuple[int, ...], tuple[int, ...]], set[tuple[int, ...]]
+    ] = defaultdict(set)
+    holdout_local_targets: dict[
+        tuple[str, tuple[int, ...], tuple[int, ...]], set[tuple[int, ...]]
+    ] = defaultdict(set)
+    for row in train:
+        train_local_targets[(row.family, row.state, row.action)].add(row.next_state)
+    for row in holdout:
+        holdout_local_targets[(row.family, row.state, row.action)].add(row.next_state)
     full_overlap = set(train_full) & set(holdout_full)
     overlap_disagreements = sum(
         train_full[key] != holdout_full[key] for key in full_overlap
     )
+    local_overlap = set(train_local_targets) & set(holdout_local_targets)
+    local_overlap_disagreements = sum(
+        train_local_targets[key].isdisjoint(holdout_local_targets[key])
+        for key in local_overlap
+    )
     audit = _audit_cohort(combined)
+    local_stats = audit["overall"]["state_current_action"]
     full_stats = audit["overall"]["state_full_public_prefix"]
+    family_admission = {
+        family: {
+            "state_recurrent_transition_admitted": (
+                values["state_current_action"]["ambiguous_keys"] == 0
+            ),
+            "public_prefix_replay_admitted": (
+                values["state_full_public_prefix"]["ambiguous_keys"] == 0
+            ),
+        }
+        for family, values in audit["families"].items()
+    }
+    state_recurrent_transition_admitted = (
+        local_stats["ambiguous_keys"] == 0 and local_overlap_disagreements == 0
+    )
+    public_prefix_replay_admitted = (
+        full_stats["ambiguous_keys"] == 0 and overlap_disagreements == 0
+    )
     body = {
         "schema": TRANSITION_IDENTIFIABILITY_SCHEMA,
         "scope": "bounded_empirical_public_transition_contract",
@@ -206,6 +239,15 @@ def audit_public_transition_identifiability(
             "general_reasoning_gain",
             "wow_signal",
         ],
+        "claim_boundary": {
+            "state_current_action": (
+                "bounded recurrent transition; the committed state must be load-bearing"
+            ),
+            "state_full_public_prefix": (
+                "bounded public-prefix replay; this may recompute from action history and "
+                "does not establish recurrent-state computation"
+            ),
+        },
         "train_tasks": len(train_tasks),
         "holdout_tasks": len(holdout_tasks),
         "train_observations": len(train),
@@ -213,17 +255,30 @@ def audit_public_transition_identifiability(
         "audit": audit,
         "train_holdout_overlap": {
             "state_current_action_keys": len(train_local & holdout_local),
+            "state_current_action_target_disagreements": local_overlap_disagreements,
             "state_full_public_prefix_keys": len(full_overlap),
             "full_prefix_target_disagreements": overlap_disagreements,
         },
         "admission": {
+            "families": family_admission,
+            "state_current_action_has_no_observed_ambiguity": (
+                local_stats["ambiguous_keys"] == 0
+            ),
+            "overlapping_state_current_action_targets_agree": (
+                local_overlap_disagreements == 0
+            ),
             "full_public_prefix_has_no_observed_ambiguity": (
                 full_stats["ambiguous_keys"] == 0
             ),
             "overlapping_full_prefix_targets_agree": overlap_disagreements == 0,
-            "admitted": (
-                full_stats["ambiguous_keys"] == 0 and overlap_disagreements == 0
+            "state_recurrent_transition_admitted": (
+                state_recurrent_transition_admitted
             ),
+            "public_prefix_replay_admitted": public_prefix_replay_admitted,
+            # The unqualified admission is deliberately the stronger contract.
+            # A causal action-prefix replay is useful, but it is not evidence
+            # that the recurrent state itself implements the transition.
+            "admitted": state_recurrent_transition_admitted,
         },
     }
     return {**body, "report_sha256": _canonical_sha256(body)}

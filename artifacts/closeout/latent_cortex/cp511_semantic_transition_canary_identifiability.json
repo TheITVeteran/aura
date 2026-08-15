@@ -1,0 +1,450 @@
+{
+  "payload": {
+    "admission": {
+      "admitted": true,
+      "families": {
+        "frontier_calibration": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        },
+        "frontier_coding": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        },
+        "frontier_misleading_premise": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        }
+      },
+      "full_public_prefix_has_no_observed_ambiguity": true,
+      "overlapping_full_prefix_targets_agree": true,
+      "overlapping_state_current_action_targets_agree": true,
+      "public_prefix_replay_admitted": true,
+      "state_current_action_has_no_observed_ambiguity": true,
+      "state_recurrent_transition_admitted": true
+    },
+    "artifact_sha256": "c56ba0f2d90a9d76a26b100d50432e21f5b6cde90775a9b3ff12ed3911878835",
+    "audit": {
+      "families": {
+        "frontier_calibration": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 0,
+            "unique_keys": 402
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 52,
+            "unique_keys": 318
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 0,
+            "unique_keys": 402
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 52,
+              "unique_keys": 318
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 26,
+              "unique_keys": 360
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 0,
+              "unique_keys": 402
+            }
+          }
+        },
+        "frontier_coding": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 36,
+            "unique_keys": 1218
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 60,
+            "unique_keys": 1194
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 36,
+            "unique_keys": 1218
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 60,
+              "unique_keys": 1194
+            },
+            "10": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 54,
+              "unique_keys": 1200
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 37,
+              "unique_keys": 1217
+            },
+            "4": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "5": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "6": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "7": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "8": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            },
+            "9": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 36,
+              "unique_keys": 1218
+            }
+          }
+        },
+        "frontier_misleading_premise": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 13,
+            "unique_keys": 656
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 14,
+            "unique_keys": 655
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 13,
+            "unique_keys": 656
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 14,
+              "unique_keys": 655
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 13,
+              "unique_keys": 656
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 13,
+              "unique_keys": 656
+            },
+            "4": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 13,
+              "unique_keys": 656
+            },
+            "5": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 13,
+              "unique_keys": 656
+            }
+          }
+        }
+      },
+      "overall": {
+        "public_prefix_only": {
+          "ambiguous_keys": 0,
+          "ambiguous_observations": 0,
+          "collision_examples": [],
+          "empirical_deterministic_accuracy_ceiling": 1.0,
+          "observations": 2412,
+          "reused_keys": 49,
+          "unique_keys": 2276
+        },
+        "state_current_action": {
+          "ambiguous_keys": 0,
+          "ambiguous_observations": 0,
+          "collision_examples": [],
+          "empirical_deterministic_accuracy_ceiling": 1.0,
+          "observations": 2412,
+          "reused_keys": 126,
+          "unique_keys": 2167
+        },
+        "state_full_public_prefix": {
+          "ambiguous_keys": 0,
+          "ambiguous_observations": 0,
+          "collision_examples": [],
+          "empirical_deterministic_accuracy_ceiling": 1.0,
+          "observations": 2412,
+          "reused_keys": 49,
+          "unique_keys": 2276
+        },
+        "state_suffix_curve": {
+          "1": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 126,
+            "unique_keys": 2167
+          },
+          "10": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "2": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 93,
+            "unique_keys": 2216
+          },
+          "3": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 50,
+            "unique_keys": 2275
+          },
+          "4": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "5": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "6": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "7": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "8": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          },
+          "9": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 2412,
+            "reused_keys": 49,
+            "unique_keys": 2276
+          }
+        }
+      }
+    },
+    "claim_boundary": {
+      "state_current_action": "bounded recurrent transition; the committed state must be load-bearing",
+      "state_full_public_prefix": "bounded public-prefix replay; this may recompute from action history and does not establish recurrent-state computation"
+    },
+    "claim_not_supported": [
+      "universal_markov_proof",
+      "learned_history_memory_is_lossless",
+      "general_reasoning_gain",
+      "wow_signal"
+    ],
+    "generation": {
+      "difficulties": [
+        1
+      ],
+      "domains": [
+        "coding",
+        "calibration",
+        "misleading_premise"
+      ],
+      "holdout_per_cell": 6,
+      "holdout_seed_offset": 9973,
+      "registry_version": "2026.08.06.1",
+      "seed": 2026081502,
+      "train_per_cell": 128,
+      "train_prompt_overlap": 0
+    },
+    "holdout_observations": 108,
+    "holdout_tasks": 18,
+    "report_sha256": "e462b9799dfcc5e2f9db3739acb09fe7d7f944653aa5fa5ba9194265343c1555",
+    "schema": "aura.unified_intrinsic.transition_identifiability.v2",
+    "scope": "bounded_empirical_public_transition_contract",
+    "train_holdout_overlap": {
+      "full_prefix_target_disagreements": 0,
+      "state_current_action_keys": 12,
+      "state_current_action_target_disagreements": 0,
+      "state_full_public_prefix_keys": 7
+    },
+    "train_observations": 2304,
+    "train_tasks": 384
+  },
+  "schema": "aura.unified_intrinsic.transition_identifiability.v2",
+  "schema_name": "aura.unified_intrinsic.transition_identifiability.v2",
+  "schema_version": 1
+}

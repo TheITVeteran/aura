@@ -49954,3 +49954,42 @@ objective, trainer, migration and evaluator contracts are `196 passed`;
 repository smoke is `104 passed`. This is an implemented mechanism, not a gain
 claim. A bounded fresh replay canary and matched lesions remain required before
 decoded-answer or resident-32B work resumes.
+
+## Checkpoint 2026-08-15-511: Make The Recurrent State Sufficient Before Training It
+
+The CP510 public-prefix reader exposed a more basic defect: the five-slot local
+state could not determine the verified next state for calibration, coding or
+mathematics. It could reconstruct sampled targets from the complete action
+history, but that made replay load-bearing and left the recurrent state itself
+non-causal. Premise auditing also omitted the identity needed to reproduce its
+declared lexical tie rule.
+
+The state contract is now versioned. Existing five-slot checkpoints retain
+their original geometry. New semantic campaigns use eleven slots: program
+counter, nine declared values and completion. Calibration retains its numerator
+and denominator; coding retains case identity and four signed balances; premise
+actions carry public row/name ranks and state retains incumbent identity. The
+controller, codebook grounding, process tape, objectives, metrics, checkpoint
+loader, bootstrap receipts and campaign identity all derive their geometry from
+that frozen schema. An incompatible parent cannot silently bootstrap it.
+
+The bounded identifiability audit now has two separate admissions. Local
+state-plus-current-action admission measures recurrent closure. Full public
+prefix admission measures replay closure. On 384 train and 18 disjoint holdout
+tasks, coding, calibration and premise have zero local ambiguities and are
+admitted for the fresh semantic canary. Adding mathematics produces 87 local
+ambiguities, so the four-family machine remains rejected even though public
+prefix replay is collision-free on the sampled cohort. Mathematics stays out
+until it has addressable work memory or a different bounded compiler.
+
+Campaign preparation recomputes the local-state admission from its own frozen
+tasks and refuses to launch on drift. The new semantic canary starts fresh,
+keeps replay disabled, uses mean family gradients after CP509 refuted PCGrad as
+the primary repair, and excludes mathematics by construction. The frozen
+evaluator now aggregates final active-state exactness, recovery, sustained
+recovery, terminal correctness, terminal self-stability and every semantic
+register. The consolidated external-review ledger is frozen beside the two
+identifiability artifacts; it distinguishes implemented, open, refuted and
+unsupported recommendations. Targeted trainer, controller, evaluator, campaign
+and schema contracts are `313 passed`; repository smoke is `104 passed`. This
+is a schema and launchability result, not a measured reasoning gain.

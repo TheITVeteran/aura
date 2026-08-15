@@ -55,9 +55,14 @@ from core.learning.recurrent_opcode_grounding import (  # noqa: E402
     tokenizer_opcode_contract,
 )
 from core.learning.recurrent_state_schema import (  # noqa: E402
-    STATE_SLOT_LOSS_WEIGHTS,
+    SEMANTIC_STATE_SLOT_NAMES,
     STATE_SLOT_NAMES,
+    state_slot_loss_weights,
+    state_slot_names,
     state_targets_from_trace,
+)
+from core.learning.transition_identifiability import (  # noqa: E402
+    audit_public_transition_identifiability,
 )
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
@@ -140,6 +145,7 @@ TRAINING_SOURCE_FILES = (
     "core/learning/recurrent_literal_grounding.py",
     "core/learning/recurrent_opcode_grounding.py",
     "core/learning/recurrent_state_schema.py",
+    "core/learning/transition_identifiability.py",
     "core/learning/unified_intrinsic_objective.py",
     "core/learning/unified_intrinsic_recurrence.py",
     "core/runtime/atomic_writer.py",
@@ -725,9 +731,10 @@ def _ground_state_value_embeddings(
             raise RuntimeError("grounded semantic label encoded to no tokens")
         return [int(token_id) for token_id in token_ids]
 
+    register_names = state_slot_names(controller.config.state_slots)
     labels = [
         f"Internal state {slot_name}={value}"
-        for slot_name in STATE_SLOT_NAMES
+        for slot_name in register_names
         for value in range(controller.config.state_cardinality)
     ]
     labels.extend(
@@ -771,7 +778,7 @@ def _ground_state_value_embeddings(
         cursor += count
         return mx.stack(selected).reshape(row_count, cardinality, -1)
 
-    grounded = take((len(STATE_SLOT_NAMES), controller.config.state_cardinality))
+    grounded = take((len(register_names), controller.config.state_cardinality))
     grounded_actions = take((len(ACTION_SLOT_NAMES), controller.config.action_cardinality))
     literal_count = LITERAL_MAX_VALUE + 1
     grounded_literals = mx.stack(concrete_rows[cursor : cursor + literal_count])
@@ -1911,7 +1918,11 @@ def _fit_family_action_readout(
             expert = int(opcodes[0]) - OP_FRONTIER_TRAVERSE
             if not 0 <= expert < expert_count:
                 raise RuntimeError("analytic action readout expert route differs")
-            state_targets = state_targets_from_trace(task.transition_trace, depth)
+            state_targets = state_targets_from_trace(
+                task.transition_trace,
+                depth,
+                state_slots=controller.config.state_slots,
+            )
             action_targets = action_targets_from_program(task.transition_program, depth)
             workspaces: list[Any] = []
             kernel_features: list[Any] = []
@@ -2593,7 +2604,14 @@ def _process_evidence_from_capture(
 ) -> dict[str, Any]:
     """Bind autonomous process correctness to the private exact trace authority."""
 
-    state_targets = state_targets_from_trace(task.transition_trace, depth)
+    state_logits = tuple(capture["state_logits"])
+    if not state_logits:
+        raise RuntimeError("autonomous process capture emitted no state decisions")
+    state_targets = state_targets_from_trace(
+        task.transition_trace,
+        depth,
+        state_slots=int(state_logits[0].shape[-2]),
+    )
     action_targets = action_targets_from_program(task.transition_program, depth)
     initial = _masked_process_decisions(
         (capture["initial_state_logits"],),
@@ -2673,7 +2691,11 @@ def _evaluate_answer_bridge_diagnostic(
                 process_capture=process_capture,
             )
             process = _process_evidence_from_capture(task, depth, process_capture)
-            state_targets = state_targets_from_trace(task.transition_trace, depth)
+            state_targets = state_targets_from_trace(
+                task.transition_trace,
+                depth,
+                state_slots=bundle.controller.config.state_slots,
+            )
             action_targets = action_targets_from_program(task.transition_program, depth)
             oracle = _generate_student_rollin(
                 bundle,
@@ -3531,6 +3553,7 @@ def _bootstrap_bundle_from_checkpoint(
         if name.startswith("bundle.")
     }
     child_values = _trainable(bundle)
+    bootstrap_state_register_order = state_slot_names(bundle.controller.config.state_slots)
     expected = set(child_values)
     unexpected_tensors = sorted(set(bundle_values) - expected)
     if unexpected_tensors:
@@ -3587,6 +3610,7 @@ def _bootstrap_bundle_from_checkpoint(
         _merge_bootstrap_transition_memory_extension(
             bundle_values,
             child_values,
+            state_register_order=bootstrap_state_register_order,
         )
     )
     bundle_values, transition_tape_reader_extension = (
@@ -3599,12 +3623,14 @@ def _bootstrap_bundle_from_checkpoint(
         _merge_bootstrap_transition_processor_extension(
             bundle_values,
             child_values,
+            state_register_order=bootstrap_state_register_order,
         )
     )
     bundle_values, transition_opcode_expert_extension = (
         _merge_bootstrap_transition_opcode_expert_extension(
             bundle_values,
             child_values,
+            state_register_order=bootstrap_state_register_order,
         )
     )
     bundle_values, transition_replay_extension = (
@@ -4052,6 +4078,8 @@ def _merge_bootstrap_action_literal_binding_extension(
 def _merge_bootstrap_transition_memory_extension(
     parent_values: dict[str, Any],
     child_values: dict[str, Any],
+    *,
+    state_register_order: tuple[str, ...] = STATE_SLOT_NAMES,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Attach typed gated transition memory as an exact parent no-op."""
 
@@ -4091,7 +4119,7 @@ def _merge_bootstrap_transition_memory_extension(
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
         "field_order": list(ACTION_SLOT_NAMES),
-        "state_register_order": list(STATE_SLOT_NAMES),
+        "state_register_order": list(state_register_order),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
         "new_tensor_names": sorted(expected),
@@ -4102,6 +4130,8 @@ def _merge_bootstrap_transition_memory_extension(
 def _merge_bootstrap_transition_processor_extension(
     parent_values: dict[str, Any],
     child_values: dict[str, Any],
+    *,
+    state_register_order: tuple[str, ...] = STATE_SLOT_NAMES,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Attach the typed state/action processor as an exact parent no-op."""
 
@@ -4141,7 +4171,7 @@ def _merge_bootstrap_transition_processor_extension(
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
         "category_identity": "exact_one_hot_or_deterministic_fourier",
-        "state_register_order": list(STATE_SLOT_NAMES),
+        "state_register_order": list(state_register_order),
         "action_field_order": list(ACTION_SLOT_NAMES),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
@@ -4204,6 +4234,8 @@ def _merge_bootstrap_transition_tape_reader_extension(
 def _merge_bootstrap_transition_opcode_expert_extension(
     parent_values: dict[str, Any],
     child_values: dict[str, Any],
+    *,
+    state_register_order: tuple[str, ...] = STATE_SLOT_NAMES,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Attach operation-isolated transition heads as an exact parent no-op."""
 
@@ -4259,7 +4291,7 @@ def _merge_bootstrap_transition_opcode_expert_extension(
         "behavior_before_training_preserved": True,
         "matched_capacity_control": "uniform_public_opcode_router",
         "opcode_order": list(range(ACTION_CARDINALITY)),
-        "state_register_order": list(STATE_SLOT_NAMES),
+        "state_register_order": list(state_register_order),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
         "new_tensor_names": sorted(expected),
@@ -4430,7 +4462,11 @@ def _evaluate_depth(
     if trace is None:
         return {"loss": loss}
 
-    targets = state_targets_from_trace(trace, depth)
+    targets = state_targets_from_trace(
+        trace,
+        depth,
+        state_slots=bundle.controller.config.state_slots,
+    )
     _state_loss, state_accuracy, _step_accuracy = structured_state_loss(
         bundle.controller,
         recurrent_states,
@@ -4544,11 +4580,12 @@ def _evaluate(
         )
     }
     first_error_histograms = {depth: {} for depth in depths}
+    register_names = state_slot_names(bundle.controller.config.state_slots)
     register_totals = {
-        name: {depth: 0.0 for depth in depths} for name in STATE_SLOT_NAMES
+        name: {depth: 0.0 for depth in depths} for name in register_names
     }
     register_counts = {
-        name: {depth: 0 for depth in depths} for name in STATE_SLOT_NAMES
+        name: {depth: 0 for depth in depths} for name in register_names
     }
     diagnostic_depth = max(depths)
     family_process_totals: dict[str, dict[str, float | int]] = {}
@@ -4767,7 +4804,7 @@ def _evaluate(
             )
             for depth in depths
         }
-        for name in STATE_SLOT_NAMES
+        for name in register_names
     }
     process_by_family_at_max_depth = {
         family: {
@@ -4907,6 +4944,15 @@ def main() -> int:
         ),
     )
     parser.add_argument("--controller-rank", type=int, default=16)
+    parser.add_argument(
+        "--state-schema",
+        choices=("legacy_v1", "semantic_v2"),
+        default="legacy_v1",
+        help=(
+            "frozen recurrent-state topology; semantic_v2 carries the declared "
+            "sufficient registers for bounded frontier transition families"
+        ),
+    )
     parser.add_argument("--state-weight", type=float, default=2.0)
     parser.add_argument("--stutter-weight", type=float, default=0.1)
     parser.add_argument("--depth-basis-size", type=int, default=4)
@@ -5624,6 +5670,26 @@ def main() -> int:
             "action-supervised curriculum contains tasks without exact programs: "
             + ",".join(missing_programs[:5])
         )
+    requested_state_register_order = (
+        SEMANTIC_STATE_SLOT_NAMES
+        if args.state_schema == "semantic_v2"
+        else STATE_SLOT_NAMES
+    )
+    for task in train_tasks + holdout:
+        state_targets_from_trace(
+            task.transition_trace,
+            1,
+            state_slots=len(requested_state_register_order),
+        )
+    if args.state_schema == "semantic_v2" and args.task_source == "frontier_process":
+        transition_identifiability = audit_public_transition_identifiability(
+            train_tasks,
+            holdout,
+        )
+        if not transition_identifiability["admission"][
+            "state_recurrent_transition_admitted"
+        ]:
+            raise RuntimeError("semantic recurrent transition is not identifiable")
 
     dataset_identity = (
         _freeze_dataset(out_dir, train_tasks, holdout)
@@ -5710,6 +5776,8 @@ def main() -> int:
         )
         training_families = sorted({str(task.family) for task in train_tasks})
         hidden_size = _residual_hidden_size(model)
+        state_register_order = requested_state_register_order
+        register_loss_weights = state_slot_loss_weights(len(state_register_order))
         answer_bridge_supervision = {
             "schema": "aura.unified_intrinsic.answer_bridge_supervision.v6",
             "semantic_cross_entropy_families": training_families,
@@ -5744,7 +5812,9 @@ def main() -> int:
                     "post_state",
                     "state_delta",
                 ],
-                "entries_per_live_step": (len(ACTION_SLOT_NAMES) + 3 * len(STATE_SLOT_NAMES)),
+                "entries_per_live_step": (
+                    len(ACTION_SLOT_NAMES) + 3 * len(state_register_order)
+                ),
                 "terminal_stutter_entries_masked": True,
                 "next_action_reads_complete_prior_tape": True,
                 "private_answer_exposed": False,
@@ -5762,6 +5832,7 @@ def main() -> int:
             UnifiedRecurrenceConfig(
                 hidden_size=hidden_size,
                 correction_rank=args.controller_rank,
+                state_slots=len(state_register_order),
                 minimum_iterations=1,
                 initialization_seed=args.init_seed,
                 literal_digit_token_ids=literal_digit_ids,
@@ -5810,7 +5881,7 @@ def main() -> int:
                 "enabled": args.direct_transition_processor,
                 "objective": "verified_state_public_action_history_to_next_state",
                 "curriculum": args.direct_transition_curriculum,
-                "register_loss_weights": list(STATE_SLOT_LOSS_WEIGHTS),
+                "register_loss_weights": list(register_loss_weights),
                 "weakest_register_weight": (
                     args.direct_transition_weakest_register_weight
                 ),
@@ -5885,6 +5956,9 @@ def main() -> int:
             "window_tissue_mode": args.window_tissue_mode,
             "lora_rank": args.lora_rank,
             "controller_rank": args.controller_rank,
+            "state_schema": args.state_schema,
+            "state_slots": len(state_register_order),
+            "state_register_order": list(state_register_order),
             "state_weight": args.state_weight,
             "stutter_weight": args.stutter_weight,
             "state_codebook": ("frozen_prelude_state_action_and_tokenizer_literal_labels"),
@@ -6167,6 +6241,7 @@ def main() -> int:
                         bridge_state_targets = state_targets_from_trace(
                             task.transition_trace,
                             semantic_depth,
+                            state_slots=controller.config.state_slots,
                         )
                         bridge_action_targets = action_targets_from_program(
                             task.transition_program,

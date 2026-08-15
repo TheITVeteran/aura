@@ -67,12 +67,12 @@ _FIELD_NAMES = {
         "likelihood_not_h_denominator",
     ),
     "frontier_misleading_premise": (
-        "winner_index",
+        "row_index",
         "impact",
         "reliability",
         "cost",
-        "score_lo",
-        "score_hi",
+        "name_rank",
+        "reserved",
     ),
 }
 
@@ -254,14 +254,17 @@ def _premise(prompt: str) -> list[tuple[int, ...]]:
     rows = _literal(match.group("rows"), role="premise rows")
     if not isinstance(rows, list) or not rows:
         raise ValueError("public premise rows are invalid")
+    names = sorted(row.get("name") for row in rows if isinstance(row, dict))
+    if len(names) != len(rows) or len(set(names)) != len(names):
+        raise ValueError("public premise names are invalid")
     actions: list[tuple[int, ...]] = []
-    for row in rows:
+    for index, row in enumerate(rows):
         if not isinstance(row, dict) or set(row) != {"name", "impact", "reliability", "cost"}:
             raise ValueError("public premise row is invalid")
         operands = (row["impact"], row["reliability"], row["cost"])
         if not isinstance(row["name"], str) or any(type(value) is not int for value in operands):
             raise ValueError("public premise row values are invalid")
-        actions.append((0, *operands, 0, 0))
+        actions.append((index, *operands, names.index(row["name"]), 0))
     return actions
 
 

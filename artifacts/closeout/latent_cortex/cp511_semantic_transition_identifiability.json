@@ -1,0 +1,3579 @@
+{
+  "payload": {
+    "admission": {
+      "admitted": false,
+      "families": {
+        "frontier_calibration": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        },
+        "frontier_coding": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        },
+        "frontier_mathematics": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": false
+        },
+        "frontier_misleading_premise": {
+          "public_prefix_replay_admitted": true,
+          "state_recurrent_transition_admitted": true
+        }
+      },
+      "full_public_prefix_has_no_observed_ambiguity": true,
+      "overlapping_full_prefix_targets_agree": true,
+      "overlapping_state_current_action_targets_agree": false,
+      "public_prefix_replay_admitted": true,
+      "state_current_action_has_no_observed_ambiguity": false,
+      "state_recurrent_transition_admitted": false
+    },
+    "artifact_sha256": "9096fee2dc072a7ad492932241a1f141f75d6df600304acf69d68de16167b79b",
+    "audit": {
+      "families": {
+        "frontier_calibration": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 0,
+            "unique_keys": 402
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 52,
+            "unique_keys": 318
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 402,
+            "reused_keys": 0,
+            "unique_keys": 402
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 52,
+              "unique_keys": 318
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 26,
+              "unique_keys": 360
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 402,
+              "reused_keys": 0,
+              "unique_keys": 402
+            }
+          }
+        },
+        "frontier_coding": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 38,
+            "unique_keys": 1214
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 63,
+            "unique_keys": 1188
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1340,
+            "reused_keys": 38,
+            "unique_keys": 1214
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 63,
+              "unique_keys": 1188
+            },
+            "10": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 59,
+              "unique_keys": 1192
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 40,
+              "unique_keys": 1212
+            },
+            "4": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "5": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "6": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "7": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "8": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            },
+            "9": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1340,
+              "reused_keys": 38,
+              "unique_keys": 1214
+            }
+          }
+        },
+        "frontier_mathematics": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1206,
+            "reused_keys": 10,
+            "unique_keys": 1195
+          },
+          "state_current_action": {
+            "ambiguous_keys": 87,
+            "ambiguous_observations": 368,
+            "collision_examples": [
+              {
+                "key_sha256": "f8c2990bec08c64ec11b800d54a6cd5cfbe72669f9312f18f1aa5ca825d43f96",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s454724872469300396"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s607983799574563417"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s638489747358927853"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 2,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 2,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "b327c2196fb7c9f7cdfab327ba1f5c75f42de48d12c55c9d1b75815809ca205e",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s679183923530047930"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s469259513094320303"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "9b746f49cc6b7c98960a2d89d7fba0c8078bcd5ab4130df08c098e0e701334f7",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s804044164058086610"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s414700451383068937"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 6,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "bf1800fade6c8c5aa65cb529464db13ee7c8900edab99598d920d27e20f9cbfe",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s376720013194444922"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 7,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "3536e4e0f32835dd33f3d799367c15c74208b66f2f14c938a279818caf817798",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s353483707605261267"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s691918755705357370"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s455597159917048315"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s38030829401503278"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 3,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "db2f373da51f89855bb7908e729012477b95202fc6ad57cef7a327727befd78e",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s828505359394015974"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s217070907713048955"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 8,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "8c7c2374f64b2d97de48f3ff0f776ee1c1e5745be70e2f99ef5032ef17c57841",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s295262384672217222"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s451629306666975767"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s488837071700214886"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 5,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      4,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "5ed953414c36d057474a95e7b555fee7391ff9fc6bb9ec474367f09de837b3ac",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s123994289238213580"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s675426181348418617"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235145666786006354"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 5,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 4,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.851575456053068,
+            "observations": 1206,
+            "reused_keys": 160,
+            "unique_keys": 447
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 1206,
+            "reused_keys": 10,
+            "unique_keys": 1195
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 87,
+              "ambiguous_observations": 368,
+              "collision_examples": [
+                {
+                  "key_sha256": "dae4185bb2965b9a159f9a67a1ffd145ce6a14b1078e938958ae8d22f763321e",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s454724872469300396"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s607983799574563417"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s638489747358927853"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 2,
+                      "state": [
+                        5,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 2,
+                      "state": [
+                        5,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "7a7a2f66bf8e8d9c9e131ffdfc44e8e82c2597f1910bc93a878cef7aabc6e601",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s679183923530047930"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s469259513094320303"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        5,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        5,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "370384017517ac459050b0b969f0d1e015d8cbcac0e934ebb7104f90adb6de10",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s804044164058086610"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s414700451383068937"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 6,
+                      "state": [
+                        5,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        5,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "cd92c7955c8f5257a6b638ae8747ac1ae431471a6bd71b048ccc2aecd1e9b204",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s376720013194444922"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 7,
+                      "state": [
+                        5,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        5,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "760cc0b149198013cba7a46ee996502d7eebae90c6b024b6c1525bd42bc7089e",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s353483707605261267"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s691918755705357370"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s455597159917048315"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s38030829401503278"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 3,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "8901fbf6cacdc6962cb5a7436c527b9071069d2dd285865f3a2a6673e41e11bb",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s828505359394015974"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s217070907713048955"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 8,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "860005228c8d4b138d5618ffde0c9b21a83b3c116fcaa0fabb8ee560f2db3303",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s295262384672217222"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s451629306666975767"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s488837071700214886"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 5,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        3,
+                        0,
+                        1,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        4,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "9a8c946d3b8d5312d47682e62c10556ea99b30f0cef1802a93b3b65eeb16f4b2",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s123994289238213580"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s675426181348418617"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s235145666786006354"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 5,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 4,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        3,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "empirical_deterministic_accuracy_ceiling": 0.851575456053068,
+              "observations": 1206,
+              "reused_keys": 160,
+              "unique_keys": 447
+            },
+            "2": {
+              "ambiguous_keys": 54,
+              "ambiguous_observations": 127,
+              "collision_examples": [
+                {
+                  "key_sha256": "a588a9bc19fbac711247f0fb42564550a0ae771771f9cc3dbdaf11331c608715",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 5,
+                      "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 2,
+                      "state": [
+                        5,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        5,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "10f6e401be16dd8721db1841c91b36c41c87850d0037df690ef219108fe1745f",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s84825950763178958"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s5077805687898034"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "bca169856c2b207a1c27cc138a44b465121e274f67a4f64419da8a6611a3249d",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s202233638182963633"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s285247823849085980"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s372906532717254557"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s956758895657584756"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 4,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 2,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "4d1c6fb752adbe8f48192cb0cbff58e4d409ef35fdf6adf4996a31812f627b8a",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s1031267233686102579"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s341591715850531431"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "bf0d257baef69c4f1999d7da8ff66e24d0f4e2030a11be3c4824e89ed101e735",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s10988537880594610"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        3,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "08406344cd95622ea993c82e163df84c2d9273c37e2e69ffaf33a7bae23a2b2c",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s41306792674092631"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s792194105704874164"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        3,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "1f65f0765239c537a8f1881ec71c61298d0fd046cd5f0012c0e9580cafc62e97",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s793900961665023579"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s78800643792032688"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        1,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "a2fd477ae808e182a6a14e634dea15fcf708cfc43ad8c3d9908823a4e6491dbb",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s539578627823353094"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s154156637023046316"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s811248222207445321"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 2,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        1,
+                        0,
+                        3,
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "empirical_deterministic_accuracy_ceiling": 0.951077943615257,
+              "observations": 1206,
+              "reused_keys": 182,
+              "unique_keys": 908
+            },
+            "3": {
+              "ambiguous_keys": 8,
+              "ambiguous_observations": 17,
+              "collision_examples": [
+                {
+                  "key_sha256": "7db6d390c152e21bbacbd7aacd4329fecf397aa6d46d970a11acdf3887040b93",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s539578627823353094"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s811248222207445321"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        1,
+                        0,
+                        3,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "72c8f8df0fefa967d2f572754562547c6004d0a915dd92ac256a1ae0d5457cf0",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s84825950763178958"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s5077805687898034"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "4997bc385f80b9298689f52ca9e18980208d4421f5d24ac5700898a9f676beba",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s202233638182963633"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s308542970821524300"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s593412324953102198"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 2,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "4474398ff24dd33350dfe338f92a9ff980131c714d6e52adc609cb80417592ac",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s8046160670992607"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s715355959193418149"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "53dbc750de738d032f3260d820c117821988cc80e105b970d09132db4f6aae04",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s589365830893824127"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        1,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "9ad765e364b36f36e2574f8870dcc5ce5961529402e2d132043a232d7a1cb5f9",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s1149851334768817416"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s654189636003608497"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        5,
+                        0,
+                        1,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        6,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "cd0b3060cfb4c569b4a48b93a713dcdd0950d6820347265919ef0f6ee5b43669",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        4,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "8478ab87dd635f455325135dbbf9c3d35a8e9315153758f3f1bb0412d9e774b1",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 9,
+                      "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 9,
+                      "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        9,
+                        22,
+                        0,
+                        1,
+                        1
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        9,
+                        24,
+                        0,
+                        1,
+                        1
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "empirical_deterministic_accuracy_ceiling": 0.9933665008291874,
+              "observations": 1206,
+              "reused_keys": 56,
+              "unique_keys": 1144
+            },
+            "4": {
+              "ambiguous_keys": 2,
+              "ambiguous_observations": 4,
+              "collision_examples": [
+                {
+                  "key_sha256": "21432d0e01c4f361b3095abf97055ad3effbfa4a3fb9e17716d43029ba98ba51",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s8046160670992607"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 6,
+                      "task_id": "recurrence-frontier_mathematics-d9-s715355959193418149"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        6,
+                        2,
+                        0,
+                        2,
+                        0
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "key_sha256": "80f21c886371fef7b17c8e6d23c07b16beaffe20dc431a7f13a6b5ddcda9b181",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        4,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "empirical_deterministic_accuracy_ceiling": 0.9983416252072969,
+              "observations": 1206,
+              "reused_keys": 18,
+              "unique_keys": 1187
+            },
+            "5": {
+              "ambiguous_keys": 1,
+              "ambiguous_observations": 2,
+              "collision_examples": [
+                {
+                  "key_sha256": "6d719ba4ecf8446cb09915656976e672fdcf0ba3f52ba99c7ca708542a71fc2b",
+                  "sources": [
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                    },
+                    {
+                      "family": "frontier_mathematics",
+                      "step": 7,
+                      "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                    }
+                  ],
+                  "targets": [
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        0,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "observations": 1,
+                      "state": [
+                        7,
+                        4,
+                        0,
+                        1,
+                        0
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "empirical_deterministic_accuracy_ceiling": 0.9991708126036484,
+              "observations": 1206,
+              "reused_keys": 11,
+              "unique_keys": 1194
+            },
+            "6": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1206,
+              "reused_keys": 10,
+              "unique_keys": 1195
+            },
+            "7": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1206,
+              "reused_keys": 10,
+              "unique_keys": 1195
+            },
+            "8": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1206,
+              "reused_keys": 10,
+              "unique_keys": 1195
+            },
+            "9": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 1206,
+              "reused_keys": 10,
+              "unique_keys": 1195
+            }
+          }
+        },
+        "frontier_misleading_premise": {
+          "public_prefix_only": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 10,
+            "unique_keys": 659
+          },
+          "state_current_action": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 10,
+            "unique_keys": 659
+          },
+          "state_full_public_prefix": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 670,
+            "reused_keys": 10,
+            "unique_keys": 659
+          },
+          "state_suffix_curve": {
+            "1": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 10,
+              "unique_keys": 659
+            },
+            "2": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 10,
+              "unique_keys": 659
+            },
+            "3": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 10,
+              "unique_keys": 659
+            },
+            "4": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 10,
+              "unique_keys": 659
+            },
+            "5": {
+              "ambiguous_keys": 0,
+              "ambiguous_observations": 0,
+              "collision_examples": [],
+              "empirical_deterministic_accuracy_ceiling": 1.0,
+              "observations": 670,
+              "reused_keys": 10,
+              "unique_keys": 659
+            }
+          }
+        }
+      },
+      "overall": {
+        "public_prefix_only": {
+          "ambiguous_keys": 0,
+          "ambiguous_observations": 0,
+          "collision_examples": [],
+          "empirical_deterministic_accuracy_ceiling": 1.0,
+          "observations": 3618,
+          "reused_keys": 58,
+          "unique_keys": 3470
+        },
+        "state_current_action": {
+          "ambiguous_keys": 87,
+          "ambiguous_observations": 368,
+          "collision_examples": [
+            {
+              "key_sha256": "f8c2990bec08c64ec11b800d54a6cd5cfbe72669f9312f18f1aa5ca825d43f96",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s454724872469300396"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s607983799574563417"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s638489747358927853"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 2,
+                  "state": [
+                    5,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 2,
+                  "state": [
+                    5,
+                    1,
+                    0,
+                    2,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "b327c2196fb7c9f7cdfab327ba1f5c75f42de48d12c55c9d1b75815809ca205e",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s679183923530047930"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s469259513094320303"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 1,
+                  "state": [
+                    5,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    5,
+                    1,
+                    0,
+                    2,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "9b746f49cc6b7c98960a2d89d7fba0c8078bcd5ab4130df08c098e0e701334f7",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s804044164058086610"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s414700451383068937"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 6,
+                  "state": [
+                    5,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    5,
+                    1,
+                    0,
+                    2,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "bf1800fade6c8c5aa65cb529464db13ee7c8900edab99598d920d27e20f9cbfe",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 5,
+                  "task_id": "recurrence-frontier_mathematics-d9-s376720013194444922"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 7,
+                  "state": [
+                    5,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    5,
+                    1,
+                    0,
+                    2,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "3536e4e0f32835dd33f3d799367c15c74208b66f2f14c938a279818caf817798",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s353483707605261267"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s691918755705357370"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s455597159917048315"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s38030829401503278"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 3,
+                  "state": [
+                    6,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    6,
+                    2,
+                    0,
+                    1,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "db2f373da51f89855bb7908e729012477b95202fc6ad57cef7a327727befd78e",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s828505359394015974"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s217070907713048955"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 8,
+                  "state": [
+                    6,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    6,
+                    2,
+                    0,
+                    2,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "8c7c2374f64b2d97de48f3ff0f776ee1c1e5745be70e2f99ef5032ef17c57841",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s295262384672217222"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s451629306666975767"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s488837071700214886"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 5,
+                  "state": [
+                    6,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    6,
+                    3,
+                    0,
+                    1,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    6,
+                    4,
+                    0,
+                    1,
+                    0
+                  ]
+                }
+              ]
+            },
+            {
+              "key_sha256": "5ed953414c36d057474a95e7b555fee7391ff9fc6bb9ec474367f09de837b3ac",
+              "sources": [
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s123994289238213580"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s675426181348418617"
+                },
+                {
+                  "family": "frontier_mathematics",
+                  "step": 6,
+                  "task_id": "recurrence-frontier_mathematics-d9-s235145666786006354"
+                }
+              ],
+              "targets": [
+                {
+                  "observations": 5,
+                  "state": [
+                    6,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                },
+                {
+                  "observations": 4,
+                  "state": [
+                    6,
+                    2,
+                    0,
+                    2,
+                    0
+                  ]
+                },
+                {
+                  "observations": 1,
+                  "state": [
+                    6,
+                    3,
+                    0,
+                    1,
+                    0
+                  ]
+                }
+              ]
+            }
+          ],
+          "empirical_deterministic_accuracy_ceiling": 0.9505251520176893,
+          "observations": 3618,
+          "reused_keys": 285,
+          "unique_keys": 2612
+        },
+        "state_full_public_prefix": {
+          "ambiguous_keys": 0,
+          "ambiguous_observations": 0,
+          "collision_examples": [],
+          "empirical_deterministic_accuracy_ceiling": 1.0,
+          "observations": 3618,
+          "reused_keys": 58,
+          "unique_keys": 3470
+        },
+        "state_suffix_curve": {
+          "1": {
+            "ambiguous_keys": 87,
+            "ambiguous_observations": 368,
+            "collision_examples": [
+              {
+                "key_sha256": "dae4185bb2965b9a159f9a67a1ffd145ce6a14b1078e938958ae8d22f763321e",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s454724872469300396"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s607983799574563417"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s638489747358927853"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 2,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 2,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "7a7a2f66bf8e8d9c9e131ffdfc44e8e82c2597f1910bc93a878cef7aabc6e601",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s679183923530047930"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s469259513094320303"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "370384017517ac459050b0b969f0d1e015d8cbcac0e934ebb7104f90adb6de10",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s804044164058086610"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s414700451383068937"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 6,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "cd92c7955c8f5257a6b638ae8747ac1ae431471a6bd71b048ccc2aecd1e9b204",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s376720013194444922"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 7,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "760cc0b149198013cba7a46ee996502d7eebae90c6b024b6c1525bd42bc7089e",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s353483707605261267"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s691918755705357370"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s455597159917048315"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s38030829401503278"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 3,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "8901fbf6cacdc6962cb5a7436c527b9071069d2dd285865f3a2a6673e41e11bb",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s828505359394015974"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s217070907713048955"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235031482066682529"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 8,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "860005228c8d4b138d5618ffde0c9b21a83b3c116fcaa0fabb8ee560f2db3303",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s295262384672217222"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s451629306666975767"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s926161830481967628"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s488837071700214886"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 5,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      4,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "9a8c946d3b8d5312d47682e62c10556ea99b30f0cef1802a93b3b65eeb16f4b2",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s123994289238213580"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s675426181348418617"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s235145666786006354"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 5,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 4,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.9505251520176893,
+            "observations": 3618,
+            "reused_keys": 285,
+            "unique_keys": 2612
+          },
+          "10": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 3618,
+            "reused_keys": 58,
+            "unique_keys": 3470
+          },
+          "2": {
+            "ambiguous_keys": 54,
+            "ambiguous_observations": 127,
+            "collision_examples": [
+              {
+                "key_sha256": "a588a9bc19fbac711247f0fb42564550a0ae771771f9cc3dbdaf11331c608715",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s932621350793646451"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 5,
+                    "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 2,
+                    "state": [
+                      5,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      5,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "10f6e401be16dd8721db1841c91b36c41c87850d0037df690ef219108fe1745f",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s84825950763178958"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s5077805687898034"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "bca169856c2b207a1c27cc138a44b465121e274f67a4f64419da8a6611a3249d",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s202233638182963633"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s285247823849085980"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s372906532717254557"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s956758895657584756"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 4,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 2,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "4d1c6fb752adbe8f48192cb0cbff58e4d409ef35fdf6adf4996a31812f627b8a",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1031267233686102579"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s341591715850531431"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "bf0d257baef69c4f1999d7da8ff66e24d0f4e2030a11be3c4824e89ed101e735",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s947795106749582656"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s10988537880594610"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "08406344cd95622ea993c82e163df84c2d9273c37e2e69ffaf33a7bae23a2b2c",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s41306792674092631"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s792194105704874164"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      3,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "1f65f0765239c537a8f1881ec71c61298d0fd046cd5f0012c0e9580cafc62e97",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s793900961665023579"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s78800643792032688"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      1,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "a2fd477ae808e182a6a14e634dea15fcf708cfc43ad8c3d9908823a4e6491dbb",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s539578627823353094"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s154156637023046316"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s811248222207445321"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 2,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      1,
+                      0,
+                      3,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.9836926478717524,
+            "observations": 3618,
+            "reused_keys": 277,
+            "unique_keys": 3119
+          },
+          "3": {
+            "ambiguous_keys": 8,
+            "ambiguous_observations": 17,
+            "collision_examples": [
+              {
+                "key_sha256": "7db6d390c152e21bbacbd7aacd4329fecf397aa6d46d970a11acdf3887040b93",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s539578627823353094"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s811248222207445321"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      1,
+                      0,
+                      3,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "72c8f8df0fefa967d2f572754562547c6004d0a915dd92ac256a1ae0d5457cf0",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s84825950763178958"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s5077805687898034"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "4997bc385f80b9298689f52ca9e18980208d4421f5d24ac5700898a9f676beba",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s202233638182963633"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s308542970821524300"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s593412324953102198"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 2,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "4474398ff24dd33350dfe338f92a9ff980131c714d6e52adc609cb80417592ac",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s8046160670992607"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s715355959193418149"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "53dbc750de738d032f3260d820c117821988cc80e105b970d09132db4f6aae04",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s589365830893824127"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      1,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "9ad765e364b36f36e2574f8870dcc5ce5961529402e2d132043a232d7a1cb5f9",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1149851334768817416"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s654189636003608497"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      5,
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      6,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "cd0b3060cfb4c569b4a48b93a713dcdd0950d6820347265919ef0f6ee5b43669",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      4,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "8478ab87dd635f455325135dbbf9c3d35a8e9315153758f3f1bb0412d9e774b1",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 9,
+                    "task_id": "recurrence-frontier_mathematics-d9-s1041653200792305453"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 9,
+                    "task_id": "recurrence-frontier_mathematics-d9-s562541627897090793"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      9,
+                      22,
+                      0,
+                      1,
+                      1
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      9,
+                      24,
+                      0,
+                      1,
+                      1
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.9977888336097291,
+            "observations": 3618,
+            "reused_keys": 106,
+            "unique_keys": 3417
+          },
+          "4": {
+            "ambiguous_keys": 2,
+            "ambiguous_observations": 4,
+            "collision_examples": [
+              {
+                "key_sha256": "21432d0e01c4f361b3095abf97055ad3effbfa4a3fb9e17716d43029ba98ba51",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s8046160670992607"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 6,
+                    "task_id": "recurrence-frontier_mathematics-d9-s715355959193418149"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      6,
+                      2,
+                      0,
+                      2,
+                      0
+                    ]
+                  }
+                ]
+              },
+              {
+                "key_sha256": "80f21c886371fef7b17c8e6d23c07b16beaffe20dc431a7f13a6b5ddcda9b181",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      4,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.9994472084024323,
+            "observations": 3618,
+            "reused_keys": 66,
+            "unique_keys": 3462
+          },
+          "5": {
+            "ambiguous_keys": 1,
+            "ambiguous_observations": 2,
+            "collision_examples": [
+              {
+                "key_sha256": "6d719ba4ecf8446cb09915656976e672fdcf0ba3f52ba99c7ca708542a71fc2b",
+                "sources": [
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s290876346413988675"
+                  },
+                  {
+                    "family": "frontier_mathematics",
+                    "step": 7,
+                    "task_id": "recurrence-frontier_mathematics-d9-s612151761018500900"
+                  }
+                ],
+                "targets": [
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  {
+                    "observations": 1,
+                    "state": [
+                      7,
+                      4,
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                ]
+              }
+            ],
+            "empirical_deterministic_accuracy_ceiling": 0.9997236042012161,
+            "observations": 3618,
+            "reused_keys": 59,
+            "unique_keys": 3469
+          },
+          "6": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 3618,
+            "reused_keys": 58,
+            "unique_keys": 3470
+          },
+          "7": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 3618,
+            "reused_keys": 58,
+            "unique_keys": 3470
+          },
+          "8": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 3618,
+            "reused_keys": 58,
+            "unique_keys": 3470
+          },
+          "9": {
+            "ambiguous_keys": 0,
+            "ambiguous_observations": 0,
+            "collision_examples": [],
+            "empirical_deterministic_accuracy_ceiling": 1.0,
+            "observations": 3618,
+            "reused_keys": 58,
+            "unique_keys": 3470
+          }
+        }
+      }
+    },
+    "claim_boundary": {
+      "state_current_action": "bounded recurrent transition; the committed state must be load-bearing",
+      "state_full_public_prefix": "bounded public-prefix replay; this may recompute from action history and does not establish recurrent-state computation"
+    },
+    "claim_not_supported": [
+      "universal_markov_proof",
+      "learned_history_memory_is_lossless",
+      "general_reasoning_gain",
+      "wow_signal"
+    ],
+    "generation": {
+      "difficulties": [
+        1
+      ],
+      "domains": [
+        "mathematics",
+        "coding",
+        "calibration",
+        "misleading_premise"
+      ],
+      "holdout_per_cell": 6,
+      "holdout_seed_offset": 9973,
+      "registry_version": "2026.08.06.1",
+      "seed": 2026081502,
+      "train_per_cell": 128,
+      "train_prompt_overlap": 0
+    },
+    "holdout_observations": 162,
+    "holdout_tasks": 24,
+    "report_sha256": "0fb5198e1543396f23377f000b821a7092cccce228de53da7b84be1182024180",
+    "schema": "aura.unified_intrinsic.transition_identifiability.v2",
+    "scope": "bounded_empirical_public_transition_contract",
+    "train_holdout_overlap": {
+      "full_prefix_target_disagreements": 0,
+      "state_current_action_keys": 48,
+      "state_current_action_target_disagreements": 5,
+      "state_full_public_prefix_keys": 8
+    },
+    "train_observations": 3456,
+    "train_tasks": 512
+  },
+  "schema": "aura.unified_intrinsic.transition_identifiability.v2",
+  "schema_name": "aura.unified_intrinsic.transition_identifiability.v2",
+  "schema_version": 1
+}
