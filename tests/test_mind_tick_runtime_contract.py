@@ -690,3 +690,79 @@ def test_tick_zero_is_a_real_tick_number():
 
     assert 'or -10_000' not in source
     assert "isinstance(raw_last, int)" in source
+
+
+def _spontaneous_is_meaty(content: str) -> bool:
+    """The gate as the tick applies it."""
+    from core.brain.llm.latent_cortex.output_quality import _terminal_complete
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply("", content)
+    stripped = content.strip()
+    return (
+        not assessment.hard_failure
+        and _terminal_complete(stripped)
+        and len(stripped.split()) >= 4
+    )
+
+
+@pytest.mark.parametrize("fragment", ["a", "ok", "Hello there", "", "   "])
+def test_a_fragment_is_not_spoken_unprompted(fragment):
+    """`len > 5 or any alphabetic` was vacuous — the `or` meant a single
+    letter passed, and this text is spoken to him without being asked for."""
+    assert _spontaneous_is_meaty(fragment) is False
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "I noticed the build finished.",
+        "The three failing tests are all in the parser.",
+        "Something about the last change is still bothering me.",
+    ],
+)
+def test_a_finished_thought_is_spoken(utterance):
+    assert _spontaneous_is_meaty(utterance) is True
+
+
+def test_an_unterminated_sentence_is_withheld():
+    assert _spontaneous_is_meaty("I was about to say that the parser") is False
+
+
+def test_the_tick_uses_the_shared_gate_not_a_local_heuristic():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod)
+
+    assert "len(content.strip()) > 5 or any(c.isalpha()" not in source
+    assert "_terminal_complete(stripped)" in source
+    assert "assess_user_facing_reply(\"\", content)" in source
+
+
+def test_a_cold_cortex_no_longer_abandons_the_tick():
+    """The escalation branch `continue`d the OUTER loop, so every thirtieth
+    tick under a normal prewarm policy threw away every phase and the commit."""
+    import ast
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._run_loop)
+    tree = ast.parse(source.lstrip())
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        rendered = ast.get_source_segment(source.lstrip(), node) or ""
+        if "_dead_tiers_are_policy_deferred_cortex" not in rendered:
+            continue
+        # The word appears in the comment explaining the fix; what matters is
+        # that no Continue statement remains in the branch.
+        assert not any(
+            isinstance(child, ast.Continue) for child in ast.walk(node)
+        ), "the tick is still abandoned"
+        assert "LLM health: dead tiers" in rendered, "the escalation was lost"
+        return
+    raise AssertionError("the deferred-cortex branch was not found")

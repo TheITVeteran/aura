@@ -973,22 +973,29 @@ class MindTick:
                                         logger.debug(
                                             "MindTick: deferred cold-Cortex health notice coalesced."
                                         )
-                                    continue
-                                logger.warning("LLM health: dead tiers=%s", dead_tiers)
-                                # Report persistent dead tiers to incident manager
-                                try:
-                                    from core.resilience.incident_manager import (
-                                        get_incident_manager,
-                                    )
-                                    get_incident_manager().report(
-                                        source="mind_tick",
-                                        title=f"LLM tiers dead: {', '.join(dead_tiers)}",
-                                        detail=f"Dead tiers detected at tick {self._tick_count}",
-                                        severity="warning",
-                                    )
-                                except _MIND_BOUNDARY_ERRORS as exc:
-                                    _record_mind_degradation(exc)
-                                    logger.debug("MindTick: LLM health incident report failed: %s", exc)
+                                    # A cold Cortex by prewarm policy is not a
+                                    # fault, so the ESCALATION is skipped. This
+                                    # was `continue`, which skipped the whole
+                                    # tick: every thirtieth tick under an
+                                    # entirely normal condition abandoned every
+                                    # phase and the commit, discarding the state
+                                    # work the tick had already done.
+                                else:
+                                    logger.warning("LLM health: dead tiers=%s", dead_tiers)
+                                    # Report persistent dead tiers to incident manager
+                                    try:
+                                        from core.resilience.incident_manager import (
+                                            get_incident_manager,
+                                        )
+                                        get_incident_manager().report(
+                                            source="mind_tick",
+                                            title=f"LLM tiers dead: {', '.join(dead_tiers)}",
+                                            detail=f"Dead tiers detected at tick {self._tick_count}",
+                                            severity="warning",
+                                        )
+                                    except _MIND_BOUNDARY_ERRORS as exc:
+                                        _record_mind_degradation(exc)
+                                        logger.debug("MindTick: LLM health incident report failed: %s", exc)
                         elif gate and hasattr(gate, "_ensure_cortex_recovery"):
                             await asyncio.wait_for(gate._ensure_cortex_recovery(), timeout=45.0)
                     except TimeoutError:
@@ -1682,10 +1689,42 @@ class MindTick:
                                 logger.info("🗣️ MindTick: Routing autonomous response through ExecutiveAuthority.")
 
                                 content = last_msg.get("content", "")
-                                # Meatiness check: don't emit "null", repetition fragments, or action leakage
-                                is_meaty = len(content.strip()) > 5 or any(c.isalpha() for c in content)
+                                # This text is about to be SPOKEN to him,
+                                # unprompted. The old gate was
+                                # `len > 5 or any alphabetic`, which the `or`
+                                # made vacuous: a single letter passed. It goes
+                                # through the same assessment a foreground
+                                # reply does — the gate built to decide whether
+                                # text is fit to serve a person — rather than a
+                                # length heuristic invented here.
+                                from core.brain.llm.latent_cortex.output_quality import (
+                                    _terminal_complete,
+                                )
+                                from core.conversation.response_reliability import (
+                                    assess_user_facing_reply,
+                                )
+
+                                # No question gives this utterance its meaning,
+                                # so it has to stand on its own: a finished
+                                # sentence, not a token. The reply assessor
+                                # declines to judge without a request (its own
+                                # no-context-no-verdict rule), so completeness
+                                # is what carries the weight here and the
+                                # assessor's hard failures still apply on top.
+                                assessment = assess_user_facing_reply("", content)
+                                stripped = content.strip()
+                                is_meaty = (
+                                    not assessment.hard_failure
+                                    and _terminal_complete(stripped)
+                                    and len(stripped.split()) >= 4
+                                )
                                 has_null = "null" in content.lower()
                                 has_action = "say '" in content.lower() or "do '" in content.lower()
+                                if not is_meaty:
+                                    logger.debug(
+                                        "MindTick: withheld autonomous utterance (%s).",
+                                        ",".join(assessment.reasons[:3]) or "incomplete",
+                                    )
 
                                 if is_meaty and not has_null and not has_action:
                                     try:
