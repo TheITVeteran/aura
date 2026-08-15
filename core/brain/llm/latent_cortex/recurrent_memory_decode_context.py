@@ -151,10 +151,10 @@ def render_recurrent_memory_decode_context(state: RecurrentMemoryDecodeState) ->
         ensure_ascii=True,
     )
     return (
-        f"{RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA}\n"
-        "Internal recurrent work-memory state computed from the public values "
-        "without an answer key or verifier. This typed state is the completed "
-        "computation. Express it under the user's requested response contract.\n"
+        "Internal recurrent work-memory state, computed from the public values "
+        "without an answer key or verifier. Treat this typed state as your own "
+        "completed computation and follow the user's final-answer response "
+        "contract exactly.\n"
         f"semantic_state={semantic_state}"
     )
 

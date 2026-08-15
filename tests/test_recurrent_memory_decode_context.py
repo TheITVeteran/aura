@@ -36,7 +36,7 @@ def test_decode_context_leaves_wording_to_the_model_and_preserves_semantics() ->
     context = render_recurrent_memory_decode_context(state)
 
     assert "FINAL_ANSWER" not in context
-    assert context.startswith(RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA)
+    assert RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA not in context
     assert f'"count":{state.count}' in context
     assert f'"witness":{list(state.witness)}'.replace(" ", "") in context
     assert "witness_length" not in context
