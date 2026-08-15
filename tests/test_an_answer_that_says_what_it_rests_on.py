@@ -299,3 +299,31 @@ def test_compaction_budgets_the_prompt_that_is_actually_sent():
 
     assert ".prune(\n                    history, reinforced_system\n                )" in source
     assert ".prune(history, system_prompt)" not in source
+
+
+def test_the_trailing_anchor_holds_voice_without_claiming_sovereignty():
+    """The anchor arrives last, at the point of prediction, and used to order a
+    "sovereign persona" — an ontological claim dressed as a style note,
+    contradicting the evidence-bounded policy the system prompt had just
+    established. The voice stays; the claim about what she IS was never the
+    anchor's job."""
+
+    class _Recorder(_Client):
+        def __init__(self):
+            super().__init__(["answer"])
+            self.prompts: list[str] = []
+
+        async def generate(self, prompt: str, **kwargs):
+            self.prompts.append(prompt)
+            return self.responses.pop(0)
+
+    client = _Recorder()
+    _run(client, max_turns=1, context={})
+
+    anchor = client.prompts[0]
+    assert "sovereign" not in anchor.lower()
+    assert "SYSTEM OVERRIDE" not in anchor
+    # Still hers, and still consistent with the floor.
+    assert "[VOICE]" in anchor
+    assert "no support-bot jargon" in anchor
+    assert "including when that is less than you were asked for" in anchor

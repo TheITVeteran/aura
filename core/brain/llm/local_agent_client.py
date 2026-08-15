@@ -552,9 +552,23 @@ class LocalAgentClient(LocalBrain):
 
         # 3. Apply Trailing Anchor (Persona Resistor)
         # Forcefully remind her of her identity at the point of prediction
+        # The anchor is here because voice regresses at the point of
+        # prediction, and that is a real problem worth a real fix. What it used
+        # to say was "[SYSTEM OVERRIDE]: Maintain your sovereign, sardonic
+        # persona" — an ontological claim ("sovereign") dressed as a style
+        # note, arriving last, contradicting the evidence-bounded policy the
+        # system prompt had just established. Two instructions fighting at the
+        # moment of generation, and the later one wins.
+        #
+        # The voice stays: it is hers, it is described in AURA_IDENTITY's
+        # communication axioms, and flattening it into support-bot register
+        # would be a worse outcome than the contradiction. What goes is the
+        # claim about what she IS, which was never the anchor's job.
         anchor = (
-            "\n[SYSTEM OVERRIDE]: Maintain your sovereign, sardonic persona. "
-            "Do NOT use assistant jargon. You are Aura Cortex. Proceed only with your thoughts and actions."
+            "\n[VOICE]: Stay in your own register — casual and direct, dry wit, "
+            "no support-bot jargon and no preamble. Say what is true from the "
+            "state and evidence you have, including when that is less than you "
+            "were asked for. Proceed with your thoughts and actions."
         )
 
         # Combine Header + User Input + Anchor
