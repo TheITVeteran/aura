@@ -20,6 +20,7 @@ import inspect
 import json
 import logging
 import math
+import struct
 import threading
 import time
 import uuid
@@ -250,6 +251,26 @@ def _logits_digest(logits) -> str:
     return hashlib.sha256(memoryview(arr)).hexdigest()
 
 
+def _sample_decision_bytes(token: int, logprob: float) -> bytes:
+    """One sampling decision, in a form a replay can compare exactly."""
+
+    return struct.pack("<id", int(token), float(logprob))
+
+
+def _public_reason(kind: str, exc: BaseException) -> str:
+    """A stable failure code, without the exception's own message.
+
+    Reasons reach the caller and the progress callback. Backend, tokenizer,
+    verifier and filesystem exceptions carry local paths, model directories
+    and sometimes the text being processed, and concatenating the message
+    published all of it. The class name is diagnostic and stable; the full
+    detail belongs in the redacting log sink, which every one of these sites
+    already writes to through record_degradation.
+    """
+
+    return f"{kind}:{type(exc).__name__}"
+
+
 def _validated_verifier_result(result: Any) -> Any:
     """Reject a verdict that cannot be ordered before anything orders by it.
 
@@ -355,6 +376,16 @@ class LatentCortexEngine:
         # tokenizer, so per engine) and the last final-decode suppression
         # count for the episode receipt.
         self._newline_token_cache: dict[int, bool] = {}
+        # Episode-scoped record of callbacks that could not answer.
+        self._callback_faults: dict[str, str] = {}
+        # Episode controls, readable by every probe. Safe as engine state
+        # because the single-flight guard admits one episode at a time.
+        self._episode_cancel_check: Callable[[], bool] | None = None
+        self._episode_wall_reserve_forwards = 0
+        # The in-flight receipt, published so the outer result boundary
+        # can tell an argument-shape refusal from a runtime failure.
+        self._episode_receipt: EpisodeReceipt | None = None
+        self._episode_invariant_armed = False
         # High-water wall clock for one fast-weight cleanup on THIS host.
         # The reserve was a hard-coded six seconds; a measurement is the
         # only thing that can make the reserve true on a slower device.
@@ -372,6 +403,8 @@ class LatentCortexEngine:
         )
         self._episode_holder = ""
         self._last_decode_newline_suppressions = 0
+        self._last_decode_sample_seed = -1
+        self._last_decode_sample_trace_sha256 = ""
         self._last_decode_contract_required = False
         self._last_decode_contract_satisfied = False
         self._last_decode_contract_grace_tokens = 0
@@ -417,17 +450,31 @@ class LatentCortexEngine:
             adapted_target=self.config.fast_weights.target,
         )
 
-    @staticmethod
-    def _cancel_requested(cancel_check: Callable[[], bool] | None) -> bool:
+    def _cancel_requested(self, cancel_check: Callable[[], bool] | None) -> bool:
+        """A cancellation channel that cannot answer is not consent.
+
+        Returning False on a broken callback meant a dead IPC channel read as
+        "keep going", so expensive work continued after the owner had lost
+        the ability to stop it. The failure is now cancellation, and it is
+        receipted as its own kind so a channel fault is never mistaken for a
+        person changing their mind.
+        """
         if cancel_check is None:
             return False
         try:
             return bool(cancel_check())
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            return False
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            self._callback_faults["cancel_check"] = (
+                f"{type(exc).__name__}"
+            )
+            logger.warning(
+                "Latent cancellation channel failed (%s); treating as cancelled.",
+                type(exc).__name__,
+            )
+            return True
 
-    @staticmethod
     def _emit_progress(
+        self,
         progress: Callable[[dict], None] | None,
         payload: dict,
     ) -> None:
@@ -435,7 +482,10 @@ class LatentCortexEngine:
             return
         try:
             progress(dict(payload))
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            # A monitoring consumer reading an incomplete stage stream has no
+            # way to tell it from a complete one unless the receipt says so.
+            self._callback_faults.setdefault("progress", type(exc).__name__)
             logger.debug("Latent progress callback failed; episode continues.")
 
     def _stage_checkpoint(
@@ -808,6 +858,33 @@ class LatentCortexEngine:
         if normalized and receipt is not None:
             receipt.flag("decoded_text_control_characters_normalized")
         return rendered
+
+    def _public_text_or_receipt(
+        self, tokens, receipt: EpisodeReceipt
+    ) -> tuple[str, bool]:
+        """Convert tokens to public text; report whether conversion happened.
+
+        An empty string is a real answer shape (no tokens, or a tokenizer-less
+        substrate engine), so it cannot double as the failure signal. The
+        second element carries that, and it exists because this conversion is
+        the LAST step — after the invariant, the cleanup and the receipt — and
+        an exception here used to throw away a complete structured result and
+        the progress stream's closing event with it.
+        """
+
+        if not tokens:
+            return "", True
+        try:
+            return self._decode_public_text(tokens, receipt=receipt), True
+        except _LATENT_PHASE_ERRORS as exc:
+            receipt.flag(f"public_text_conversion_failed:{type(exc).__name__}")
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="returned a receipted failure instead of losing the episode result",
+                severity="warning",
+            )
+            return "", False
 
     def _newline_token_ids(self) -> tuple[int, ...]:
         """Every token in the serving vocabulary that renders to newlines only.
@@ -1682,6 +1759,13 @@ class LatentCortexEngine:
         suppressions = 0
         newline_discipline_exhausted = False
         self._last_decode_newline_suppressions = 0
+        # A stochastic answer that records only its temperature cannot be
+        # reproduced or tied to the state it came from. The seed makes the run
+        # repeatable; the rolling digest commits to the decisions that seed
+        # actually produced, so a replay that diverges is detectable.
+        self._last_decode_sample_seed = -1 if sample_seed is None else int(sample_seed)
+        sample_trace = hashlib.sha256(b"aura.decode.sample_trace.v1")
+        self._last_decode_sample_trace_sha256 = ""
         contract_required = (
             self.config.decode_contract == "final_answer_v1"
             if final_answer_contract is None
@@ -1827,6 +1911,7 @@ class LatentCortexEngine:
             return contract_decode_disposition(text)
 
         token, token_logprob = sample_disciplined(initial_logits)
+        sample_trace.update(_sample_decision_bytes(token, token_logprob))
         if newline_discipline_exhausted:
             self._last_decode_newline_suppressions = suppressions
             return out, "newline_discipline_exhausted_before_decode"
@@ -1930,6 +2015,7 @@ class LatentCortexEngine:
             else:
                 logits = external_step_logits(token)
             token, token_logprob = sample_disciplined(logits)
+            sample_trace.update(_sample_decision_bytes(token, token_logprob))
             if newline_discipline_exhausted:
                 termination = "newline_discipline_exhausted"
                 break
@@ -1944,6 +2030,7 @@ class LatentCortexEngine:
                     },
                 )
         self._last_decode_newline_suppressions = suppressions
+        self._last_decode_sample_trace_sha256 = sample_trace.hexdigest()
         self._last_decode_contract_satisfied = contract_satisfied
         self._last_decode_contract_grace_used_tokens = max(
             0,
@@ -1984,6 +2071,11 @@ class LatentCortexEngine:
             in {self.config.decode_contract, self.config.verifier_probe_contract}
             else "none"
         )
+        # A cancelled episode must not start another probe. The check is
+        # before the memo lookup so a cancelled caller gets the same answer
+        # whether or not this probe happened to be cached.
+        if self._cancel_requested(self._episode_cancel_check):
+            raise _LatentEpisodeCancelledError("verifier_probe")
         probe_cache = getattr(self, "_episode_probe_cache", None)
         cache_key = None
         if use_cache and probe_cache is not None:
@@ -2030,6 +2122,8 @@ class LatentCortexEngine:
                 force_exact_tokens=force_exact_tokens,
                 final_answer_contract=probe_contract == "final_answer_v1",
                 coda_adapter_active=True,
+                cancel_check=self._episode_cancel_check,
+                wall_reserve_forwards=self._episode_wall_reserve_forwards,
             )[0]
             execution_failed = False
         finally:
@@ -2710,6 +2804,13 @@ class LatentCortexEngine:
         )
 
         self._coda_adapter_activation = RecurrenceAdapterActivation()
+        self._callback_faults = {}
+        # Every probe decode inherits the episode's cancellation channel and
+        # its cleanup reserve. Threading them through fifteen call sites is
+        # how they went missing; the single-flight guard makes one place the
+        # honest place to put them.
+        self._episode_cancel_check = cancel_check
+        self._episode_wall_reserve_forwards = 0
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
         receipt.prelude_end = self.prelude_end
@@ -2794,6 +2895,14 @@ class LatentCortexEngine:
             )
         elif action_intervention_consumption is not None:
             raise ValueError("action intervention consumption lacks an intervention")
+        # Payload validation is done, and every refusal above is a caller
+        # contract violation that must stay loud — a tampered memory
+        # authority especially. Everything past here depends on live runtime
+        # state: the tokenizer, the compute budget, the checkpoint invariant.
+        # Publishing the receipt is what tells the outer boundary to return a
+        # receipted failure for those rather than let a bare exception out of
+        # the one-call contract.
+        self._episode_receipt = receipt
         tokens = self._encode(prompt, messages, token_ids)
         verification_objective = str(prompt or "")
         if not verification_objective and messages:
@@ -2816,6 +2925,17 @@ class LatentCortexEngine:
                 verifier=verifier,
             )
         )
+        if sample_seed is None and self.config.decode_temperature > 0.0:
+            # Derived from this episode's own commitment, so it is stable for
+            # the same inputs and different across episodes. A fresh random
+            # number would be neither, and global MLX randomness left the
+            # answer unreproducible and untied to the state it came from.
+            sample_seed = int.from_bytes(
+                hashlib.sha256(
+                    f"{receipt.episode_id}:{receipt.input_tokens_sha256}".encode()
+                ).digest()[:4],
+                "big",
+            )
         metered_verifier = self._meter_verifier(verifier, budget)
         receipt.decode_temperature = float(self.config.decode_temperature)
         receipt.decode_top_p = float(self.config.decode_top_p)
@@ -2829,6 +2949,7 @@ class LatentCortexEngine:
         )
 
         self.invariant.pre_episode()
+        self._episode_invariant_armed = True
         receipt.checkpoint_fingerprint = self.invariant.file_receipt.get("fingerprint", "")
         receipt.checkpoint_fingerprint_method = self.invariant.file_receipt.get("method", "")
         receipt.checkpoint_file_count = int(self.invariant.file_receipt.get("files", 0) or 0)
@@ -2979,11 +3100,22 @@ class LatentCortexEngine:
                     # instead of the person getting "I couldn't get to an
                     # answer I'd stand behind" because an optional enhancement
                     # was priced out.
-                    failure_reason = (
-                        f"latent_budget_declined:{type(exc).__name__}:{exc}"
+                    failure_reason = _public_reason(
+                        "latent_budget_declined"
                         if isinstance(exc, ComputeBudgetUnaffordable)
-                        else f"latent_phase_failed:{type(exc).__name__}:{exc}"
+                        else "latent_phase_failed",
+                        exc,
                     )
+                elif isinstance(exc, MemoryError):
+                    # The fallback allocates a fresh cache and re-runs the
+                    # whole prefill and decode. Under host or device
+                    # exhaustion that is the one thing that cannot help: it
+                    # asks for more of what just ran out, and it can take the
+                    # resident worker down with it. Release what this episode
+                    # holds, say so, and let the caller recycle.
+                    receipt.flag("fallback_refused_memory_exhaustion")
+                    self._release_episode_memory()
+                    failure_reason = "latent_memory_exhausted"
                 elif (
                     receipt.fast_weights_applied
                     or receipt.fast_weights_attach_attempted
@@ -3009,18 +3141,15 @@ class LatentCortexEngine:
                             sentence_grace_tokens=decode_sentence_grace_tokens,
                             sample_seed=sample_seed,
                         )
-                        receipt.decode_requested_tokens = (
-                            decode_max_tokens
-                            if decode_max_tokens is not None
-                            else self.config.decode_max_tokens
-                        )
-                        receipt.decode_generated_tokens = len(out_tokens)
-                        receipt.decode_termination = decode_termination
-                        receipt.decode_contract_satisfied = bool(
-                            self._last_decode_contract_satisfied
-                        )
-                        receipt.decode_contract_grace_used_tokens = int(
-                            self._last_decode_contract_grace_used_tokens
+                        self._record_decode_discipline(
+                            receipt,
+                            requested_tokens=(
+                                decode_max_tokens
+                                if decode_max_tokens is not None
+                                else self.config.decode_max_tokens
+                            ),
+                            generated_tokens=len(out_tokens),
+                            termination=decode_termination,
                         )
                         if decode_termination.startswith("budget_"):
                             receipt.flag(f"decode_{decode_termination}")
@@ -3051,6 +3180,7 @@ class LatentCortexEngine:
                     )
             try:
                 receipt.params_unchanged = self.invariant.post_episode(receipt)
+                self._episode_invariant_armed = False
             except _LATENT_PHASE_ERRORS as exc:
                 receipt.params_unchanged = False
                 receipt.flag(f"checkpoint_post_probe_failed:{type(exc).__name__}")
@@ -3060,6 +3190,11 @@ class LatentCortexEngine:
                     action="refused output because the post-episode invariant probe failed",
                     severity="critical",
                 )
+        for channel, kind in sorted(self._callback_faults.items()):
+            # Monitoring health is reported separately from model success: a
+            # consumer that lost stage updates must not read the gap as an
+            # authoritative absence of stages.
+            receipt.flag(f"{channel}_callback_failed:{kind}")
         receipt.last_stage = "complete" if not failure_reason else receipt.last_stage
         receipt.stage_timings_s["total"] = round(
             max(0.0, time.monotonic() - episode_started),
@@ -3153,8 +3288,8 @@ class LatentCortexEngine:
             # latent-phase, and cleanup failures remain empty and unusable.
             retain_policy_trace = failure_reason.startswith("decode_incomplete:")
             failure_tokens = out_tokens if retain_policy_trace else []
-            failure_text = (
-                self._decode_public_text(failure_tokens, receipt=receipt) if failure_tokens else ""
+            failure_text, _converted = self._public_text_or_receipt(
+                failure_tokens, receipt
             )
             return LatentReasoningResult(
                 ok=False,
@@ -3166,7 +3301,18 @@ class LatentCortexEngine:
                 answer_replacement_private=answer_replacement_private,
             )
 
-        text = self._decode_public_text(out_tokens, receipt=receipt) if out_tokens else ""
+        text, converted = self._public_text_or_receipt(out_tokens, receipt)
+        if not converted:
+            receipt.last_stage = "public_text_conversion_failed"
+            return LatentReasoningResult(
+                ok=False,
+                text="",
+                receipt=receipt,
+                tokens=out_tokens,
+                reason="public_text_conversion_failed",
+                decode_token_logprobs=decode_token_logprobs,
+                answer_replacement_private=answer_replacement_private,
+            )
         return LatentReasoningResult(
             ok=True,
             text=text,
@@ -3209,9 +3355,126 @@ class LatentCortexEngine:
         probe, encoding, the recurrent passes, fast-weight attach and erase,
         and the post-episode invariant. Splitting any of it out would let a
         second caller measure "before" against the other episode's "after".
+
+        This is also the structured-result boundary. Context validation, token
+        commitment and the pre-episode invariant all run before the episode's
+        own exception handling, so their ordinary failures escaped the
+        one-call contract as bare exceptions while every later failure came
+        back as a receipted result. A caller had to handle both shapes for
+        the same class of problem.
         """
         with self._single_flight_episode():
-            return self._reason_episode(*args, **kwargs)
+            self._episode_receipt = None
+            self._episode_invariant_armed = False
+            try:
+                return self._reason_episode(*args, **kwargs)
+            except _LATENT_PHASE_ERRORS as exc:
+                receipt = self._episode_receipt
+                if receipt is None:
+                    # Nothing ran. This is an argument-shape refusal, and
+                    # turning a caller's contract violation into an ok=False
+                    # result would hide the bug rather than report it.
+                    raise
+                self._close_armed_invariant(receipt)
+                receipt.flag(f"admission_failed:{type(exc).__name__}")
+                record_degradation(
+                    "latent_cortex",
+                    exc,
+                    action="returned a receipted admission failure to the caller",
+                    severity="warning",
+                )
+                return LatentReasoningResult(
+                    ok=False,
+                    text="",
+                    receipt=receipt,
+                    reason=_public_reason("latent_admission_failed", exc),
+                )
+            finally:
+                self._episode_receipt = None
+
+    def _record_decode_discipline(
+        self,
+        receipt: EpisodeReceipt,
+        *,
+        requested_tokens: int,
+        generated_tokens: int,
+        termination: str,
+    ) -> None:
+        """One finalization for both decode paths.
+
+        The fallback recorded four of the six fields. Newline suppressions and
+        the repetition penalty were the two it dropped, which are exactly the
+        two that say sampling was intervened in — so a fallback receipt looked
+        like an unmodified decode next to a latent one that said otherwise.
+        """
+
+        receipt.decode_requested_tokens = int(requested_tokens)
+        receipt.decode_generated_tokens = int(generated_tokens)
+        receipt.decode_termination = termination
+        receipt.decode_contract_satisfied = bool(self._last_decode_contract_satisfied)
+        receipt.decode_contract_grace_used_tokens = int(
+            self._last_decode_contract_grace_used_tokens
+        )
+        receipt.decode_newline_suppressions = int(
+            self._last_decode_newline_suppressions
+        )
+        receipt.decode_repetition_penalty_applied = float(
+            self.config.decode_repetition_penalty
+        )
+        receipt.decode_sample_seed = int(self._last_decode_sample_seed)
+        receipt.decode_sample_trace_sha256 = str(
+            self._last_decode_sample_trace_sha256
+        )
+
+    def _release_episode_memory(self) -> None:
+        """Give back what this episode holds after memory exhaustion.
+
+        Best effort by construction — the process is already short — but the
+        episode's own caches are the largest thing it can release, and the
+        device allocator holds freed buffers until it is asked not to.
+        """
+
+        self._episode_probe_cache = None
+        self._episode_kv_state_tree = None
+        try:
+            import gc
+
+            import mlx.core as mx
+
+            gc.collect()
+            clear = getattr(getattr(mx, "metal", None), "clear_cache", None)
+            if callable(clear):
+                clear()
+        except (AttributeError, ImportError, MemoryError, RuntimeError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="could not release device caches after memory exhaustion",
+                severity="warning",
+            )
+
+    def _close_armed_invariant(self, receipt: EpisodeReceipt) -> None:
+        """Run the post-episode probe when pre_episode already armed it.
+
+        The invariant is a lifecycle: arming it and never closing it leaves
+        the next episode measuring "before" against a reading nobody took an
+        "after" for.
+        """
+
+        if not self._episode_invariant_armed:
+            return
+        self._episode_invariant_armed = False
+        try:
+            receipt.params_unchanged = self.invariant.post_episode(receipt)
+        except _LATENT_PHASE_ERRORS as exc:
+            receipt.params_unchanged = False
+            receipt.flag(f"checkpoint_post_probe_failed:{type(exc).__name__}")
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="could not close the checkpoint invariant after an admission failure",
+                severity="critical",
+            )
 
     # inspect.signature() follows __wrapped__, so the public entry point
     # still reports the real parameter list rather than (*args, **kwargs).
@@ -5766,7 +6029,7 @@ class LatentCortexEngine:
                 receipt.counterfactual_verifier = {
                     "requested": True,
                     "available": False,
-                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "reason": _public_reason("verifier_unavailable", exc),
                     "selection_effect": "none",
                 }
         elif self.config.counterfactual_verifier_enabled:
@@ -5844,7 +6107,7 @@ class LatentCortexEngine:
                 receipt.generative_verifier = {
                     "requested": True,
                     "available": False,
-                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "reason": _public_reason("verifier_unavailable", exc),
                     "selection_effect": "none",
                 }
         elif self.config.generative_verifier_enabled:
@@ -5910,7 +6173,7 @@ class LatentCortexEngine:
                 receipt.prefix_stability = {
                     "requested": True,
                     "available": False,
-                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "reason": _public_reason("verifier_unavailable", exc),
                     "selection_effect": "none",
                     "correctness_effect": "none",
                 }
@@ -6781,6 +7044,7 @@ class LatentCortexEngine:
                 # against it. Mark the mutation before it happens, and keep
                 # the attach inside the block whose handler finalizes.
                 receipt.fast_weights_attach_attempted = True
+                self._episode_wall_reserve_forwards = _FW_ERASE_PROBE_TOKENS + 1
                 try:
                     wrapped = fast_weights.attach(
                         self.model.model,
@@ -7991,15 +8255,12 @@ class LatentCortexEngine:
                     latent_sha256=(tensor_sha256(winner.z) if latent_decode_authorized else ""),
                     final=True,
                 )
-            receipt.decode_requested_tokens = decode_limit
-            receipt.decode_generated_tokens = len(out_tokens)
-            receipt.decode_termination = decode_termination
-            receipt.decode_contract_satisfied = bool(self._last_decode_contract_satisfied)
-            receipt.decode_contract_grace_used_tokens = int(
-                self._last_decode_contract_grace_used_tokens
+            self._record_decode_discipline(
+                receipt,
+                requested_tokens=decode_limit,
+                generated_tokens=len(out_tokens),
+                termination=decode_termination,
             )
-            receipt.decode_newline_suppressions = int(self._last_decode_newline_suppressions)
-            receipt.decode_repetition_penalty_applied = float(self.config.decode_repetition_penalty)
             if heterogeneous_finalized and final_fusion_audit is not None:
                 from core.brain.llm.latent_cortex.heterogeneous_integrator import (
                     build_heterogeneous_decode_receipt,
@@ -8381,6 +8642,7 @@ class LatentCortexEngine:
             self._fw_cleanup_seconds_high_water,
             time.monotonic() - cleanup_started,
         )
+        self._episode_wall_reserve_forwards = 0
         if receipt.fast_weights_erased is not True:
             receipt.flag("fast_weight_erase_unproven")
         lifecycle = fast_weights.lifecycle
@@ -8769,7 +9031,7 @@ class LatentCortexEngine:
         except _LATENT_PHASE_ERRORS as exc:
             return {
                 "evaluated": False,
-                "reason": f"generated battery failed: {type(exc).__name__}: {exc}",
+                "reason": _public_reason("generated_battery_failed", exc),
                 "items": [],
                 "failed": [],
             }

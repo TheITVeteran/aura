@@ -1253,7 +1253,13 @@ def handle_latent_reason(
         )
         and not integrity_safe
     )
-    body["requires_worker_recycle"] = not integrity_safe
+    # Memory exhaustion is not a clean failure even when the erase proof
+    # holds: the process just could not get what it asked for, and the next
+    # episode inherits whatever fragmentation caused it.
+    memory_exhausted = "fallback_refused_memory_exhaustion" in set(
+        result.receipt.honest_flags
+    )
+    body["requires_worker_recycle"] = not integrity_safe or memory_exhausted
     if not integrity_safe:
         logger.warning(
             "Latent episode returned no complete worker-bound runtime-integrity "

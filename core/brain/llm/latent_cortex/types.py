@@ -1600,6 +1600,11 @@ class EpisodeReceipt:
     # already held _MAX_NEWLINE_RUN — a sampling constraint, never text
     # editing; nonzero values reveal the model still trying to babble.
     decode_newline_suppressions: int = 0
+    # -1 means the decode was deterministic and no seed was in play. Any other
+    # value reproduces the sampling exactly; the trace digest commits to the
+    # sequence of decisions that seed actually produced.
+    decode_sample_seed: int = -1
+    decode_sample_trace_sha256: str = ""
     decode_repetition_penalty_applied: float = 1.0
     # Deterministic task-verifier evidence when the episode ran under
     # verifier guidance (task_verifiers.EpisodeTaskVerifier receipt).
@@ -1977,6 +1982,8 @@ class EpisodeReceipt:
             ),
             "incumbent_artifact": dict(self.incumbent_artifact),
             "decode_newline_suppressions": self.decode_newline_suppressions,
+            "decode_sample_seed": self.decode_sample_seed,
+            "decode_sample_trace_sha256": self.decode_sample_trace_sha256,
             "decode_repetition_penalty_applied": self.decode_repetition_penalty_applied,
             "verifier_guidance": dict(self.verifier_guidance),
             "escape": dict(self.escape),
