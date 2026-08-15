@@ -155,6 +155,7 @@ TRANSITION_TAPE_READER_PARAMETER_NAMES: Final = (
 )
 TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
     "transition_processor_state_projection",
+    "transition_processor_state_cross_projection",
     "transition_processor_action_left",
     "transition_processor_action_right",
     "transition_processor_history_projection",
@@ -189,7 +190,9 @@ TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES: Final = (
 TRANSITION_PROCESSOR_MODES: Final = (
     "residual",
     "authoritative",
+    "copy_write",
 )
+TRANSITION_COPY_PRIOR_LOGIT_BIAS: Final = 2.0
 TRANSITION_OPCODE_EXPERT_ROUTING_MODES: Final = (
     "opcode",
     "uniform",
@@ -907,6 +910,20 @@ class UnifiedRecurrentController(nn.Module):
                 key=key_transition_processor_state,
             ).astype(mx.float32)
             * processor_scale
+        )
+        # Existing processor checkpoints only let an output register inspect
+        # its own prior value. That makes cross-register predicates (for
+        # example comparing a candidate against a two-register score)
+        # structurally unrepresentable. This bank starts at exact zero so it
+        # can be attached to trained parents without changing one logit.
+        self.transition_processor_state_cross_projection = mx.zeros(
+            (
+                config.state_slots,
+                config.state_slots,
+                config.correction_rank,
+                config.correction_rank,
+            ),
+            dtype=mx.float32,
         )
         processor_action_shape = (
             config.state_slots,
@@ -2596,11 +2613,17 @@ class UnifiedRecurrentController(nn.Module):
 
         state_identity = self._categorical_identity_features(state_probabilities)
         action_identity = self._categorical_identity_features(action_probabilities)
-        state = mx.einsum(
+        local_state = mx.einsum(
             "bsi,sio->bso",
             state_identity,
             self.transition_processor_state_projection,
         )
+        cross_state = mx.einsum(
+            "bni,snio->bso",
+            state_identity,
+            self.transition_processor_state_cross_projection,
+        )
+        state = local_state + cross_state
         action_left = mx.einsum(
             "bai,saio->bso",
             action_identity,
@@ -2718,6 +2741,18 @@ class UnifiedRecurrentController(nn.Module):
         )
         if transition_processor_mode == "authoritative":
             resolved = processor_logits
+        elif transition_processor_mode == "copy_write":
+            # A register machine is sparse by construction: most operations
+            # retain most of the committed state. Predicting every register
+            # from scratch spends gradient on relearning identity and lets an
+            # uncertain head erase valid state. The finite prior is strong
+            # enough to make a zero-attached processor an exact copy, while a
+            # learned candidate can still override any register. It carries no
+            # target, private trace, opcode semantics, or future information.
+            resolved = processor_logits + (
+                TRANSITION_COPY_PRIOR_LOGIT_BIAS
+                * state_probabilities.astype(mx.float32)
+            )
         else:
             if legacy_logits is None:
                 raise ValueError("residual transition processor requires legacy logits")
@@ -5123,6 +5158,8 @@ __all__ = [
     "TRANSITION_MEMORY_PARAMETER_NAMES",
     "TRANSITION_TAPE_READER_PARAMETER_NAMES",
     "TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES",
+    "TRANSITION_COPY_PRIOR_LOGIT_BIAS",
+    "TRANSITION_PROCESSOR_MODES",
     "TRANSITION_PROCESSOR_PARAMETER_NAMES",
     "TRANSITION_REPLAY_MODES",
     "TRANSITION_REPLAY_PARAMETER_NAMES",

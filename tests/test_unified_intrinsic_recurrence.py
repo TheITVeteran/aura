@@ -1266,6 +1266,108 @@ def test_typed_transition_processor_attaches_as_exact_noop() -> None:
     assert bool(mx.all(logits == 0))
 
 
+def test_copy_write_processor_is_identity_at_zero_attachment() -> None:
+    controller = _controller()
+    values = (3, 7, 11, 13, 0)
+    state = controller.exact_probabilities(
+        values,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    copied = controller.resolve_transition_processor_logits(
+        None,
+        state,
+        action,
+        None,
+        transition_processor_mode="copy_write",
+    )
+    regenerated = controller.resolve_transition_processor_logits(
+        None,
+        state,
+        action,
+        None,
+        transition_processor_mode="authoritative",
+    )
+
+    mx.eval(copied, regenerated)
+    assert tuple(mx.argmax(copied[0], axis=-1).tolist()) == values
+    assert tuple(mx.argmax(regenerated[0], axis=-1).tolist()) != values
+
+
+def test_copy_write_processor_can_override_any_committed_register() -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    target = (1, 8, 12, 14, 1)
+    categories = mx.arange(controller.config.state_cardinality)[None, None, :]
+    candidate = 4.0 * (
+        categories == mx.array((target,), dtype=mx.int32)[..., None]
+    ).astype(mx.float32)
+    original = controller.typed_transition_processor_logits
+    controller.typed_transition_processor_logits = lambda *_args, **_kwargs: candidate
+    try:
+        resolved = controller.resolve_transition_processor_logits(
+            None,
+            state,
+            action,
+            None,
+            transition_processor_mode="copy_write",
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    mx.eval(resolved)
+    assert tuple(mx.argmax(resolved[0], axis=-1).tolist()) == target
+
+
+def test_cross_register_transition_tissue_is_zero_attached_then_causal() -> None:
+    controller = _controller()
+    assert bool(mx.all(controller.transition_processor_state_cross_projection == 0))
+    controller.transition_processor_state_cross_projection = (
+        controller.transition_processor_state_cross_projection.at[1, 2].add(
+            mx.eye(controller.config.correction_rank)
+        )
+    )
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(1251),
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    changed = controller.exact_probabilities(
+        (0, 7, 12, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    baseline = controller.typed_transition_processor_logits(state, action, None)
+    observed = controller.typed_transition_processor_logits(changed, action, None)
+    mx.eval(baseline, observed)
+    assert not bool(mx.allclose(baseline[:, 1], observed[:, 1]))
+
+
 def test_typed_transition_processor_opcode_experts_are_isolated() -> None:
     controller = _controller()
     controller.transition_processor_opcode_output = (

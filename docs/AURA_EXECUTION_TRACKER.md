@@ -50057,3 +50057,56 @@ reasoning domains, open-domain generality, globally authorized runtime use,
 permanent neural-weight fusion, frontier performance, or `WOW Signal`. The next
 proof gate is a fresh semantic-state canary across coding, calibration and
 misleading-premise families before broader answer-level replication.
+
+## Checkpoint 2026-08-15-536: Stop The Semantic Machine At Its Measured Boundary
+
+The fresh semantic-v2 canary ran coding, calibration and misleading-premise
+from clean source commit `d11c0e2060a5081ed5b612c91d9c0f8f7e7361f8`.
+Its launchd controller, detached supervisor, trainer process group, memory
+sentinel and sleep inhibitor remained healthy through a durable step-144
+checkpoint. Training reached step 160 in the same attempt before the campaign
+was deliberately stopped; step 128 had already shown all 36 trajectories
+diverging at their first transition and no exact T1 state.
+
+The model-free matched-arm evaluator then replayed step 144. Opcode-intact
+execution produced one exact T1 task out of 36, `0.01852` exact state execution
+at T3, `0.00833` at T16 and no complete T3 or T16 trajectory. Uniform routing
+and the opcode-expert lesion were zero at all measured depths. State and history
+lesions reduced the already-small deep result. This establishes that opcode
+tissue learned a causal fragment, but it also establishes futility for the
+candidate architecture: exact execution did not become reliable and recurrence
+compounded the first-step failures.
+
+The immutable campaign, checkpoint and matched report identities are recorded
+in `artifacts/closeout/latent_cortex/cp536_semantic_transition_canary_verdict.json`.
+The verdict is `not_admitted`. It supports no semantic decode, resident-32B,
+runtime promotion, fusion, frontier-reasoning or `WOW Signal` claim.
+
+## Checkpoint 2026-08-15-537: Make Sparse State Updates Representable
+
+CP536 exposed a defect in the candidate transition machine rather than a need
+for another evaluator. The direct processor regenerated all eleven registers
+from scratch even though most declared operations preserve most registers. Its
+output register also read only the same-index prior register, making predicates
+such as comparing a candidate against a multi-register score structurally
+under-specified. Early per-family gradient norms differed by more than an order
+of magnitude despite family-balanced batches.
+
+The controller now has a versioned `copy_write` transition mode. A finite prior
+over the committed categorical state makes a zero processor an exact identity
+machine, while learned logits can still overwrite any register. A separately
+authenticated cross-register projection lets every output register read every
+input register; its exact-zero initialization preserves old checkpoints. The
+trainer can also use `balanced_mean`, which equalizes transition-owned family
+gradient norms before averaging while leaving unowned parameters on the
+ordinary arithmetic mean. It does not revive the refuted PCGrad policy.
+
+Checkpoint migration adds only missing tensors, refuses partial or active
+extensions and never overwrites trained parent values. Evaluation records the
+deployed transition policy and requires cross-register tissue for a copy-write
+checkpoint. The new source-bound profile starts from a fresh initialization,
+keeps replay disabled and binds copy-write, cross-register tissue and balanced
+family gradients into campaign identity. Focused recurrence, objective,
+trainer, evaluator and campaign contracts pass `259/259`. This is a candidate
+mechanism, not a gain claim; the next gate is the bounded fresh canary with
+matched authoritative-policy, state, history, router and expert lesions.

@@ -558,6 +558,25 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
     assert arguments[arguments.index("--transition-replay-mode") + 1] == "disabled"
 
 
+def test_semantic_copy_write_canary_binds_repaired_transition_dynamics() -> None:
+    training = _profile_training("process_semantic_copy_write_canary")
+    arguments = _training_cli(training)
+
+    assert training["state_schema"] == "semantic_v2"
+    assert training["transition_processor_mode"] == "copy_write"
+    assert training["process_gradient_combiner"] == "balanced_mean"
+    assert training["transition_replay_mode"] == "disabled"
+    assert training["max_steps"] == training["state_warmup_steps"] == 256
+    assert "process_semantic_copy_write_canary" not in BOOTSTRAP_PROFILES
+    assert "process_semantic_copy_write_canary" in OPTIONAL_BOOTSTRAP_PROFILES
+    assert arguments[arguments.index("--transition-processor-mode") + 1] == (
+        "copy_write"
+    )
+    assert arguments[arguments.index("--process-gradient-combiner") + 1] == (
+        "balanced_mean"
+    )
+
+
 def test_semantic_transition_canary_accepts_only_optional_exact_continuation() -> None:
     _validate_bootstrap_profile(
         "process_semantic_transition_canary",
@@ -565,6 +584,14 @@ def test_semantic_transition_canary_accepts_only_optional_exact_continuation() -
     )
     _validate_bootstrap_profile(
         "process_semantic_transition_canary",
+        present=True,
+    )
+    _validate_bootstrap_profile(
+        "process_semantic_copy_write_canary",
+        present=False,
+    )
+    _validate_bootstrap_profile(
+        "process_semantic_copy_write_canary",
         present=True,
     )
     with pytest.raises(RuntimeError, match="does_not_accept"):

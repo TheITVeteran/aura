@@ -90,6 +90,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     PROCESS_TAPE_SCHEMA,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
+    TRANSITION_PROCESSOR_MODES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
     TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
@@ -2295,7 +2296,7 @@ def _combine_process_gradient_trees(
         not samples
         or len(samples) != len(labels)
         or len(set(labels)) != len(labels)
-        or mode not in {"mean", "pcgrad"}
+        or mode not in {"mean", "balanced_mean", "pcgrad"}
         or not ownership_group
     ):
         raise ValueError("process gradient combiner cohort differs")
@@ -2317,6 +2318,51 @@ def _combine_process_gradient_trees(
     ]
     if not owned:
         raise ValueError("process gradient combiner owns no parameters")
+    if mode == "balanced_mean":
+        squared_norms = [
+            mx.sum(
+                mx.stack(
+                    [
+                        mx.sum(candidate[name].astype(mx.float32) ** 2)
+                        for name in owned
+                    ]
+                )
+            )
+            for candidate in original
+        ]
+        mx.eval(*squared_norms)
+        norms = [math.sqrt(max(0.0, float(value.item()))) for value in squared_norms]
+        nonzero = [value for value in norms if value > 1e-12]
+        target_norm = sum(nonzero) / len(nonzero) if nonzero else 0.0
+        scales = [target_norm / value if value > 1e-12 else 0.0 for value in norms]
+        count = float(len(original))
+        combined = tree_unflatten(
+            [
+                (
+                    name,
+                    sum(
+                        candidate[name] * (
+                            scales[index]
+                            if name in owned
+                            else 1.0
+                        )
+                        for index, candidate in enumerate(original)
+                    )
+                    / count,
+                )
+                for name in names
+            ]
+        )
+        return combined, {
+            "mode": mode,
+            "ownership_group": ownership_group,
+            "target_owned_norm": target_norm,
+            "owned_norms": dict(zip(labels, norms, strict=True)),
+            "owned_scales": dict(zip(labels, scales, strict=True)),
+            "projection_count": 0,
+            "projection_events": [],
+            "unowned_parameters_combined_by": "arithmetic_mean",
+        }
     projected = [dict(candidate) for candidate in original]
     events: list[dict[str, Any]] = []
     for left_index in range(len(projected)):
@@ -2991,6 +3037,7 @@ def _evaluate_process_admission(
     *,
     public_action_program: bool = False,
     transition_processor_lesion: bool = False,
+    transition_processor_mode: str = "authoritative",
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
@@ -3022,7 +3069,7 @@ def _evaluate_process_admission(
                     public_action_values=_public_actions_for_task(task, depth),
                     microcode_lesion=True,
                     transition_processor_lesion=transition_processor_lesion,
-                    transition_processor_mode="authoritative",
+                    transition_processor_mode=transition_processor_mode,
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
@@ -3055,7 +3102,7 @@ def _evaluate_process_admission(
         "transition_processor_available": not transition_processor_lesion,
         "transition_processor_lesioned": transition_processor_lesion,
         "transition_processor_mode": (
-            "authoritative" if public_action_program else "residual"
+            transition_processor_mode if public_action_program else "residual"
         ),
         "transition_opcode_expert_routing": transition_opcode_expert_routing,
         "transition_replay_mode": transition_replay_mode,
@@ -4179,17 +4226,18 @@ def _merge_bootstrap_transition_processor_extension(
     """Attach the typed state/action processor as an exact parent no-op."""
 
     expected = {f"controller.{name}" for name in TRANSITION_PROCESSOR_PARAMETER_NAMES}
+    cross_name = "controller.transition_processor_state_cross_projection"
     missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
-    if missing != expected:
+    if missing not in (expected, {cross_name}):
         raise RuntimeError(
             "unified recurrence bootstrap transition-processor inventory differs: "
             + ",".join(sorted(missing))
         )
     migrated = dict(parent_values)
     tensor_receipts: dict[str, dict[str, Any]] = {}
-    for name in sorted(expected):
+    for name in sorted(missing):
         if name not in child_values:
             raise RuntimeError(
                 "unified recurrence bootstrap transition-processor source differs"
@@ -4202,14 +4250,18 @@ def _merge_bootstrap_transition_processor_extension(
             "sha256": _tensor_sha256(value),
         }
     output_name = "controller.transition_processor_output"
-    if bool(mx.any(migrated[output_name] != 0)):
+    if output_name in missing and bool(mx.any(migrated[output_name] != 0)):
         raise RuntimeError(
             "unified recurrence bootstrap transition processor is not a no-op"
         )
+    if cross_name in missing and bool(mx.any(migrated[cross_name] != 0)):
+        raise RuntimeError(
+            "unified recurrence bootstrap cross-register tissue is not a no-op"
+        )
     return migrated, {
-        "schema": "aura.unified_intrinsic.transition_processor_extension.v1",
+        "schema": "aura.unified_intrinsic.transition_processor_extension.v2",
         "migration_rule": (
-            "parent_exact_plus_zero_output_typed_state_action_history_processor"
+            "parent_exact_plus_zero_output_processor_or_cross_register_extension"
         ),
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
@@ -4218,7 +4270,7 @@ def _merge_bootstrap_transition_processor_extension(
         "action_field_order": list(ACTION_SLOT_NAMES),
         "future_action_visible": False,
         "private_transition_trace_visible": False,
-        "new_tensor_names": sorted(expected),
+        "new_tensor_names": sorted(missing),
         "tensors": tensor_receipts,
     }
 
@@ -4467,6 +4519,7 @@ def _evaluate_depth(
     depth: int,
     *,
     public_action_program: bool = False,
+    transition_processor_mode: str = "authoritative",
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
 ) -> dict[str, float]:
@@ -4489,7 +4542,7 @@ def _evaluate_depth(
         public_action_values=public_actions,
         microcode_lesion=public_action_program,
         transition_processor_mode=(
-            "authoritative" if public_action_program else "residual"
+            transition_processor_mode if public_action_program else "residual"
         ),
         transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_replay_mode=transition_replay_mode,
@@ -4579,6 +4632,7 @@ def _evaluate(
     *,
     envelope: Any,
     public_action_program: bool = False,
+    transition_processor_mode: str = "authoritative",
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
 ) -> dict[str, Any]:
@@ -4644,6 +4698,7 @@ def _evaluate(
                     spec,
                     depth,
                     public_action_program=public_action_program,
+                    transition_processor_mode=transition_processor_mode,
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
@@ -5035,11 +5090,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--process-gradient-combiner",
-        choices=("mean", "pcgrad"),
+        choices=("mean", "balanced_mean", "pcgrad"),
         default="mean",
         help=(
-            "average family gradients or project measured negative conflicts "
-            "from transition-owned tensors before averaging"
+            "average family gradients, equalize transition-owned family norms, "
+            "or project measured negative conflicts before averaging"
         ),
     )
     parser.add_argument(
@@ -5082,6 +5137,17 @@ def main() -> int:
         help=(
             "train verified categorical state/action/history transitions without "
             "constructing a transformer graph"
+        ),
+    )
+    parser.add_argument(
+        "--transition-processor-mode",
+        choices=tuple(
+            mode for mode in TRANSITION_PROCESSOR_MODES if mode != "residual"
+        ),
+        default="authoritative",
+        help=(
+            "regenerate every state register or learn sparse writes over the "
+            "committed categorical state"
         ),
     )
     parser.add_argument(
@@ -5370,6 +5436,12 @@ def main() -> int:
     ):
         raise ValueError(
             "direct transition processor requires public transition-only controller training"
+        )
+    if args.transition_processor_mode != "authoritative" and (
+        not args.direct_transition_processor or not args.public_action_program
+    ):
+        raise ValueError(
+            "copy-write transition mode requires direct public transition training"
         )
     if (
         args.direct_transition_curriculum != "closed_loop"
@@ -5927,6 +5999,7 @@ def main() -> int:
             "process_query_gradient_scale": args.process_query_gradient_scale,
             "direct_transition_processor": {
                 "enabled": args.direct_transition_processor,
+                "mode": args.transition_processor_mode,
                 "objective": (
                     "actual_committed_state_public_action_history_to_exact_next_state"
                 ),
@@ -5947,7 +6020,9 @@ def main() -> int:
                     if args.direct_transition_curriculum == "progressive"
                     else ["closed_loop"]
                 ),
-                "deployed_transition_policy": "processor_authoritative",
+                "deployed_transition_policy": (
+                    f"processor_{args.transition_processor_mode}"
+                ),
                 "opcode_expert_routing": args.transition_opcode_expert_routing,
                 "transition_replay": {
                     "mode": args.transition_replay_mode,
@@ -6687,6 +6762,9 @@ def main() -> int:
                                             weakest_register_weight=(
                                                 args.direct_transition_weakest_register_weight
                                             ),
+                                            transition_processor_mode=(
+                                                args.transition_processor_mode
+                                            ),
                                             transition_replay_mode=(
                                                 args.transition_replay_mode
                                             ),
@@ -6707,7 +6785,7 @@ def main() -> int:
                                         public_action_values=public_actions,
                                         microcode_lesion=args.public_action_program,
                                         transition_processor_mode=(
-                                            "authoritative"
+                                            args.transition_processor_mode
                                             if args.public_action_program
                                             else "residual"
                                         ),
@@ -6852,6 +6930,7 @@ def main() -> int:
                         spec.depths,
                         envelope=envelope,
                         public_action_program=args.public_action_program,
+                        transition_processor_mode=args.transition_processor_mode,
                         transition_opcode_expert_routing=(
                             args.transition_opcode_expert_routing
                         ),
@@ -6933,6 +7012,7 @@ def main() -> int:
                 spec.depths,
                 envelope=envelope,
                 public_action_program=args.public_action_program,
+                transition_processor_mode=args.transition_processor_mode,
                 transition_opcode_expert_routing=(
                     args.transition_opcode_expert_routing
                 ),

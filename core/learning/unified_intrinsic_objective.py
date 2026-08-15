@@ -28,6 +28,7 @@ from core.learning.recurrent_state_schema import (
     state_targets_from_trace,
 )
 from core.learning.unified_intrinsic_recurrence import (
+    TRANSITION_PROCESSOR_MODES,
     TRANSITION_REPLAY_MODES,
     UnifiedRecurrentController,
     unified_recurrent_hidden_states,
@@ -1138,6 +1139,7 @@ def unified_typed_transition_processor_loss(
     corrupt_state_offset: int = 1,
     register_weights: Sequence[float] | None = None,
     weakest_register_weight: float = 0.0,
+    transition_processor_mode: str = "authoritative",
     transition_replay_mode: str = "disabled",
     replay_auxiliary_weight: float = 0.5,
 ) -> tuple[Any, dict[str, Any]]:
@@ -1189,6 +1191,8 @@ def unified_typed_transition_processor_loss(
         or not isinstance(weakest_register_weight, (int, float))
         or not math.isfinite(float(weakest_register_weight))
         or not 0.0 <= float(weakest_register_weight) <= 2.0
+        or transition_processor_mode not in TRANSITION_PROCESSOR_MODES
+        or transition_processor_mode == "residual"
         or transition_replay_mode not in TRANSITION_REPLAY_MODES
         or isinstance(replay_auxiliary_weight, bool)
         or not isinstance(replay_auxiliary_weight, (int, float))
@@ -1347,7 +1351,7 @@ def unified_typed_transition_processor_loss(
             state_probabilities,
             action_probabilities,
             history_memory,
-            transition_processor_mode="authoritative",
+            transition_processor_mode=transition_processor_mode,
             opcode_expert_routing=opcode_expert_routing,
         )
         logits, replay_candidate, replay_gate = controller.typed_transition_replay_logits(
@@ -1496,6 +1500,7 @@ def unified_typed_transition_processor_loss(
             float(value) for value in resolved_register_weights[0].tolist()
         ],
         "weakest_register_weight": float(weakest_register_weight),
+        "transition_processor_mode": transition_processor_mode,
         "post_terminal_transitions_trained": 0,
         "answer_tokens_exposed": False,
         "transformer_graph_constructed": False,

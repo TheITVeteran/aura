@@ -411,8 +411,13 @@ def test_bootstrap_transition_processor_extension_is_exact_and_audited() -> None
         **{
             f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
             for name in TRANSITION_PROCESSOR_PARAMETER_NAMES
-            if name != "transition_processor_output"
+            if name
+            not in {
+                "transition_processor_output",
+                "transition_processor_state_cross_projection",
+            }
         },
+        "controller.transition_processor_state_cross_projection": mx.zeros((2, 2)),
         "controller.transition_processor_output": mx.zeros((2, 2)),
     }
 
@@ -425,6 +430,34 @@ def test_bootstrap_transition_processor_extension_is_exact_and_audited() -> None
     assert receipt["category_identity"] == "exact_one_hot_or_deterministic_fourier"
     assert set(migrated) == set(child)
     assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+    incremental_parent = dict(child)
+    del incremental_parent["controller.transition_processor_state_cross_projection"]
+    incremental_parent["controller.transition_processor_output"] = mx.ones((2, 2))
+    incremental, incremental_receipt = _merge_bootstrap_transition_processor_extension(
+        incremental_parent,
+        child,
+    )
+    assert incremental_receipt is not None
+    assert incremental_receipt["new_tensor_names"] == [
+        "controller.transition_processor_state_cross_projection"
+    ]
+    assert bool(
+        mx.array_equal(
+            incremental["controller.transition_processor_output"],
+            incremental_parent["controller.transition_processor_output"],
+        )
+    )
+
+    active_cross = dict(child)
+    active_cross["controller.transition_processor_state_cross_projection"] = mx.ones(
+        (2, 2)
+    )
+    with pytest.raises(RuntimeError, match="cross-register tissue is not a no-op"):
+        _merge_bootstrap_transition_processor_extension(
+            incremental_parent,
+            active_cross,
+        )
 
 
 def test_bootstrap_transition_processor_rejects_partial_or_active_extension() -> None:
@@ -2869,6 +2902,41 @@ def test_mean_process_gradient_combiner_is_exact_mean() -> None:
     )
 
 
+def test_balanced_mean_equalizes_owned_family_norms_only() -> None:
+    left = {
+        "controller": {
+            "transition_processor_output": mx.array([1.0, 0.0]),
+            "transport_bias": mx.array([2.0]),
+        }
+    }
+    right = {
+        "controller": {
+            "transition_processor_output": mx.array([0.0, 3.0]),
+            "transport_bias": mx.array([4.0]),
+        }
+    }
+
+    combined, receipt = _combine_process_gradient_trees(
+        [left, right],
+        ["calibration", "coding"],
+        mode="balanced_mean",
+        ownership_group="typed_state_transition",
+    )
+    flat = dict(tree_flatten(combined))
+    mx.eval(*flat.values())
+
+    assert receipt["owned_norms"] == pytest.approx(
+        {"calibration": 1.0, "coding": 3.0}
+    )
+    assert receipt["owned_scales"] == pytest.approx(
+        {"calibration": 2.0, "coding": 2.0 / 3.0}
+    )
+    assert flat["controller.transition_processor_output"].tolist() == pytest.approx(
+        [1.0, 1.0]
+    )
+    assert flat["controller.transport_bias"].tolist() == pytest.approx([3.0])
+
+
 def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:
     parameters = {
         "model": {
@@ -3449,9 +3517,11 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
         depth,
         *,
         public_action_program=False,
+        transition_processor_mode="authoritative",
         transition_opcode_expert_routing="opcode",
         transition_replay_mode="disabled",
     ):
+        assert transition_processor_mode == "authoritative"
         assert transition_opcode_expert_routing == "opcode"
         assert transition_replay_mode == "disabled"
         observed.append((depth, public_action_program))

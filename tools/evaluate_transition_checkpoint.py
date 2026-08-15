@@ -25,6 +25,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
+    TRANSITION_PROCESSOR_MODES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
     TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
@@ -73,10 +74,11 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
             initialization_seed=int(identity["init_seed"]),
         )
     )
+    optional_cross_register = {"transition_processor_state_cross_projection"}
     required_names = (
         set(TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES)
         | set(TRANSITION_MEMORY_PARAMETER_NAMES)
-        | set(TRANSITION_PROCESSOR_PARAMETER_NAMES)
+        | (set(TRANSITION_PROCESSOR_PARAMETER_NAMES) - optional_cross_register)
         | {"transition_processor_opcode_output"}
     )
     extension_groups = (
@@ -87,6 +89,7 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
         },
         {"transition_processor_opcode_hidden"},
         set(TRANSITION_REPLAY_PARAMETER_NAMES),
+        optional_cross_register,
     )
     available = {
         name.removeprefix("bundle.controller."): value
@@ -101,6 +104,13 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
             "transition checkpoint tensor inventory is incomplete: "
             + ",".join(sorted(missing))
         )
+    processor_identity = identity.get("direct_transition_processor", {})
+    if (
+        isinstance(processor_identity, dict)
+        and processor_identity.get("mode") == "copy_write"
+        and not optional_cross_register <= set(available)
+    ):
+        raise RuntimeError("copy-write checkpoint has no cross-register tissue")
     for group in extension_groups:
         present = group & set(available)
         if present and present != group:
@@ -140,6 +150,7 @@ def _evaluate_task(
     depth: int,
     *,
     routing: str,
+    transition_processor_mode: str,
     replay_mode: str = "disabled",
     state_history_arm: str = "intact",
 ) -> dict[str, Any]:
@@ -206,7 +217,7 @@ def _evaluate_task(
                 processor_state,
                 action,
                 memory,
-                transition_processor_mode="authoritative",
+                transition_processor_mode=transition_processor_mode,
                 opcode_expert_routing=routing,
             )
             decision, _replay_candidate, _replay_gate = (
@@ -310,6 +321,13 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--depths", default="1,3,5,9,10,12,16")
     parser.add_argument("--routings", default="opcode,uniform,lesion")
+    parser.add_argument(
+        "--transition-processor-mode",
+        choices=tuple(
+            mode for mode in TRANSITION_PROCESSOR_MODES if mode != "residual"
+        ),
+        default="authoritative",
+    )
     parser.add_argument("--replay-modes", default="disabled")
     parser.add_argument("--state-history-arms", default="intact")
     parser.add_argument("--output", type=Path, required=True)
@@ -344,6 +362,9 @@ def main() -> int:
                                 task,
                                 depth,
                                 routing=routing,
+                                transition_processor_mode=(
+                                    args.transition_processor_mode
+                                ),
                                 replay_mode=replay_mode,
                                 state_history_arm=state_history_arm,
                             ),
@@ -370,7 +391,7 @@ def main() -> int:
         "replay_modes": list(replay_modes),
         "state_history_arms": list(state_history_arms),
         "runtime_contract": {
-            "transition_processor_mode": "authoritative",
+            "transition_processor_mode": args.transition_processor_mode,
             "legacy_transition_logits_available": False,
             "exact_microcode_available": False,
             "initial_state_authority": "verified_public_initial_state",

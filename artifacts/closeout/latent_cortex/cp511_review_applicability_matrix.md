@@ -47,6 +47,9 @@ and uncited measurements are not treated as observations.
 | Recovery from corrupted state | Partial | One-step target is computed from the corrupted state; coherent off-manifold continuation, empirical error harvesting, recoverability classes, and invalid-state latch remain |
 | Primitive coverage curriculum | Open, required | Certify opcode, operand, boundary, composition, and length coverage; unique prompts are insufficient |
 | Family/horizon/register-balanced optimization | Partial | Balanced family batches and weakest-register term exist; canary enables them and must report macro groups |
+| Preserve unchanged registers with an identity/copy path | Implemented for the next canary | `copy_write` is an exact no-op at zero initialization and permits learned overrides without regenerating every register |
+| Cross-register semantic predicates | Implemented for the next canary | A zero-attached state-to-state projection lets each output register inspect every committed input register; attachment cannot change an older checkpoint |
+| Equalize family gradient magnitudes without PCGrad | Implemented, unmeasured | `balanced_mean` normalizes transition-owned family gradients to their cohort mean norm while preserving arithmetic mean behavior for unowned tensors |
 | State/history/tape lesions | Partial | Existing arms need topology-matched shuffle, wrong-prefix, processor, replay-only, constant-state, identity-copy, and complete-machine nulls |
 | Matched-capacity control | Open, required | Train an initialization-matched, equal-budget control; post-hoc expert averaging is not sufficient |
 | Per-task gain and regression sets | Open, required before causal claim | Emit converted, preserved, regressed, and lesion-erased task identities |
@@ -335,3 +338,37 @@ index, eight-arm result and model-neutral scientific boundary. This closes
 independent certification of bounded resident transfer. Semantic multi-domain
 state execution, answer-level replication outside mathematics, runtime
 promotion, permanent fusion, frontier reasoning and `WOW Signal` remain open.
+
+## CP536-CP537 addendum
+
+CP536 ran the fresh semantic-v2 state machine on coding, calibration and
+misleading-premise tasks with replay disabled. The source-bound detached
+campaign reached step 160 in one attempt and preserved a durable step-144
+checkpoint. The independent matched-arm evaluation found one exact T1 task out
+of 36 in the opcode-intact arm, zero exact T1 tasks under uniform routing or an
+opcode-expert lesion, and no exact depth-3 or depth-16 trajectories. The
+opcode path therefore learned a causal fragment, but the machine was nowhere
+near autonomous admission. The bounded verdict is frozen in
+`cp536_semantic_transition_canary_verdict.json`; no decode, resident, fusion,
+frontier or WOW claim follows from it.
+
+The failure localized three architectural defects that were obscured by
+average categorical accuracy. First, the authoritative processor regenerated
+all eleven state registers at every step even though the declared machine is
+sparse and most registers are unchanged. Second, each output register could
+read only its corresponding prior register, so cross-register predicates were
+not representable by the processor tissue. Third, early family gradient norms
+differed by more than an order of magnitude even after family-balanced
+sampling; CP509 had already shown that projecting small negative cosines was
+not the answer.
+
+CP537 changes the candidate machine rather than the proof bar. A versioned
+`copy_write` policy adds a finite committed-state prior, making a zero-attached
+processor an exact identity machine while leaving every register overridable.
+A zero-initialized cross-register projection lets every output register inspect
+every committed state register without changing old checkpoint behavior.
+`balanced_mean` equalizes only the transition-owned family gradient norms and
+keeps unowned parameters on the ordinary arithmetic mean. Historical
+authoritative and residual modes remain unchanged and older checkpoints attach
+only the missing zero tensor. These are implemented contracts, not evidence of
+a gain; the next gate is a fresh canary and matched policy/tissue lesions.

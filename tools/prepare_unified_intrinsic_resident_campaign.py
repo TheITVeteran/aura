@@ -88,6 +88,7 @@ PROFILES: Final = frozenset(
         "process_public_transition_extended_acquisition",
         "process_public_transition_factorized_acquisition",
         "process_semantic_transition_canary",
+        "process_semantic_copy_write_canary",
         "recovery",
     }
 )
@@ -115,6 +116,7 @@ OPTIONAL_BOOTSTRAP_PROFILES: Final = frozenset(
         # same experiment can survive a source-only repair without resetting
         # its optimizer, cursor, or controller tissue.
         "process_semantic_transition_canary",
+        "process_semantic_copy_write_canary",
     }
 )
 BOUNDED_ATTEMPT_PROFILES: Final = frozenset(
@@ -134,6 +136,7 @@ BOUNDED_ATTEMPT_PROFILES: Final = frozenset(
         "process_public_transition_extended_acquisition",
         "process_public_transition_factorized_acquisition",
         "process_semantic_transition_canary",
+        "process_semantic_copy_write_canary",
     }
 )
 DEFAULT_CAPSULE_ROOT: Final = Path.home() / ".aura/training-capsules"
@@ -301,6 +304,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "analytic_action_readout_fit": False,
         "public_action_program": False,
         "direct_transition_processor": False,
+        "transition_processor_mode": "authoritative",
         "direct_transition_curriculum": "closed_loop",
         "direct_transition_weakest_register_weight": 0.0,
         "transition_opcode_expert_routing": "opcode",
@@ -722,6 +726,49 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "wired_limit_gb": 24.0,
             "max_minutes": 90.0,
         }
+    if profile == "process_semantic_copy_write_canary":
+        process_steps = 256
+        return {
+            **common,
+            "window_tissue_mode": "controller_only",
+            "state_schema": "semantic_v2",
+            "task_source": "frontier_process",
+            "families": "coding,calibration,misleading_premise",
+            "task_depths": "3,5,10",
+            "train_depths": "1,3,5,9,10",
+            "heldout_depths": "12,16",
+            "per_cell": 128,
+            "holdout_per_cell": 12,
+            "max_steps": process_steps,
+            "semantic_warmup_steps": 0,
+            "state_warmup_steps": process_steps,
+            "answer_bridge_steps": 0,
+            "answer_bridge_inner_steps": 1,
+            "process_curriculum": "transition_only",
+            "process_family_batch_size": 3,
+            "process_family_batch_mode": "balanced_families",
+            "process_gradient_combiner": "balanced_mean",
+            "process_transformer_gradient_scale": 0.0,
+            "process_query_gradient_scale": 0.0,
+            "public_action_program": True,
+            "direct_transition_processor": True,
+            "transition_processor_mode": "copy_write",
+            "direct_transition_curriculum": "progressive",
+            "direct_transition_weakest_register_weight": 0.25,
+            "transition_replay_mode": "disabled",
+            "state_teacher_forcing_probability": 0.0,
+            "state_teacher_forcing_final_probability": 0.0,
+            "eval_every": 32,
+            "checkpoint_every": 16,
+            "state_learning_rate": 0.0002,
+            "max_gradient_norm": 1.0,
+            "seed": 2026081507,
+            "init_seed": 2026081508,
+            "memory_fraction": 0.30,
+            "memory_limit_gb": 20.0,
+            "wired_limit_gb": 24.0,
+            "max_minutes": 75.0,
+        }
     if profile in {
         "process_action_canary",
         "process_canary",
@@ -899,6 +946,7 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "transition_opcode_expert_routing": (
             "--transition-opcode-expert-routing"
         ),
+        "transition_processor_mode": "--transition-processor-mode",
         "transition_replay_mode": "--transition-replay-mode",
         "direct_transition_curriculum": "--direct-transition-curriculum",
         "direct_transition_weakest_register_weight": (

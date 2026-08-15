@@ -1242,7 +1242,10 @@ def test_direct_transition_loss_weights_value_registers_and_weakest_term() -> No
     )
 
 
-def test_direct_transition_objective_learns_exact_trace() -> None:
+@pytest.mark.parametrize("transition_processor_mode", ["authoritative", "copy_write"])
+def test_direct_transition_objective_learns_exact_trace(
+    transition_processor_mode: str,
+) -> None:
     controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
     trace = StructuredTransitionTrace(
         family="boolean",
@@ -1264,6 +1267,7 @@ def test_direct_transition_objective_learns_exact_trace() -> None:
             transition_trace=trace,
             transition_program=program,
             public_action_values=public_actions,
+            transition_processor_mode=transition_processor_mode,
         )[0]
 
     initial_loss, initial_receipt = unified_typed_transition_processor_loss(
@@ -1272,6 +1276,7 @@ def test_direct_transition_objective_learns_exact_trace() -> None:
         transition_trace=trace,
         transition_program=program,
         public_action_values=public_actions,
+        transition_processor_mode=transition_processor_mode,
     )
     legacy_before = mx.array(controller.state_transition_output)
     optimizer = optim.Adam(learning_rate=0.01)
@@ -1285,12 +1290,14 @@ def test_direct_transition_objective_learns_exact_trace() -> None:
         transition_trace=trace,
         transition_program=program,
         public_action_values=public_actions,
+        transition_processor_mode=transition_processor_mode,
     )
     mx.eval(initial_loss, final_loss, legacy_before, controller.state_transition_output)
 
     assert float(final_loss.item()) < float(initial_loss.item()) * 0.05
     assert final_receipt["state_accuracy"] > initial_receipt["state_accuracy"]
     assert final_receipt["state_accuracy"] == 1.0
+    assert final_receipt["transition_processor_mode"] == transition_processor_mode
     assert mx.array_equal(controller.state_transition_output, legacy_before).item()
 
 

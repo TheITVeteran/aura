@@ -1,0 +1,83 @@
+{
+  "schema": "aura.unified_intrinsic.semantic_transition_canary_verdict.v1",
+  "campaign_id": "cp536-semantic-transition-20260815",
+  "source_commit": "d11c0e2060a5081ed5b612c91d9c0f8f7e7361f8",
+  "source_tree": "61150ea5b18bf6c631998c574446ae4e98e85eed",
+  "campaign_config_sha256": "932df4d59924639a738263951c9aa62d83d42471e3ba029255b8b20d387f622a",
+  "dataset_identity_sha256": "473521f3ac7b4ce0f8cf9e62df459e8473eba8cc0eb9649c39f93f693daf3c45",
+  "profile": "process_semantic_transition_canary",
+  "checkpoint": {
+    "step": 144,
+    "checkpoint_sha256": "383b14ef29bece2e096331c06bd267f789aac36df3ad2482a89664c014373bdf",
+    "checkpoint_identity_sha256": "cc4e44c71fc7d0dd2a3cd7c4abc4c0c234bd489b70f82046a24b6fcf95b0fa51",
+    "checkpoint_receipt_sha256": "83eaa2b9c4f3696eb6669370b2c3109175cc4e820540ee78112c5fb708d5061d"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "last_completed_training_step": 160,
+    "latest_durable_checkpoint_step": 144,
+    "duration_seconds": 875.632348,
+    "detached_receipt_sha256": "660ca4edb418f717beb1ad14596d5e2e47f7a8bbdc547cd3f0d70b826d592459",
+    "halt_reason": "bounded_futility_after_step_128_and_matched_step_144_adjudication"
+  },
+  "authoritative_evaluation": {
+    "external_report_payload_sha256": "afd5f5c744c1cf36e26d8eb0931674cb79d8fac4154a562f40ba5d9878bb4371",
+    "external_report_file_sha256": "58f705853859ade8717f39fcabd7675731642b238d721353b20267bd5bb79587",
+    "holdout_tasks": 36,
+    "depths": [1, 3, 16],
+    "opcode_intact": {
+      "t1_active_state_exact": 0.027777777777777776,
+      "t1_active_trajectory_exact": 0.027777777777777776,
+      "t3_active_state_exact": 0.018518518518518517,
+      "t3_active_trajectory_exact": 0.0,
+      "t16_active_state_exact": 0.008333333333333335,
+      "t16_active_trajectory_exact": 0.0,
+      "t16_recovery_after_wrong": 0.05555555555555555
+    },
+    "uniform_intact": {
+      "t1_active_state_exact": 0.0,
+      "t16_active_state_exact": 0.0,
+      "t16_active_trajectory_exact": 0.0
+    },
+    "opcode_expert_lesion_intact": {
+      "t1_active_state_exact": 0.0,
+      "t16_active_state_exact": 0.0,
+      "t16_active_trajectory_exact": 0.0
+    },
+    "opcode_history_lesion": {
+      "t1_active_state_exact": 0.0,
+      "t16_active_state_exact": 0.002777777777777778,
+      "t16_active_trajectory_exact": 0.0
+    },
+    "opcode_state_lesion": {
+      "t1_active_state_exact": 0.027777777777777776,
+      "t16_active_state_exact": 0.002777777777777778,
+      "t16_active_trajectory_exact": 0.0
+    }
+  },
+  "verdict": "not_admitted",
+  "supported_claims": [
+    "The source-bound semantic-v2 campaign completed one healthy detached attempt through a durable step-144 checkpoint.",
+    "Opcode-conditioned tissue caused one exact T1 transition that matched uniform and expert-lesion controls did not produce.",
+    "The authoritative all-register processor failed to acquire reliable exact semantic transitions and recurrence reduced exactness with depth."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous semantic-state execution",
+    "positive recurrence-depth effect",
+    "multi-domain decoded reasoning gain",
+    "resident-32B semantic transfer",
+    "runtime promotion or weight fusion",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "blocking_observations": [
+    "Only one of 36 T1 tasks was exact in the opcode-intact arm.",
+    "No depth-3 or depth-16 trajectory was completely correct.",
+    "All 36 depth-16 trajectories first diverged at transition one.",
+    "Uniform routing and the opcode-expert lesion were exactly zero at every measured depth.",
+    "The output-register computation could not inspect other state registers, making cross-register predicates structurally under-specified.",
+    "Regenerating every register from scratch required relearning sparse identity transitions and allowed one uncertain write to erase valid state."
+  ],
+  "next_bounded_mechanism": "Use an exact no-op copy-and-write transition policy, add zero-attached cross-register state tissue, equalize measured per-family transition gradient norms, and run a fresh source-bound canary with authoritative-policy, state, history, uniform-router and expert lesions."
+}
