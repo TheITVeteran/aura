@@ -1086,3 +1086,98 @@ def test_a_truncated_closure_still_contains_its_own_roots():
 
     for root in frontier_gap._EXECUTION_ROOTS:
         assert root in closure, root
+
+
+# ─────────────────────────── the diagnostic runner says what it enforced
+
+
+def test_the_diagnostic_runner_enforces_the_wall_clock_it_can():
+    source = inspect.getsource(frontier_gap.run_battery)
+
+    assert "asyncio.wait_for(" in source
+    assert 'MATCHED_BUDGET["hard_timeout_s"]' in source
+
+
+def test_a_timed_out_item_is_an_invalid_miss_not_a_crash():
+    source = inspect.getsource(frontier_gap.run_battery)
+
+    assert "except TimeoutError as exc:" in source
+    assert 'execution_error = "TimeoutError"' in source
+
+
+def test_the_runner_reports_what_it_did_not_measure():
+    source = inspect.getsource(frontier_gap.run_battery)
+
+    assert '"budget_enforcement"' in source
+    for unmeasured in ("process_isolation", "generation_calls", "output_tokens"):
+        assert unmeasured in source
+
+
+# ─────────────────────────── what the battery is
+
+
+def test_the_scope_states_what_it_does_not_measure():
+    scope = frontier_gap.battery_scope()
+
+    assert scope["supports_general_capability_claim"] is False
+    assert set(scope["task_classes"]) == set(frontier_gap._BATTERY_BUILDERS)
+    for absent in ("contamination control", "transfer to unseen task families"):
+        assert absent in scope["does_not_measure"]
+
+
+def test_the_scope_rides_on_the_report():
+    source = inspect.getsource(frontier_gap)
+
+    assert source.count("battery_scope()") == 3
+
+
+# ─────────────────────────── the candidate could not have read the answers
+
+
+def _receipt_started(value):
+    return {"payload": {"started_at_unix": value}}
+
+
+def test_generation_before_the_reference_existed_is_provable():
+    proof = frontier_gap.candidate_non_disclosure(
+        reference_measured_at=500.0,
+        candidate_run_started=100.0,
+        candidate_worker_receipts=[_receipt_started(120.0), _receipt_started(300.0)],
+    )
+
+    assert proof["generation_preceded_reference"] is True
+    assert proof["basis"] == "worker_start_precedes_reference_measurement"
+
+
+def test_a_candidate_that_began_after_the_reference_falls_back_to_the_assertion():
+    """Not a refusal: a later run may still have been sealed. It is the
+    difference between proven and asserted, and the report now says which."""
+    proof = frontier_gap.candidate_non_disclosure(
+        reference_measured_at=100.0,
+        candidate_run_started=200.0,
+        candidate_worker_receipts=[_receipt_started(250.0)],
+    )
+
+    assert proof["generation_preceded_reference"] is False
+    assert proof["basis"] == "sealed_execution_assertion_only"
+
+
+def test_one_late_worker_is_enough_to_lose_the_ordering_proof():
+    proof = frontier_gap.candidate_non_disclosure(
+        reference_measured_at=500.0,
+        candidate_run_started=100.0,
+        candidate_worker_receipts=[_receipt_started(120.0), _receipt_started(900.0)],
+    )
+
+    assert proof["generation_preceded_reference"] is False
+
+
+def test_no_receipts_prove_nothing():
+    proof = frontier_gap.candidate_non_disclosure(
+        reference_measured_at=500.0,
+        candidate_run_started=100.0,
+        candidate_worker_receipts=[],
+    )
+
+    assert proof["generation_preceded_reference"] is False
+    assert proof["latest_candidate_worker_start_unix"] is None

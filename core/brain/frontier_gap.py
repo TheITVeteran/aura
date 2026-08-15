@@ -8,6 +8,7 @@ passes the complete provenance contract.
 from __future__ import annotations
 
 import ast
+import asyncio
 import copy
 import hashlib
 import inspect
@@ -1445,8 +1446,32 @@ async def run_battery(
     for item_index, item in enumerate(items):
         execution_error = ""
         try:
+            # The budget this runner reports is the PROTOCOL's, and this path
+            # measures none of it — no process isolation, no generation or
+            # token accounting, no tool/network/cache guard. What it can
+            # enforce is the wall clock, so it does, and the report says the
+            # rest was not measured here.
             observation = _coerce_observation(
-                await solve(item.prompt, item.task_type)
+                await asyncio.wait_for(
+                    solve(item.prompt, item.task_type),
+                    timeout=float(MATCHED_BUDGET["hard_timeout_s"]),
+                )
+            )
+        except TimeoutError as exc:
+            record_degradation(
+                "frontier_gap",
+                exc,
+                severity="warning",
+                action=(
+                    "battery item exceeded the protocol hard timeout; retained "
+                    "as an invalid miss"
+                ),
+            )
+            execution_error = "TimeoutError"
+            observation = SolverObservation(
+                answer="",
+                verified=False,
+                diagnostics=(execution_error,),
             )
         except Exception as exc:  # noqa: BLE001 - bounded evaluation item boundary
             record_degradation(
@@ -1587,6 +1612,27 @@ async def run_battery(
             else None
         ),
         "budget": dict(MATCHED_BUDGET),
+        # What this runner actually enforced, next to the budget it names.
+        # Reporting MATCHED_BUDGET alone implied matched execution that this
+        # diagnostic path never measured, and the claim-eligible lane is the
+        # isolated v5 worker — not this one.
+        "battery_scope": battery_scope(),
+        "budget_enforcement": {
+            "schema": BUDGET_ENFORCEMENT_SCHEMA,
+            "runner": "run_battery_diagnostic",
+            "enforced": ["per_item_hard_timeout_s"],
+            "per_item_hard_timeout_s": float(MATCHED_BUDGET["hard_timeout_s"]),
+            "unmeasured": [
+                "process_isolation",
+                "generation_calls",
+                "output_tokens",
+                "tool_calls",
+                "network_calls",
+                "cache_reads",
+                "cache_writes",
+            ],
+            "claim_eligible": False,
+        },
         "duration_s": round(time.time() - started, 2),
         "generated_at_unix": time.time(),
     }
@@ -1601,6 +1647,76 @@ def _finite_float(value: Any, *, field_name: str) -> float:
     return normalized
 
 
+BUDGET_ENFORCEMENT_SCHEMA = "aura.frontier_gap.budget_enforcement.v1"
+NON_DISCLOSURE_SCHEMA = "aura.frontier_gap.non_disclosure.v1"
+BATTERY_SCOPE_SCHEMA = "aura.frontier_gap.battery_scope.v1"
+
+
+def candidate_non_disclosure(
+    *,
+    reference_measured_at: float,
+    candidate_run_started: float,
+    candidate_worker_receipts: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """What is provable about the candidate not having seen the answers.
+
+    The candidate report embeds the FULL signed reference — outputs included —
+    and runs the same challenge and task spec. Equality between the two is
+    checked; ordering is not, so the only thing standing between the candidate
+    and the reference answers was the worker's own
+    ``sealed_evaluation_enforced`` boolean.
+
+    What can be checked from the evidence already present: every candidate
+    worker receipt has to have STARTED before the reference was measured. A
+    candidate that began generating before the reference existed could not have
+    read it. This does not prove isolation — a candidate run afterwards may
+    still have been sealed — so a report that fails the ordering test is
+    reported as relying on the sealed-execution assertion rather than refused.
+    """
+
+    starts = [
+        float(receipt["payload"].get("started_at_unix", float("inf")))
+        for receipt in candidate_worker_receipts
+    ]
+    latest_start = max(starts) if starts else float("inf")
+    ordered = bool(starts) and latest_start < reference_measured_at
+    return {
+        "schema": NON_DISCLOSURE_SCHEMA,
+        "generation_preceded_reference": ordered,
+        "basis": "worker_start_precedes_reference_measurement"
+        if ordered
+        else "sealed_execution_assertion_only",
+        "reference_measured_at_unix": float(reference_measured_at),
+        "candidate_run_started_at_unix": float(candidate_run_started),
+        "latest_candidate_worker_start_unix": (
+            latest_start if starts else None
+        ),
+    }
+
+
+def battery_scope() -> dict[str, Any]:
+    """What this battery measures, stated so a label cannot be misread.
+
+    Four classes: two-factor multiplication, three-name ordering, one-line
+    sum/min/max functions, and a fixed fact list. That is a bounded public
+    diagnostic. The report already marks general frontier claims ineligible,
+    but "capability" and "gap" read like broad model capability to anyone who
+    does not know the contents, and nothing in the payload said otherwise.
+    """
+
+    return {
+        "schema": BATTERY_SCOPE_SCHEMA,
+        "battery_version": BATTERY_VERSION,
+        "task_classes": sorted(_BATTERY_BUILDERS),
+        "measures": "bounded deterministic diagnostic over four narrow classes",
+        "does_not_measure": [
+            "task difficulty calibration",
+            "contamination control",
+            "transfer to unseen task families",
+            "coverage of any frontier benchmark suite",
+        ],
+        "supports_general_capability_claim": False,
+    }
 SOURCE_COMPONENT_COVERAGE_SCHEMA = "aura.frontier_gap.source_component_coverage.v1"
 WORKSPACE_RESOLUTION_SCHEMA = "aura.frontier_gap.workspace_resolution.v1"
 
@@ -2720,6 +2836,12 @@ def validate_capability_report(
     normalized["workspace_resolution"] = resolve_workspace_state(
         source_stability["after"],
         workspace_resolver=workspace_resolver,
+    )
+    normalized["battery_scope"] = battery_scope()
+    normalized["non_disclosure"] = candidate_non_disclosure(
+        reference_measured_at=float(reference.measured_at),
+        candidate_run_started=float(run["payload"]["started_at_unix"]),
+        candidate_worker_receipts=worker_receipts,
     )
     normalized["runtime_identity_binding"] = runtime_identity_binding(
         runtime_manifest,
