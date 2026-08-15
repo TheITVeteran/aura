@@ -202,3 +202,94 @@ async def test_a_failing_effect_does_not_abort_the_approved_action():
 
     assert await core._commit_action_side_effects(action, now=1.0) is True
     assert ran == ["after"]
+
+
+def test_a_fabricated_conclusion_is_not_learned_from():
+    """When structured generation collapses, the shard fabricates a conclusion
+    so it does not die silently — which is right, a zombie shard is worse. But
+    the abstraction engine then learned from that sentence as a SUCCESS, the
+    crucible refined it dialectically, and the collective was pulsed with
+    success=True. A formatting collapse became a lesson."""
+    assert "shard_succeeded = not bool(" in SOURCE
+    assert "if abstractor is not None and shard_succeeded:" in SOURCE
+    assert "if output_text and shard_succeeded:" in SOURCE
+    assert "success=shard_succeeded" in SOURCE
+    assert 'pulse_hypha("collective", "distributed_agency", success=True)' not in SOURCE
+
+
+def test_the_internet_pulse_waits_for_the_research_to_win():
+    """The agency->internet edge was pulsed with success=True while the pathway
+    was only building a proposal: no request made, nothing returned, and it
+    might not even win. The network's picture of reachability was a record of
+    how often Aura felt like looking."""
+    marker = SOURCE.index("def _pathway_world_monitor")
+    block = SOURCE[marker : SOURCE.index("def _pathway_self_development")]
+
+    assert "world_monitor.pulse" in block
+    assert "_deferred_effects" in block
+    # The pulse call itself may only appear inside the deferred closure.
+    pulse_at = block.index('pulse_hypha("agency", "internet"')
+    closure_at = block.index("def _pulse_research_intent")
+    assert closure_at < pulse_at
+
+
+def test_identity_writes_happen_only_for_the_winner():
+    """Social reflection, creative synthesis and metacognitive audit wrote
+    beliefs into identity while every pathway was still being evaluated."""
+    tree = ast.parse(SOURCE)
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("_pathway_"):
+            continue
+        for child in ast.iter_child_nodes(node):
+            for inner in ast.walk(child):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Name)
+                    and inner.func.id == "_record_durable_insight"
+                ):
+                    # Only acceptable inside a nested effect closure.
+                    offenders.append((node.name, inner.lineno))
+    # Every remaining call must sit inside a nested function, which the walk
+    # above only reaches through one — so verify by source position instead.
+    for name, lineno in offenders:
+        line = SOURCE.splitlines()[lineno - 1]
+        assert line.startswith("            ") or line.startswith("                "), (
+            f"{name}:{lineno} writes identity at pathway top level"
+        )
+
+
+def test_an_insight_write_reads_its_own_disposition():
+    """add_insight returns 'denied' | 'duplicate' | 'saved' | 'persist_failed'
+    precisely so a caller can tell durable success from a mutation that never
+    reached disk. Every call site discarded it."""
+    assert "_record_durable_insight" in SOURCE
+    assert SOURCE.count("identity.add_insight(") == 1, "a raw write came back"
+    marker = SOURCE.index("def _record_durable_insight")
+    block = SOURCE[marker : marker + 1400]
+    assert 'disposition in {"saved", "duplicate"}' in block
+    assert "not durable" in block
+
+
+def test_the_trust_claim_is_grounded_in_what_she_has():
+    """"Our interactions feel increasingly grounded in mutual trust" was
+    asserted from the mere existence of a kinship entry — no trend, no
+    comparison, nothing that could have come out the other way."""
+    # Checked against string literals, not the file text: the comment
+    # explaining the removal quotes the old sentence, and a substring search
+    # cannot tell an explanation from the thing it explains.
+    tree = ast.parse(SOURCE)
+    spoken = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            spoken.append(node.value)
+        elif isinstance(node, ast.JoinedStr):
+            for part in node.values:
+                if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                    spoken.append(part.value)
+
+    assert not any("increasingly grounded in mutual trust" in t for t in spoken)
+    assert any("What I have to go on: kinship level" in t for t in spoken)

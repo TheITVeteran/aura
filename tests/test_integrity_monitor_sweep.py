@@ -14,11 +14,12 @@ import sqlite3
 import pytest
 
 from core.resilience.integrity_monitor import SystemIntegrityMonitor
+from core.runtime.sqlite_support import connecting
 
 
 def _make_db(path, rows: int = 3) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    with connecting(sqlite3.connect(path)) as conn:
         conn.execute("CREATE TABLE t (x INTEGER)")
         conn.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(rows)])
 

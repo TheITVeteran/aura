@@ -30,6 +30,7 @@ from core.runtime.life_trace import (
 from core.runtime.life_trace import (
     reset_singleton_for_test as reset_life_trace,
 )
+from core.runtime.sqlite_support import connecting
 
 # ---------------------------------------------------------------------------
 # Evidence mode
@@ -240,7 +241,7 @@ def test_life_trace_detects_tamper(tmp_path):
 
     import sqlite3
 
-    with sqlite3.connect(db) as conn:
+    with connecting(sqlite3.connect(db)) as conn:
         conn.execute("UPDATE life_trace SET payload = ? WHERE rowid = 1", ('{"tampered": true}',))
     assert ledger.verify_chain() is False
 

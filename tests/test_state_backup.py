@@ -20,6 +20,7 @@ from tools.state_backup import (
     prune_ring,
     verify_backup,
 )
+from core.runtime.sqlite_support import connecting
 
 
 @pytest.fixture()
@@ -31,7 +32,7 @@ def state_root(tmp_path):
     (root / "data" / "error_logs").mkdir()
 
     db = root / "data" / "aura_state.db"
-    with sqlite3.connect(db) as conn:
+    with connecting(sqlite3.connect(db)) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE facts (k TEXT, v TEXT)")
         conn.execute("INSERT INTO facts VALUES ('alpha', '1')")
@@ -85,7 +86,7 @@ class TestCreate:
         with tarfile.open(archive) as tar:
             extract_dir = out_dir / "x"
             tar.extractall(extract_dir, filter="data")
-        with sqlite3.connect(extract_dir / "data" / "aura_state.db") as conn:
+        with connecting(sqlite3.connect(extract_dir / "data" / "aura_state.db")) as conn:
             rows = dict(conn.execute("SELECT k, v FROM facts").fetchall())
         assert rows == {"alpha": "1", "beta": "2"}
 

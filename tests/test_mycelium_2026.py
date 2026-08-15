@@ -11,6 +11,7 @@ import time
 import pytest
 
 from core.mycelium import HardwiredPathway, Hypha, MycelialNetwork
+from core.runtime.sqlite_support import connecting
 
 _TEST_ROOT_KEY = "root-test->hardware:test-device"
 
@@ -766,7 +767,7 @@ async def test_invalid_vault_generation_cannot_partially_replace_topology(
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?",
             ("topology_v3",),
@@ -819,7 +820,7 @@ async def test_vault_rejects_malformed_nested_surfaces_without_partial_restore(
     assert await network.vault_sync() is True
 
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?",
             ("topology_v3",),
@@ -862,7 +863,7 @@ async def test_vault_rebases_monotonic_ages_instead_of_persisting_process_clock(
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
 
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?",
             ("topology_v3",),
@@ -1682,7 +1683,7 @@ async def test_restore_and_sync_are_linearized_against_newer_memory_revision(
     assert "newer_memory" in network.pathways
 
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -1720,7 +1721,7 @@ async def test_vault_sync_commits_coherent_snapshot_while_live_topology_advances
 
     assert await sync_task is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -1732,7 +1733,7 @@ async def test_vault_sync_commits_coherent_snapshot_while_live_topology_advances
     assert network._last_vault_sync_lag_revisions >= 1
 
     assert await network.vault_sync() is True
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -1919,7 +1920,7 @@ async def test_vault_rejects_nonfinite_negative_and_cross_surface_corruption(
     assert await network.vault_sync() is True
 
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -1993,7 +1994,7 @@ async def test_vault_restored_ages_include_time_elapsed_since_capture(
     vault_path = tmp_path / "data" / "mycelium_vault.db"
     elapsed_offline = 86_400.0
 
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -2137,7 +2138,7 @@ async def test_an_edited_vault_is_refused_rather_than_restored(
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
 
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         row = connection.execute(
             "SELECT data FROM aegis_vault WHERE key = ?", ("topology_v3",)
         ).fetchone()
@@ -2172,7 +2173,7 @@ async def test_a_vault_written_before_attestation_seeds_a_fresh_network(
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         connection.execute("DROP TABLE aegis_vault_attestation")
         connection.commit()
 
@@ -2193,7 +2194,7 @@ async def test_an_unattested_vault_cannot_overwrite_learned_routing(
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
-    with sqlite3.connect(vault_path) as connection:
+    with connecting(sqlite3.connect(vault_path)) as connection:
         connection.execute("DROP TABLE aegis_vault_attestation")
         connection.commit()
 

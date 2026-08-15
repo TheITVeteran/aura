@@ -12,6 +12,7 @@ import pytest
 
 from core.memory.recall_observations import RecallObservationRing
 from tools.fit_actr_retrieval import _observed_samples
+from core.runtime.sqlite_support import connecting
 
 
 def test_durable_observations_are_readable_by_a_fresh_owner(tmp_path):
@@ -67,7 +68,7 @@ def test_schema_cannot_store_memory_content_or_identity(tmp_path):
     ring.record([0.8, 0.2], returned_count=1)
     ring.flush()
 
-    with sqlite3.connect(path) as conn:
+    with connecting(sqlite3.connect(path)) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(recall_observations)")}
 
     assert columns == {
@@ -83,7 +84,7 @@ def test_schema_cannot_store_memory_content_or_identity(tmp_path):
 
 def test_prelabel_rows_remain_unmeasured_during_schema_upgrade(tmp_path):
     path = tmp_path / "recalls.db"
-    with sqlite3.connect(path) as conn:
+    with connecting(sqlite3.connect(path)) as conn:
         conn.execute(
             """CREATE TABLE recall_observations (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,

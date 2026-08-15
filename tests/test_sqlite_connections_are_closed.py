@@ -29,7 +29,12 @@ from core.runtime.sqlite_support import connecting
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parent.parent
-SCANNED = ("core", "interface", "tools", "training")
+# "tests" was missing, and that is where the idiom had migrated: 31 call sites
+# across nine files, opening connections the ratchet could not see because it
+# was not looking in the directory they lived in. One of them surfaced as a
+# leaked mycelium_vault.db at teardown of an unrelated test — the hermetic
+# guard caught what the gate for this exact defect had been blind to.
+SCANNED = ("core", "interface", "tests", "tools", "training")
 
 
 def _bare_sqlite_context_lines(source: str, *, filename: str) -> list[int]:

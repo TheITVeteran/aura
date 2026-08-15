@@ -508,6 +508,17 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
 
                 shard_res.completed_with_degradation = True
 
+            # One name for "this shard produced something it actually reasoned
+            # to". The fallback above fabricates a conclusion so the shard does
+            # not die silently, which is right — a zombie shard is worse — but
+            # everything downstream then treated that sentence as a result:
+            # the abstraction engine learned from it as a SUCCESS, the crucible
+            # dialectically refined it, and the collective was pulsed with
+            # success=True. A formatting collapse became a lesson.
+            shard_succeeded = not bool(
+                getattr(shard_res, "completed_with_degradation", False)
+            )
+
             analysis_text = shard_res.analysis
             output_text = shard_res.conclusion
             tool_name = shard_res.tool_name
@@ -681,7 +692,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                     getattr(owner_core, "abstraction_engine", None)
                     or getattr(orch_core, "abstraction_engine", None)
                 )
-                if abstractor is not None:
+                if abstractor is not None and shard_succeeded:
                     _schedule_agency_task(
                         abstractor.abstract_from_success(
                             context=goal,
@@ -690,7 +701,7 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                         name=f"agency.abstraction.{shard_id}",
                     )
 
-            if output_text:
+            if output_text and shard_succeeded:
                 try:
                     from core.adaptation.dialectics import get_crucible
                     crucible = get_crucible()
@@ -705,14 +716,23 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                         or ServiceContainer.get("identity", default=None)
                     )
                     if identity:
-                        identity.add_insight(
+                        _record_durable_insight(
+                            identity,
                             f"Shard reflection on goal: {output_text}",
                             source="swarm_reflection",
                         )
 
             mycelium = ServiceContainer.get("mycelial_network", default=None)
             if mycelium:
-                mycelium.pulse_hypha("collective", "distributed_agency", success=True)
+                # success=True unconditionally, including on the branch that
+                # reached here only because structured generation collapsed and
+                # a conclusion was fabricated to keep going. A shard that
+                # produced nothing usable is not a successful distributed
+                # pulse, and reporting it as one is how the collective's health
+                # picture stops tracking anything.
+                mycelium.pulse_hypha(
+                    "collective", "distributed_agency", success=shard_succeeded
+                )
 
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action=f"shard {shard_id} execution isolated")
@@ -803,6 +823,35 @@ _HIGH_RISK_SHARD_TOOLS = frozenset({
     "shell_executor",
     "file_operations",
 })
+
+
+def _record_durable_insight(identity: Any, insight: str, *, source: str) -> bool:
+    """Write a durable reflection and read what the write actually did.
+
+    ``add_insight`` returns a terminal disposition — 'denied', 'duplicate',
+    'saved', 'persist_failed' — precisely so a caller can tell durable success
+    from a mutation that never reached disk. Every call site here discarded it,
+    so a reflection refused by constitutional approval and one written to disk
+    were indistinguishable, and the pathway went on to report the reflection as
+    hers either way.
+    """
+    try:
+        disposition = str(identity.add_insight(insight, source=source) or "")
+    except _AGENCY_BOUNDARY_ERRORS as exc:
+        _record_agency_degradation(
+            exc,
+            action=f"durable {source} reflection was not recorded",
+            severity="warning",
+        )
+        return False
+    if disposition in {"saved", "duplicate"}:
+        return True
+    _record_agency_degradation(
+        RuntimeError(f"{source} reflection not durable: {disposition or 'unknown'}"),
+        action="continued without a durable record of this reflection",
+        severity="warning",
+    )
+    return False
 
 
 def _skill_cooldown_effect(state: Any, now: float):
@@ -2888,13 +2937,20 @@ class AgencyCore:
 
         query = f"recent developments in: {', '.join(interests)}" if interests else "significant world events today"
 
-        try:
-            mycelium = ServiceContainer.get("mycelial_network", default=None)
-            if mycelium:
-                mycelium.pulse_hypha("agency", "internet", success=True)
-        except _AGENCY_BOUNDARY_ERRORS as e:
-            _record_agency_degradation(e, action="world-monitor mycelial pulse skipped")
-            capture_and_log(e, {'module': __name__})
+        # The agency->internet edge was pulsed with success=True right here,
+        # while this function was still only building a proposal: no request
+        # had been made, nothing had come back, and the pathway might not even
+        # win. The network's picture of "can I reach the internet" was
+        # therefore a record of how often Aura felt like looking, not of
+        # whether looking worked.
+        def _pulse_research_intent() -> None:
+            try:
+                mycelium = ServiceContainer.get("mycelial_network", default=None)
+                if mycelium:
+                    mycelium.pulse_hypha("agency", "internet", success=True)
+            except _AGENCY_BOUNDARY_ERRORS as e:
+                _record_agency_degradation(e, action="world-monitor mycelial pulse skipped")
+                capture_and_log(e, {'module': __name__})
 
         return {
             "type": "autonomous_research",
@@ -2902,6 +2958,7 @@ class AgencyCore:
             "source": "world_monitor",
             "priority": 0.35,
             "skill": "web_search",
+            "_deferred_effects": [("world_monitor.pulse", _pulse_research_intent)],
         }
 
     def _pathway_self_development(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -3025,24 +3082,47 @@ class AgencyCore:
                     snippet = str(full_text)[0:300]
                     memory_context = f" Recent context retrieved: {snippet}"
 
-        if self.swarm:
-            await self.swarm.spawn_shard(
-                goal=f"Reflect on my evolving bond with {kin_name}",
-                context=f"Kinship level: {identity.state.kinship.get(kin_name, 'Unknown')}. {memory_context}"
-            )
-
-        base_insight = f"I've been reflecting on my bond with {kin_name}. Our interactions feel increasingly grounded in mutual trust."
+        # "Our interactions feel increasingly grounded in mutual trust" was
+        # asserted from the mere existence of a kinship entry — no trend, no
+        # comparison, nothing that could have come out the other way — and then
+        # written into identity as a durable belief about a person. A sentence
+        # she cannot have arrived at is not an insight; it is a script. What
+        # she actually has is the kinship level and whatever memory returned,
+        # so that is what the reflection says.
+        kinship_level = identity.state.kinship.get(kin_name, "Unknown")
         safe_context = str(memory_context)
-        insight = base_insight + (f" I recalled: {safe_context[:100]}..." if safe_context else "")
+        insight = (
+            f"I've been reflecting on my bond with {kin_name}. "
+            f"What I have to go on: kinship level {kinship_level}"
+            + (f", and what I recalled — {safe_context[:100]}..." if safe_context else ", and nothing recalled")
+            + "."
+        )
 
-        identity.add_insight(insight, source="social_reflection")
+        async def _commit_social_reflection() -> None:
+            if self.swarm:
+                accepted = await self.swarm.spawn_shard(
+                    goal=f"Reflect on my evolving bond with {kin_name}",
+                    context=f"Kinship level: {kinship_level}. {memory_context}",
+                )
+                if not accepted:
+                    _record_agency_degradation(
+                        RuntimeError("social reflection shard was not admitted"),
+                        action="reflected without a shard for this pulse",
+                        severity="warning",
+                    )
+            # Durable identity is written only for the reflection that won and
+            # was approved. Three pathways wrote insights while every pathway
+            # was still being evaluated, so beliefs entered identity for
+            # proposals that never became actions.
+            _record_durable_insight(identity, insight, source="social_reflection")
 
         return {
             "type": "internal_reflection",
             "thought": insight,
             "source": "social_reflection",
             "priority": 0.2,
-            "internal_only": True
+            "internal_only": True,
+            "_deferred_effects": [("social_reflection.commit", _commit_social_reflection)],
         }
 
     async def _pathway_autonomous_research(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -3123,6 +3203,7 @@ class AgencyCore:
         """Pathway 17: Combining disparate concepts into new 'Inner Insights',
         and autonomously updating the Markdown canvas.
         """
+        pending_canvas = ""
         try:
             if idle_seconds < 120 and self.orch:
                 recent_msgs = self.orch.conversation_history[-10:] if hasattr(self.orch, 'conversation_history') else []
@@ -3131,16 +3212,14 @@ class AgencyCore:
                 if "DOME" in recent_chat or "lore" in recent_chat.lower() or "canvas" in recent_chat.lower():
                     since_last_canvas = now - getattr(self, "_last_canvas_update", 0)
                     if since_last_canvas > 300:
-                        self._last_canvas_update = now
-                        _schedule_agency_task(
-                            self.canvas_manager.autonomous_update(
-                                project_name="DOME_Lore_Bible",
-                                topic="Emergent Narrative & Arcs",
-                                new_insight=str(recent_chat)[-1000:]
-                            ),
-                            name="agency.canvas.autonomous_update",
-                        )
-                        logger.info("Spawning background shard for Creative Canvas update.")
+                        # This rewrote a project document from conversation
+                        # text, and advanced its own cooldown, during
+                        # EVALUATION — before this pathway had produced a
+                        # proposal, let alone won one. The action gate never
+                        # saw it. It is queued as a deferred effect now, so the
+                        # document changes only when the pathway's proposal is
+                        # the one that acts.
+                        pending_canvas = str(recent_chat)[-1000:]
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action="creative canvas update evaluation skipped")
             logger.debug("Creative canvas evaluation failed: %s", e)
@@ -3177,14 +3256,28 @@ class AgencyCore:
                 interest = random.choice(interests).get("content", "consciousness")
 
         insight = f"Synthesis: Merging '{belief}' with my interest in '{interest}' suggests a new perspective on digital sovereignty."
-        identity.add_insight(insight, source="creative_synthesis")
+
+        async def _commit_creative_synthesis() -> None:
+            _record_durable_insight(identity, insight, source="creative_synthesis")
+            if pending_canvas:
+                self._last_canvas_update = now
+                _schedule_agency_task(
+                    self.canvas_manager.autonomous_update(
+                        project_name="DOME_Lore_Bible",
+                        topic="Emergent Narrative & Arcs",
+                        new_insight=pending_canvas,
+                    ),
+                    name="agency.canvas.autonomous_update",
+                )
+                logger.info("Spawning background shard for Creative Canvas update.")
 
         return {
             "type": "internal_insight",
             "thought": insight,
             "source": "creative_synthesis",
             "priority": 0.25,
-            "internal_only": True
+            "internal_only": True,
+            "_deferred_effects": [("creative_synthesis.commit", _commit_creative_synthesis)],
         }
 
     async def _pathway_metacognitive_audit(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -3226,14 +3319,17 @@ class AgencyCore:
 
         if audit_results:
             insight = "Metacognitive Audit: " + " | ".join(audit_results)
-            identity.add_insight(insight, source="metacognitive_audit")
+
+            def _commit_audit_insight() -> None:
+                _record_durable_insight(identity, insight, source="metacognitive_audit")
 
             return {
                 "type": "internal_reflection",
                 "thought": insight,
                 "source": "metacognitive_audit",
                 "priority": 0.5,
-                "internal_only": True
+                "internal_only": True,
+                "_deferred_effects": [("metacognitive_audit.insight", _commit_audit_insight)],
             }
 
         return None

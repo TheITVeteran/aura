@@ -9,6 +9,7 @@ import pytest
 
 import core.state.state_repository as state_module
 from core.state.state_repository import StateRepository, _schedule_state_task
+from core.runtime.sqlite_support import connecting
 
 
 class ClosingAwaitable:
@@ -376,7 +377,7 @@ async def test_shutdown_direct_snapshot_does_not_reopen_aiosqlite_worker(
     )
 
     assert committed is True
-    with sqlite3.connect(repo.db_path) as connection:
+    with connecting(sqlite3.connect(repo.db_path)) as connection:
         row = connection.execute(
             "SELECT transition_cause FROM state_log ORDER BY timestamp DESC LIMIT 1"
         ).fetchone()

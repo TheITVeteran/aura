@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from core.memory.cognitive_vault import CognitiveVault
+from core.runtime.sqlite_support import connecting
 
 
 @pytest.mark.asyncio
@@ -25,7 +26,7 @@ async def test_cognitive_vault_persists_allowlisted_memory_payload(tmp_path):
     assert started is True
     assert committed is True
     assert stopped is True
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         row = conn.execute("SELECT topic, content, metadata FROM memories").fetchone()
     assert row[0] == "runtime"
     assert row[1] == "bounded queue write"

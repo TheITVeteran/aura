@@ -1,6 +1,7 @@
 import sqlite3
 import time
 from pathlib import Path
+from core.runtime.sqlite_support import connecting
 
 
 def test_db_maintenance_degradation_audit_is_clean():
@@ -17,7 +18,7 @@ def test_retention_policy_rejects_unsafe_identifiers_without_executing_sql(tmp_p
     )
 
     db_path = tmp_path / "aura_state.db"
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         conn.execute("CREATE TABLE safe_table(id INTEGER PRIMARY KEY, created_at REAL)")
         conn.execute("INSERT INTO safe_table(created_at) VALUES (?)", (time.time(),))
 
@@ -29,7 +30,7 @@ def test_retention_policy_rejects_unsafe_identifiers_without_executing_sql(tmp_p
     maint = DatabaseMaintenance(db_path=str(db_path), retention_policies=[policy])
     result = MaintenanceResult()
 
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         maint.run_retention(conn, result)
         still_exists = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='safe_table'"
@@ -52,7 +53,7 @@ def test_retention_deletes_only_expired_rows_in_batch(tmp_path):
     db_path = tmp_path / "aura_state.db"
     now = time.time()
     old = now - (40 * 86400)
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         conn.execute("CREATE TABLE receipts(id INTEGER PRIMARY KEY, created_at REAL)")
         conn.executemany(
             "INSERT INTO receipts(created_at) VALUES (?)",
@@ -72,7 +73,7 @@ def test_retention_deletes_only_expired_rows_in_batch(tmp_path):
     )
     result = MaintenanceResult()
 
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         maint.run_retention(conn, result)
         remaining = conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
 
@@ -84,7 +85,7 @@ def test_maintenance_pass_continues_after_phase_failure(monkeypatch, tmp_path):
     from core.persistence.db_maintenance import DatabaseMaintenance
 
     db_path = tmp_path / "aura_state.db"
-    with sqlite3.connect(db_path) as conn:
+    with connecting(sqlite3.connect(db_path)) as conn:
         conn.execute("CREATE TABLE receipts(id INTEGER PRIMARY KEY, created_at REAL)")
 
     maint = DatabaseMaintenance(db_path=str(db_path))

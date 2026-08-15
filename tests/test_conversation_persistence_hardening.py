@@ -14,6 +14,7 @@ from core.conversation.persistence import (
     ConversationPersistence,
     ConversationRevisionConflictError,
 )
+from core.runtime.sqlite_support import connecting
 
 
 def _install_event_bus(monkeypatch, bus):
@@ -133,7 +134,7 @@ def test_memory_log_outbox_reclaims_expired_lease_and_bounds_poison_retry(tmp_pa
     first = store.claim_memory_log_batch(limit=1)[0]
     assert first["operation_id"] == operation_id
 
-    with sqlite3.connect(tmp_path / "memory-outbox-retry.db") as con:
+    with connecting(sqlite3.connect(tmp_path / "memory-outbox-retry.db")) as con:
         con.execute(
             "UPDATE conversation_memory_outbox SET claimed_at = ? "
             "WHERE operation_id = ?",
@@ -228,7 +229,7 @@ def test_conversation_regeneration_is_atomic_and_append_only(monkeypatch, tmp_pa
         b"Stronger replacement"
     ).hexdigest()
 
-    with sqlite3.connect(db_path) as con:
+    with connecting(sqlite3.connect(db_path)) as con:
         revisions = con.execute(
             "SELECT revision, content, previous_content_sha256, content_sha256, "
             "origin, actor_principal_id, actor_principal_surface "
