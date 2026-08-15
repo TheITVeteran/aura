@@ -235,6 +235,44 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
     return prereg
 
 
+def _validate_contamination_receipt(
+    trial: dict[str, Any], trial_id: str, trial_reasons: list[str]
+) -> str:
+    """Require EVIDENCE that a contamination scan ran, not a boolean saying so.
+
+    ``"contamination_scan_passed": True`` is a claim with nothing behind it —
+    the same shape as an absent check reported as a passed one. A producer that
+    never scanned, or scanned with a threshold chosen after seeing the overlap,
+    produces exactly that field.
+
+    A receipt has to name the scanner that ran, the method, the threshold it
+    was held to, and the overlap it actually measured — and the measurement has
+    to satisfy the threshold. Returns the scanner digest so the caller can
+    require ONE scanner across the run: a per-trial scanner would let a
+    producer keep scanning until a trial passed.
+    """
+    receipt = trial.get("contamination_scan")
+    if not isinstance(receipt, dict):
+        trial_reasons.append(f"{trial_id}:contamination_scan_receipt_missing")
+        return ""
+    scanner = str(receipt.get("scanner_implementation_sha256") or "")
+    if not _is_sha256(scanner):
+        trial_reasons.append(f"{trial_id}:contamination_scanner_unproven")
+    if not str(receipt.get("method") or "").strip():
+        trial_reasons.append(f"{trial_id}:contamination_method_missing")
+    threshold = receipt.get("max_overlap_threshold")
+    measured = receipt.get("max_overlap_observed")
+    if not _finite_number(threshold) or not 0.0 <= float(threshold) <= 1.0:
+        trial_reasons.append(f"{trial_id}:contamination_threshold_invalid")
+        return scanner
+    if not _finite_number(measured) or not 0.0 <= float(measured) <= 1.0:
+        trial_reasons.append(f"{trial_id}:contamination_overlap_unmeasured")
+        return scanner
+    if float(measured) > float(threshold):
+        trial_reasons.append(f"{trial_id}:contamination_overlap_exceeds_threshold")
+    return scanner
+
+
 def _validate_resident_model(
     resident: Any, prereg: dict[str, Any], reasons: list[str]
 ) -> dict[str, Any]:
@@ -1054,6 +1092,10 @@ def verify_frontier_gain_bundle(
     admitted_trial_count = 0
     rejected_trial_count = 0
     comparison_accounting: list[dict[str, Any]] = []
+    #: Every trial must be scanned by the SAME scanner. A per-trial scanner
+    #: lets a producer keep rescanning until a trial passes, which is choosing
+    #: the instrument after seeing the reading.
+    contamination_scanners: set[str] = set()
     for trial in trials:
         # ADMISSION ISOLATION: a trial's own integrity defects are collected
         # here and, if any exist, the trial is EXCLUDED from the paired
@@ -1086,6 +1128,8 @@ def verify_frontier_gain_bundle(
             continue
         if trial.get("held_out") is not True or trial.get("contamination_scan_passed") is not True:
             trial_reasons.append(f"{trial_id}:heldout_or_contamination_unproven")
+        # The boolean above is the producer's CLAIM. This is the evidence.
+        scanner_digest = _validate_contamination_receipt(trial, trial_id, trial_reasons)
         if not _finite_number(trial.get("task_generated_at"), positive=True) or float(
             trial.get("task_generated_at") or 0.0
         ) <= frozen_at:
@@ -1250,6 +1294,10 @@ def verify_frontier_gain_bundle(
             rejected_trial_count += 1
             continue
         admitted_trial_count += 1
+        # Only ADMITTED trials constrain the scanner: a rejected trial's junk
+        # receipt already surfaced its own reason and must not manufacture a
+        # second one about run-wide uniformity.
+        contamination_scanners.add(scanner_digest)
         paired[domain].append(
             PairedObservation(
                 task_id=task_id,
@@ -1260,6 +1308,9 @@ def verify_frontier_gain_bundle(
                 control_layer_apps=control_layers,
             )
         )
+
+    if len(contamination_scanners) > 1:
+        reasons.append("contamination_scanner_not_uniform")
 
     for domain, observations in paired.items():
         if len(observations) < min_trials:

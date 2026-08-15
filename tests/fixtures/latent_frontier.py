@@ -308,6 +308,15 @@ def _bundle(
                     "domain": domain,
                     "held_out": True,
                     "contamination_scan_passed": True,
+                    # The boolean above is a claim. This is the measurement
+                    # behind it: which scanner ran, how, what it was held to,
+                    # and what it actually found.
+                    "contamination_scan": {
+                        "scanner_implementation_sha256": "b" * 64,
+                        "method": "13gram_overlap",
+                        "max_overlap_threshold": 0.02,
+                        "max_overlap_observed": 0.0,
+                    },
                     "task_generated_at": 1001.0 + index,
                     "evaluation_started_at": 1201.0 + index,
                     "verifier_blinded": True,
