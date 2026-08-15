@@ -161,6 +161,20 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         },
         "heartbeat_key_sha256": hashlib.sha256(b"k" * 32).hexdigest(),
         "training": training,
+        "training_admission": {
+            "transition_identifiability": (
+                {
+                    "schema": "aura.unified_intrinsic.transition_identifiability.v2",
+                    "report_sha256": "f" * 64,
+                    "state_recurrent_transition_admitted": True,
+                    "public_prefix_replay_admitted": True,
+                    "families": {},
+                    "claim_boundary": {},
+                }
+                if training["state_schema"] == "semantic_v2"
+                else None
+            ),
+        },
         "training_args": _training_cli(training),
         "watchdog": {
             "poll_interval_s": 15.0,
@@ -520,6 +534,29 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
     assert "process_semantic_transition_canary" not in BOOTSTRAP_PROFILES
     assert arguments[arguments.index("--state-schema") + 1] == "semantic_v2"
     assert arguments[arguments.index("--transition-replay-mode") + 1] == "disabled"
+
+
+def test_semantic_transition_campaign_requires_signed_local_state_admission(
+    tmp_path: Path,
+) -> None:
+    path, raw = _config(tmp_path, profile="process_semantic_transition_canary")
+
+    loaded = controller._load_config(path)
+
+    assert loaded["training_admission"]["transition_identifiability"][
+        "state_recurrent_transition_admitted"
+    ] is True
+    raw["training_admission"]["transition_identifiability"] = None
+    body = {key: value for key, value in raw.items() if key != "config_sha256"}
+    raw["config_sha256"] = canonical_sha256(body)
+    path.chmod(0o600)
+    path.write_bytes(canonical_bytes(raw) + b"\n")
+    path.chmod(0o400)
+    with pytest.raises(
+        controller.UnifiedResidentControllerError,
+        match="campaign_transition_identifiability_invalid",
+    ):
+        controller._load_config(path)
 
 
 def test_compositional_profiles_share_runner_bootstrap_contract(

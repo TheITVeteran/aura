@@ -269,6 +269,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "paths",
         "heartbeat_key_sha256",
         "training",
+        "training_admission",
         "training_args",
         "watchdog",
         "launch",
@@ -290,6 +291,22 @@ def _load_config(path: Path) -> dict[str, Any]:
         expected_training
     ):
         _fail("campaign_training_profile_drift")
+    training_admission = config.get("training_admission")
+    transition_admission = (
+        training_admission.get("transition_identifiability")
+        if isinstance(training_admission, dict)
+        else None
+    )
+    if expected_training["state_schema"] == "semantic_v2":
+        if (
+            not isinstance(transition_admission, dict)
+            or transition_admission.get("state_recurrent_transition_admitted") is not True
+            or not isinstance(transition_admission.get("report_sha256"), str)
+            or len(transition_admission["report_sha256"]) != 64
+        ):
+            _fail("campaign_transition_identifiability_invalid")
+    elif training_admission != {"transition_identifiability": None}:
+        _fail("campaign_transition_identifiability_invalid")
     paths = config.get("paths")
     base_path_keys = {
         "workspace_root",
