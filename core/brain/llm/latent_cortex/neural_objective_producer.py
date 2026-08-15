@@ -35,6 +35,8 @@ import ast
 from functools import lru_cache
 from typing import Any
 
+from core.runtime.errors import record_degradation
+
 from core.brain.llm.latent_cortex.neural_transition_tissue import (
     NeuralTransitionTissue,
     execute_neural_action_program,
@@ -188,6 +190,40 @@ def neural_compiled_transition_expected(
     }
 
 
+_FALLBACK_REPORTED: set[str] = set()
+
+
+def _record_neural_fallback(objective: str) -> None:
+    """Say once, per reason, that the learned path did not run.
+
+    Once rather than per call: this is on a solve path, and a refused seal
+    stays refused, so per-call recording would bury the fact it is reporting.
+    """
+    try:
+        from core.learning.sealed_artifact_admission import mathematics_memory_admitted
+
+        admitted, detail = mathematics_memory_admitted()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return
+    if admitted:
+        # No admitted executor covers this objective, which is ordinary: most
+        # objectives do not compile to a transition program.
+        return
+    if detail in _FALLBACK_REPORTED:
+        return
+    _FALLBACK_REPORTED.add(detail)
+    record_degradation(
+        "latent_cortex.neural_objective_producer",
+        RuntimeError(f"sealed neural tissue unavailable: {detail}"),
+        severity="warning",
+        action=(
+            "answered from the deterministic solver; the receipt says which "
+            "engine ran, and no neural claim is supported by this solve"
+        ),
+        extra={"objective_prefix": str(objective)[:80]},
+    )
+
+
 def solve_objective_program_neural(objective: str) -> tuple[str, dict[str, Any]] | None:
     """Solve a public objective with the learned tissue where one applies.
 
@@ -199,6 +235,13 @@ def solve_objective_program_neural(objective: str) -> tuple[str, dict[str, Any]]
 
     executed = neural_compiled_transition_expected(objective)
     if executed is None:
+        # The fallback is correct — an unavailable student is not a failed one
+        # — but it was SILENT, and the receipt it produces is the same shape as
+        # a neural one. So a sealed artifact could be refused (2026-08-15:
+        # frontier_process_supervision.py drifted from its pinned hash in
+        # 8c48eec8d) and the only visible effect anywhere was a registered
+        # runtime claim reporting False, with nothing saying why.
+        _record_neural_fallback(objective)
         executed = _execute_objective(objective)
     if executed is None:
         return None

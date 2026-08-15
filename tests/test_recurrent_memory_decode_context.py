@@ -13,9 +13,11 @@ from core.brain.llm.latent_cortex.recurrent_memory_decode_context import (
     execute_recurrent_memory_decode_state,
     render_recurrent_memory_decode_context,
 )
+from tests.sealed_artifact_support import require_mathematics_memory_tissue
 
 
 def test_decode_state_comes_from_the_sealed_student_rollin() -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_203, difficulty=3)
 
     state = execute_recurrent_memory_decode_state(task.public.prompt)
@@ -30,6 +32,7 @@ def test_decode_state_comes_from_the_sealed_student_rollin() -> None:
 
 
 def test_decode_context_leaves_wording_to_the_model_and_preserves_semantics() -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_203, difficulty=3)
     state = execute_recurrent_memory_decode_state(task.public.prompt)
 
@@ -45,6 +48,7 @@ def test_decode_context_leaves_wording_to_the_model_and_preserves_semantics() ->
 
 
 def test_no_write_lesion_changes_the_semantic_state_before_decode() -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_203, difficulty=3)
 
     treatment = execute_recurrent_memory_decode_state(task.public.prompt)
@@ -76,6 +80,7 @@ def test_decode_ingress_never_calls_a_verifier_or_frontier_answer() -> None:
 
 
 def test_typed_state_rejects_a_forged_execution_receipt() -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_203, difficulty=3)
     state = execute_recurrent_memory_decode_state(task.public.prompt)
     forged = dict(state.execution_receipt)

@@ -25,7 +25,9 @@ def main() -> int:
     parser.add_argument(
         "--resident-manifest",
         type=Path,
-        default=Path("/Users/bryan/.aura/live-source/training/fused-model/active.json"),
+        # Anchored to the checkout, not to one machine's home directory:
+        # the absolute literal made this tool runnable on exactly one host.
+        default=REPO_ROOT / "training" / "fused-model" / "active.json",
     )
     parser.add_argument("--model", type=Path)
     parser.add_argument("--out", type=Path, default=DEFAULT_ACTIVATION_PATH)

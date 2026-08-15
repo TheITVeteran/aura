@@ -17,12 +17,24 @@ checked-in baseline that may shrink and may not grow.
 
 Three rules:
 
-1. A file recorded in the baseline may not exceed its recorded size. Growth in a
-   file already known to be too large is the failure this exists to stop.
-2. A file NOT in the baseline may not exceed the thresholds at all. A new God
+1. A file NOT in the baseline may not exceed the thresholds at all. A new God
    object is never grandfathered.
-3. A file that has shrunk must have its baseline refreshed. A stale entry is
+2. A file that has shrunk must have its baseline refreshed. A stale entry is
    headroom nobody earned, and it is how a ratchet quietly stops ratcheting.
+3. The TOTAL oversize — every baselined line above the threshold, summed — may
+   never grow. Individual files may move within that total.
+
+Rule 3 is a correction to this tool's own first design, which pinned every file
+individually and failed the moment a legitimate feature touched one. That is how
+a gate gets deleted: it blocks work it was never meant to block, someone removes
+it, and the debt it was holding resumes growing unobserved. A per-file pin also
+cannot express the trade this gate exists to encourage — moving four hundred
+lines out of `chat.py` into three new modules should PASS, and under a per-file
+rule it fails on the new modules.
+
+The budget is what actually matters and it cannot be gamed quietly: a file may
+grow only if another shrinks by more, and `--write-baseline` refuses to record a
+larger total than the one already checked in.
 
 The thresholds come from this repository's own distribution rather than from
 taste: 2,000 lines is just under the 98th percentile of file length (2,115) and
@@ -118,17 +130,29 @@ def write_baseline(path: Path, measurements: dict[str, Measurement]) -> int:
         for m in measurements.values()
         if m.lines > MAX_NEW_MODULE_LINES or m.max_class_methods > MAX_NEW_CLASS_METHODS
     }
+    total = oversize_total(measurements)
+
+    previous = load_budget(path)
+    if previous is not None and total > previous:
+        raise ValueError(
+            f"refusing to record a larger oversize budget: {total} > {previous}. "
+            "A file may grow only if another shrinks by more; this is the one "
+            "number the ratchet holds."
+        )
+
     path.write_text(
         json.dumps(
             {
                 "schema": BASELINE_SCHEMA,
                 "description": (
-                    "Modules already above the size thresholds. Entries may shrink "
-                    "and may never grow; a file that has shrunk must be re-recorded, "
+                    "Modules already above the size thresholds, and the total "
+                    "oversize budget. Individual entries may move; the total may "
+                    "only shrink. A file that has shrunk must be re-recorded, "
                     "because a stale entry is headroom nobody earned."
                 ),
                 "max_new_module_lines": MAX_NEW_MODULE_LINES,
                 "max_new_class_methods": MAX_NEW_CLASS_METHODS,
+                "oversize_budget_lines": total,
                 "modules": dict(sorted(modules.items())),
             },
             indent=2,
@@ -138,12 +162,46 @@ def write_baseline(path: Path, measurements: dict[str, Measurement]) -> int:
     return len(modules)
 
 
+def oversize_total(measurements: dict[str, Measurement]) -> int:
+    """Every line above the threshold, summed across the tree.
+
+    The quantity the ratchet actually holds. Moving four hundred lines out of a
+    God object into three new modules leaves this unchanged or lower, which is
+    the trade the gate exists to allow; growing one file without shrinking
+    another raises it, which is the trade it exists to refuse.
+    """
+    return sum(
+        max(0, m.lines - MAX_NEW_MODULE_LINES) for m in measurements.values()
+    )
+
+
+def load_budget(path: Path) -> int | None:
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = payload.get("oversize_budget_lines")
+    return int(value) if isinstance(value, int) else None
+
+
 def check(
-    measurements: dict[str, Measurement], baseline: dict[str, dict[str, int]]
+    measurements: dict[str, Measurement],
+    baseline: dict[str, dict[str, int]],
+    *,
+    budget: int | None = None,
 ) -> tuple[list[str], list[str]]:
     """Returns (failures, stale_entries)."""
     failures: list[str] = []
     stale: list[str] = []
+
+    if budget is not None:
+        total = oversize_total(measurements)
+        if total > budget:
+            failures.append(
+                f"total oversize is {total} lines against a budget of {budget} "
+                f"(+{total - budget}). A file may grow only if another shrinks by "
+                "more; this is the one number the ratchet holds"
+            )
 
     for path, measurement in sorted(measurements.items()):
         recorded = baseline.get(path)
@@ -162,24 +220,17 @@ def check(
                 )
             continue
 
-        allowed_lines = int(recorded.get("lines", 0))
         allowed_methods = int(recorded.get("max_class_methods", 0))
-        if measurement.lines > allowed_lines:
-            failures.append(
-                f"{path}: grew to {measurement.lines} lines from a baseline of "
-                f"{allowed_lines}. This file is already known to be too large; "
-                "growth here is the failure this ratchet exists to stop"
-            )
         if measurement.max_class_methods > allowed_methods:
+            # Method count is pinned per class rather than budgeted. Splitting a
+            # God class is the point; growing one is never the trade.
             failures.append(
                 f"{path}: class {measurement.largest_class} grew to "
                 f"{measurement.max_class_methods} methods from a baseline of "
                 f"{allowed_methods}"
             )
-        if (
-            measurement.lines < allowed_lines
-            or measurement.max_class_methods < allowed_methods
-        ):
+        allowed_lines = int(recorded.get("lines", 0))
+        if measurement.lines < allowed_lines or measurement.max_class_methods < allowed_methods:
             stale.append(
                 f"{path}: now {measurement.lines} lines / "
                 f"{measurement.max_class_methods} methods, baseline still says "
@@ -203,8 +254,15 @@ def main(argv: list[str] | None = None) -> int:
     measurements = measure_tree()
 
     if args.write_baseline:
-        count = write_baseline(baseline_path, measurements)
-        print(f"module size baseline written: {count} oversized module(s)")
+        try:
+            count = write_baseline(baseline_path, measurements)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"module size baseline written: {count} oversized module(s), "
+            f"budget {oversize_total(measurements)} lines"
+        )
         return 0
 
     baseline = load_baseline(baseline_path)
@@ -216,14 +274,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    failures, stale = check(measurements, baseline)
+    failures, stale = check(measurements, baseline, budget=load_budget(baseline_path))
 
     oversized = sum(
         1
         for m in measurements.values()
         if m.lines > MAX_NEW_MODULE_LINES or m.max_class_methods > MAX_NEW_CLASS_METHODS
     )
-    print(f"modules scanned: {len(measurements)}; over threshold: {oversized}")
+    budget = load_budget(baseline_path)
+    print(
+        f"modules scanned: {len(measurements)}; over threshold: {oversized}; "
+        f"oversize {oversize_total(measurements)} lines"
+        + (f" against a budget of {budget}" if budget is not None else "")
+    )
 
     if stale:
         print(f"\n📉 {len(stale)} baseline entry/entries are stale — refresh with")

@@ -26,6 +26,7 @@ from core.brain.llm.latent_cortex.local_repair import (
 from core.brain.llm.latent_cortex.value_of_computation import (
     build_evidence_snapshot,
 )
+from tests.sealed_artifact_support import require_mathematics_memory_tissue
 
 
 def _digest(value: str) -> str:
@@ -490,6 +491,7 @@ def test_certified_recurrent_program_replaces_wrong_complete_engine_candidates()
 
 
 def test_sealed_recurrent_memory_replaces_a_wrong_mathematics_decode():
+    require_mathematics_memory_tissue()
     from core.brain.llm.latent_cortex.frontier_tasks import generate_task
 
     task = generate_task("mathematics", seed=1_037, difficulty=3)

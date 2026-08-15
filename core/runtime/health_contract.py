@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from core.runtime.health_fragments import collect_health_fragments
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.HealthContract")
@@ -1768,9 +1769,11 @@ def _runtime_integrity_block() -> dict[str, Any]:
     # mind declined to say. Both are numbers nothing else in the runtime
     # produces.
     try:
-        from core.memory.retrieval_outcomes import get_outcome_ledger
-
-        outcomes = get_outcome_ledger().status()
+        # Registry lookup, never an import; see core/memory/retrieval_outcomes.py.
+        ledger = get_runtime_service("retrieval_outcome_ledger", default=None)
+        if ledger is None:
+            raise LookupError("retrieval outcome ledger is not registered")
+        outcomes = ledger.status()
         block["judgement"] = {
             "retrieval": {
                 "tracked": outcomes["tracked"],
@@ -1978,34 +1981,6 @@ def integrity_block_snapshot() -> dict[str, Any]:
     return block
 
 
-def _external_reach_snapshot() -> dict[str, Any]:
-    """How far Aura can actually reach outside herself, right now.
-
-    `mcp_client` was registered, routable, and described as connecting Aura
-    to enterprise data connectors while the `mcp` package was not installed
-    and no connector was configured — so every call returned an error and
-    nothing anywhere said so. A capability that is dead in practice must be
-    visible as dead, not discoverable only by trying it.
-    """
-    snapshot: dict[str, Any] = {"mcp": {"available": False, "connectors": 0}}
-    try:
-        import importlib.util
-
-        from core.capabilities.mcp_connectors import available_connectors
-
-        connectors = available_connectors()
-        snapshot["mcp"] = {
-            # The transport. Without it no connector is reachable however
-            # many are configured.
-            "available": importlib.util.find_spec("mcp") is not None,
-            "connectors": len(connectors),
-            "names": [c.name for c in connectors],
-        }
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:
-        snapshot["mcp"]["error"] = repr(exc)
-    return snapshot
-
-
 def runtime_health_report() -> dict[str, Any]:
     """Return Aura's canonical runtime health contract report."""
     report = evaluate_health().to_report()
@@ -2022,7 +1997,9 @@ def runtime_health_report() -> dict[str, Any]:
         }
     report["shutdown"] = shutdown
     report["integrity"] = integrity_block_snapshot()
-    report["external_reach"] = _external_reach_snapshot()
+    # Subsystems publish; the foundation never reaches down. See
+    # core/runtime/health_fragments.py for why.
+    report.update(collect_health_fragments())
     request = shutdown.get("request") if isinstance(shutdown, dict) else None
     if isinstance(request, dict) and request.get("requested") is True:
         report["pre_shutdown_status"] = report.get("status")

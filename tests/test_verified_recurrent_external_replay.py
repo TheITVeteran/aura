@@ -438,6 +438,10 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
     assert tuple(sample.branch_index for sample in samples) == (0, 1)
 
     source_task = khop_reachability(1, 929)
+    # The right answer and a wrong one, read off the task so a curriculum
+    # change moves the fixture with it instead of silently invalidating it.
+    _CORRECT_NODE = int(source_task.expected["node"])
+    _WRONG_NODE = _CORRECT_NODE + 1
     public_task, _sealed_task = build_verified_training_task(
         source_task,
         answer_nonce=b"external-replay-answer-nonce-32b",
@@ -474,7 +478,13 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
                 return 'FINAL_ANSWER: {"node":'
             if len(token_ids) != 2:
                 raise ValueError("unexpected test token sequence")
-            node = 4 if admitted and token_ids[0] == 7 else 5
+            # Derived from the task, not hard-coded. These were literals 4
+            # and 5, chosen when khop_reachability(1, 929) answered 4. The
+            # curriculum moved and the answer became 6, so BOTH branches
+            # returned a wrong node: every transition scored wrong_to_wrong,
+            # `optimizer_admitted` was correctly False, and the fixture failed
+            # while asserting the behaviour it had stopped producing.
+            node = _WRONG_NODE if admitted and token_ids[0] == 7 else _CORRECT_NODE
             return f'FINAL_ANSWER: {{"node":{node}}}'
 
         @classmethod

@@ -20,6 +20,7 @@ from core.learning.recurrent_work_memory_training import (
     build_mathematics_memory_registry,
     train_mathematics_memory_tissue,
 )
+from tests.sealed_artifact_support import require_mathematics_memory_tissue
 
 
 @pytest.fixture(scope="module")
@@ -122,6 +123,7 @@ def test_wrong_write_lesion_remains_observable_instead_of_being_guarded() -> Non
 
 
 def test_sealed_tissue_reloads_and_replays_the_fresh_registry() -> None:
+    require_mathematics_memory_tissue()
     tissue = load_mathematics_memory_tissue()
     _private_labels, heldout_tasks = build_mathematics_memory_registry(
         seeds=range(1_000, 1_100),
@@ -135,6 +137,7 @@ def test_sealed_tissue_reloads_and_replays_the_fresh_registry() -> None:
 
 
 def test_sealed_tissue_rejects_weight_tampering(tmp_path: Path) -> None:
+    require_mathematics_memory_tissue()
     artifact = tmp_path / "artifact"
     shutil.copytree(DEFAULT_MATHEMATICS_MEMORY_ARTIFACT, artifact)
     weights = artifact / "weights.safetensors"
