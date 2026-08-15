@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.learning.recurrence_curriculum import task_battery
+from core.learning.transition_identifiability import public_transition_observations
 from tools.unified_intrinsic_tokenization_contract import (
     SOURCE_DATASET_FILENAME,
     TOKENIZED_DATASET_FILENAME,
@@ -73,6 +74,11 @@ def test_source_dataset_roundtrips_exact_private_programs(tmp_path: Path) -> Non
     assert first == second
     assert restored_train == train
     assert restored_holdout == holdout
+    for task in (*restored_train, *restored_holdout):
+        assert task.transition_program is not None
+        assert task.transition_program.state_trace is task.transition_trace
+    assert public_transition_observations(restored_train)
+    assert public_transition_observations(restored_holdout)
     assert first["partition_overlap"] == 0
     assert stat.S_IMODE(path.stat().st_mode) == 0o400
 

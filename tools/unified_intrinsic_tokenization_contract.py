@@ -208,8 +208,15 @@ def load_source_dataset(
                 raise UnifiedTokenizationContractError(
                     "source_dataset_program_trace_differs"
                 )
+            if trace is None:
+                raise UnifiedTokenizationContractError(
+                    "source_dataset_program_trace_differs"
+                )
             program = StructuredTransitionProgram(
-                state_trace=program_trace,
+                # The equality check above verifies the redundant frozen copy.
+                # Bind the restored program to the task's canonical trace so
+                # every downstream state/action audit has one authority.
+                state_trace=trace,
                 action_field_names=tuple(raw_program["action_field_names"]),
                 actions=tuple(tuple(action) for action in raw_program["actions"]),
             )

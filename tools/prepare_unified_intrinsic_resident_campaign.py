@@ -64,6 +64,7 @@ from tools.unified_intrinsic_tokenization_contract import (  # noqa: E402
     TOKENIZED_DATASET_FILENAME,
     freeze_source_dataset,
     freeze_tokenized_dataset,
+    load_source_dataset,
 )
 
 PREPARATION_SCHEMA: Final = "aura.unified_intrinsic.resident_preparation.v1"
@@ -1127,6 +1128,24 @@ def _freeze_campaign(
         train_tasks,
         holdout_tasks,
     )
+    restored_train_tasks, restored_holdout_tasks = load_source_dataset(
+        inputs / SOURCE_DATASET_FILENAME
+    )
+    if restored_train_tasks != train_tasks or restored_holdout_tasks != holdout_tasks:
+        _fail("frozen_source_dataset_roundtrip_differs")
+    if transition_identifiability is not None:
+        restored_transition_report = audit_public_transition_identifiability(
+            restored_train_tasks,
+            restored_holdout_tasks,
+        )
+        if (
+            restored_transition_report["report_sha256"]
+            != transition_identifiability["report_sha256"]
+            or not restored_transition_report["admission"][
+                "state_recurrent_transition_admitted"
+            ]
+        ):
+            _fail("frozen_transition_identifiability_roundtrip_differs")
     tokenizer = load_resident_bootstrap_tokenizer(model_path)
     tokenizer_identity = resident_bootstrap_tokenizer_identity(model_path, tokenizer)
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
@@ -1136,8 +1155,8 @@ def _freeze_campaign(
     tokenized_dataset_identity = freeze_tokenized_dataset(
         inputs / TOKENIZED_DATASET_FILENAME,
         tokenizer,
-        train_tasks,
-        holdout_tasks,
+        restored_train_tasks,
+        restored_holdout_tasks,
         bridge=bridge,
         dataset_identity=dataset_identity,
         tokenizer_identity_sha256=tokenizer_identity["identity_sha256"],
