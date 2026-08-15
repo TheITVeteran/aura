@@ -215,3 +215,26 @@ grammar. It does not yet establish task-disjoint free decoding through the base
 model, open-domain transfer, resident-32B gain, or a WOW Signal. Canonical
 objective rendering remains an answer formatter; the next gate must require the
 model's own decoder to carry the recurrent result under matched controls.
+
+## CP523-CP527 addendum
+
+CP523 introduced a source-bound language-head canary with ordinary decode,
+matched initialization, no-write, no-read, reset-memory, and wrong-state arms.
+The first preflight exposed two answer-bridge defects rather than memory
+failures: zero-padded fixed-width slots caused one semantic substitution and one
+padding leak. CP524 replaced that lossy representation with canonical unpadded
+semantic JSON. CP525 then showed that injecting a schema banner into the model
+context made all six semantically correct outputs violate the public response
+contract. CP526 reproduced the known negative-conditioning failure: telling the
+model not to emit Markdown caused every treatment output to emit Markdown.
+
+CP527 separates those concerns. Recurrent semantic state remains model input,
+while a structural `FINAL_ANSWER:` prefill is applied uniformly as a decoder
+wire contract; the model still generates the complete JSON payload. The frozen
+30-task run at `cp527_mathematics_memory_decode_canary.json` produced 30/30
+treatment successes and 0/30 for every initialization, write, read, reset, and
+wrong-state control. It is retained as positive but superseded evidence because
+the arm named `ordinary_base` also received the structural prefill. The next
+revision must measure both a genuinely unconstrained ordinary baseline and a
+separately named matched-wire baseline, require treatment to beat both, and
+independently replay the artifact before making the bounded decode claim.
