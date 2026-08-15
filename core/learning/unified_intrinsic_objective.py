@@ -985,18 +985,22 @@ def unified_typed_transition_processor_loss(
     losses: list[Any] = []
     correct = mx.zeros((), dtype=mx.float32)
     required = mx.zeros((), dtype=mx.float32)
-    prior_values = targets.initial_values
+    state_probabilities = controller.exact_probabilities(
+        targets.initial_values,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    active_transitions = min(
+        plan.iterations,
+        int(transition_trace.depth),
+        len(transition_program.actions),
+    )
     for action_values, next_values, masks in zip(
-        public_actions,
-        targets.values,
-        targets.masks,
+        public_actions[:active_transitions],
+        targets.values[:active_transitions],
+        targets.masks[:active_transitions],
         strict=True,
     ):
-        state_probabilities = controller.exact_probabilities(
-            prior_values,
-            slots=controller.config.state_slots,
-            cardinality=controller.config.state_cardinality,
-        )
         action_probabilities = controller.exact_probabilities(
             action_values,
             slots=controller.config.action_slots,
@@ -1021,7 +1025,11 @@ def unified_typed_transition_processor_loss(
         predictions = mx.argmax(logits, axis=-1)
         correct = correct + mx.sum((predictions == labels).astype(mx.float32) * mask)
         required = required + mx.sum(mask)
-        prior_values = next_values
+        # Match deployment exactly: after the public initial state, recurrent
+        # execution consumes its own hard categorical decision.  The
+        # straight-through estimator keeps the entire rollout differentiable
+        # while preventing the private trace from becoming an inference input.
+        state_probabilities = controller.straight_through_probabilities(logits)
     if not losses:
         raise ValueError("direct transition training has no active transitions")
     loss = mx.mean(mx.stack(losses))
@@ -1036,6 +1044,11 @@ def unified_typed_transition_processor_loss(
         "public_actions_are_correctness_authority": False,
         "verified_state_teacher_available": True,
         "teacher_available_at_inference": False,
+        "initial_state_authority": "verified_public_initial_state",
+        "rollout_state_authority": "student_prediction_after_initial",
+        "closed_loop_student_rollout": True,
+        "active_transitions": active_transitions,
+        "post_terminal_transitions_trained": 0,
         "answer_tokens_exposed": False,
         "transformer_graph_constructed": False,
         "readout_graph_constructed": False,

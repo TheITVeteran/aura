@@ -49636,3 +49636,39 @@ every 256 steps and preserves resumable checkpoints every 32 steps. This is a
 mechanism and curriculum change, not a relaxed evidence gate. The next
 campaign must still clear `0.95` one-step exactness, preserve matched baseline
 successes and improve deep unseen execution before answer emission resumes.
+
+## Checkpoint 2026-08-14-499: Train The Deployed Closed-Loop State Machine
+
+CP498 tested the opcode-isolated processor on eight times more process tasks.
+At its step-512 interim gate, actions were `1.0` exact and T16 exact-value state
+accuracy improved from CP496's `0.1146` to `0.1536`, including coding at
+`0.2292`. The result remained below admission: T1 was only `0.5417`,
+calibration was `0.0104`, premise auditing was `0.0`, T1 remained the best
+depth and every depth-gain measure was negative. The exact launchd job and
+trainer/sentinel process groups were stopped after durable step 576. The
+negative result is frozen in
+`artifacts/closeout/latent_cortex/cp498_factorized_transition_acquisition_verdict.json`.
+
+The campaign exposed a training/runtime contradiction. Runtime recurrently
+feeds each hard predicted categorical state into the next transition. The
+direct objective instead reconstructed the verified prior state independently
+at every step. Its zero-teacher-forcing profile therefore described the action
+surface while the state input remained an oracle. Low training loss proved
+one-step fitting under correct prior states, not stable autonomous execution.
+
+Direct transition acquisition now begins from the exact public initial state
+and then feeds each straight-through hard student prediction into the next
+transition. Loss remains supervised by the private trace, but the trace is no
+longer a forward-path input after initialization. The complete rollout remains
+differentiable, and steps after the real terminal transition are excluded from
+the acquisition objective because runtime preserves terminal state
+structurally. Receipts declare the initial and rollout authorities, active
+transition count and zero trained post-terminal transitions.
+
+Contracts directly observe a deliberately wrong first prediction becoming the
+second transition's input instead of the teacher state, prove terminal padding
+does not invoke the processor and retain isolated-processor optimization to
+exact three-step accuracy. This checkpoint repairs the acquisition topology;
+the next bounded source-bound campaign must still clear `0.95` T1 exactness,
+produce positive deep execution and survive matched processor, opcode and
+history lesions before answer emission or resident-32B work resumes.

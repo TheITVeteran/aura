@@ -615,6 +615,62 @@ def test_direct_transition_objective_reaches_only_categorical_processor() -> Non
     assert receipt["answer_tokens_exposed"] is False
 
 
+def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=2,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 0, 0), (0, 0, 0)),
+    )
+    public_actions = action_targets_from_program(program, 3).values
+    observed_inputs: list[tuple[int, ...]] = []
+    original = controller.typed_transition_processor_logits
+
+    def observe_student_state(state_probabilities, action_probabilities, history_memory):
+        observed_inputs.append(
+            tuple(int(value) for value in mx.argmax(state_probabilities, axis=-1)[0].tolist())
+        )
+        logits = mx.full(
+            (
+                1,
+                controller.config.state_slots,
+                controller.config.state_cardinality,
+            ),
+            -8.0,
+        )
+        predicted = (7, 9, 0, 0, 0)
+        for slot, value in enumerate(predicted):
+            logits = logits.at[0, slot, value].add(16.0)
+        return logits
+
+    controller.typed_transition_processor_logits = observe_student_state
+    try:
+        _loss, receipt = unified_typed_transition_processor_loss(
+            controller,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=public_actions,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    assert observed_inputs[0] == (0, 0, 0, 0, 0)
+    assert observed_inputs[1] == (7, 9, 0, 0, 0)
+    assert observed_inputs[1] != (1, 1, 0, 0, 0)
+    assert len(observed_inputs) == 2
+    assert receipt["closed_loop_student_rollout"] is True
+    assert receipt["rollout_state_authority"] == "student_prediction_after_initial"
+    assert receipt["post_terminal_transitions_trained"] == 0
+    assert receipt["active_transitions"] == 2
+
+
 def test_direct_transition_objective_learns_exact_trace() -> None:
     controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
     trace = StructuredTransitionTrace(

@@ -1,0 +1,50 @@
+{
+  "schema": "aura.latent_cortex.factorized_transition_acquisition_verdict.v1",
+  "campaign_id": "cp498-factorized-transition-acquisition-1p5b-20260814",
+  "campaign_source_commit": "c843640d81553e743a82c97a6fbb4683dbd0822c",
+  "campaign_config_sha256": "748b684dc30bcb3eec457a5faa0e49db7c2a196e16490b3a68963ea08ff26d7d",
+  "dataset_identity_sha256": "9856f5e4d7036ec81877051bef4ce1ac3fcb5c8deddac68c9f97f19fe02fc867",
+  "tokenized_dataset_identity_sha256": "11a181979041eb832aa9290206a974f81de99d10fe0a95efae4d590909e82cf4",
+  "model_manifest_sha256": "71c040465070cf9b0068ca6f7bc26581443ae5fb46937e85e109212b3fb80092",
+  "bootstrap": {
+    "parent_checkpoint_sha256": "a7353f85489a025a1a5d025a3ed2b594479cc7d634e2567497f4b7979ddde8b3",
+    "transition_opcode_expert_extension_sha256": "844372f380d48731812dfebf4fddb4e9fd5a13e7676999ff38aa1bddda4abbf8",
+    "behavior_before_training_preserved": true
+  },
+  "terminal_checkpoint": {
+    "step": 576,
+    "checkpoint_sha256": "c65e7f241c0093f959b1192f51c1e485fc74623d987147e8151efe1ceace101e",
+    "receipt_sha256": "025265fc62df9e28830e97372daa8b99f6d6d7176a0568069ac8b2d147cdaf34"
+  },
+  "decision_evaluation": {
+    "step": 512,
+    "examples": 24,
+    "t1_state_value_exact_accuracy": 0.5416666666666666,
+    "t16_state_value_exact_accuracy": 0.15364583333333334,
+    "t16_family_state_value_exact_accuracy": {
+      "frontier_calibration": 0.010416666666666666,
+      "frontier_coding": 0.22916666666666666,
+      "frontier_mathematics": 0.375,
+      "frontier_misleading_premise": 0.0
+    },
+    "action_instruction_exact_accuracy": 1.0,
+    "best_depth": "T1",
+    "best_deep_relative_gain": -0.09551198258795263,
+    "best_heldout_relative_gain": -0.12443534278679046,
+    "trained_depth_helps": false,
+    "heldout_depth_helps": false
+  },
+  "interim_futility_gate": {
+    "one_step_exact_readiness_bar": 0.95,
+    "passed": false,
+    "operator_stopped_after_durable_checkpoint": true,
+    "detached_terminal_receipt_sha256": "a7d2a18e144682b6446bee2830ccbf1291dc5268d2476892a51e854dfa8f5fee",
+    "termination_signal": 15,
+    "launchd_label_removed": true,
+    "process_group_empty": true
+  },
+  "verdict": "opcode_output_factorization_improved_some_deep_fields_without_autonomous_execution",
+  "conclusion": "Opcode-isolated output heads and eight-times-broader task support raised T16 exact-value accuracy from CP496's 0.1146 to 0.1536 and coding to 0.2292, but T1 remained 0.5417, calibration remained 0.0104 and premise auditing remained 0.0. Inspection found that the direct objective still supplied the verified prior state independently at every transition while deployment recursively consumes its own hard predictions. The nominal teacher-free profile therefore trained one-step oracle-state transitions, not the deployed closed-loop dynamical system. Continuing the same objective to step 2048 was not authorized.",
+  "next_mechanism": "Train the same typed processor as a differentiable closed-loop rollout: exact public initial state only, straight-through student predictions thereafter, no post-terminal padding loss, and unchanged public action, answer-blind and frozen-readout boundaries.",
+  "claim_boundary": "Negative bounded 1.5B mechanism result only; no answer-level, resident-32B, fusion, frontier or WOW Signal authority."
+}
