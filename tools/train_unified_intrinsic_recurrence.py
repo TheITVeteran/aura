@@ -67,6 +67,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_initial_state_loss,
     structured_state_accuracy_breakdown,
     structured_state_loss,
+    structured_state_trajectory_diagnostics,
     unified_answer_and_recurrent_trajectory,
     unified_intrinsic_training_loss,
     unified_process_training_loss,
@@ -2099,6 +2100,8 @@ def _capture_autonomous_process(
     public_action_values: tuple[tuple[int, ...], ...] | None = None,
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
+    transition_processor_mode: str = "residual",
+    transition_opcode_expert_routing: str = "opcode",
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Capture one prefix-only autonomous process execution without decoding."""
@@ -2118,6 +2121,8 @@ def _capture_autonomous_process(
         public_action_values=public_action_values,
         microcode_lesion=microcode_lesion,
         transition_processor_lesion=transition_processor_lesion,
+        transition_processor_mode=transition_processor_mode,
+        transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_history_lesion=transition_history_lesion,
     )
     if len(initial_state_logits) != 1:
@@ -2654,6 +2659,7 @@ def _evaluate_process_admission(
     *,
     public_action_program: bool = False,
     transition_processor_lesion: bool = False,
+    transition_opcode_expert_routing: str = "opcode",
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Require exact teacher-removed state/action execution on every unseen task."""
@@ -2683,6 +2689,10 @@ def _evaluate_process_admission(
                     public_action_values=_public_actions_for_task(task, depth),
                     microcode_lesion=True,
                     transition_processor_lesion=transition_processor_lesion,
+                    transition_processor_mode="authoritative",
+                    transition_opcode_expert_routing=(
+                        transition_opcode_expert_routing
+                    ),
                     transition_history_lesion=transition_history_lesion,
                 )
                 if public_action_program
@@ -2710,6 +2720,10 @@ def _evaluate_process_admission(
         "exact_microcode_available": not public_action_program,
         "transition_processor_available": not transition_processor_lesion,
         "transition_processor_lesioned": transition_processor_lesion,
+        "transition_processor_mode": (
+            "authoritative" if public_action_program else "residual"
+        ),
+        "transition_opcode_expert_routing": transition_opcode_expert_routing,
         "transition_action_history_available": not transition_history_lesion,
         "transition_action_history_lesioned": transition_history_lesion,
         "depth": depth,
@@ -3862,7 +3876,8 @@ def _merge_bootstrap_transition_opcode_expert_extension(
     missing = expected - set(parent_values)
     if not missing:
         return dict(parent_values), None
-    if missing != expected:
+    hidden_name = "controller.transition_processor_opcode_hidden"
+    if missing not in (expected, {hidden_name}):
         raise RuntimeError(
             "unified recurrence bootstrap transition-opcode expert inventory differs: "
             + ",".join(sorted(missing))
@@ -3887,9 +3902,12 @@ def _merge_bootstrap_transition_opcode_expert_extension(
         }
     return migrated, {
         "schema": "aura.unified_intrinsic.transition_opcode_expert_extension.v1",
-        "migration_rule": "parent_exact_plus_zero_output_opcode_isolated_heads",
+        "migration_rule": (
+            "parent_exact_plus_zero_output_opcode_isolated_hidden_and_heads"
+        ),
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
+        "matched_capacity_control": "uniform_public_opcode_router",
         "opcode_order": list(range(ACTION_CARDINALITY)),
         "state_register_order": list(STATE_SLOT_NAMES),
         "future_action_visible": False,
@@ -3972,6 +3990,7 @@ def _evaluate_depth(
     depth: int,
     *,
     public_action_program: bool = False,
+    transition_opcode_expert_routing: str = "opcode",
 ) -> dict[str, float]:
     """Evaluate one depth and release its MLX graph before the next depth."""
 
@@ -3991,6 +4010,10 @@ def _evaluate_depth(
         action_logit_trajectory=action_logits,
         public_action_values=public_actions,
         microcode_lesion=public_action_program,
+        transition_processor_mode=(
+            "authoritative" if public_action_program else "residual"
+        ),
+        transition_opcode_expert_routing=transition_opcode_expert_routing,
         answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
         # Evaluation consumes only the final answer loss. Decoding every
         # recurrent intermediate through the resident 32B coda retains a
@@ -4019,6 +4042,11 @@ def _evaluate_depth(
         targets,
     )
     state_breakdown = structured_state_accuracy_breakdown(state_logits, targets)
+    trajectory = structured_state_trajectory_diagnostics(
+        state_logits,
+        targets,
+        active_steps=min(int(trace.depth), depth),
+    )
     initial_breakdown = structured_initial_state_accuracy_breakdown(
         initial_state_logits[0], targets
     )
@@ -4054,6 +4082,7 @@ def _evaluate_depth(
         "action_instruction_exact_accuracy": float(
             action_breakdown["instruction_exact_accuracy"] or 0.0
         ),
+        **trajectory,
     }
 
 
@@ -4067,6 +4096,7 @@ def _evaluate(
     *,
     envelope: Any,
     public_action_program: bool = False,
+    transition_opcode_expert_routing: str = "opcode",
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
@@ -4084,6 +4114,37 @@ def _evaluate(
     initial_value_exact_totals = {depth: 0.0 for depth in depths}
     action_totals = {depth: 0.0 for depth in depths}
     action_exact_totals = {depth: 0.0 for depth in depths}
+    trajectory_metric_names = (
+        "active_state_exact_accuracy",
+        "active_value_exact_accuracy",
+        "active_trajectory_exact",
+        "first_error_fraction",
+    )
+    trajectory_totals = {
+        name: {depth: 0.0 for depth in depths} for name in trajectory_metric_names
+    }
+    recovery_totals = {depth: 0.0 for depth in depths}
+    sustained_recovery_totals = {depth: 0.0 for depth in depths}
+    recovery_counts = {depth: 0 for depth in depths}
+    terminal_correct_stability_totals = {depth: 0.0 for depth in depths}
+    terminal_self_stability_totals = {depth: 0.0 for depth in depths}
+    terminal_stability_counts = {depth: 0 for depth in depths}
+    conditional_transition_counts = {
+        name: {depth: 0 for depth in depths}
+        for name in (
+            "correct_after_correct",
+            "correct_predecessors",
+            "correct_after_wrong",
+            "wrong_predecessors",
+        )
+    }
+    first_error_histograms = {depth: {} for depth in depths}
+    register_totals = {
+        name: {depth: 0.0 for depth in depths} for name in STATE_SLOT_NAMES
+    }
+    register_counts = {
+        name: {depth: 0 for depth in depths} for name in STATE_SLOT_NAMES
+    }
     diagnostic_depth = max(depths)
     family_process_totals: dict[str, dict[str, float | int]] = {}
     with recurrence_adapter_scope(start=None, stop=None):
@@ -4098,6 +4159,9 @@ def _evaluate(
                     spec,
                     depth,
                     public_action_program=public_action_program,
+                    transition_opcode_expert_routing=(
+                        transition_opcode_expert_routing
+                    ),
                 )
                 totals[depth] += metrics["loss"]
                 if "state_accuracy" in metrics:
@@ -4111,6 +4175,34 @@ def _evaluate(
                     initial_value_exact_totals[depth] += metrics["initial_value_exact_accuracy"]
                     action_totals[depth] += metrics["action_accuracy"]
                     action_exact_totals[depth] += metrics["action_instruction_exact_accuracy"]
+                    for name in trajectory_metric_names:
+                        trajectory_totals[name][depth] += float(metrics[name])
+                    if metrics["recovery_observable"]:
+                        recovery_totals[depth] += float(
+                            metrics["recovered_after_first_error"]
+                        )
+                        sustained_recovery_totals[depth] += float(
+                            metrics["sustained_recovery_after_first_error"]
+                        )
+                        recovery_counts[depth] += 1
+                    if metrics["terminal_stability_observable"]:
+                        terminal_correct_stability_totals[depth] += float(
+                            metrics["terminal_correct_stable"]
+                        )
+                        terminal_self_stability_totals[depth] += float(
+                            metrics["terminal_self_stable"]
+                        )
+                        terminal_stability_counts[depth] += 1
+                    for name, value in metrics["conditional_transition_counts"].items():
+                        conditional_transition_counts[name][depth] += int(value)
+                    first_error_key = str(metrics["first_error_step"] or "none")
+                    first_error_histograms[depth][first_error_key] = (
+                        first_error_histograms[depth].get(first_error_key, 0) + 1
+                    )
+                    for name, value in metrics["per_register_accuracy"].items():
+                        if value is not None:
+                            register_totals[name][depth] += float(value)
+                            register_counts[name][depth] += 1
                     state_counts[depth] += 1
                     if depth == diagnostic_depth:
                         family = str(task.family)
@@ -4121,6 +4213,7 @@ def _evaluate(
                                 "action_accuracy": 0.0,
                                 "action_instruction_exact_accuracy": 0.0,
                                 "state_value_exact_accuracy": 0.0,
+                                "active_state_value_exact_accuracy": 0.0,
                             },
                         )
                         family_totals["examples"] += 1
@@ -4130,6 +4223,9 @@ def _evaluate(
                         ]
                         family_totals["state_value_exact_accuracy"] += metrics[
                             "state_value_exact_accuracy"
+                        ]
+                        family_totals["active_state_value_exact_accuracy"] += metrics[
+                            "active_value_exact_accuracy"
                         ]
                 # Reclaim after each depth. Holding the full ladder's lazy MLX
                 # graphs caused resident-32B evaluation to exceed 51 GiB.
@@ -4192,6 +4288,81 @@ def _evaluate(
         else None
         for depth in depths
     }
+    trajectory_metrics = {
+        name: {
+            f"T{depth}": (
+                trajectory_totals[name][depth] / state_counts[depth]
+                if state_counts[depth]
+                else None
+            )
+            for depth in depths
+        }
+        for name in trajectory_metric_names
+    }
+    recovery_accuracy = {
+        f"T{depth}": (
+            recovery_totals[depth] / recovery_counts[depth]
+            if recovery_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    sustained_recovery_accuracy = {
+        f"T{depth}": (
+            sustained_recovery_totals[depth] / recovery_counts[depth]
+            if recovery_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    terminal_correct_stability_accuracy = {
+        f"T{depth}": (
+            terminal_correct_stability_totals[depth]
+            / terminal_stability_counts[depth]
+            if terminal_stability_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    terminal_self_stability_accuracy = {
+        f"T{depth}": (
+            terminal_self_stability_totals[depth] / terminal_stability_counts[depth]
+            if terminal_stability_counts[depth]
+            else None
+        )
+        for depth in depths
+    }
+    conditional_transition_accuracy = {
+        "p_correct_given_previous_correct": {
+            f"T{depth}": (
+                conditional_transition_counts["correct_after_correct"][depth]
+                / conditional_transition_counts["correct_predecessors"][depth]
+                if conditional_transition_counts["correct_predecessors"][depth]
+                else None
+            )
+            for depth in depths
+        },
+        "p_correct_given_previous_wrong": {
+            f"T{depth}": (
+                conditional_transition_counts["correct_after_wrong"][depth]
+                / conditional_transition_counts["wrong_predecessors"][depth]
+                if conditional_transition_counts["wrong_predecessors"][depth]
+                else None
+            )
+            for depth in depths
+        },
+    }
+    per_register_accuracy = {
+        name: {
+            f"T{depth}": (
+                register_totals[name][depth] / register_counts[name][depth]
+                if register_counts[name][depth]
+                else None
+            )
+            for depth in depths
+        }
+        for name in STATE_SLOT_NAMES
+    }
     process_by_family_at_max_depth = {
         family: {
             "examples": int(values["examples"]),
@@ -4201,6 +4372,10 @@ def _evaluate(
             )
             / int(values["examples"]),
             "state_value_exact_accuracy": float(values["state_value_exact_accuracy"])
+            / int(values["examples"]),
+            "active_state_value_exact_accuracy": float(
+                values["active_state_value_exact_accuracy"]
+            )
             / int(values["examples"]),
         }
         for family, values in sorted(family_process_totals.items())
@@ -4222,6 +4397,28 @@ def _evaluate(
         "state_value_exact_accuracy": state_value_exact_accuracy,
         "initial_value_exact_accuracy": initial_value_exact_accuracy,
         "action_instruction_exact_accuracy": action_instruction_exact_accuracy,
+        **trajectory_metrics,
+        "recovery_accuracy": recovery_accuracy,
+        "sustained_recovery_accuracy": sustained_recovery_accuracy,
+        "recovery_observation_count": {
+            f"T{depth}": recovery_counts[depth] for depth in depths
+        },
+        "conditional_transition_accuracy": conditional_transition_accuracy,
+        "conditional_transition_counts": {
+            name: {f"T{depth}": values[depth] for depth in depths}
+            for name, values in conditional_transition_counts.items()
+        },
+        "first_error_histogram": {
+            f"T{depth}": first_error_histograms[depth] for depth in depths
+        },
+        "terminal_correct_stability_accuracy": (
+            terminal_correct_stability_accuracy
+        ),
+        "terminal_self_stability_accuracy": terminal_self_stability_accuracy,
+        "terminal_stability_observation_count": {
+            f"T{depth}": terminal_stability_counts[depth] for depth in depths
+        },
+        "per_register_accuracy": per_register_accuracy,
         "process_by_family_at_max_depth": {
             "depth": diagnostic_depth,
             "families": process_by_family_at_max_depth,
@@ -4381,6 +4578,15 @@ def main() -> int:
         help=(
             "train verified categorical state/action/history transitions without "
             "constructing a transformer graph"
+        ),
+    )
+    parser.add_argument(
+        "--transition-opcode-expert-routing",
+        choices=("opcode", "uniform", "lesion"),
+        default="opcode",
+        help=(
+            "route hidden and output transition experts by the public opcode, "
+            "uniformly for a matched-capacity control, or lesion them"
         ),
     )
     parser.add_argument(
@@ -4616,6 +4822,12 @@ def main() -> int:
     ):
         raise ValueError(
             "direct transition processor requires public transition-only controller training"
+        )
+    if args.transition_opcode_expert_routing != "opcode" and (
+        not args.direct_transition_processor or not args.public_action_program
+    ):
+        raise ValueError(
+            "transition opcode routing controls require direct public transition training"
         )
     if (
         not math.isfinite(args.analytic_action_readout_ridge)
@@ -5117,6 +5329,8 @@ def main() -> int:
             "direct_transition_processor": {
                 "enabled": args.direct_transition_processor,
                 "objective": "verified_state_public_action_history_to_next_state",
+                "deployed_transition_policy": "processor_authoritative",
+                "opcode_expert_routing": args.transition_opcode_expert_routing,
                 "transformer_graph_constructed": False,
                 "readout_graph_constructed": False,
             },
@@ -5780,6 +5994,9 @@ def main() -> int:
                                             transition_trace=transition_trace,
                                             transition_program=transition_program,
                                             public_action_values=public_actions,
+                                            opcode_expert_routing=(
+                                                args.transition_opcode_expert_routing
+                                            ),
                                         )[0]
                                     return unified_process_training_loss(
                                         candidate.model,
@@ -5793,6 +6010,14 @@ def main() -> int:
                                         component=component,
                                         public_action_values=public_actions,
                                         microcode_lesion=args.public_action_program,
+                                        transition_processor_mode=(
+                                            "authoritative"
+                                            if args.public_action_program
+                                            else "residual"
+                                        ),
+                                        transition_opcode_expert_routing=(
+                                            args.transition_opcode_expert_routing
+                                        ),
                                     )[0]
 
                                 cohort_loss, cohort_gradient = nn.value_and_grad(
@@ -5904,6 +6129,9 @@ def main() -> int:
                         spec.depths,
                         envelope=envelope,
                         public_action_program=args.public_action_program,
+                        transition_opcode_expert_routing=(
+                            args.transition_opcode_expert_routing
+                        ),
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
@@ -5975,6 +6203,9 @@ def main() -> int:
                 spec.depths,
                 envelope=envelope,
                 public_action_program=args.public_action_program,
+                transition_opcode_expert_routing=(
+                    args.transition_opcode_expert_routing
+                ),
             )
             final_ladder["step"] = step
             final_ladder["optimization_phase"] = _optimization_phase(
@@ -6038,6 +6269,9 @@ def main() -> int:
                 spec,
                 bridge,
                 public_action_program=args.public_action_program,
+                transition_opcode_expert_routing=(
+                    args.transition_opcode_expert_routing
+                ),
             )
             if args.answer_bridge_steps == 0 and step >= args.max_steps
             else None

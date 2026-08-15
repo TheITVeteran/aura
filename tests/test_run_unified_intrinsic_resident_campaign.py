@@ -449,6 +449,7 @@ def test_direct_transition_acquisition_removes_transformer_graph() -> None:
 
     assert training["public_action_program"] is True
     assert training["direct_transition_processor"] is True
+    assert training["transition_opcode_expert_routing"] == "opcode"
     assert training["process_curriculum"] == "transition_only"
     assert training["process_transformer_gradient_scale"] == 0.0
     assert training["process_query_gradient_scale"] == 0.0
@@ -464,6 +465,7 @@ def test_factorized_transition_acquisition_expands_operation_support() -> None:
 
     assert training["public_action_program"] is True
     assert training["direct_transition_processor"] is True
+    assert training["transition_opcode_expert_routing"] == "opcode"
     assert training["per_cell"] == 128
     assert training["holdout_per_cell"] == 6
     assert training["max_steps"] == training["state_warmup_steps"] == 2048

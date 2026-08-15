@@ -430,8 +430,22 @@ def test_bootstrap_transition_opcode_experts_are_exact_and_audited() -> None:
     assert set(migrated) == set(child)
     assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
 
+    incremental_parent = dict(child)
+    del incremental_parent["controller.transition_processor_opcode_hidden"]
+    incremental, incremental_receipt = (
+        _merge_bootstrap_transition_opcode_expert_extension(
+            incremental_parent,
+            child,
+        )
+    )
+    assert incremental_receipt is not None
+    assert incremental_receipt["matched_capacity_control"] == (
+        "uniform_public_opcode_router"
+    )
+    assert set(incremental) == set(child)
+
     active = dict(child)
-    active["controller.transition_processor_opcode_output"] = mx.ones((4, 2, 3))
+    active["controller.transition_processor_opcode_hidden"] = mx.ones((4, 2, 3))
     with pytest.raises(RuntimeError, match="expert is not a no-op"):
         _merge_bootstrap_transition_opcode_expert_extension(parent, active)
 
@@ -2166,11 +2180,15 @@ def test_process_admission_propagates_processor_and_history_lesions(
             "public_action_values": ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
             "microcode_lesion": True,
             "transition_processor_lesion": True,
+            "transition_processor_mode": "authoritative",
+            "transition_opcode_expert_routing": "opcode",
             "transition_history_lesion": True,
         }
     ]
     assert report["transition_processor_available"] is False
     assert report["transition_processor_lesioned"] is True
+    assert report["transition_processor_mode"] == "authoritative"
+    assert report["transition_opcode_expert_routing"] == "opcode"
     assert report["transition_action_history_available"] is False
     assert report["transition_action_history_lesioned"] is True
 
@@ -3147,7 +3165,9 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
         depth,
         *,
         public_action_program=False,
+        transition_opcode_expert_routing="opcode",
     ):
+        assert transition_opcode_expert_routing == "opcode"
         observed.append((depth, public_action_program))
         return {"loss": float(depth)}
 

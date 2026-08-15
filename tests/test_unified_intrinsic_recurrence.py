@@ -1178,6 +1178,81 @@ def test_typed_transition_processor_opcode_experts_are_isolated() -> None:
     assert bool(mx.all(isolated == 0))
 
 
+def test_typed_transition_processor_hidden_experts_are_noop_isolated_and_controlled() -> None:
+    controller = _controller()
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(120),
+    )
+    controller.transition_processor_opcode_hidden = (
+        controller.transition_processor_opcode_hidden.at[8].add(
+            mx.eye(controller.config.correction_rank)[None, :, :]
+        )
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    opcode_eight = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    opcode_nine = controller.exact_probabilities(
+        (9, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    active = controller.typed_transition_processor_logits(state, opcode_eight, None)
+    isolated = controller.typed_transition_processor_logits(state, opcode_nine, None)
+    lesioned = controller.typed_transition_processor_logits(
+        state,
+        opcode_eight,
+        None,
+        opcode_expert_routing="lesion",
+    )
+    isolated_lesioned = controller.typed_transition_processor_logits(
+        state,
+        opcode_nine,
+        None,
+        opcode_expert_routing="lesion",
+    )
+    control_eight = controller.typed_transition_processor_logits(
+        state,
+        opcode_eight,
+        None,
+        opcode_expert_routing="uniform",
+    )
+    control_nine = controller.typed_transition_processor_logits(
+        state,
+        opcode_nine,
+        None,
+        opcode_expert_routing="uniform",
+    )
+
+    mx.eval(
+        active,
+        isolated,
+        lesioned,
+        isolated_lesioned,
+        control_eight,
+        control_nine,
+    )
+    assert not bool(mx.allclose(active, lesioned))
+    assert bool(mx.allclose(isolated, isolated_lesioned))
+    assert not bool(mx.allclose(control_eight, lesioned))
+    assert not bool(mx.allclose(control_nine, isolated_lesioned))
+    with pytest.raises(ValueError, match="routing differs"):
+        controller.typed_transition_processor_logits(
+            state,
+            opcode_eight,
+            None,
+            opcode_expert_routing="private_family",
+        )
+
+
 def test_typed_transition_processor_preserves_state_action_and_history_identity() -> None:
     controller = _controller()
     controller.transition_processor_output = mx.random.normal(
@@ -1272,6 +1347,99 @@ def test_typed_transition_processor_has_an_independent_lesion() -> None:
 
     mx.eval(intact, lesioned)
     assert not bool(mx.allclose(intact, lesioned))
+
+
+def test_authoritative_transition_matches_the_direct_training_surface() -> None:
+    controller = _controller()
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(124),
+    )
+    controller.state_transition_output = mx.random.normal(
+        controller.state_transition_output.shape,
+        key=mx.random.key(125),
+    )
+    problem = mx.random.normal((1, 7, 64), key=mx.random.key(126))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(127))
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    history = controller._typed_transition_memory((action,))
+    direct = controller.typed_transition_processor_logits(state, action, history)
+    deployed = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=controller.commit_action_probabilities(action),
+        state_probabilities=state,
+        action_probabilities=action,
+        action_probability_history=(action,),
+        microcode_lesion=True,
+        transition_processor_mode="authoritative",
+    )
+    residual = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=0,
+        action_state=controller.commit_action_probabilities(action),
+        state_probabilities=state,
+        action_probabilities=action,
+        action_probability_history=(action,),
+        microcode_lesion=True,
+        transition_processor_mode="residual",
+    )
+
+    mx.eval(direct, deployed, residual)
+    assert bool(mx.array_equal(direct, deployed))
+    assert not bool(mx.allclose(direct, residual))
+
+
+def test_microcode_forbidden_authoritative_path_stutters_terminal_state() -> None:
+    controller = _controller()
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(128),
+    )
+    problem = mx.random.normal((1, 7, 64), key=mx.random.key(129))
+    hidden = mx.random.normal((1, 10, 64), key=mx.random.key(130))
+    terminal_values = (5, 7, 11, 13, 1)
+    state = controller.exact_probabilities(
+        terminal_values,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (32, 32, 32, 32, 32, 32, 32, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    logits = controller.state_transition_logits(
+        problem,
+        hidden,
+        state_slot_start=3,
+        step=5,
+        action_state=controller.commit_action_probabilities(action),
+        state_probabilities=state,
+        action_probabilities=action,
+        action_probability_history=(action,),
+        microcode_lesion=True,
+        transition_processor_mode="authoritative",
+    )
+
+    mx.eval(logits)
+    assert tuple(int(value) for value in mx.argmax(logits[0], axis=-1).tolist()) == (
+        terminal_values
+    )
 
 
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:

@@ -190,6 +190,8 @@ def unified_answer_and_recurrent_trajectory(
     state_teacher_forcing_probability: float = 0.0,
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
+    transition_processor_mode: str = "residual",
+    transition_opcode_expert_routing: str = "opcode",
     transition_history_lesion: bool = False,
     initial_state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
@@ -259,6 +261,8 @@ def unified_answer_and_recurrent_trajectory(
         state_teacher_forcing_probability=state_teacher_forcing_probability,
         microcode_lesion=microcode_lesion,
         transition_processor_lesion=transition_processor_lesion,
+        transition_processor_mode=transition_processor_mode,
+        transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_history_lesion=transition_history_lesion,
     )
     answer_start = int(tokens.shape[-1]) + state_slots - 1
@@ -496,6 +500,141 @@ def structured_state_accuracy_breakdown(
         "value_accuracy": value_correct / value_total if value_total else None,
         "value_exact_accuracy": (value_exact / value_exact_count if value_exact_count else None),
         "control_accuracy": control_correct / control_total if control_total else None,
+    }
+
+
+def structured_state_trajectory_diagnostics(
+    logits: Sequence[Any],
+    targets: RecurrentStateTargets,
+    *,
+    active_steps: int,
+) -> dict[str, Any]:
+    """Measure active execution separately from terminal padding.
+
+    ``state_targets_from_trace`` intentionally repeats the terminal state when
+    an evaluation depth exceeds the program depth.  Those repetitions are a
+    useful stability probe, but averaging them into execution exactness makes
+    T16 a mixture of algorithm quality and padding length.  This diagnostic
+    keeps the two claims separate and reports where an autonomous rollout first
+    leaves, and whether it later re-enters, the verified public trajectory.
+    """
+
+    if len(logits) != len(targets.values):
+        raise ValueError("state trajectory diagnostics differ from recurrent trajectory")
+    if type(active_steps) is not int or not 1 <= active_steps <= len(logits):
+        raise ValueError("active transition count differs from recurrent trajectory")
+
+    exact_steps: list[bool] = []
+    value_exact_steps: list[bool] = []
+    register_correct = [0] * len(STATE_SLOT_LOSS_WEIGHTS)
+    register_total = [0] * len(STATE_SLOT_LOSS_WEIGHTS)
+    predictions: list[tuple[int, ...]] = []
+    for step_index, (decision, labels_row, masks_row) in enumerate(
+        zip(logits, targets.values, targets.masks, strict=True)
+    ):
+        predicted = tuple(int(value) for value in mx.argmax(decision[0], axis=-1).tolist())
+        predictions.append(predicted)
+        active = [index for index, mask in enumerate(masks_row) if mask]
+        values = [index for index in active if 0 < index < len(masks_row) - 1]
+        exact_steps.append(all(predicted[index] == labels_row[index] for index in active))
+        value_exact_steps.append(
+            bool(values)
+            and all(predicted[index] == labels_row[index] for index in values)
+        )
+        if step_index < active_steps:
+            for index in active:
+                register_total[index] += 1
+                register_correct[index] += int(predicted[index] == labels_row[index])
+
+    active_exact = exact_steps[:active_steps]
+    active_value_exact = value_exact_steps[:active_steps]
+    first_error = next(
+        (index + 1 for index, exact in enumerate(active_exact) if not exact),
+        None,
+    )
+    recovery_observable = first_error is not None and first_error < active_steps
+    recovered = (
+        any(active_exact[first_error:])
+        if recovery_observable and first_error is not None
+        else None
+    )
+    sustained_recovery = (
+        any(all(active_exact[index:]) for index in range(first_error, active_steps))
+        if recovery_observable and first_error is not None
+        else None
+    )
+    prior_correct = active_exact[:-1]
+    subsequent_correct = active_exact[1:]
+    correct_after_correct = sum(
+        current
+        for previous, current in zip(prior_correct, subsequent_correct, strict=True)
+        if previous
+    )
+    correct_predecessors = sum(prior_correct)
+    correct_after_wrong = sum(
+        current
+        for previous, current in zip(prior_correct, subsequent_correct, strict=True)
+        if not previous
+    )
+    wrong_predecessors = len(prior_correct) - correct_predecessors
+    padding_predictions = predictions[active_steps:]
+    terminal_target = targets.values[active_steps - 1]
+    terminal_mask = targets.masks[active_steps - 1]
+    terminal_stable = (
+        all(
+            all(
+                prediction[index] == terminal_target[index]
+                for index, active in enumerate(terminal_mask)
+                if active
+            )
+            for prediction in padding_predictions
+        )
+        if padding_predictions
+        else None
+    )
+    terminal_self_stable = (
+        all(prediction == padding_predictions[0] for prediction in padding_predictions[1:])
+        if padding_predictions
+        else None
+    )
+    return {
+        "active_steps": active_steps,
+        "padding_steps": len(logits) - active_steps,
+        "active_state_exact_accuracy": sum(active_exact) / active_steps,
+        "active_value_exact_accuracy": sum(active_value_exact) / active_steps,
+        "active_trajectory_exact": all(active_exact),
+        "first_error_step": first_error,
+        "first_error_fraction": (
+            1.0 if first_error is None else (first_error - 1) / active_steps
+        ),
+        "recovery_observable": recovery_observable,
+        "recovered_after_first_error": recovered,
+        "sustained_recovery_after_first_error": sustained_recovery,
+        "conditional_transition_counts": {
+            "correct_after_correct": correct_after_correct,
+            "correct_predecessors": correct_predecessors,
+            "correct_after_wrong": correct_after_wrong,
+            "wrong_predecessors": wrong_predecessors,
+        },
+        "p_correct_given_previous_correct": (
+            correct_after_correct / correct_predecessors
+            if correct_predecessors
+            else None
+        ),
+        "p_correct_given_previous_wrong": (
+            correct_after_wrong / wrong_predecessors if wrong_predecessors else None
+        ),
+        "terminal_stability_observable": terminal_stable is not None,
+        "terminal_correct_stable": terminal_stable,
+        "terminal_self_stable": terminal_self_stable,
+        "per_register_accuracy": {
+            name: (
+                register_correct[index] / register_total[index]
+                if register_total[index]
+                else None
+            )
+            for index, name in enumerate(("pc", "value0", "value1", "value2", "done"))
+        },
     }
 
 
@@ -838,6 +977,8 @@ def unified_process_training_loss(
     component: str = "joint",
     public_action_values: Sequence[Sequence[int]] | None = None,
     microcode_lesion: bool = False,
+    transition_processor_mode: str = "residual",
+    transition_opcode_expert_routing: str = "opcode",
 ) -> tuple[Any, dict[str, Any]]:
     """Train the autonomous typed process without constructing answer graphs.
 
@@ -890,6 +1031,8 @@ def unified_process_training_loss(
         initial_state_teacher_values=targets.initial_values,
         state_teacher_forcing_probability=state_teacher_forcing_probability,
         microcode_lesion=microcode_lesion,
+        transition_processor_mode=transition_processor_mode,
+        transition_opcode_expert_routing=transition_opcode_expert_routing,
         process_only=True,
         detach_problem_evidence=False,
     )
@@ -963,6 +1106,7 @@ def unified_typed_transition_processor_loss(
     transition_trace: Any,
     transition_program: Any,
     public_action_values: Sequence[Sequence[int]],
+    opcode_expert_routing: str = "opcode",
 ) -> tuple[Any, dict[str, Any]]:
     """Train exact categorical transition algebra without a transformer graph.
 
@@ -1008,10 +1152,13 @@ def unified_typed_transition_processor_loss(
         )
         action_history.append(action_probabilities)
         history_memory = controller._typed_transition_memory(action_history)
-        logits = controller.typed_transition_processor_logits(
+        logits = controller.resolve_transition_processor_logits(
+            None,
             state_probabilities,
             action_probabilities,
             history_memory,
+            transition_processor_mode="authoritative",
+            opcode_expert_routing=opcode_expert_routing,
         )
         labels = mx.array((next_values,), dtype=mx.int32)
         mask = mx.array((masks,), dtype=mx.float32)
@@ -1047,6 +1194,9 @@ def unified_typed_transition_processor_loss(
         "initial_state_authority": "verified_public_initial_state",
         "rollout_state_authority": "student_prediction_after_initial",
         "closed_loop_student_rollout": True,
+        "deployed_transition_policy": "processor_authoritative",
+        "legacy_transition_logits_available": False,
+        "opcode_expert_routing": opcode_expert_routing,
         "active_transitions": active_transitions,
         "post_terminal_transitions_trained": 0,
         "answer_tokens_exposed": False,
@@ -1062,6 +1212,7 @@ __all__ = [
     "readout_fingerprint",
     "structured_state_loss",
     "structured_state_accuracy_breakdown",
+    "structured_state_trajectory_diagnostics",
     "structured_initial_state_accuracy_breakdown",
     "structured_initial_state_loss",
     "structured_action_loss",

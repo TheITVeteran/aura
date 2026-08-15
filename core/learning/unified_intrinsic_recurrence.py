@@ -153,7 +153,17 @@ TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
     "transition_processor_output",
 )
 TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES: Final = (
+    "transition_processor_opcode_hidden",
     "transition_processor_opcode_output",
+)
+TRANSITION_PROCESSOR_MODES: Final = (
+    "residual",
+    "authoritative",
+)
+TRANSITION_OPCODE_EXPERT_ROUTING_MODES: Final = (
+    "opcode",
+    "uniform",
+    "lesion",
 )
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
     "identity",
@@ -817,6 +827,21 @@ class UnifiedRecurrentController(nn.Module):
                 config.state_slots,
                 config.correction_rank,
                 config.state_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        # Public opcodes select distinct transition algebras.  Specializing
+        # only the categorical head leaves every opcode sharing the same
+        # hidden computation, so incompatible algorithms can still overwrite
+        # one another before decoding.  This residual bank operates inside
+        # the processor and attaches as an exact no-op.  A uniform router uses
+        # the same tensor inventory as a matched-capacity control.
+        self.transition_processor_opcode_hidden = mx.zeros(
+            (
+                config.action_cardinality,
+                config.state_slots,
+                config.correction_rank,
+                config.correction_rank,
             ),
             dtype=mx.float32,
         )
@@ -2051,6 +2076,8 @@ class UnifiedRecurrentController(nn.Module):
         state_probabilities: Any,
         action_probabilities: Any,
         history_memory: Any | None,
+        *,
+        opcode_expert_routing: str = "opcode",
     ) -> Any:
         """Compute one register transition from typed state, action and history."""
 
@@ -2064,6 +2091,8 @@ class UnifiedRecurrentController(nn.Module):
             raise ValueError("typed transition processor categories differ")
         if int(state_probabilities.shape[0]) != int(action_probabilities.shape[0]):
             raise ValueError("typed transition processor batch differs")
+        if opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
+            raise ValueError("typed transition processor routing differs")
         if history_memory is None:
             history_memory = mx.zeros(
                 (
@@ -2131,19 +2160,71 @@ class UnifiedRecurrentController(nn.Module):
                 self.transition_processor_interaction_down,
             )
         )
+        opcode_probabilities = action_probabilities[:, 0, :].astype(mx.float32)
+        if opcode_expert_routing == "uniform":
+            routing = mx.full_like(
+                opcode_probabilities,
+                1.0 / float(self.config.action_cardinality),
+            )
+        elif opcode_expert_routing == "lesion":
+            routing = mx.zeros_like(opcode_probabilities)
+        else:
+            routing = opcode_probabilities
+        hidden_residual = mx.einsum(
+            "bo,osri,bsi->bsr",
+            routing,
+            self.transition_processor_opcode_hidden,
+            processed,
+        )
+        processed = processed + hidden_residual
         shared_logits = mx.einsum(
             "bsr,src->bsc",
             processed,
             self.transition_processor_output,
         )
-        opcode_probabilities = action_probabilities[:, 0, :].astype(mx.float32)
         expert_logits = mx.einsum(
             "bo,osrc,bsr->bsc",
-            opcode_probabilities,
+            routing,
             self.transition_processor_opcode_output,
             processed,
         )
         return shared_logits + expert_logits
+
+    def resolve_transition_processor_logits(
+        self,
+        legacy_logits: Any | None,
+        state_probabilities: Any,
+        action_probabilities: Any,
+        history_memory: Any | None,
+        *,
+        transition_processor_mode: str,
+        opcode_expert_routing: str = "opcode",
+    ) -> Any:
+        """Apply one declared processor policy to the deployed transition.
+
+        Direct processor training has no transformer or legacy transition graph.
+        Its certified runtime counterpart must therefore use the processor as
+        the authoritative transition, rather than silently adding a separately
+        learned legacy head.  ``residual`` remains available for historical
+        checkpoints, while evidence campaigns bind ``authoritative`` into their
+        identity.
+        """
+
+        if transition_processor_mode not in TRANSITION_PROCESSOR_MODES:
+            raise ValueError("typed transition processor mode differs")
+        processor_logits = self.typed_transition_processor_logits(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            opcode_expert_routing=opcode_expert_routing,
+        )
+        if transition_processor_mode == "authoritative":
+            return processor_logits
+        if legacy_logits is None:
+            raise ValueError("residual transition processor requires legacy logits")
+        if legacy_logits.shape != processor_logits.shape:
+            raise ValueError("legacy and typed transition logits differ")
+        return legacy_logits + processor_logits
 
     def state_transition_logits(
         self,
@@ -2158,6 +2239,8 @@ class UnifiedRecurrentController(nn.Module):
         action_probability_history: Sequence[Any] | None = None,
         microcode_lesion: bool = False,
         transition_processor_lesion: bool = False,
+        transition_processor_mode: str = "residual",
+        opcode_expert_routing: str = "opcode",
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
 
@@ -2166,6 +2249,10 @@ class UnifiedRecurrentController(nn.Module):
             or type(transition_processor_lesion) is not bool
         ):
             raise TypeError("transition lesion flags must be bools")
+        if transition_processor_mode not in TRANSITION_PROCESSOR_MODES:
+            raise ValueError("state transition processor mode differs")
+        if opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
+            raise ValueError("state transition opcode routing differs")
 
         if (
             len(problem_evidence.shape) != 3
@@ -2267,25 +2354,28 @@ class UnifiedRecurrentController(nn.Module):
             and state_probabilities is not None
             and action_probabilities is not None
         ):
-            learned_logits = learned_logits + self.typed_transition_processor_logits(
+            learned_logits = self.resolve_transition_processor_logits(
+                learned_logits,
                 state_probabilities,
                 action_probabilities,
                 typed_memory,
+                transition_processor_mode=transition_processor_mode,
+                opcode_expert_routing=opcode_expert_routing,
             )
-        if microcode_lesion:
-            return learned_logits
         if state_probabilities is None or action_probabilities is None:
             return learned_logits
-        microcode_logits, recognized = self.microcode_transition_logits(
-            state_probabilities,
-            action_probabilities,
-            action_probability_history=action_probability_history,
-        )
         state_values = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
         terminal = state_values[:, -1] == 1
         state_categories = mx.arange(self.config.state_cardinality)[None, None, :]
         terminal_exact = (state_values[..., None] == state_categories).astype(mx.float32)
         terminal_logits = mx.log(mx.maximum(terminal_exact, 1e-6))
+        if microcode_lesion:
+            return mx.where(terminal[:, None, None], terminal_logits, learned_logits)
+        microcode_logits, recognized = self.microcode_transition_logits(
+            state_probabilities,
+            action_probabilities,
+            action_probability_history=action_probability_history,
+        )
         return mx.where(
             terminal[:, None, None],
             terminal_logits,
@@ -3693,6 +3783,8 @@ def unified_recurrent_hidden_states(
     action_literal_binding_lesion: bool = False,
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
+    transition_processor_mode: str = "residual",
+    transition_opcode_expert_routing: str = "opcode",
     transition_history_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
@@ -3719,6 +3811,10 @@ def unified_recurrent_hidden_states(
         or type(detach_problem_evidence) is not bool
     ):
         raise TypeError("unified recurrence mode flags must be bools")
+    if transition_processor_mode not in TRANSITION_PROCESSOR_MODES:
+        raise ValueError("unified recurrence transition processor mode differs")
+    if transition_opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
+        raise ValueError("unified recurrence opcode routing differs")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
         raise ValueError("minimum iterations exceed the recurrence plan")
     if caches is not None:
@@ -3973,6 +4069,8 @@ def unified_recurrent_hidden_states(
                     ),
                     microcode_lesion=microcode_lesion,
                     transition_processor_lesion=transition_processor_lesion,
+                    transition_processor_mode=transition_processor_mode,
+                    opcode_expert_routing=transition_opcode_expert_routing,
                 )
                 next_state_probabilities = (
                     controller.straight_through_probabilities(state_logits)

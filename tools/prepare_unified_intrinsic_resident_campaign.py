@@ -234,6 +234,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "analytic_action_readout_fit": False,
         "public_action_program": False,
         "direct_transition_processor": False,
+        "transition_opcode_expert_routing": "opcode",
         "analytic_action_readout_ridge": 0.001,
         "analytic_action_readout_margin": 8.0,
         "max_gradient_norm": 0.5,
@@ -696,6 +697,9 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         "process_family_batch_mode": "--process-family-batch-mode",
         "process_transformer_gradient_scale": ("--process-transformer-gradient-scale"),
         "process_query_gradient_scale": "--process-query-gradient-scale",
+        "transition_opcode_expert_routing": (
+            "--transition-opcode-expert-routing"
+        ),
         "analytic_action_readout_ridge": "--analytic-action-readout-ridge",
         "analytic_action_readout_margin": "--analytic-action-readout-margin",
         "max_gradient_norm": "--max-gradient-norm",

@@ -19,6 +19,7 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
     action_targets_from_program,
 )
+from core.learning.recurrent_state_schema import state_targets_from_trace  # noqa: E402
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
@@ -26,6 +27,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_action_loss,
     structured_initial_state_accuracy_breakdown,
     structured_initial_state_loss,
+    structured_state_trajectory_diagnostics,
     unified_answer_and_recurrent_trajectory,
     unified_answer_trajectory,
     unified_intrinsic_training_loss,
@@ -57,6 +59,60 @@ def _model() -> Model:
     model.freeze()
     mx.eval(model.parameters())
     return model
+
+
+def test_state_trajectory_diagnostics_separate_execution_recovery_and_padding() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="diagnostic",
+        depth=3,
+        field_names=("pc", "value0", "value1", "value2", "done"),
+        states=(
+            (0, 0, 0, 0, 0),
+            (1, 1, 0, 0, 0),
+            (2, 2, 0, 0, 0),
+            (3, 3, 0, 0, 1),
+        ),
+    )
+    targets = state_targets_from_trace(trace, 5)
+    predicted = (
+        targets.values[0],
+        (2, 9, 0, 0, 0),
+        targets.values[2],
+        targets.values[3],
+        (3, 8, 0, 0, 1),
+    )
+    logits = tuple(
+        controller.exact_probabilities(
+            row,
+            slots=controller.config.state_slots,
+            cardinality=controller.config.state_cardinality,
+        )
+        for row in predicted
+    )
+
+    report = structured_state_trajectory_diagnostics(
+        logits,
+        targets,
+        active_steps=3,
+    )
+
+    assert report["active_steps"] == 3
+    assert report["padding_steps"] == 2
+    assert report["active_state_exact_accuracy"] == pytest.approx(2 / 3)
+    assert report["active_value_exact_accuracy"] == pytest.approx(2 / 3)
+    assert report["active_trajectory_exact"] is False
+    assert report["first_error_step"] == 2
+    assert report["first_error_fraction"] == pytest.approx(1 / 3)
+    assert report["recovery_observable"] is True
+    assert report["recovered_after_first_error"] is True
+    assert report["sustained_recovery_after_first_error"] is True
+    assert report["p_correct_given_previous_correct"] == 0.0
+    assert report["p_correct_given_previous_wrong"] == 1.0
+    assert report["terminal_stability_observable"] is True
+    assert report["terminal_correct_stable"] is False
+    assert report["terminal_self_stable"] is False
+    assert report["per_register_accuracy"]["value0"] == pytest.approx(2 / 3)
 
 
 def _spec() -> UnifiedIntrinsicTrainingSpec:
@@ -613,6 +669,9 @@ def test_direct_transition_objective_reaches_only_categorical_processor() -> Non
     assert receipt["transformer_graph_constructed"] is False
     assert receipt["readout_graph_constructed"] is False
     assert receipt["answer_tokens_exposed"] is False
+    assert receipt["deployed_transition_policy"] == "processor_authoritative"
+    assert receipt["legacy_transition_logits_available"] is False
+    assert receipt["opcode_expert_routing"] == "opcode"
 
 
 def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
@@ -632,7 +691,14 @@ def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
     observed_inputs: list[tuple[int, ...]] = []
     original = controller.typed_transition_processor_logits
 
-    def observe_student_state(state_probabilities, action_probabilities, history_memory):
+    def observe_student_state(
+        state_probabilities,
+        action_probabilities,
+        history_memory,
+        *,
+        opcode_expert_routing="opcode",
+    ):
+        assert opcode_expert_routing == "opcode"
         observed_inputs.append(
             tuple(int(value) for value in mx.argmax(state_probabilities, axis=-1)[0].tolist())
         )
@@ -669,6 +735,74 @@ def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
     assert receipt["rollout_state_authority"] == "student_prediction_after_initial"
     assert receipt["post_terminal_transitions_trained"] == 0
     assert receipt["active_transitions"] == 2
+
+
+def test_direct_transition_forward_path_is_invariant_to_future_gold_states() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+
+    def evidence(value: int) -> tuple[StructuredTransitionTrace, StructuredTransitionProgram]:
+        trace = StructuredTransitionTrace(
+            family="boolean",
+            depth=2,
+            field_names=("pc", "value", "done"),
+            states=((0, 0, 0), (1, value, 0), (2, 1 - value, 1)),
+        )
+        return trace, StructuredTransitionProgram(
+            state_trace=trace,
+            action_field_names=("opcode", "operand", "has_operand"),
+            actions=((0, 0, 0), (0, 0, 0)),
+        )
+
+    trace_a, program_a = evidence(0)
+    trace_b, program_b = evidence(1)
+    public_actions = action_targets_from_program(program_a, 2).values
+    assert public_actions == action_targets_from_program(program_b, 2).values
+    captures: list[list[tuple[tuple[int, ...], tuple[float, ...]]]] = []
+    original = controller.typed_transition_processor_logits
+
+    for trace, program in ((trace_a, program_a), (trace_b, program_b)):
+        run: list[tuple[tuple[int, ...], tuple[float, ...]]] = []
+
+        def capture(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            *,
+            opcode_expert_routing="opcode",
+            _run=run,
+        ):
+            logits = original(
+                state_probabilities,
+                action_probabilities,
+                history_memory,
+                opcode_expert_routing=opcode_expert_routing,
+            )
+            mx.eval(state_probabilities, logits)
+            _run.append(
+                (
+                    tuple(
+                        int(value)
+                        for value in mx.argmax(state_probabilities[0], axis=-1).tolist()
+                    ),
+                    tuple(float(value) for value in logits.flatten().tolist()),
+                )
+            )
+            return logits
+
+        controller.typed_transition_processor_logits = capture
+        try:
+            unified_typed_transition_processor_loss(
+                controller,
+                _spec().plan_at(2),
+                transition_trace=trace,
+                transition_program=program,
+                public_action_values=public_actions,
+            )
+        finally:
+            controller.typed_transition_processor_logits = original
+        captures.append(run)
+
+    assert captures[0] == captures[1]
 
 
 def test_direct_transition_objective_learns_exact_trace() -> None:

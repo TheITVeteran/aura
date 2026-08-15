@@ -1,0 +1,76 @@
+{
+  "campaign": {
+    "campaign_config_sha256": "e11a3f7954b0731de8bb67b09e260775bbdb942a823927996aa127c7c3f8e4cc",
+    "campaign_id": "cp500-closed-loop-transition-acquisition-1p5b-20260814",
+    "dataset_identity_sha256": "9856f5e4d7036ec81877051bef4ce1ac3fcb5c8deddac68c9f97f19fe02fc867",
+    "model_manifest_sha256": "71c040465070cf9b0068ca6f7bc26581443ae5fb46937e85e109212b3fb80092",
+    "source_commit": "9921d0b3140563692e06f6a6cd3f17a1abc288f9",
+    "source_manifest_sha256": "22bd400f3ee07fe4dbfc4a75af5d9871f079e3bdac0da3eb5771a5582f8aa6ce"
+  },
+  "claim_not_supported": [
+    "deep_recurrent_execution_gain",
+    "general_reasoning_gain",
+    "resident_32b_transfer",
+    "weight_fusion",
+    "wow_signal"
+  ],
+  "final_checkpoint": {
+    "checkpoint_sha256": "3bab8884a9c0ead099648cab1d2683d65cc33821cf993a9f60808e716736386b",
+    "receipt_sha256": "aadbf7e73f9c7a224c2a12ba8223fbc8f4b141e32dbb81c403914e1a8db60c1e",
+    "step": 640
+  },
+  "findings": {
+    "closed_loop_gradient_active": true,
+    "legacy_transition_head_mismatch_discovered_after_stop": true,
+    "post_terminal_padding_contaminated_historical_depth_aggregate": true,
+    "public_action_instruction_exact_accuracy": 1.0,
+    "reason_for_stop": "T1 remained far below admission and every deeper execution measure remained negative after two scheduled evaluations",
+    "stopped_at_durable_boundary": true
+  },
+  "schema": "aura.rlc.cp500_closed_loop_transition_verdict.v1",
+  "scheduled_evaluations": [
+    {
+      "best_depth": "T1",
+      "family_t16_state_value_exact_accuracy": {
+        "frontier_calibration": 0.010416666666666666,
+        "frontier_coding": 0.20833333333333334,
+        "frontier_mathematics": 0.375,
+        "frontier_misleading_premise": 0.0
+      },
+      "heldout_depth_helps": false,
+      "state_value_exact_accuracy": {
+        "T1": 0.5416666666666666,
+        "T3": 0.3611111111111111,
+        "T5": 0.3166666666666667,
+        "T9": 0.26388888888888884,
+        "T10": 0.23749999999999996,
+        "T12": 0.19791666666666663,
+        "T16": 0.1484375
+      },
+      "step": 256,
+      "trained_depth_helps": false
+    },
+    {
+      "best_depth": "T1",
+      "family_t16_state_value_exact_accuracy": {
+        "frontier_calibration": 0.010416666666666666,
+        "frontier_coding": 0.2708333333333333,
+        "frontier_mathematics": 0.3541666666666667,
+        "frontier_misleading_premise": 0.010416666666666666
+      },
+      "heldout_depth_helps": false,
+      "state_value_exact_accuracy": {
+        "T1": 0.5833333333333334,
+        "T3": 0.43055555555555564,
+        "T5": 0.36666666666666664,
+        "T9": 0.28703703703703703,
+        "T10": 0.2583333333333333,
+        "T12": 0.2152777777777778,
+        "T16": 0.16145833333333334
+      },
+      "step": 512,
+      "trained_depth_helps": false
+    }
+  ],
+  "verdict": "negative_for_cp500_objective"
+}

@@ -49672,3 +49672,54 @@ exact three-step accuracy. This checkpoint repairs the acquisition topology;
 the next bounded source-bound campaign must still clear `0.95` T1 exactness,
 produce positive deep execution and survive matched processor, opcode and
 history lesions before answer emission or resident-32B work resumes.
+
+## Checkpoint 2026-08-14-501: Make Training And Deployment The Same Machine
+
+CP500's closed-loop repair was active: unseen T1 exact-value accuracy moved
+from `0.5417` at step 256 to `0.5833` at step 512. It did not approach the
+`0.95` mechanism gate. T16 remained `0.1615`, calibration and premise audit
+were each `0.0104`, and T1 remained the best depth. The job stopped at durable
+step 640. Its bounded negative verdict is frozen in
+`artifacts/closeout/latent_cortex/cp500_closed_loop_transition_acquisition_verdict.json`.
+
+The stop exposed two evaluator and architecture defects. Direct acquisition
+trained the categorical processor alone, while deployed recurrence added that
+processor to a nonzero legacy transition head. The two paths were different
+dynamical systems. Evaluation also averaged repeated post-terminal targets
+into T16, mixing active execution with terminal stability. The processor now
+has an explicit authoritative policy used by direct training and public-program
+evaluation. A contract makes the deployed authoritative logits bit-identical
+to the training surface even when the legacy head is nonzero. Active execution,
+first error, recovery, terminal stability and per-register accuracy are now
+reported separately.
+
+The exact CP500-sized public-contract audit measured 3,618 transitions. The
+five-register state plus current action had 251 ambiguous keys and an empirical
+deterministic ceiling of `0.8773`. Mathematics, coding and calibration were
+non-Markov under that local view; premise audit was Markov. Adding the complete
+public action prefix removed every observed ambiguity and produced a `1.0`
+bounded empirical ceiling, with zero disagreement on overlapping holdout keys.
+This admits the public information contract but does not prove the learned GRU
+history summary preserves it. Evidence is frozen in
+`artifacts/closeout/latent_cortex/cp501_public_transition_identifiability.json`.
+
+The frozen CP500 controller was then re-evaluated without loading the base
+model: only its authenticated transition tensors were restored, the new hidden
+expert bank was attached at exact zero, and the authoritative public processor
+was run with no legacy head or microcode. Opcode routing achieved `0.4583` at
+T1 and `0.1796` active exact-value accuracy at T16, versus `0.1630` for the
+opcode lesion and `0.1546` for uniform routing. `P(correct | previous wrong)`
+was `0.0` in every measured deep arm. T10, T12 and T16 were identical once
+terminal stutter was measured separately, proving that padding was not the
+source of the remaining failure. The learned processor itself cannot yet
+reconstruct sufficient public history or recover after an error. The signed
+reevaluation is frozen in
+`artifacts/closeout/latent_cortex/cp501_cp500_authoritative_reevaluation.json`.
+
+Opcode specialization now reaches the hidden transition computation as well as
+the output head. A uniform router provides the same parameter inventory as a
+matched-capacity control; opcode, uniform and lesion routing are carried in the
+signed training identity. The next mechanism step is a non-destructive public
+tape reader plus primitive and compositional coverage, followed by a bounded
+1.5B canary. No decoded gain, resident transfer, fusion or `WOW Signal` is
+claimed.
