@@ -50229,3 +50229,24 @@ actual claim under test: whether learned recurrent tissue can compute the
 opcode-qualified value-register transition. The continuation profile uses fresh
 dataset and initialization seeds; exact multi-step state acquisition remains the
 next gate before decoded-answer training.
+
+## Checkpoint 2026-08-15-545: Control Is Exact; Value Acquisition Is Not
+
+The fresh structural-control campaign kept program position and the terminal
+latch exact at every measured depth through T16, closing CP543's control-drift
+defect. It did not make the semantic state machine executable. At its latest
+durable step-128 checkpoint, only `2/36` T1 holdout transitions were exact and
+no complete trajectory beyond one transition was correct. Held-out recurrence
+remained harmful.
+
+The campaign was stopped at its bounded futility point with one attempt, no
+restart, signal-15 termination, and empty process group and lineage. Exact
+source, dataset, checkpoint, evaluation series, receipt and unsupported claims
+are frozen in
+`artifacts/closeout/latent_cortex/cp545_semantic_structural_control_verdict.json`.
+
+The next mechanism will not repeat the same 192-step whole-program schedule.
+It must measure train/holdout opcode-value support and provide coverage-complete
+primitive acquisition so learned tissue masters public semantic transitions
+before recurrence, answer emission, resident transfer, fusion or `WOW Signal`
+claims proceed.

@@ -1,0 +1,100 @@
+{
+  "schema": "aura.unified_intrinsic.semantic_structural_control_verdict.v1",
+  "campaign_id": "cp545-semantic-structural-control-20260815",
+  "source_commit": "3e7120ae7634fe8681e549fd900900a46dc4f9c9",
+  "source_tree": "4fd844926312b956ea8c1a8f52f5e0eac34f0896",
+  "source_manifest_sha256": "d81bd510e09193f7e6ce5c32e069cda3029f81dcefb4bcc39fe1e02820173cb0",
+  "campaign_config_sha256": "67dc43a34a1e3b471238a341323beda662e94f0166126f177b04d25835f90ae0",
+  "dataset_identity_sha256": "d45d6bc1b94d6fe8cd50c9d41872955902d13f2ae41a65ba7282ca7632c1abe5",
+  "tokenized_dataset_identity_sha256": "b669bbd41bdb25ea663aeb9500f22e7194e78b15177de8c9c6d68fffc476337e",
+  "profile": "process_semantic_masked_copy_write_canary",
+  "transition_policy": {
+    "mode": "masked_copy_write",
+    "control_state_policy": "exact_public_pc_and_terminal_latch",
+    "copy_prior_logit_bias": 0.01,
+    "state_schema": "semantic_v2",
+    "replay_mode": "disabled",
+    "gradient_combiner": "balanced_mean",
+    "dataset_seed": 2026081517,
+    "initialization_seed": 2026081518
+  },
+  "checkpoint": {
+    "step": 128,
+    "checkpoint_sha256": "b16adbcec7ddfa10ad592f99fafbd131d743ee42b4ea1a3e2ac2b62f773587ad",
+    "checkpoint_identity_sha256": "1807535e90bc64a46730eebb8494eb17219777b918f0b5b612a108d02d081837",
+    "checkpoint_receipt_sha256": "7cdef6926bc5a611f3d88e47e26d5f59c394b8a6f5f292628086030d95f47fb1"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "duration_seconds": 190.97557020187378,
+    "detached_receipt_sha256": "4a54dd5c61058370bd2b9e9b347a688a4bfcd26b3865873f0ac3b10e941eb929",
+    "detached_receipt_file_sha256": "ff1dfeaba36fc5a4ded9f7bc987cdc30954a3e51034459e286d2cb5a0c1fc673",
+    "halt_reason": "bounded_exact_trajectory_futility_after_step_128",
+    "stop_signal": 15,
+    "process_group_empty": true,
+    "lineage_empty": true
+  },
+  "observations": {
+    "step_32": {
+      "t1_categorical_state_accuracy": 0.8000541263156467,
+      "t16_categorical_state_accuracy": 0.6432855424160758,
+      "t1_value_accuracy": 0.731481481481482,
+      "t16_value_accuracy": 0.5260802469135804,
+      "t1_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.002777777777777778,
+      "t16_active_trajectory_exact_accuracy": 0.0,
+      "t1_control_accuracy": 1.0,
+      "t16_control_accuracy": 1.0
+    },
+    "step_64": {
+      "t1_categorical_state_accuracy": 0.8000541263156467,
+      "t16_categorical_state_accuracy": 0.6563571054591901,
+      "t1_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.002777777777777778,
+      "t16_active_trajectory_exact_accuracy": 0.0,
+      "t1_control_accuracy": 1.0,
+      "t16_control_accuracy": 1.0
+    },
+    "step_96": {
+      "t1_categorical_state_accuracy": 0.8079906337791019,
+      "t16_categorical_state_accuracy": 0.6419270891282294,
+      "t1_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.005555555555555556,
+      "t16_active_trajectory_exact_accuracy": 0.0,
+      "t1_control_accuracy": 1.0,
+      "t16_control_accuracy": 1.0
+    },
+    "step_128": {
+      "t1_categorical_state_accuracy": 0.8130411373244392,
+      "t16_categorical_state_accuracy": 0.6583074101039933,
+      "t1_value_accuracy": 0.7487654320987658,
+      "t16_value_accuracy": 0.5427469135802468,
+      "t1_active_state_exact_accuracy": 0.05555555555555555,
+      "t16_active_state_exact_accuracy": 0.005555555555555556,
+      "t1_active_trajectory_exact_accuracy": 0.05555555555555555,
+      "t16_active_trajectory_exact_accuracy": 0.0,
+      "t1_control_accuracy": 1.0,
+      "t16_control_accuracy": 1.0,
+      "heldout_depth_helps": false,
+      "best_heldout_relative_gain": -4.782934759360661
+    }
+  },
+  "verdict": "not_admitted_semantic_value_acquisition_futility",
+  "supported_claims": [
+    "Exact public control-state construction remained perfect through T16 and removed the program-counter drift isolated by CP543.",
+    "Learned value tissue recovered two of 36 exact T1 holdout transitions by step 128 but no complete trajectory beyond one transition.",
+    "The residual failure is semantic value-transition acquisition rather than action parsing, initial-state grounding, or deterministic control-plane bookkeeping.",
+    "Repeating the same thin whole-program training schedule is not justified."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous semantic-state execution",
+    "positive exact recurrence-depth effect",
+    "multi-domain decoded reasoning gain",
+    "resident-32B semantic transfer",
+    "runtime promotion or weight fusion",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "next_bounded_mechanism": "Measure train/holdout opcode-value support and replace thin whole-program sampling with coverage-complete opcode-conditioned primitive acquisition before another answer-level campaign."
+}
