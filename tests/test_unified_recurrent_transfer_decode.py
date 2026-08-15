@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -77,4 +78,71 @@ def test_typed_process_decode_rejects_untyped_or_invalid_dimensions() -> None:
             recurrence_depth=4,
             eos_token_id=None,
             max_tokens=1,
+        )
+
+
+def test_base_decode_conditions_on_and_returns_matched_prefill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def generate_step(tokens, model, *, max_tokens, sampler):
+        observed.update(
+            tokens=tokens.tolist(),
+            model=model,
+            max_tokens=max_tokens,
+            sampled=int(sampler(SimpleNamespace()).item()),
+        )
+        yield 7, None
+        yield 8, None
+
+    class ArgmaxResult:
+        @staticmethod
+        def item() -> int:
+            return 5
+
+    monkeypatch.setattr(
+        transfer.mx,
+        "argmax",
+        lambda _values, axis=-1: ArgmaxResult(),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mlx_lm.generate",
+        SimpleNamespace(generate_step=generate_step),
+    )
+    progress: list[int] = []
+    seen: list[tuple[int, ...]] = []
+    model = object()
+
+    generated, stopped, _latency_ms = transfer.decode_base_greedy_tokens(
+        model,
+        (1, 2),
+        eos_token_id=None,
+        max_tokens=2,
+        prefill_tokens=(3, 4),
+        completion_check=lambda values: seen.append(values) or values[-1] == 8,
+        progress=progress.append,
+    )
+
+    assert observed == {
+        "tokens": [1, 2, 3, 4],
+        "model": model,
+        "max_tokens": 2,
+        "sampled": 5,
+    }
+    assert generated == (3, 4, 7, 8)
+    assert stopped is True
+    assert progress == [1, 2]
+    assert seen == [(3, 4, 7), (3, 4, 7, 8)]
+
+
+def test_base_decode_rejects_invalid_prefill_tokens() -> None:
+    with pytest.raises(ValueError, match="dimensions are invalid"):
+        transfer.decode_base_greedy_tokens(
+            object(),
+            (1,),
+            eos_token_id=None,
+            max_tokens=1,
+            prefill_tokens=(-1,),
         )

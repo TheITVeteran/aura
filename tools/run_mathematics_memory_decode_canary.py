@@ -188,6 +188,12 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     ]
     state_receipts = [state.receipt() for state in treatment_states]
     model, tokenizer = load(str(model_path))
+    wire_prefill = tuple(
+        int(token)
+        for token in tokenizer.encode("FINAL_ANSWER: ", add_special_tokens=False)
+    )
+    if not wire_prefill:
+        raise RuntimeError("decode canary wire prefill tokenization is empty")
     rows: list[dict[str, Any]] = []
     raw_outputs: list[dict[str, Any]] = []
     for index, task in enumerate(tasks):
@@ -229,6 +235,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 prompt,
                 eos_token_id=tokenizer.eos_token_id,
                 max_tokens=args.max_tokens,
+                prefill_tokens=wire_prefill,
                 completion_check=lambda values: _complete(tokenizer, values),
             )
             text = tokenizer.decode(list(generated), skip_special_tokens=True)
@@ -342,6 +349,9 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "producer_available_during_decode": False,
             "verifier_available_during_decode": False,
             "answer_replacement_enabled": False,
+            "matched_wire_prefill": True,
+            "wire_prefill_token_count": len(wire_prefill),
+            "wire_prefill_sha256": _sha(list(wire_prefill)),
         },
         "task_inventory_sha256": _sha(sorted(task.task_id for task in tasks)),
         "state_inventory_sha256": _sha(state_receipts),

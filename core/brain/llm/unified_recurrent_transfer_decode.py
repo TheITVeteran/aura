@@ -21,17 +21,31 @@ def decode_base_greedy_tokens(
     *,
     eos_token_id: int | None,
     max_tokens: int,
+    prefill_tokens: Sequence[int] = (),
     completion_check: Callable[[tuple[int, ...]], bool] | None = None,
     progress: Callable[[int], None] | None = None,
 ) -> tuple[tuple[int, ...], bool, int]:
-    """Decode the frozen model once through its canonical cached greedy lane."""
+    """Decode the frozen model once through its canonical cached greedy lane.
 
-    if not public_tokens or type(max_tokens) is not int or max_tokens < 1:
+    ``prefill_tokens`` is a matched serialization surface, not an answer
+    channel. It lets every experimental arm start from the same public wire
+    prefix while the model still generates the complete semantic payload.
+    """
+
+    public = tuple(public_tokens)
+    prefill = tuple(prefill_tokens)
+    if (
+        not public
+        or any(type(token) is not int or token < 0 for token in public)
+        or any(type(token) is not int or token < 0 for token in prefill)
+        or type(max_tokens) is not int
+        or max_tokens < 1
+    ):
         raise ValueError("base transfer decode dimensions are invalid")
     from mlx_lm.generate import generate_step
 
-    tokens = mx.array(list(public_tokens), dtype=mx.int32)
-    generated: list[int] = []
+    tokens = mx.array([*public, *prefill], dtype=mx.int32)
+    generated: list[int] = list(prefill)
     stopped = False
     started = time.perf_counter()
     for token_id, _logprobs in generate_step(
@@ -43,7 +57,7 @@ def decode_base_greedy_tokens(
         token_id = int(token_id)
         generated.append(token_id)
         if progress is not None:
-            progress(len(generated))
+            progress(len(generated) - len(prefill))
         if eos_token_id is not None and token_id == eos_token_id:
             stopped = True
             break
