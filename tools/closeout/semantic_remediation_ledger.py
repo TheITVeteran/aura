@@ -371,7 +371,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     drifted: list[tuple[str, str]] = []
     orphaned: list[str] = []
+    unreadable: list[tuple[str, str]] = []
     for finding_id, entry in ledger.items():
+        status = str(entry.get("status") or "")
+        if status not in VALID_STATUSES:
+            unreadable.append((finding_id, status or "<missing>"))
         if finding_id not in inventory:
             orphaned.append(finding_id)
             continue
@@ -382,6 +386,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     print(f"ledger entries      : {len(ledger)}")
     print(f"orphaned (unknown id): {len(orphaned)}")
+    print(f"unreadable status    : {len(unreadable)}")
     print(f"files changed since closure: {len({f for _, f in drifted})}")
     if drifted and args.show:
         print()
@@ -389,9 +394,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
         for path in sorted({f for _, f in drifted}):
             count = sum(1 for _, p in drifted if p == path)
             print(f"    {count:>4} finding(s)  {path}")
+    if unreadable:
+        print()
+        print("  rows whose status no reader recognises — these count as OPEN:")
+        for finding_id, status in sorted(unreadable):
+            print(f"    {finding_id}  status={status}")
+
     # Drift is expected during an active campaign (later batches touch the
     # same file), so it is reported, not failed.
-    return 1 if orphaned else 0
+    #
+    # An unreadable status is not. `status` printed a warning about those and
+    # exited zero, so a row carrying a commit and a passing test could sit
+    # uncounted indefinitely — which is what `remediated_scope_named` did.
+    # Warning about a defect and then reporting success is the same shape as
+    # the findings this campaign exists to close.
+    return 1 if (orphaned or unreadable) else 0
 
 
 def _cp126_commits_by_file() -> dict[str, list[str]]:
