@@ -386,6 +386,8 @@ def test_public_transition_acquisition_removes_answer_and_microcode_authority() 
     assert training["process_curriculum"] == "transition_only"
     assert training["process_family_batch_size"] == 4
     assert training["process_family_batch_mode"] == "balanced_families"
+    assert training["task_depths"] == "3,5,9,10"
+    assert training["train_depths"] == "1,3,5,9,10"
     assert training["state_warmup_steps"] == training["max_steps"] == 128
     assert training["answer_bridge_steps"] == 0
     assert "--public-action-program" in arguments
