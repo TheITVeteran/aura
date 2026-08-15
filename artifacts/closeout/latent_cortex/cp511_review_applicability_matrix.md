@@ -238,3 +238,27 @@ the arm named `ordinary_base` also received the structural prefill. The next
 revision must measure both a genuinely unconstrained ordinary baseline and a
 separately named matched-wire baseline, require treatment to beat both, and
 independently replay the artifact before making the bounded decode claim.
+
+## CP529 addendum
+
+CP529 implements the required eight-arm correction. `ordinary_base` receives
+the untouched public prompt and no structural prefill. `matched_wire_base`
+receives the same `FINAL_ANSWER:` structural prefix as treatment and every
+lesion. Structural tokens are recorded separately and are no longer charged as
+model-generated tokens. Admission requires treatment to beat both baselines and
+all causal controls.
+
+The clean-source 30-task artifact at
+`cp529_mathematics_memory_decode_canary.json` records 30/30 exact treatment
+answers across all three registered difficulties. The true ordinary baseline
+was 0/30 exact while remaining 30/30 parse-valid; the matched-wire baseline was
+0/30. Matched initialization, no-write, no-read, reset-memory, and matched
+wrong-state controls were each 0/30 and 30/30 parse-valid. Treatment therefore
+converted all 30 ordinary baseline failures with no regressions, and each
+declared causal lesion removed the gain.
+
+This is positive bounded evidence that the sealed teacher-removed recurrent
+memory tissue computes task state which the frozen 1.5B language head can emit
+correctly. It is not yet an independently replayed certificate, open-domain
+reasoning gain, resident-32B transfer, or WOW Signal. Those boundaries remain
+explicit.

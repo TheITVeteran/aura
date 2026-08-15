@@ -1,0 +1,4730 @@
+{
+  "admitted": true,
+  "arms": {
+    "matched_initialization": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 22.0,
+      "mean_latency_ms": 208.233,
+      "mean_prompt_tokens": 220.733,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "7deee3199c0db293c89255c5a69291c7bf827faf82b2f2f21f995884c70a2c97"
+    },
+    "matched_wire_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 1.0,
+      "mean_latency_ms": 69.467,
+      "mean_prompt_tokens": 171.733,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 0,
+      "parsed_accuracy": 0.0,
+      "receipt_sha256": "93bd2d7949feb1c299264f5c1e8ce37452b00440096b236017a60c10990c7072"
+    },
+    "matched_wrong_state": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 17.533,
+      "mean_latency_ms": 184.233,
+      "mean_prompt_tokens": 229.267,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "10d22343980ff5d5f6152484adae6a2a03a2e6586384d71248d80e479c83c609"
+    },
+    "no_read": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 22.0,
+      "mean_latency_ms": 212.667,
+      "mean_prompt_tokens": 220.733,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "d33ea2a26eb5efbcc8d2d064c5b4a833060b3a51d7c3a8cc40800b7774899aba"
+    },
+    "no_write": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 22.0,
+      "mean_latency_ms": 207.867,
+      "mean_prompt_tokens": 220.733,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "998a6ff0a0739572baf8161b424bdeb7e23edd49d7eb9247f91b2c967dee09a3"
+    },
+    "ordinary_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 25.833,
+      "mean_latency_ms": 221.733,
+      "mean_prompt_tokens": 171.733,
+      "mean_wire_prefill_tokens": 0.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "aee380e01977f6dc06f4c995864bf5c108fde361b7eaa29050c37cc3d095a055"
+    },
+    "reset_memory": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 22.0,
+      "mean_latency_ms": 209.667,
+      "mean_prompt_tokens": 220.733,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "cd251b9742eeafdf27e33ddff43e51fab9c41b2fd2dfda29bcfb389fc12ffb6b"
+    },
+    "treatment": {
+      "exact": 30,
+      "exact_accuracy": 1.0,
+      "examples": 30,
+      "mean_generated_tokens": 17.533,
+      "mean_latency_ms": 185.533,
+      "mean_prompt_tokens": 229.267,
+      "mean_wire_prefill_tokens": 5.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "35ab7c1b7fc1b93e210df63adbd961f9581dcbbf83a1939d7f6b1262fa113e3f"
+    }
+  },
+  "claim_boundary": "bounded teacher-free recurrent-state-to-free-decode transfer on the local 1.5B; not open-domain, resident-32B, broad reasoning, or WOW",
+  "elapsed_s": 45.948,
+  "gain_count": 30,
+  "gain_set_sha256": "8c3d71cf6ff83734555797860bc1e364745ac0319190991794751afec7024e8e",
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "protocol": {
+    "answer_replacement_enabled": false,
+    "arm_order": "task_hash_rotated",
+    "arms": [
+      "ordinary_base",
+      "matched_wire_base",
+      "treatment",
+      "matched_initialization",
+      "no_write",
+      "no_read",
+      "reset_memory",
+      "matched_wrong_state"
+    ],
+    "difficulties": [
+      1,
+      2,
+      3
+    ],
+    "greedy_decode": true,
+    "matched_wire_prefill": true,
+    "max_tokens": 64,
+    "ordinary_base_unconstrained": true,
+    "producer_available_during_decode": false,
+    "seed": 2026081529,
+    "task_count": 30,
+    "tasks_per_difficulty": 10,
+    "verifier_available_during_decode": false,
+    "wire_prefill_arms": [
+      "matched_wire_base",
+      "treatment",
+      "matched_initialization",
+      "no_write",
+      "no_read",
+      "reset_memory",
+      "matched_wrong_state"
+    ],
+    "wire_prefill_sha256": "ad3c7a790c22122bba1d5b0472233ea19529e95dc3f2cd8e97ebcb80d4b8a92f",
+    "wire_prefill_token_count": 5
+  },
+  "raw_outputs": [
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 8, 21]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 8, 21]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 8, 21]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":21,\"witness\":[6,12,29]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [3, 8, 21]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[3,5,33]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 8, 21]}",
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 14, 29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 14, 29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 14, 29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 14, 29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[2,14,31]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [6, 14, 29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":21,\"witness\":[6,12,29]}",
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[2,14,31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":31,\"witness\":[2,5,31]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [2, 5, 14]}",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 10, 27]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 10, 27]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 10, 27]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 10, 27]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":23,\"witness\":[2,6,31]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [2, 10, 27]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":31,\"witness\":[2,5,31]}",
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 15, 31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 15, 31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 15, 31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":22,\"witness\":[6,10,32]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [2, 15, 31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":23,\"witness\":[2,6,31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 15, 31]}",
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":24,\"witness\":[2,9,27]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [6, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":22,\"witness\":[6,10,32]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 10, 32]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 10, 32]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 10, 32]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 10, 32]}",
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 9, 19]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":7,\"witness\":[17,24,30]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [2, 7, 19]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":24,\"witness\":[2,9,27]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 9, 19]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 9, 19]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 9, 19]}",
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":19,\"witness\":[2,21,29]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [17, 20, 31]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":7,\"witness\":[17,24,30]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [17, 20, 31]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [17, 20, 31]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [17, 20, 31]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [17, 20, 31]}",
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 23, 32]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 23, 32]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 23, 32]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 23, 32]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[6,11,31]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 12, 32]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":19,\"witness\":[2,21,29]}",
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":30,\"witness\":[5,14,30]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [6, 11, 18]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[6,11,31]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 11, 23]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 11, 23]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 11, 23]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 11, 23]}",
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":19,\"witness\":[6,21,33]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [30, 31, 32]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":30,\"witness\":[5,14,30]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 14, 31]}",
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 21, 25]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 21, 25]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 21, 25]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 21, 25]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":28,\"witness\":[2,11,30]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [6, 21, 26]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":19,\"witness\":[6,21,33]}",
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":30,\"witness\":[3,10,32]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 14, 30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":28,\"witness\":[2,11,30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 14, 30]}",
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":30,\"witness\":[3,10,32]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 10, 29]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 10, 29]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 10, 29]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 10, 29]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":31,\"witness\":[2,9,30]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [3, 10, 29]}",
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":31,\"witness\":[2,9,30]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 13, 25]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 13, 25]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 13, 25]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 13, 25]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[3,15,28]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 9, 13]}",
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 15, 25]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 15, 25]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 15, 25]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[8,14,31]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [3, 15, 24]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[3,15,28]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 15, 25]}",
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":24,\"witness\":[8,15,27]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [8, 14, 25]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[8,14,31]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 14, 25]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 14, 25]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 14, 25]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 14, 25]}",
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":24,\"witness\":[8,15,27]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 15, 23]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 15, 23]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 15, 23]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [8, 15, 23]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":26,\"witness\":[3,12,32]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [8, 15, 23]}",
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":21,\"witness\":[2,6,25]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [3, 12, 19]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":26,\"witness\":[3,12,32]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 12, 19]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 12, 19]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 12, 19]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 12, 19]}",
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":21,\"witness\":[2,6,25]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 8, 14]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 8, 14]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 8, 14]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 8, 14]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":51,\"witness\":[7,11,21,31]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 2, \"witness\": [2, 14, 18]}",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":51,\"witness\":[7,11,21,31]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [7, 11, 14, 21]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [7, 11, 14, 21]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [7, 11, 14, 21]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [7, 11, 14, 21]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":39,\"witness\":[2,6,22,33]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [7, 11, 12, 13]}",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":74,\"witness\":[2,4,13,31]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 5, 6, 12]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":39,\"witness\":[2,6,22,33]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 12, 26]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 12, 26]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 12, 26]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 12, 26]}",
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 4, 10, 13]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 4, 10, 13]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 4, 10, 13]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 4, 10, 13]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":58,\"witness\":[5,9,20,28]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 4, 10, 13]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":74,\"witness\":[2,4,13,31]}",
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 9, 15, 20]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 9, 15, 20]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":57,\"witness\":[2,5,21,29]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [5, 9, 10, 15]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":58,\"witness\":[5,9,20,28]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 9, 15, 20]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [5, 9, 15, 20]}",
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 17, 20]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 17, 20]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 17, 20]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [2, 5, 17, 20]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":108,\"witness\":[3,7,16,30]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [2, 5, 6, 29]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":57,\"witness\":[2,5,21,29]}",
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 7, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 7, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 7, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [3, 7, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[6,9,19,33]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [3, 7, 10, 14]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":108,\"witness\":[3,7,16,30]}",
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 8, 13, 20]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 8, 13, 20]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 8, 13, 20]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":23,\"witness\":[4,8,15,25]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [6, 8, 9, 10]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":32,\"witness\":[6,9,19,33]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 8, 13, 20]}",
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [4, 5, 15, 16]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":48,\"witness\":[6,9,22,33]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [4, 5, 15, 16]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":23,\"witness\":[4,8,15,25]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [4, 5, 15, 16]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [4, 5, 15, 16]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [4, 5, 15, 16]}",
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 7, 12, 22]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 7, 12, 22]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":99,\"witness\":[4,8,28,33]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [6, 7, 9, 12]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":48,\"witness\":[6,9,22,33]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 7, 12, 22]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 1, \"witness\": [6, 7, 12, 22]}",
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"count\":99,\"witness\":[4,8,28,33]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "matched_initialization",
+      "response": "FINAL_ANSWER:  {\"count\": 12, \"witness\": [4, 8, 15, 21]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "no_write",
+      "response": "FINAL_ANSWER:  {\"count\": 12, \"witness\": [4, 8, 15, 21]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "no_read",
+      "response": "FINAL_ANSWER:  {\"count\": 12, \"witness\": [4, 8, 15, 21]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "reset_memory",
+      "response": "FINAL_ANSWER:  {\"count\": 12, \"witness\": [4, 8, 15, 21]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"count\":27,\"witness\":[3,5,33]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: {\"count\": 1, \"witness\": [4, 8, 15, 21]}",
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe"
+    }
+  ],
+  "receipt_sha256": "74e212bd8e5b1cedb9c6e4a9669fd92cffde5f135c3bbffbcf534fc9fd8854e2",
+  "regression_count": 0,
+  "regression_set_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "rows": [
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 130,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "fcd3f4186f4206365e1f598dd8ee5dfe7cb6b9447d6cab352e64772ddb6bf274",
+      "state_receipt_sha256": "8735a77f7bfb36b92e554d7453704dabbc23761b8506875443dd7174142f8b3e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 127,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "fcd3f4186f4206365e1f598dd8ee5dfe7cb6b9447d6cab352e64772ddb6bf274",
+      "state_receipt_sha256": "aff128045e4bd828bbdda74827d7f65122dc61b2dce339cfd89ace34a637abf5",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 136,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "fcd3f4186f4206365e1f598dd8ee5dfe7cb6b9447d6cab352e64772ddb6bf274",
+      "state_receipt_sha256": "4ba518811523180cad76bdf380b9cf74290d90eac138347c2ea6ba73d9634d38",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 147,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "f031b46b47ec288a9441ebc20660d71e0770021dc8225fe26582664acd86b7f9",
+      "state_receipt_sha256": "f3e43f7a441730421b240e583d3cc0269215e9ce4bc460fabbb28db166e90c8e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 24,
+      "latency_ms": 229,
+      "parsed": true,
+      "prompt_tokens": 167,
+      "response_sha256": "e3f8eab1ab912c2dddd0892c2359581a747db5732375c301aac6158bbb5f2e0f",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 88,
+      "parsed": false,
+      "prompt_tokens": 167,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "91dfaa8de59528ae2cc104c37951e790ee11a34cc99fd0683b90b1071add8e3a",
+      "state_receipt_sha256": "924c8ebb3ec0ddf251e638362ffef29ce39958f7a5138f4c19c453c8cddfcc8e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "fcd3f4186f4206365e1f598dd8ee5dfe7cb6b9447d6cab352e64772ddb6bf274",
+      "state_receipt_sha256": "9eea4833dd84362a2e4e0fa7be786b357168e857640c425dc6211c78804d49af",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:fbe067e013147cfb8edd22db8eb44e875949b0c943917706a9269b9cf262b01a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 195,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "53e73b0e4632011eaac2d5b7d3302c0d94ab1c1336eb30efae93efad7d6015dc",
+      "state_receipt_sha256": "7c443bafe370cd61c66876d793d9e0d56f9bd18075f3e1e73ea5b17187fbffa9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 189,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "53e73b0e4632011eaac2d5b7d3302c0d94ab1c1336eb30efae93efad7d6015dc",
+      "state_receipt_sha256": "33c3d29873fe1f9b29fba2db52b52aaf6d29d87bf604c2c1937e26ad9e73fd93",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 190,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "53e73b0e4632011eaac2d5b7d3302c0d94ab1c1336eb30efae93efad7d6015dc",
+      "state_receipt_sha256": "8f19ac88e9f6d9176ddce91e2ce99d73df213e843c6c510eaf7dac8b25385730",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "53e73b0e4632011eaac2d5b7d3302c0d94ab1c1336eb30efae93efad7d6015dc",
+      "state_receipt_sha256": "0f138fa45fa5ba977ddc89993f8dc24076577c82d1c1d82dd4f1b72553b87b6e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 192,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "2afd7a834f177abd88ccd060b9ec79d42b02b8cd7b38a4464c95baccce6070d6",
+      "state_receipt_sha256": "e574e463474e2f59bf24f3566d8ff4b58ddda7576082be676267fbe44659841d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 221,
+      "parsed": true,
+      "prompt_tokens": 168,
+      "response_sha256": "16657fff30ada646da1770ae9067611771ac066e0f641a3250fbf87be04afff3",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 67,
+      "parsed": false,
+      "prompt_tokens": 168,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 180,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "f031b46b47ec288a9441ebc20660d71e0770021dc8225fe26582664acd86b7f9",
+      "state_receipt_sha256": "f3e43f7a441730421b240e583d3cc0269215e9ce4bc460fabbb28db166e90c8e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:226d13815d80bbc57bbaa60fa097eb953b5e85f1c8318cbe5c263416214ab666",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 169,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "2afd7a834f177abd88ccd060b9ec79d42b02b8cd7b38a4464c95baccce6070d6",
+      "state_receipt_sha256": "e574e463474e2f59bf24f3566d8ff4b58ddda7576082be676267fbe44659841d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 197,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "d9a53a982e99c45930ecff83527acb1619317d8feaa2c16c8a0ae6f6826fe33d",
+      "state_receipt_sha256": "91d17ad775173267bee9a8d4f1702eeb79546d4f7adc8b65c03dd9871f537abd",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "d9a53a982e99c45930ecff83527acb1619317d8feaa2c16c8a0ae6f6826fe33d",
+      "state_receipt_sha256": "90ce2702b9e6e2974c2019bb2d84fc1f91b7c8b73f1ec1af32626707523283b0",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "d9a53a982e99c45930ecff83527acb1619317d8feaa2c16c8a0ae6f6826fe33d",
+      "state_receipt_sha256": "4870f74691d6de6a77dc5631c778412e28ef8e57366590ee51686a9c2e7832f9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 207,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "d9a53a982e99c45930ecff83527acb1619317d8feaa2c16c8a0ae6f6826fe33d",
+      "state_receipt_sha256": "078081cb7e137495f149046a13aec3ee75734c7af56ca27b3977ee45efdcf1b0",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 176,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "74f0d0d0052fa6aaa67ffa8079cb1dcbb3a757a2ba3ca8489d57ffcf67fe639e",
+      "state_receipt_sha256": "488dc8a3cbba57df090a3cb2bd6a4ef696015dac16fd1716e2bf9ac808b96d09",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 24,
+      "latency_ms": 211,
+      "parsed": true,
+      "prompt_tokens": 168,
+      "response_sha256": "e4472a460200833beb9f69e5b17bcd07165de239908c711f6619be5677e8ced9",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 67,
+      "parsed": false,
+      "prompt_tokens": 168,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c25c5e1e7aa2b87e1f333d33b17b8eec98e31169b7179b0f3645d2e4e69b7684",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 200,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "2f9a3ef47674df7161fb823a9c113aeb180b60013548b64710269318bb08dda4",
+      "state_receipt_sha256": "bbfca92a089ce358825a7cdc7bea7fc8dfb82ad2ce5ace229f64969dc1f031e2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 197,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "2f9a3ef47674df7161fb823a9c113aeb180b60013548b64710269318bb08dda4",
+      "state_receipt_sha256": "09f5f85c014a9ac38b19d180c968375ca178091a55cae57062645815d65e6425",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 201,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "2f9a3ef47674df7161fb823a9c113aeb180b60013548b64710269318bb08dda4",
+      "state_receipt_sha256": "562b1bb471d806e04145b7452490c428d3de89811d413784ef6ca916860727ea",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 217,
+      "response_sha256": "2f9a3ef47674df7161fb823a9c113aeb180b60013548b64710269318bb08dda4",
+      "state_receipt_sha256": "8389fc9afd61c77209625a0a0b81bea8438ec6ab6912590cdc7d6f6070ac7626",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 171,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "57618f427141f870e10efb51eeb0d512c62fff1b109f84e28552423916c3f9c6",
+      "state_receipt_sha256": "036c556702e084faadbafd8dd9ddc4080a58e79b51b1dd4ce4e66ee21361483b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 219,
+      "parsed": true,
+      "prompt_tokens": 168,
+      "response_sha256": "2c80d2752a73707fe266a026548bcd8510901e6ea7d996facc7ec35b7f4bb2db",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 71,
+      "parsed": false,
+      "prompt_tokens": 168,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 181,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "74f0d0d0052fa6aaa67ffa8079cb1dcbb3a757a2ba3ca8489d57ffcf67fe639e",
+      "state_receipt_sha256": "488dc8a3cbba57df090a3cb2bd6a4ef696015dac16fd1716e2bf9ac808b96d09",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:3573fdcb46fb43dfca528781c029598ccff0feac6907ab14a7fa94eed04be1ab",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "330bc24460859f4ba9d05ceeec3d40cadc4331c2bdfc628fac23d68422a34b02",
+      "state_receipt_sha256": "d829f07b8f62256acdc37f9dcc957115327d90eaf1f794f1f58106c0b0c8c807",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 195,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "330bc24460859f4ba9d05ceeec3d40cadc4331c2bdfc628fac23d68422a34b02",
+      "state_receipt_sha256": "1d0830b7152e02c055b2017b5fda1ea063cd66a799878d3b550c3b30f26ebff3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 204,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "330bc24460859f4ba9d05ceeec3d40cadc4331c2bdfc628fac23d68422a34b02",
+      "state_receipt_sha256": "ee5f0735a372f9c541a1225d4baf08437bebe44528dffdfad297a4706c7dd870",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 185,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "df5edb56930b61f123025c2074c5bd5600a0c285032af5839280fb98f36a3f98",
+      "state_receipt_sha256": "c78bf47d3b2ba6aba3efc7e8a39cee2ffb12c29163962e01a24f2faf9e71f64a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 221,
+      "parsed": true,
+      "prompt_tokens": 167,
+      "response_sha256": "20c0a1c07cdc668469122066222211ccc3c99a4e6551f92c11163bfeee0d3ebb",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 70,
+      "parsed": false,
+      "prompt_tokens": 167,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 171,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "57618f427141f870e10efb51eeb0d512c62fff1b109f84e28552423916c3f9c6",
+      "state_receipt_sha256": "036c556702e084faadbafd8dd9ddc4080a58e79b51b1dd4ce4e66ee21361483b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 201,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "330bc24460859f4ba9d05ceeec3d40cadc4331c2bdfc628fac23d68422a34b02",
+      "state_receipt_sha256": "18ab2dc2eccd301faedfc19453bc1e30aba79d3153971e1e9c8bdf79e6b29680",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:603bb932bd287c88a3f6bec4ae4e6d02eb5ea0f537c026fa4a59611163b59195",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 159,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "232736100e367960cd6993d7fe59113c7aa22a1e01b764b912a1ccf1544e9661",
+      "state_receipt_sha256": "d879957f02b649501271aac53d746d1f999f4a4676070e734179655fd5c00842",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 169,
+      "response_sha256": "ddd89df0498a05003e6db02afe089b2d65631eebc9ba16d34bac9d14445a0b96",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 69,
+      "parsed": false,
+      "prompt_tokens": 169,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 190,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "df5edb56930b61f123025c2074c5bd5600a0c285032af5839280fb98f36a3f98",
+      "state_receipt_sha256": "c78bf47d3b2ba6aba3efc7e8a39cee2ffb12c29163962e01a24f2faf9e71f64a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "caf281426967e834e3d88efee7b194f1e6efe1d2f1a204936075679a16f46e17",
+      "state_receipt_sha256": "62e25f3c1f3cf9b1c90feedb0f8a8fec1ed48def489349cca10dc25764b7c287",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "caf281426967e834e3d88efee7b194f1e6efe1d2f1a204936075679a16f46e17",
+      "state_receipt_sha256": "12cf0662d776a2d264d418d28ba561ec10d7542bb1b15434e4ccc918cc681adc",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "caf281426967e834e3d88efee7b194f1e6efe1d2f1a204936075679a16f46e17",
+      "state_receipt_sha256": "9924b2bd42f72ce187bb2bb398d93d5202db195bf9172201c2e33e105d9ac2e2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "caf281426967e834e3d88efee7b194f1e6efe1d2f1a204936075679a16f46e17",
+      "state_receipt_sha256": "10c37b08f6ee62038485327b4003a7fdad6faa0c457a3941acdb70da29899ac7",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:399c9d9355728a295430459e6feefcbb863d3502ed4d9fa2b459d53be4931b53",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 197,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "072d992c35f0c3ca601d7b24cefb0c3c76eea12c06369902b28a37352736ef2f",
+      "state_receipt_sha256": "0aaa6ff4dfa8de0a503fd9744441f9966f5a7162bc510b587449a04ddf2538fb",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 180,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "31358504825bc857b063c92cb2346e386cbda23a365de27d21b10e4295b8e2ec",
+      "state_receipt_sha256": "044e3d1a984f792e07f61f3c90c18c6dc5017e14e3380b4f57f6717d0c1c8e22",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 24,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 167,
+      "response_sha256": "5573dccb02cee7e7c15f2860bbd116584fdf3501a4a497238e090465697494aa",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 65,
+      "parsed": false,
+      "prompt_tokens": 167,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 16,
+      "latency_ms": 172,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "232736100e367960cd6993d7fe59113c7aa22a1e01b764b912a1ccf1544e9661",
+      "state_receipt_sha256": "d879957f02b649501271aac53d746d1f999f4a4676070e734179655fd5c00842",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 186,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "072d992c35f0c3ca601d7b24cefb0c3c76eea12c06369902b28a37352736ef2f",
+      "state_receipt_sha256": "09984fc9c56feba34910218cd41f00fafce188f840d2ec5b9e4f920a265d2796",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "072d992c35f0c3ca601d7b24cefb0c3c76eea12c06369902b28a37352736ef2f",
+      "state_receipt_sha256": "f121a30a4494d4835efde56526d5ca50a48c1e5512910ba0100b646ea1d59a50",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 20,
+      "latency_ms": 211,
+      "parsed": true,
+      "prompt_tokens": 216,
+      "response_sha256": "072d992c35f0c3ca601d7b24cefb0c3c76eea12c06369902b28a37352736ef2f",
+      "state_receipt_sha256": "8998f4ca05e63abaca188e7514ecc3fd1d8ff2c1f34cbcc99fea6a909c5a955a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:050dfdd9bdf5405f3b4309d9ac96ecc71460ff966dd0d61989442e635bb1e1e6",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 181,
+      "parsed": true,
+      "prompt_tokens": 227,
+      "response_sha256": "efce3696dd25fc578766af393dc5c2c7034577109f63e1342432049052bceaf3",
+      "state_receipt_sha256": "eefdc4f78f2099f4422aba08a078d3165cb953a08e59deeb916b8706685a767b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 26,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 170,
+      "response_sha256": "514460d8cb891cc64b72f28187b9e45d1ffdaf34acc8991a41803be4bdc06964",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 64,
+      "parsed": false,
+      "prompt_tokens": 170,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 185,
+      "parsed": true,
+      "prompt_tokens": 227,
+      "response_sha256": "31358504825bc857b063c92cb2346e386cbda23a365de27d21b10e4295b8e2ec",
+      "state_receipt_sha256": "044e3d1a984f792e07f61f3c90c18c6dc5017e14e3380b4f57f6717d0c1c8e22",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 22,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 219,
+      "response_sha256": "5a0efa664a235556225c3a7185e0cc648f8d3234ae0c4a18b7a85ba0ecebd1a4",
+      "state_receipt_sha256": "e2ebc05934f75ae7edc8a99f6ce7b77f7367f21705f071ef36cf85762bcf76b7",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 22,
+      "latency_ms": 210,
+      "parsed": true,
+      "prompt_tokens": 219,
+      "response_sha256": "5a0efa664a235556225c3a7185e0cc648f8d3234ae0c4a18b7a85ba0ecebd1a4",
+      "state_receipt_sha256": "247ceba9f849507917dd2b412bdc39be5cd98b266512ddf3b9bbc63828517ba1",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 22,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 219,
+      "response_sha256": "5a0efa664a235556225c3a7185e0cc648f8d3234ae0c4a18b7a85ba0ecebd1a4",
+      "state_receipt_sha256": "1735b05bdc6e5f8c1dea3d39148f9f66da1ffbf0b31daf411331039265e9ba99",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 22,
+      "latency_ms": 213,
+      "parsed": true,
+      "prompt_tokens": 219,
+      "response_sha256": "5a0efa664a235556225c3a7185e0cc648f8d3234ae0c4a18b7a85ba0ecebd1a4",
+      "state_receipt_sha256": "247f438db384738051157f846c5f11a3eb57be9ce878a73e582aa8479ace7d01",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:91b9ad21c15fccfafe287ff5f7844deb913c69a27e9e43d7db2f2386b845ac8b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "d00183cfa73b82d4c40e0ef9fa007938c8745adae67940bcf9dcf19ccc5d6f21",
+      "state_receipt_sha256": "65e6fc2e309be0828905aca7ad0bb80f652f071efe8af99d8fa21fd28527f580",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "d00183cfa73b82d4c40e0ef9fa007938c8745adae67940bcf9dcf19ccc5d6f21",
+      "state_receipt_sha256": "d8548e9a3bdc4ccb0dc68cf800530c359a534dd1367ac63b9545718893afb677",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 211,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "d00183cfa73b82d4c40e0ef9fa007938c8745adae67940bcf9dcf19ccc5d6f21",
+      "state_receipt_sha256": "8fc9103e515f4628dfc6f1d78bd617311145837152f28352ae7c66b7ba10fefc",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "d00183cfa73b82d4c40e0ef9fa007938c8745adae67940bcf9dcf19ccc5d6f21",
+      "state_receipt_sha256": "bc5277cbc8b0af3338021d56b4105075951ce9c052fcf1acfdf2ca3a4b3fd226",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 175,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "076aa339a22e2ce5f9486b8a0c6390b92726fcaa9ba913f36ed41f946a0ad16d",
+      "state_receipt_sha256": "2fab1e3304f1d3523c140d5a878750da99a20f436c317074c8815847453ae315",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 210,
+      "parsed": true,
+      "prompt_tokens": 169,
+      "response_sha256": "e4f92cafc08e47396619959783c5a6f9e0fd8a6cc898f93fdff895c947129797",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 69,
+      "parsed": false,
+      "prompt_tokens": 169,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 182,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "efce3696dd25fc578766af393dc5c2c7034577109f63e1342432049052bceaf3",
+      "state_receipt_sha256": "eefdc4f78f2099f4422aba08a078d3165cb953a08e59deeb916b8706685a767b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:c8c0ff46b3a999f1fe465113022f39946c703d3b4fa058c2316183eae397b42b",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 183,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "0b4f03527590527b544ef4791ca10ad0a1ce8321d6bbd1c1d8de5da40355ff5f",
+      "state_receipt_sha256": "f663c93f4c134d4e2ddb432b109e75192ae9bc70b04798a62880b3cbd5280006",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 25,
+      "latency_ms": 212,
+      "parsed": true,
+      "prompt_tokens": 169,
+      "response_sha256": "f2f7ca2254ae72769f6ca6152a754dfbc81eb32d80fec4f0a8d4459732f72bd2",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 1,
+      "latency_ms": 68,
+      "parsed": false,
+      "prompt_tokens": 169,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 1,
+      "generated_tokens": 17,
+      "latency_ms": 181,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "076aa339a22e2ce5f9486b8a0c6390b92726fcaa9ba913f36ed41f946a0ad16d",
+      "state_receipt_sha256": "2fab1e3304f1d3523c140d5a878750da99a20f436c317074c8815847453ae315",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "28a954d8b8977492e0cc309e6e10f71eb5fa00e5e0ef828de6f397f153b7b66c",
+      "state_receipt_sha256": "6d706e59cd9d8b7e209d15e4024d087561bf8eb4851839c67a0b87cc3b695def",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 201,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "28a954d8b8977492e0cc309e6e10f71eb5fa00e5e0ef828de6f397f153b7b66c",
+      "state_receipt_sha256": "43704a6ec5336c9fb39a98bbb152ea3b5d0e842eda15a3e6534adb49acc9a15a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "28a954d8b8977492e0cc309e6e10f71eb5fa00e5e0ef828de6f397f153b7b66c",
+      "state_receipt_sha256": "17d1929b3b396be58885dd35b52242b1b7b714b472e2fbe04c83b0414d604fb8",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 1,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "28a954d8b8977492e0cc309e6e10f71eb5fa00e5e0ef828de6f397f153b7b66c",
+      "state_receipt_sha256": "25f31b807ec478e57baa1982f7d6bfd72bc4d0ae05bd52f98c167d4e267b3719",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:304085e7b2f7ed95a08daed22d330efd71675d34515dea9f77a34199685ba62a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "7be11b48fe0d0beecda2fc83969367fb5d4a5e21c0e6040299ab715296de257a",
+      "state_receipt_sha256": "4599191e1217962f3a21f3b99e1d567ee08dc91c6a9bfcf191cc94e89a66253f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 178,
+      "parsed": true,
+      "prompt_tokens": 228,
+      "response_sha256": "38fdf69f297b099d42016a9062e8d2dcf28986670e3b6c41b7c570d5b04bfcdc",
+      "state_receipt_sha256": "7b7743f6aa1b8b987d989ae2ef9e5c072b5b9db6e8abd7071e5ff30cf9d9d007",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 26,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 171,
+      "response_sha256": "bbc272f35c666d3ada9b3306b013de3950d27668511ad06f584fc39f267d2c69",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 73,
+      "parsed": false,
+      "prompt_tokens": 171,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 187,
+      "parsed": true,
+      "prompt_tokens": 228,
+      "response_sha256": "0b4f03527590527b544ef4791ca10ad0a1ce8321d6bbd1c1d8de5da40355ff5f",
+      "state_receipt_sha256": "f663c93f4c134d4e2ddb432b109e75192ae9bc70b04798a62880b3cbd5280006",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 194,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "7be11b48fe0d0beecda2fc83969367fb5d4a5e21c0e6040299ab715296de257a",
+      "state_receipt_sha256": "d6c4856328ea81fd1559f3dd66b12691fb0e742f59a3acb13a3992a49dfa790e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "7be11b48fe0d0beecda2fc83969367fb5d4a5e21c0e6040299ab715296de257a",
+      "state_receipt_sha256": "9763308430ce3a559db9f3973f00f374472bb14632593804fe14b6387fb90062",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "7be11b48fe0d0beecda2fc83969367fb5d4a5e21c0e6040299ab715296de257a",
+      "state_receipt_sha256": "9bb520b4346ebd955f7037a9f8a7cba13120f11ab52224e6a0c16f1112f6f0f5",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8014f4743f7e07e41e66664e8bf3192d1cdd31d42adf5a78ef7620f084ccd9ec",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 207,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "81e08dd5e9efb1114b8910217f4aceb3ca1045ba5cd3ab5bda91f87e2a578fb5",
+      "state_receipt_sha256": "e03fa2278d4e63a44f5c77a5adbc7571ce6e87d2f83c8aea90a806223bf7e2cd",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 200,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "81e08dd5e9efb1114b8910217f4aceb3ca1045ba5cd3ab5bda91f87e2a578fb5",
+      "state_receipt_sha256": "1542469f803027daf6c534740a11535739421ced85b971896cd082c72c26e571",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "81e08dd5e9efb1114b8910217f4aceb3ca1045ba5cd3ab5bda91f87e2a578fb5",
+      "state_receipt_sha256": "dc2b17e17bbe55ffc8ba6662e9c4372f6a5631fff3cfb3a394c5b36304af83d9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "81e08dd5e9efb1114b8910217f4aceb3ca1045ba5cd3ab5bda91f87e2a578fb5",
+      "state_receipt_sha256": "85480eddd4d5199cc7aba3975bcb13d5dfdfbedae00c80390cc6cdc43b74df3f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 186,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "5b7c7ac63c443d1211cba649238c0e34f34851f787ce0664ac4458d24362b720",
+      "state_receipt_sha256": "f02d4ad714c08481a58e8d0e4c1f973ee998a7271456e4e9eaf9054f4a9f49b2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 220,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "52306732da2ac8836701a16f02a298cf08f904190261fd8037067fc18b755e71",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 67,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 177,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "38fdf69f297b099d42016a9062e8d2dcf28986670e3b6c41b7c570d5b04bfcdc",
+      "state_receipt_sha256": "7b7743f6aa1b8b987d989ae2ef9e5c072b5b9db6e8abd7071e5ff30cf9d9d007",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0733db93ab56afb136c9ba92cdd71035705753685b222355741c27081a4334a8",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 192,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "3e1e34567f8684d715d75eb812346bf871a0baa84f830f2d977f755b0daa6563",
+      "state_receipt_sha256": "7640c4ab29b1d3d6089878069f9d64414aceb2a550603f11d7fc2a71856aa22f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "3e1e34567f8684d715d75eb812346bf871a0baa84f830f2d977f755b0daa6563",
+      "state_receipt_sha256": "6393bb72cf7a32bf00fff7cca3b9b3a446b56c90243a590c86c908a6da4c59e2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "3e1e34567f8684d715d75eb812346bf871a0baa84f830f2d977f755b0daa6563",
+      "state_receipt_sha256": "7a359792f96d67f84ae128249b6cbba89de386dc82479d7cde7b2632dad679a6",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 191,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "feb5a404da01da4dbc99df80d217a66517b3bad82eb286618db69f5e06c5173f",
+      "state_receipt_sha256": "c76addd829a8a6ef6910606071d28928404cf9f968d85362e9a2218b5783c51a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "1ae9c88e40e7ee36ab36d74b700f4a4ce3c92b2b4a70b5fd3cb2d008900f5d80",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 65,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 178,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "5b7c7ac63c443d1211cba649238c0e34f34851f787ce0664ac4458d24362b720",
+      "state_receipt_sha256": "f02d4ad714c08481a58e8d0e4c1f973ee998a7271456e4e9eaf9054f4a9f49b2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "3e1e34567f8684d715d75eb812346bf871a0baa84f830f2d977f755b0daa6563",
+      "state_receipt_sha256": "e4e9b06620b639e6a1f6e23c26fff91a66db232c1e5d105821dc51d083d07517",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:0deaa3069d89c9cb87ae44a24762bd77a72142adbe86f85f19a4d4c843e2e855",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 61,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 172,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "feb5a404da01da4dbc99df80d217a66517b3bad82eb286618db69f5e06c5173f",
+      "state_receipt_sha256": "c76addd829a8a6ef6910606071d28928404cf9f968d85362e9a2218b5783c51a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 204,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "b2f6db594ed328ba1d54da29de44b8724af3e75ffce7999f3fec06e8e4d15757",
+      "state_receipt_sha256": "8ac8644c86ef58b6aa1aad7771c192cbccf4f128dfffdad34abe4a34db29891c",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "b2f6db594ed328ba1d54da29de44b8724af3e75ffce7999f3fec06e8e4d15757",
+      "state_receipt_sha256": "1070db73a54c7e0d4fb0d1dab256c897c0adc53cc9a20039d644ccd295f0c484",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "b2f6db594ed328ba1d54da29de44b8724af3e75ffce7999f3fec06e8e4d15757",
+      "state_receipt_sha256": "50dbb18ed36922c735c7b8dda0719b97cd6bf76c1612dac0f2cf277bca49bfe7",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 207,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "b2f6db594ed328ba1d54da29de44b8724af3e75ffce7999f3fec06e8e4d15757",
+      "state_receipt_sha256": "9ccbc14026a25e3f7e71ade010d12f70d963a9f8f5b0a7f097520d5615552bad",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 16,
+      "latency_ms": 173,
+      "parsed": true,
+      "prompt_tokens": 228,
+      "response_sha256": "43d313de360ce16bb8e4560e8ca65f992dc1a4fde8f377052f11a7f117b81b7f",
+      "state_receipt_sha256": "a2b120da678dd39c66da8a6b79fbfdbb507809992f6259b827b63b6e72b3fa8a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "83d915997b177d9b7a6dce6db7befa39a1cad3378414cd0e6a86e5446b8772b6",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5110d735886bbc61c709f49d52e6af2a4dbc5aa5f7cbdf34faed7f753b6ef6de",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 64,
+      "parsed": false,
+      "prompt_tokens": 171,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 16,
+      "latency_ms": 176,
+      "parsed": true,
+      "prompt_tokens": 227,
+      "response_sha256": "43d313de360ce16bb8e4560e8ca65f992dc1a4fde8f377052f11a7f117b81b7f",
+      "state_receipt_sha256": "a2b120da678dd39c66da8a6b79fbfdbb507809992f6259b827b63b6e72b3fa8a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 201,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "11691e9c993e3d1ca2f3a481f091a8b187bd88b1bb3b46a0b6a15f0e773fb437",
+      "state_receipt_sha256": "accc4bc886fe7d530a58dd98bca9e833d74516e50965829906bfb4b8b0a5eb94",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 198,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "11691e9c993e3d1ca2f3a481f091a8b187bd88b1bb3b46a0b6a15f0e773fb437",
+      "state_receipt_sha256": "913548da5c010782abb9c24cae626b950d3a81de08776a33573236f5a5b18000",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 204,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "11691e9c993e3d1ca2f3a481f091a8b187bd88b1bb3b46a0b6a15f0e773fb437",
+      "state_receipt_sha256": "910945835f430a35cd9212781883140475d11d42f7be79ebd39b14d4917c70a0",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 220,
+      "response_sha256": "11691e9c993e3d1ca2f3a481f091a8b187bd88b1bb3b46a0b6a15f0e773fb437",
+      "state_receipt_sha256": "5744d119c62b28814cca8c7a7a9627e693c25fc40bcf81a97d2f92be8c45e00c",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 184,
+      "parsed": true,
+      "prompt_tokens": 228,
+      "response_sha256": "6bd08bcb630fec05d786371bc6bf1a271aa31b254bf880a6c72b94defd5a5e5e",
+      "state_receipt_sha256": "c3670c869148ff7ee56f7226c6af301ed7367455b4e85f618eadbec01484485c",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 24,
+      "latency_ms": 204,
+      "parsed": true,
+      "prompt_tokens": 171,
+      "response_sha256": "715f1f9cab7f8d13b7b022389d9f673ba2c3cb6efaeee149db678c1fdcbc6d49",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:122439a5f8332ed8828e5f044b5a81345118f9733f58ce8103d896d03a1ea611",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 194,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "e48430c1cfb2243208102c7f48af970134e80de48a7bb86b0d7f81ec2c0c5a99",
+      "state_receipt_sha256": "2edd05add5aaad763a95d216f74e0672e6a6e3f353f6a58b13f1e4ea47713f2f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "e48430c1cfb2243208102c7f48af970134e80de48a7bb86b0d7f81ec2c0c5a99",
+      "state_receipt_sha256": "f6fa4673252fc155f2ee0867917cce39f37f1cb2e629769ce98349a2a2aa4e41",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "e48430c1cfb2243208102c7f48af970134e80de48a7bb86b0d7f81ec2c0c5a99",
+      "state_receipt_sha256": "c64c377dd1487045fb0a1e2e368ee347c36ce8c925de0a81a521578d4f0af642",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 177,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "7bd3869878432ac8cfa0df5aee55a111b523d2fcc7640096ee272ffc00a21e33",
+      "state_receipt_sha256": "9c04e64b2040fae8aacf069f4a88ece880400f0e54ebb2dc3746989994368a66",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "d9aef40b60a971d11ef731be0b8f72babb3a3844c82e1b1d2696dfa80cefd08c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 64,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 183,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "6bd08bcb630fec05d786371bc6bf1a271aa31b254bf880a6c72b94defd5a5e5e",
+      "state_receipt_sha256": "c3670c869148ff7ee56f7226c6af301ed7367455b4e85f618eadbec01484485c",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "e48430c1cfb2243208102c7f48af970134e80de48a7bb86b0d7f81ec2c0c5a99",
+      "state_receipt_sha256": "a88b961ec1cc7fbbfc44f1055ea0bfc930f6d69e588e080d56d4629604fb7a30",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:71c618559b3ce2c5bed9d4255741a44d952f923817ad40611a9d0521e489c3e2",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 174,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "ed81389d81548c00eb402659b065340ef98ac146f44656734acc861d8c675eec",
+      "state_receipt_sha256": "0bb0044c5b46a5fe72926a78b06519e7ccb34fce91b048aac9106acb83fa0e4f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 206,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "6ca751757e125d7c015db4a278b064018857dff696cd32018c1362eaf41c313c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 69,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 187,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "7bd3869878432ac8cfa0df5aee55a111b523d2fcc7640096ee272ffc00a21e33",
+      "state_receipt_sha256": "9c04e64b2040fae8aacf069f4a88ece880400f0e54ebb2dc3746989994368a66",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "cff69363b974031bbec4af7eecc60809c8c00bc152798fdcc8251eaf09a012c8",
+      "state_receipt_sha256": "832032163e22a5cd91e0e13f465ad2ee02eb4c8c10362b049df25ef70cb2f24d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "cff69363b974031bbec4af7eecc60809c8c00bc152798fdcc8251eaf09a012c8",
+      "state_receipt_sha256": "3831ccbc035946ab0875d7a35ffa75ae3a28ec518e9fede0a284b4b6b6108304",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "cff69363b974031bbec4af7eecc60809c8c00bc152798fdcc8251eaf09a012c8",
+      "state_receipt_sha256": "d6f60dfe4f5323a8e28a43566d097d5464aca126a16ab998e71ed64c5cbe1164",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "cff69363b974031bbec4af7eecc60809c8c00bc152798fdcc8251eaf09a012c8",
+      "state_receipt_sha256": "9ddfd308dd027cd44fdb6d5dda58d598fa3d899710b5de32ce43f5ad40f6f48e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:72bd7237ef84a696626e14939d2c0644e0b5763ab6f639fa9a2f11a55d1b938e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 66,
+      "parsed": false,
+      "prompt_tokens": 172,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 174,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "ed81389d81548c00eb402659b065340ef98ac146f44656734acc861d8c675eec",
+      "state_receipt_sha256": "0bb0044c5b46a5fe72926a78b06519e7ccb34fce91b048aac9106acb83fa0e4f",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 201,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "8074c5d52a81d7ed414dd19cdbb82c8269d5de69295b4b3ded90f4933e9e8f0d",
+      "state_receipt_sha256": "ca23a66962788f2a782987fc65ef51afc0ebf83a33a9f56cbd73553a822d6543",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "8074c5d52a81d7ed414dd19cdbb82c8269d5de69295b4b3ded90f4933e9e8f0d",
+      "state_receipt_sha256": "e1c8fc38e040933d3bf4e2d30dd12d076f10b36f058486a464c830d085df2c45",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 205,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "8074c5d52a81d7ed414dd19cdbb82c8269d5de69295b4b3ded90f4933e9e8f0d",
+      "state_receipt_sha256": "3993cf283223c17c0b8e081c3ce3cb80ba4139cfa99537a350753d08ec900698",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 219,
+      "parsed": true,
+      "prompt_tokens": 221,
+      "response_sha256": "8074c5d52a81d7ed414dd19cdbb82c8269d5de69295b4b3ded90f4933e9e8f0d",
+      "state_receipt_sha256": "ad3ab75f4d1866b0eaa5adc31680448098d19ae5e7abcb93dbd2602e96c70cc6",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 184,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "02688278802e901e4837f8e68c1092e93be12cbc0dc8fd9d1bd46ae41804e539",
+      "state_receipt_sha256": "c979eabfa9eb0ee508c66eca87dd787a34bd074815b1cc3d35df49bed9f705c3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 172,
+      "response_sha256": "32ee4752f5da79fc1417420148ce1aca902d1adcaa15793385da23d6d9393cbe",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5cf3ba83e8b0c30a3747884bd58362615839e6709f6e4d0df3897ff632965134",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 16,
+      "latency_ms": 183,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "7db0f70588fae2141742dd79e9b752fb60d4fc6f545c973902be307f2c781930",
+      "state_receipt_sha256": "b10e457a246ec1b9c7df374de7308b84fbe9823c0653c63ef3fdc2db60796daf",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 219,
+      "parsed": true,
+      "prompt_tokens": 173,
+      "response_sha256": "bde8e9373dfca3139fd7a75a8c3fb9c114be14aff74c3f8645203211d399466d",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 66,
+      "parsed": false,
+      "prompt_tokens": 173,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 17,
+      "latency_ms": 179,
+      "parsed": true,
+      "prompt_tokens": 230,
+      "response_sha256": "02688278802e901e4837f8e68c1092e93be12cbc0dc8fd9d1bd46ae41804e539",
+      "state_receipt_sha256": "c979eabfa9eb0ee508c66eca87dd787a34bd074815b1cc3d35df49bed9f705c3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 197,
+      "parsed": true,
+      "prompt_tokens": 222,
+      "response_sha256": "12c693efb5acb9255936c02fe3cb2a2fd256a7410b77f8f8cfdd63b56ccff1ea",
+      "state_receipt_sha256": "cc6587d639f1411714995d502bcea4c102767919d9f8762b7db3390abcbbdd56",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 202,
+      "parsed": true,
+      "prompt_tokens": 222,
+      "response_sha256": "12c693efb5acb9255936c02fe3cb2a2fd256a7410b77f8f8cfdd63b56ccff1ea",
+      "state_receipt_sha256": "e1156ae09b92664dd972f5728e638c199077684a69ba5997bd9f9f2023110163",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 222,
+      "response_sha256": "12c693efb5acb9255936c02fe3cb2a2fd256a7410b77f8f8cfdd63b56ccff1ea",
+      "state_receipt_sha256": "c958a69a2f677ef1faac9576a4313804842a4bb12aebd010c5320348dd20982d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 21,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 222,
+      "response_sha256": "12c693efb5acb9255936c02fe3cb2a2fd256a7410b77f8f8cfdd63b56ccff1ea",
+      "state_receipt_sha256": "2132309968d6568fc01b3c736d9eaa173b0dc3bb1c9fc5ebc2787755a962971a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:1ad336e834f67e6707bc4e66cd3c48289b2bdd6157b87d3ad13359dc1fa03e4d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 2,
+      "generated_tokens": 16,
+      "latency_ms": 164,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "7db0f70588fae2141742dd79e9b752fb60d4fc6f545c973902be307f2c781930",
+      "state_receipt_sha256": "b10e457a246ec1b9c7df374de7308b84fbe9823c0653c63ef3fdc2db60796daf",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 20,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "fe6b3e8377caa4e72137b25f39135611c721808930ae7c6dd540e848a9450c7a",
+      "state_receipt_sha256": "62a227f61ed382c2a2a57da04f39d72158c4bd95749214be3163448a4842b7ba",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 20,
+      "latency_ms": 200,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "fe6b3e8377caa4e72137b25f39135611c721808930ae7c6dd540e848a9450c7a",
+      "state_receipt_sha256": "73969ef5a5d10bc7c968187c162310372f9817c5a00cf655ab7e0a4a8136f2dc",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 20,
+      "latency_ms": 200,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "fe6b3e8377caa4e72137b25f39135611c721808930ae7c6dd540e848a9450c7a",
+      "state_receipt_sha256": "32af91bfd3162768221554cf516599d2b67230233932a3adad0f97e03c25f4fc",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 20,
+      "latency_ms": 203,
+      "parsed": true,
+      "prompt_tokens": 218,
+      "response_sha256": "fe6b3e8377caa4e72137b25f39135611c721808930ae7c6dd540e848a9450c7a",
+      "state_receipt_sha256": "a1437609144d2e3e087b6c177bd250aaffe1c867e3343ebe47ae78ae28aaa9b3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 20,
+      "latency_ms": 194,
+      "parsed": true,
+      "prompt_tokens": 229,
+      "response_sha256": "b715a538bc6e81fc3d1b74b5227c84b01edb0e0b8f5c0d4d1cca4d5de5e4523d",
+      "state_receipt_sha256": "be6bf5ac1b5d16aa1da6027e4035171507bfc4d3dbaf06cb9d4e9865f949effa",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 25,
+      "latency_ms": 222,
+      "parsed": true,
+      "prompt_tokens": 169,
+      "response_sha256": "c11ee8a71a5f2e24fa0e6c00c4b9521390f05e60a03f6a889a30bd577deb2a22",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 2,
+      "generated_tokens": 1,
+      "latency_ms": 70,
+      "parsed": false,
+      "prompt_tokens": 169,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:30e90512143a403a611ef823a5cad0610d00984a70f61654e504523f668a0fcb",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 20,
+      "latency_ms": 182,
+      "parsed": true,
+      "prompt_tokens": 237,
+      "response_sha256": "b715a538bc6e81fc3d1b74b5227c84b01edb0e0b8f5c0d4d1cca4d5de5e4523d",
+      "state_receipt_sha256": "be6bf5ac1b5d16aa1da6027e4035171507bfc4d3dbaf06cb9d4e9865f949effa",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 262,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "f1913ea6a08d76e73d020d880d0e147a8cc97e2f3bc8d33e35c3daae27386be2",
+      "state_receipt_sha256": "9d9deb2b1de22edb73e1b24200e60c1253679ae931736a756bee303cfe6ab3ad",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 283,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "f1913ea6a08d76e73d020d880d0e147a8cc97e2f3bc8d33e35c3daae27386be2",
+      "state_receipt_sha256": "a2cf873c060f4b50e579f8f9427dffb126b768fb11f6b2f61ff5f7b39f9ad411",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 230,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "f1913ea6a08d76e73d020d880d0e147a8cc97e2f3bc8d33e35c3daae27386be2",
+      "state_receipt_sha256": "7c21a2f34ca96fc81de1958a95c9e33571f707befd7701bd873b0bbfa81a5d98",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 223,
+      "parsed": true,
+      "prompt_tokens": 226,
+      "response_sha256": "f1913ea6a08d76e73d020d880d0e147a8cc97e2f3bc8d33e35c3daae27386be2",
+      "state_receipt_sha256": "78c11dd1396ba049453c272b9fa7f5dff6d5e962a98dd8d9247de1a4e0af1d9e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 204,
+      "parsed": true,
+      "prompt_tokens": 236,
+      "response_sha256": "fb47d151c077533e5a1caf43f09a43fc30817b56aa353f4cdab4356e205507b6",
+      "state_receipt_sha256": "848b6b4aabdf0be28476ff80162b3ce0d66abf07cf3f559e3c36d4b8fe5ca503",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 29,
+      "latency_ms": 253,
+      "parsed": true,
+      "prompt_tokens": 177,
+      "response_sha256": "54f6252bbafa2517a61cec5f0887404f54b0759e9f196f388f956eee928d835a",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 72,
+      "parsed": false,
+      "prompt_tokens": 177,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:5fc7035f122465eb4604910db9d70c8025f603c3e9859c5fa52a1c3a18b00a82",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 183,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "f2f55ee360b795bc34a2bc9a8cab1ac94a67d20cd8ddb929b37050234b1ae30e",
+      "state_receipt_sha256": "9bb8035a723937a4a242dd5cbf8cd9f6443bf8db754ef482e664e43a57d6c018",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 27,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 175,
+      "response_sha256": "a5e280acb1ddb85d0ab233b9adbbed69e22255d4ee2f8b311fa05c50dcd2c088",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 67,
+      "parsed": false,
+      "prompt_tokens": 175,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 198,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "fb47d151c077533e5a1caf43f09a43fc30817b56aa353f4cdab4356e205507b6",
+      "state_receipt_sha256": "848b6b4aabdf0be28476ff80162b3ce0d66abf07cf3f559e3c36d4b8fe5ca503",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 231,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "0d9b38e8e91d36d2dda3b8fff8c598a4c11b386c1e0546afe8e8379df74bd52d",
+      "state_receipt_sha256": "f6e767a6bf04194b206016a2a889a138e870262b22f74147bc14ac410586ebce",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 225,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "0d9b38e8e91d36d2dda3b8fff8c598a4c11b386c1e0546afe8e8379df74bd52d",
+      "state_receipt_sha256": "f8af9235a6631867cf5e35f42030f881cace853d2b613f669ae745c6d7452358",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 225,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "0d9b38e8e91d36d2dda3b8fff8c598a4c11b386c1e0546afe8e8379df74bd52d",
+      "state_receipt_sha256": "ae0413e850402dc275d6cd33b13b109e478e20e7d1118306c9323b6f3022f1e9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 220,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "0d9b38e8e91d36d2dda3b8fff8c598a4c11b386c1e0546afe8e8379df74bd52d",
+      "state_receipt_sha256": "9ab00b3a18132b3c3f5f095f8fff6d0d83e21da783078c8694c3116c0773a5ea",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:47d040c3ab05870f9b578fab06875ce8ce973955a043989280836df477072d3f",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 222,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "2ab407f1309760d55060f5044752be78e59e2e9ab46c379b47bc23d4eb0a7bde",
+      "state_receipt_sha256": "60f8e36d64b72aacd5f33e9d63ab74ebda84e112aeab26fcdd4f6cf74b1eee45",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 228,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "2ab407f1309760d55060f5044752be78e59e2e9ab46c379b47bc23d4eb0a7bde",
+      "state_receipt_sha256": "920b1d9d718fef24c9e384a9120cda0e498abee151da19aa56789d935434943d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 228,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "2ab407f1309760d55060f5044752be78e59e2e9ab46c379b47bc23d4eb0a7bde",
+      "state_receipt_sha256": "4c152228451030006aed5aee48542ef66be9a27cc8f68c211da047d753e19c43",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 226,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "2ab407f1309760d55060f5044752be78e59e2e9ab46c379b47bc23d4eb0a7bde",
+      "state_receipt_sha256": "bda9e9b26ae29595a45c8333a68e931f3af24a81b934aca2439b045222f63ad1",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 191,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "ef3edf7d58919b6177ab60dcee621f1101529502f162742724dab3ad250208b0",
+      "state_receipt_sha256": "f312ae0bcd47d2b466b03c0ed0fc7dc4b7009a979764f6c32c7dc7234fb74a16",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 28,
+      "latency_ms": 239,
+      "parsed": true,
+      "prompt_tokens": 175,
+      "response_sha256": "2c7a85ff2647149526d374c49d27c55858302a99b50609467a2b90a14a4d6912",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 69,
+      "parsed": false,
+      "prompt_tokens": 175,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "f2f55ee360b795bc34a2bc9a8cab1ac94a67d20cd8ddb929b37050234b1ae30e",
+      "state_receipt_sha256": "9bb8035a723937a4a242dd5cbf8cd9f6443bf8db754ef482e664e43a57d6c018",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:83abf1c688bdaf33c4341368c58e9c17836d53ae4c0527f879634a7f74c9a865",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 211,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "1134d35e4a34c4d6cba86a9a48a47a8b8319714b8608339fa697e2a062a8a0eb",
+      "state_receipt_sha256": "f5e949d2824e170fe846ff982f29a18c2e9a4352948aa18c6b5d5a05204017a2",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 216,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "1134d35e4a34c4d6cba86a9a48a47a8b8319714b8608339fa697e2a062a8a0eb",
+      "state_receipt_sha256": "cde6240cc951a8d93a066393e8da4c6132c680e472e7f078f2ea14d6ad18f3fb",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 206,
+      "parsed": true,
+      "prompt_tokens": 235,
+      "response_sha256": "f277362cfa7e93b67471ad6fda071d08194a49e733fdb60e8820092dbcbff543",
+      "state_receipt_sha256": "fb8af1f92b22de182814413a82b26a87f20feb48928fba68dcda79f7239caf88",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 28,
+      "latency_ms": 241,
+      "parsed": true,
+      "prompt_tokens": 176,
+      "response_sha256": "4da5e0d9a6833a0e87e6783cae10207b3e8b84ef91d09796c95e86d83262c146",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 70,
+      "parsed": false,
+      "prompt_tokens": 176,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 191,
+      "parsed": true,
+      "prompt_tokens": 235,
+      "response_sha256": "ef3edf7d58919b6177ab60dcee621f1101529502f162742724dab3ad250208b0",
+      "state_receipt_sha256": "f312ae0bcd47d2b466b03c0ed0fc7dc4b7009a979764f6c32c7dc7234fb74a16",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 214,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "1134d35e4a34c4d6cba86a9a48a47a8b8319714b8608339fa697e2a062a8a0eb",
+      "state_receipt_sha256": "516503cbe81d9a03c4a3e3e0a1be87377dc6355808e687c4212817b4a4051eb8",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 226,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "1134d35e4a34c4d6cba86a9a48a47a8b8319714b8608339fa697e2a062a8a0eb",
+      "state_receipt_sha256": "57edb6494e2fcbbd16ecfa1268b0b9d8dc72af48c0e53fa933138b52e95c7609",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a3e78a9e0e1ac252aa2fceb8bb1640290f98020b45c370f24a242b8b0ffdfe9e",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 230,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "e559c414bb29bf88fb46daeff81120708d13826e419ba865475531f4bf5e0b6f",
+      "state_receipt_sha256": "472d30936ca2372c5a94668fb11244b0a4f16347ba444c61dd5ac82c0370d583",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 230,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "e559c414bb29bf88fb46daeff81120708d13826e419ba865475531f4bf5e0b6f",
+      "state_receipt_sha256": "079699d8f17a9c573784e317fd5710abdd0b2930d9f506f21686f53fdd781f4d",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 228,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "e559c414bb29bf88fb46daeff81120708d13826e419ba865475531f4bf5e0b6f",
+      "state_receipt_sha256": "5bc5b3a6c4060c34af79eeea5033dd15d17fe4d221e9de712daff9d40ead5287",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 222,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "e559c414bb29bf88fb46daeff81120708d13826e419ba865475531f4bf5e0b6f",
+      "state_receipt_sha256": "52233148806e790e8ed07b355871cd9d4ab1303ff79a9310758bd70932d32db5",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 20,
+      "latency_ms": 200,
+      "parsed": true,
+      "prompt_tokens": 235,
+      "response_sha256": "b0fd566009b79d9ecc45a91d59f24c376c5f6b8535690ee1bd829de019d5a4be",
+      "state_receipt_sha256": "5638c6de769d0e53e7bfb51e82072916d4cc515beed38c6c6ce99eef57dbfe39",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 27,
+      "latency_ms": 232,
+      "parsed": true,
+      "prompt_tokens": 175,
+      "response_sha256": "8bfd23e034b2e287754992285fe89c463a7eb49b759d892051ab6290984ec36f",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 72,
+      "parsed": false,
+      "prompt_tokens": 175,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 194,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "f277362cfa7e93b67471ad6fda071d08194a49e733fdb60e8820092dbcbff543",
+      "state_receipt_sha256": "fb8af1f92b22de182814413a82b26a87f20feb48928fba68dcda79f7239caf88",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8b5883bdbac4d7f8398a6d9ee514c5462872b952ef1326f400abd91b3f5f1f6a",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 209,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "6f4718c694440e83ce32aa539d030fd65db8281f372d3e6f851ace0ee9eb252c",
+      "state_receipt_sha256": "80de8dc56bf76f8970ddaca5c65805717e9876bc0d4806a9e4235cdd6803cdfc",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 218,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "6f4718c694440e83ce32aa539d030fd65db8281f372d3e6f851ace0ee9eb252c",
+      "state_receipt_sha256": "f03267cbda73789d97eb0fa18a25025e33b58cd72b4ab56bad812d34a3f13b5b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 240,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "6f4718c694440e83ce32aa539d030fd65db8281f372d3e6f851ace0ee9eb252c",
+      "state_receipt_sha256": "894a6ee35923c87a035a91339b1505c702784d2e1759c817f1e4dacd571c7bb3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 234,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "6f4718c694440e83ce32aa539d030fd65db8281f372d3e6f851ace0ee9eb252c",
+      "state_receipt_sha256": "544ddf398ad96481f71e232811d3d73894780252114b9cfcced9f134efcbf6b9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 191,
+      "parsed": true,
+      "prompt_tokens": 235,
+      "response_sha256": "5dd0dfcc817cb2e46629a7763c93bc7793129ab3a46c2bfc342c8a805e447fe2",
+      "state_receipt_sha256": "e377f26a5a41b39bd2825de27bf65314de4606be18ec40adefa8b82d6ff126b9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 28,
+      "latency_ms": 228,
+      "parsed": true,
+      "prompt_tokens": 176,
+      "response_sha256": "55d765a31a1014aaef68b3bd010d86703ec88a518f9c3a8bd9fcbf86706ac106",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 72,
+      "parsed": false,
+      "prompt_tokens": 176,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 20,
+      "latency_ms": 213,
+      "parsed": true,
+      "prompt_tokens": 236,
+      "response_sha256": "b0fd566009b79d9ecc45a91d59f24c376c5f6b8535690ee1bd829de019d5a4be",
+      "state_receipt_sha256": "5638c6de769d0e53e7bfb51e82072916d4cc515beed38c6c6ce99eef57dbfe39",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:8c3f0bea43ecf2b6c3a7a93c48ce2b99d119882f428c2af0b974a1f0c43a3d04",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 223,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a2e2bd47d3da49186d8ec4d58b92167b16b139f5cb31330dd51aaf806065720b",
+      "state_receipt_sha256": "7562a5e12de020b6f71d7f54bc869bbfd27c1860df76a1f5d56f3c61261e4f01",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 217,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a2e2bd47d3da49186d8ec4d58b92167b16b139f5cb31330dd51aaf806065720b",
+      "state_receipt_sha256": "e8a4257b0e0798ccb2667ee397c1721f28ef7047839cfa55d04b1d55b66a0cf9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 225,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a2e2bd47d3da49186d8ec4d58b92167b16b139f5cb31330dd51aaf806065720b",
+      "state_receipt_sha256": "e3d60a049b8952e83f9968c9beaf6a4b959a557a17e76c17b0dd8ad6c00906a1",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "0dbd0a7f3ca4dd1e792dd14223126f7a356d0ca36dd842fc06d7ac58773d2e3d",
+      "state_receipt_sha256": "9284fd8eb6ecb2ea2dae8d1648227429de9466e4d8920f63b0c34b1543aef81a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 27,
+      "latency_ms": 238,
+      "parsed": true,
+      "prompt_tokens": 175,
+      "response_sha256": "4d0b51252f3aeae23e24becf6007b55d46b1afbe4f653330bf623fe6686bf732",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 67,
+      "parsed": false,
+      "prompt_tokens": 175,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 191,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "5dd0dfcc817cb2e46629a7763c93bc7793129ab3a46c2bfc342c8a805e447fe2",
+      "state_receipt_sha256": "e377f26a5a41b39bd2825de27bf65314de4606be18ec40adefa8b82d6ff126b9",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a2e2bd47d3da49186d8ec4d58b92167b16b139f5cb31330dd51aaf806065720b",
+      "state_receipt_sha256": "873f53d8abfdf838dd37c7ad08931fe39bde5d1e69738ee2fb4d046683735878",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:86ce0f82ea9c2b189c878e468a5670152a6abdfb10f0bf366d9afb6251f4a680",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 217,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "2040b624c639c099590557b372dbfba153e57693f9cac2e66b1e58c4e9feec84",
+      "state_receipt_sha256": "d91bc20ca42128751c32a052dcff934f15e9f5ff1d03039ba9fc279ce12be9e3",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 199,
+      "parsed": true,
+      "prompt_tokens": 233,
+      "response_sha256": "532231ce881981376ffbc1efa171adafb90599935f781a69a14db9d53b992fb9",
+      "state_receipt_sha256": "5edfad42f0bd494c7aea84cc076c1551af36320ad3538fb16db1d073ff988162",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 28,
+      "latency_ms": 249,
+      "parsed": true,
+      "prompt_tokens": 174,
+      "response_sha256": "7a5b5711493945c8b273e251bab141af597842f8383563dbd2b2de30b1c5a380",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 71,
+      "parsed": false,
+      "prompt_tokens": 174,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 193,
+      "parsed": true,
+      "prompt_tokens": 233,
+      "response_sha256": "0dbd0a7f3ca4dd1e792dd14223126f7a356d0ca36dd842fc06d7ac58773d2e3d",
+      "state_receipt_sha256": "9284fd8eb6ecb2ea2dae8d1648227429de9466e4d8920f63b0c34b1543aef81a",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 216,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "2040b624c639c099590557b372dbfba153e57693f9cac2e66b1e58c4e9feec84",
+      "state_receipt_sha256": "8c0609a8b738e5605f061a39e03a8e29aaf5e86b9b5cbfd94cd4421d3c2a2042",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 215,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "2040b624c639c099590557b372dbfba153e57693f9cac2e66b1e58c4e9feec84",
+      "state_receipt_sha256": "3a17175cb9e2dc4fceee64a27551f57c0087e44bfb29771b05aba5cc18562b06",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 318,
+      "parsed": true,
+      "prompt_tokens": 223,
+      "response_sha256": "2040b624c639c099590557b372dbfba153e57693f9cac2e66b1e58c4e9feec84",
+      "state_receipt_sha256": "3c260d76856be9bf370e94d337adb9ba895b130a2b5883c1033a4a736b424a41",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:7a8050797360645fd7f693c20cb0b249fc8c2916b11c80154c4102aabf7e8f0d",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 225,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a0732eebdb477c8b13ca38c4c12a3b58a6053230f8dd1d128e8593980fc4160e",
+      "state_receipt_sha256": "47d9bda864705cdd632b28b1b8323823b8851ef20a7a73aa89b6af3a1c7c8971",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 195,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a0732eebdb477c8b13ca38c4c12a3b58a6053230f8dd1d128e8593980fc4160e",
+      "state_receipt_sha256": "4bb96777ae153e10109dad12c6d4acec3a6d40209f477181debce41ee374f15b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 187,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "76e76599e9b365ca86e0fdc65a6b3f02f14ace5fad24b5d5fac07646e363a26a",
+      "state_receipt_sha256": "98ce1430805b40b9e39da6eb9278191cbb46d5f1ae924c578e16735ad55bcd03",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 27,
+      "latency_ms": 260,
+      "parsed": true,
+      "prompt_tokens": 175,
+      "response_sha256": "5c75fa4ec6010798ad3ab12f0b11b7eff9c769da3d3f83c2cb93f0fec13a2d40",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 0
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 86,
+      "parsed": false,
+      "prompt_tokens": 175,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 197,
+      "parsed": true,
+      "prompt_tokens": 234,
+      "response_sha256": "532231ce881981376ffbc1efa171adafb90599935f781a69a14db9d53b992fb9",
+      "state_receipt_sha256": "5edfad42f0bd494c7aea84cc076c1551af36320ad3538fb16db1d073ff988162",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 192,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a0732eebdb477c8b13ca38c4c12a3b58a6053230f8dd1d128e8593980fc4160e",
+      "state_receipt_sha256": "3442de05d3b1c090b5778e40400a19bac20182dc82101059a8b8ba07b7cae370",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 24,
+      "latency_ms": 218,
+      "parsed": true,
+      "prompt_tokens": 224,
+      "response_sha256": "a0732eebdb477c8b13ca38c4c12a3b58a6053230f8dd1d128e8593980fc4160e",
+      "state_receipt_sha256": "4137566817576353957c36f2dfbc6884c083815709a401c64ccdf74985c3dde6",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:a34d69210c93afcde5722c163eb057be72fc6367fac8c74ee62ed4b9e44b19e7",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wire_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 1,
+      "latency_ms": 75,
+      "parsed": false,
+      "prompt_tokens": 176,
+      "response_sha256": "eec0228afe2bceb56781616854533c9a56dded02873d2d409a5f9dd040a8700c",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "treatment",
+      "correct": true,
+      "difficulty": 3,
+      "generated_tokens": 19,
+      "latency_ms": 208,
+      "parsed": true,
+      "prompt_tokens": 235,
+      "response_sha256": "76e76599e9b365ca86e0fdc65a6b3f02f14ace5fad24b5d5fac07646e363a26a",
+      "state_receipt_sha256": "98ce1430805b40b9e39da6eb9278191cbb46d5f1ae924c578e16735ad55bcd03",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_initialization",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 218,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "b585da5c29cb7bd7fba99712cfb86821684d357fa8d677a3bce434e9502b9500",
+      "state_receipt_sha256": "c7e64cca685e4729b75c9788968f6e8871293ffd5863939ca03ff6e98a938ba1",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_write",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 219,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "b585da5c29cb7bd7fba99712cfb86821684d357fa8d677a3bce434e9502b9500",
+      "state_receipt_sha256": "f2df81fef7f3da68d3a68b848f6ccd3448509a5d186aead72ae6dc82970fed05",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "no_read",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 240,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "b585da5c29cb7bd7fba99712cfb86821684d357fa8d677a3bce434e9502b9500",
+      "state_receipt_sha256": "9623aeec458abdb679df5dfa0681cae5b9417b08576b6da21dc99306f1f24a1b",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "reset_memory",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 25,
+      "latency_ms": 246,
+      "parsed": true,
+      "prompt_tokens": 225,
+      "response_sha256": "b585da5c29cb7bd7fba99712cfb86821684d357fa8d677a3bce434e9502b9500",
+      "state_receipt_sha256": "cf6a73efca63ad1dbd5268d3f675a69d70970b29b0ff84ec7f6607d884047dc1",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "matched_wrong_state",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 16,
+      "latency_ms": 178,
+      "parsed": true,
+      "prompt_tokens": 232,
+      "response_sha256": "91dfaa8de59528ae2cc104c37951e790ee11a34cc99fd0683b90b1071add8e3a",
+      "state_receipt_sha256": "924c8ebb3ec0ddf251e638362ffef29ce39958f7a5138f4c19c453c8cddfcc8e",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 5
+    },
+    {
+      "arm": "ordinary_base",
+      "correct": false,
+      "difficulty": 3,
+      "generated_tokens": 28,
+      "latency_ms": 223,
+      "parsed": true,
+      "prompt_tokens": 176,
+      "response_sha256": "8e32c202212ee922c3d16f4b6039e7cadb502345f199df071b5d7b014490526b",
+      "state_receipt_sha256": "",
+      "stopped": true,
+      "task_id": "rlc_frontier:mathematics:aedbe219c6dfef8cc0d9b7ef492ce568c26198290b769a387a449d34889395fe",
+      "wire_prefill_tokens": 0
+    }
+  ],
+  "schema": "aura.rlc.mathematics_memory_decode_canary.v1",
+  "source_identity": {
+    "commit": "c2fba96a3b9ef085411142eb427bb4bf9f095170",
+    "measured_source_clean": true,
+    "source_sha256s": {
+      "core/brain/llm/latent_cortex/frontier_tasks.py": "a6286de6f9c9ce12b7e521633168050c701a813ec06907f1d1d5eb352c6571db",
+      "core/brain/llm/latent_cortex/recurrent_memory_decode_context.py": "cd4d7890e3f2a4f4d373a3dc8125ce48559f79f7351bff56e4520e836f65eccc",
+      "core/brain/llm/unified_recurrent_transfer_decode.py": "7bc2d7e0fe741b0760775a39449b33db506b0a6fd76cb9e3667951d9a67b4a78",
+      "core/learning/recurrent_work_memory_tissue.py": "07e5728c4df332650f619bf42fc1ef12a52b69f6b25a18c24e11998b53087f3d",
+      "tools/run_mathematics_memory_decode_canary.py": "2998ea14e0551dcda2953ec85dd15870826d86f35b8b10011bb10d569907427c"
+    }
+  },
+  "state_inventory_sha256": "e3e5c263ec38538a3dd5c3d61aa11a7402098f82c33a6cc4a1274c74296910ec",
+  "task_inventory_sha256": "8c3d71cf6ff83734555797860bc1e364745ac0319190991794751afec7024e8e"
+}
