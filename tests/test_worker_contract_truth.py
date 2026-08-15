@@ -36,8 +36,8 @@ class TestSanitizerModeAsymmetry:
         assert _sanitize_telemetry_leakage(corrupted, is_proof=False) is None
         assert _sanitize_telemetry_leakage(corrupted, is_proof=True) is None
 
-    def test_backend_markers_stay_conversational_only(self):
-        """A leaked machine token is conversational-only; the English word is not.
+    def test_a_leaked_machine_token_is_refused_in_every_mode(self):
+        """The marker's IDENTITY is its casing, and that holds in proof mode too.
 
         This test used to assert that "Proceeding with the derivation, the
         limit equals 3 as required." must be DESTROYED in conversation. That
@@ -46,11 +46,12 @@ class TestSanitizerModeAsymmetry:
         replies. Measured live — a 226-token answer became "I couldn't get to
         an answer I'd stand behind on that one".
 
-        The asymmetry it was reaching for is real, so it is kept here with a
-        marker whose IDENTITY is its casing.
+        Fixing the casing removed the reason for the proof exemption, but the
+        exemption stayed and the comment kept citing the old pattern. A raw
+        backend action code is leaked internals wherever it appears.
         """
         leaked = "Status: PROCEEDING with ExistenceHash 0x41 emitted."
-        assert _sanitize_telemetry_leakage(leaked, is_proof=True) == leaked
+        assert _sanitize_telemetry_leakage(leaked, is_proof=True) is None
         assert _sanitize_telemetry_leakage(leaked, is_proof=False) is None
 
     def test_the_english_word_survives_in_every_mode(self):

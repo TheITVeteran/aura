@@ -318,3 +318,114 @@ def test_a_checkpoint_that_declares_nothing_records_the_assumption(tmp_path, cap
     assert any(
         "context_window_undeclared" in record.getMessage() for record in caplog.records
     )
+
+
+# ─────────────────────────── an exemption outlived its reason
+
+
+def test_a_leaked_backend_code_is_refused_in_proof_mode_too():
+    """The exemption was justified by a pattern that no longer exists: the
+    markers are exact-case identifiers matched WITHOUT re.IGNORECASE."""
+    leaked = "Result: 42 TOOL_ACTION emitted."
+
+    assert worker._sanitize_telemetry_leakage(leaked, is_proof=True) is None
+    assert worker._sanitize_telemetry_leakage(leaked, is_proof=False) is None
+
+
+def test_the_ordinary_english_word_survives_in_both_modes():
+    text = "Proceeding with the derivation, the limit equals 3 as required."
+
+    assert worker._sanitize_telemetry_leakage(text, is_proof=True) == text
+    assert worker._sanitize_telemetry_leakage(text, is_proof=False) == text
+
+
+def test_the_markers_never_match_lowercase_prose():
+    for probe in (
+        "we are proceeding carefully",
+        "field coherence is high",
+        "the tool action succeeded",
+    ):
+        assert worker._BACKEND_SYMBOLIC_SURFACE_MARKERS.search(probe) is None
+
+
+def test_the_path_wall_check_stays_non_proof():
+    """Unlike the symbolic markers there is no exact token separating a
+    telemetry wall from a path-aware proof answer."""
+    source = inspect.getsource(worker)
+
+    assert "if not is_proof:\n        slash_count" in source
+
+
+def test_corruption_is_refused_in_every_mode():
+    source = inspect.getsource(worker)
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "_sanitize_telemetry_leakage"
+        ):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        assert "if _contains_corrupted_language(text):" in rendered
+        return
+    raise AssertionError("the sanitizer was not found")
+
+
+# ─────────────────────────── a role label inside an exact value
+
+
+def test_an_inline_role_label_no_longer_truncates_a_proof_value():
+    """A transcript, a format description or a test vector can legitimately
+    contain "Assistant:"; the bare substring search shortened the answer while
+    the envelope still looked contract-compliant."""
+    normalized = worker._normalize_strict_answer_response(
+        "The transcript reads Assistant: hello there.", envelope_prefixed=True
+    )
+
+    assert normalized == "<answer>The transcript reads Assistant: hello there.</answer>"
+
+
+def test_a_role_label_at_a_line_boundary_still_ends_the_turn():
+    normalized = worker._normalize_strict_answer_response(
+        "the value\nAssistant: leftover continuation", envelope_prefixed=True
+    )
+
+    assert normalized == "<answer>the value</answer>"
+
+
+def test_chat_control_tokens_still_truncate_anywhere():
+    normalized = worker._normalize_strict_answer_response(
+        "the value<|im_end|>trailing", envelope_prefixed=True
+    )
+
+    assert normalized == "<answer>the value</answer>"
+
+
+def test_an_escaped_literal_survives_normalization():
+    """Windows paths and regexes are exact proof values."""
+    literal = "\\".join(["D:", "work", "x", "re", "d+"])
+
+    normalized = worker._normalize_strict_answer_response(
+        literal, envelope_prefixed=True
+    )
+
+    assert normalized == f"<answer>{literal}</answer>"
+
+
+def test_no_envelope_is_manufactured_when_the_prompt_did_not_open_one():
+    normalized = worker._normalize_strict_answer_response(
+        "plain answer", envelope_prefixed=False
+    )
+
+    assert normalized == "plain answer"
+
+
+def test_a_model_emitted_envelope_survives_verbatim():
+    body = "\\".join(["D:", "path", "value"])
+
+    normalized = worker._normalize_strict_answer_response(
+        f"<answer>{body}</answer>", envelope_prefixed=False
+    )
+
+    assert normalized == f"<answer>{body}</answer>"

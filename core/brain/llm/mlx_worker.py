@@ -1978,6 +1978,9 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
     # filesystem, or proof output. The old slash-count heuristic rejected any
     # answer with more than 15 "/" characters, which is common in live coding
     # tasks and path-aware proof/eval runs.
+    # The path-wall check stays non-proof: coding and path-aware eval answers
+    # legitimately contain many paths, and unlike the symbolic markers there
+    # is no exact token that separates a wall from real content.
     if not is_proof:
         slash_count = text.count("/")
         if slash_count > 30 and "http" not in text.lower():
@@ -1998,11 +2001,15 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
     # corrupted evidence, so the proof exemption never applied here.
     if _contains_corrupted_language(text):
         return None
-    # Backend-symbolic surface markers stay non-proof only: the pattern
-    # includes common English words ("proceeding", "field coherence") that
-    # legitimately occur in eval/proof task content; proof corruption is
-    # covered by the corrupted-language and path-wall checks above.
-    if not is_proof and _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(text):
+    # 5) Backend-symbolic surface markers apply in EVERY mode. The exemption
+    # here was justified by a pattern that no longer exists: it claimed the
+    # regex matched common English words ("proceeding", "field coherence"),
+    # but the markers are exact-case backend identifiers — PROCEEDING,
+    # TOOL_ACTION, ExistenceHash — matched WITHOUT re.IGNORECASE, so
+    # lowercase prose never matched, and "field coherence" is not in this
+    # pattern at all. A proof answer containing a raw backend action code is
+    # leaked internals wherever it appears.
+    if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(text):
         return None
 
     return text
@@ -2796,8 +2803,22 @@ def _collapse_escape_noise(text: str) -> str:
 
 
 def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> str:
-    """Normalize strict proof output without changing the model-derived answer."""
-    cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
+    """Normalize strict proof output without changing the model-derived answer.
+
+    ``envelope_prefixed`` says the PROMPT already opened ``<answer>``, so the
+    model's continuation is the body of an envelope the worker opened — closing
+    it is completion, not manufacture. Without that flag nothing is wrapped:
+    an envelope the model never produced is not evidence that it produced one.
+    """
+    raw = _strip_leading_chatml_prefix(str(text or "").strip()).strip()
+    # A chat-control token ENDS the turn. Substituting it away first glued
+    # whatever followed — the next turn's text — onto the answer, and the
+    # truncation loop further down never saw a token to stop at. Cut at the
+    # first one that is not the leading prefix, then clean what remains.
+    control = _CHAT_CONTROL_TOKEN_RE.search(raw)
+    if control is not None and control.start() > 0:
+        raw = raw[: control.start()].strip()
+    cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", raw).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
     # Envelope extraction runs BEFORE escape rewriting: a well-formed
     # <answer> body is the model's exact value and must survive unaltered.
@@ -2817,17 +2838,18 @@ def _normalize_strict_answer_response(text: str, *, envelope_prefixed: bool) -> 
     cleaned = re.sub(r"(?is)^\s*<answer>\s*", "", cleaned).strip()
     if "</answer>" in cleaned:
         cleaned = cleaned.split("</answer>", 1)[0].strip()
-    for marker in (
-        "<|im_end|>",
-        "<|im_start|>",
-        "User:",
-        "Human:",
-        "Assistant:",
-        "Aura:",
-    ):
-        idx = cleaned.find(marker)
-        if idx >= 0:
-            cleaned = cleaned[:idx].strip()
+    # Chat-control tokens already truncated above. Human-readable role labels
+    # are different: an exact proof value can legitimately contain
+    # "Assistant:" — a transcript, a format description, a test vector — and
+    # truncating on the bare substring silently shortened the answer while the
+    # envelope still looked contract-compliant. They only end a turn at a line
+    # boundary, which is the same rule _merge_stop_sequences already applies.
+    role_stop = re.search(
+        r"(?m)^[ \t]*(?:User|Human|Assistant|Aura):",
+        cleaned,
+    )
+    if role_stop and role_stop.start() > 0:
+        cleaned = cleaned[: role_stop.start()].strip()
     return f"<answer>{cleaned}</answer>" if cleaned else ""
 
 
