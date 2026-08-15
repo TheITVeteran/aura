@@ -1337,6 +1337,59 @@ def test_typed_transition_processor_hidden_experts_are_noop_isolated_and_control
         )
 
 
+def test_typed_transition_processor_interaction_experts_specialize_before_compression() -> None:
+    controller = _controller()
+    controller.transition_processor_opcode_interaction_down = (
+        controller.transition_processor_opcode_interaction_down.at[8].add(1.0)
+    )
+    controller.transition_processor_output = mx.random.normal(
+        controller.transition_processor_output.shape,
+        key=mx.random.key(121),
+    )
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    opcode_eight = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    opcode_nine = controller.exact_probabilities(
+        (9, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    active = controller.typed_transition_processor_logits(
+        state,
+        opcode_eight,
+        None,
+    )
+    active_lesioned = controller.typed_transition_processor_logits(
+        state,
+        opcode_eight,
+        None,
+        opcode_expert_routing="lesion",
+    )
+    isolated = controller.typed_transition_processor_logits(
+        state,
+        opcode_nine,
+        None,
+    )
+    isolated_lesioned = controller.typed_transition_processor_logits(
+        state,
+        opcode_nine,
+        None,
+        opcode_expert_routing="lesion",
+    )
+
+    mx.eval(active, active_lesioned, isolated, isolated_lesioned)
+    assert not bool(mx.allclose(active, active_lesioned))
+    assert bool(mx.allclose(isolated, isolated_lesioned))
+
+
 def test_typed_transition_processor_preserves_state_action_and_history_identity() -> None:
     controller = _controller()
     controller.transition_processor_output = mx.random.normal(

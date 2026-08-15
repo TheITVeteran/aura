@@ -475,6 +475,30 @@ def test_factorized_transition_acquisition_expands_operation_support() -> None:
     assert "--direct-transition-processor" in arguments
 
 
+def test_compositional_transition_acquisition_stages_before_closed_loop() -> None:
+    training = _profile_training(
+        "process_public_transition_compositional_acquisition"
+    )
+    arguments = _training_cli(training)
+
+    assert training["public_action_program"] is True
+    assert training["direct_transition_processor"] is True
+    assert training["direct_transition_curriculum"] == "progressive"
+    assert training["direct_transition_weakest_register_weight"] == pytest.approx(
+        0.25
+    )
+    assert training["per_cell"] == 128
+    assert training["holdout_per_cell"] == 12
+    assert training["max_steps"] == training["state_warmup_steps"] == 1536
+    assert training["eval_every"] == 128
+    assert arguments[arguments.index("--direct-transition-curriculum") + 1] == (
+        "progressive"
+    )
+    assert arguments[
+        arguments.index("--direct-transition-weakest-register-weight") + 1
+    ] == "0.25"
+
+
 def test_process_completion_signed_config_is_controller_admitted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

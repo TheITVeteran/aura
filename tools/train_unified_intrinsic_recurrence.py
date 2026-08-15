@@ -55,6 +55,7 @@ from core.learning.recurrent_opcode_grounding import (  # noqa: E402
     tokenizer_opcode_contract,
 )
 from core.learning.recurrent_state_schema import (  # noqa: E402
+    STATE_SLOT_LOSS_WEIGHTS,
     STATE_SLOT_NAMES,
     state_targets_from_trace,
 )
@@ -943,6 +944,84 @@ def _process_training_policy(
     }
 
 
+def _direct_transition_curriculum_window(
+    step: int,
+    total_steps: int,
+    transition_depth: int,
+    *,
+    mode: str,
+) -> dict[str, Any]:
+    """Progress from local transition mastery to the deployed closed loop."""
+
+    if (
+        type(step) is not int
+        or type(total_steps) is not int
+        or type(transition_depth) is not int
+        or total_steps < 1
+        or transition_depth < 1
+        or not 0 <= step < total_steps
+        or mode not in {"closed_loop", "progressive"}
+    ):
+        raise ValueError("direct transition curriculum coordinates differ")
+    if mode == "closed_loop":
+        return {
+            "stage": "closed_loop",
+            "transition_start": 0,
+            "transition_count": transition_depth,
+            "training_only_midtrace_initial_state": False,
+            "complete_public_prefix_visible": True,
+            "corrupt_transition": None,
+            "corrupt_state_slot": None,
+        }
+
+    stage_stop = (
+        max(1, 15 * total_steps // 100),
+        max(2, 30 * total_steps // 100),
+        max(3, 45 * total_steps // 100),
+    )
+    widths = (1, 2, 4)
+    stage_index = next(
+        (index for index, stop in enumerate(stage_stop) if step < stop),
+        None,
+    )
+    if stage_index is None:
+        recovery_start = max(stage_stop[-1], 70 * total_steps // 100)
+        recovery_stop = max(recovery_start, 85 * total_steps // 100)
+        if recovery_start <= step < recovery_stop:
+            recovery_index = step - recovery_start
+            return {
+                "stage": "controlled_recovery",
+                "transition_start": 0,
+                "transition_count": transition_depth,
+                "training_only_midtrace_initial_state": False,
+                "complete_public_prefix_visible": True,
+                "corrupt_transition": recovery_index % transition_depth,
+                "corrupt_state_slot": 1 + recovery_index % 3,
+            }
+        return {
+            "stage": "closed_loop",
+            "transition_start": 0,
+            "transition_count": transition_depth,
+            "training_only_midtrace_initial_state": False,
+            "complete_public_prefix_visible": True,
+            "corrupt_transition": None,
+            "corrupt_state_slot": None,
+        }
+    width = min(widths[stage_index], transition_depth)
+    stage_start = 0 if stage_index == 0 else stage_stop[stage_index - 1]
+    available_starts = transition_depth - width + 1
+    transition_start = (step - stage_start) % available_starts
+    return {
+        "stage": f"verified_window_{width}",
+        "transition_start": transition_start,
+        "transition_count": width,
+        "training_only_midtrace_initial_state": transition_start > 0,
+        "complete_public_prefix_visible": True,
+        "corrupt_transition": None,
+        "corrupt_state_slot": None,
+    }
+
+
 def _phase_schedule(
     *,
     semantic_warmup_steps: int,
@@ -1129,6 +1208,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.state_literal_copy_logit",
             "controller.state_action_projection",
             "controller.transition_memory_",
+            "controller.transition_tape_",
             "controller.transition_processor_",
         )
     ):
@@ -2057,6 +2137,89 @@ def _mean_gradient_trees(samples: list[Any]) -> Any:
             for index, (name, _value) in enumerate(flattened[0])
         ]
     )
+
+
+def _gradient_conflict_diagnostics(
+    samples: list[Any],
+    labels: list[str],
+    *,
+    ownership_group: str,
+) -> dict[str, Any]:
+    """Measure cross-task gradient alignment without inventing an SNR model."""
+
+    if (
+        not samples
+        or len(samples) != len(labels)
+        or len(set(labels)) != len(labels)
+        or not ownership_group
+    ):
+        raise ValueError("gradient conflict cohort differs")
+    flattened = [dict(tree_flatten(sample)) for sample in samples]
+    names = sorted(
+        name
+        for name in flattened[0]
+        if _gradient_ownership_group(name) == ownership_group
+    )
+    if not names or any(set(candidate) != set(flattened[0]) for candidate in flattened[1:]):
+        raise ValueError("gradient conflict topology differs")
+    norms = [
+        mx.sqrt(
+            mx.sum(
+                mx.stack(
+                    [
+                        mx.sum(candidate[name].astype(mx.float32) ** 2)
+                        for name in names
+                    ]
+                )
+            )
+        )
+        for candidate in flattened
+    ]
+    pairs: list[dict[str, Any]] = []
+    for left_index in range(len(flattened)):
+        for right_index in range(left_index + 1, len(flattened)):
+            denominator = norms[left_index] * norms[right_index]
+            dot = mx.sum(
+                mx.stack(
+                    [
+                        mx.sum(
+                            flattened[left_index][name].astype(mx.float32)
+                            * flattened[right_index][name].astype(mx.float32)
+                        )
+                        for name in names
+                    ]
+                )
+            )
+            mx.eval(denominator, dot)
+            measured = float(denominator.item()) > 1e-12
+            pairs.append(
+                {
+                    "left": labels[left_index],
+                    "right": labels[right_index],
+                    "cosine": float((dot / denominator).item()) if measured else None,
+                    "measured": measured,
+                }
+            )
+    mx.eval(*norms)
+    measured_cosines = [
+        float(pair["cosine"]) for pair in pairs if pair["cosine"] is not None
+    ]
+    return {
+        "ownership_group": ownership_group,
+        "parameter_count": len(names),
+        "norms": {
+            label: float(norm.item()) for label, norm in zip(labels, norms, strict=True)
+        },
+        "pairs": pairs,
+        "measured_pairs": len(measured_cosines),
+        "negative_pairs": sum(value < 0.0 for value in measured_cosines),
+        "minimum_cosine": min(measured_cosines) if measured_cosines else None,
+        "mean_cosine": (
+            sum(measured_cosines) / len(measured_cosines)
+            if measured_cosines
+            else None
+        ),
+    }
 
 
 def _cached_answer_binding_features(
@@ -3937,7 +4100,16 @@ def _merge_bootstrap_transition_opcode_expert_extension(
     if not missing:
         return dict(parent_values), None
     hidden_name = "controller.transition_processor_opcode_hidden"
-    if missing not in (expected, {hidden_name}):
+    interaction_names = {
+        "controller.transition_processor_opcode_interaction_up",
+        "controller.transition_processor_opcode_interaction_down",
+    }
+    if missing not in (
+        expected,
+        {hidden_name},
+        interaction_names,
+        interaction_names | {hidden_name},
+    ):
         raise RuntimeError(
             "unified recurrence bootstrap transition-opcode expert inventory differs: "
             + ",".join(sorted(missing))
@@ -3950,7 +4122,11 @@ def _merge_bootstrap_transition_opcode_expert_extension(
                 "unified recurrence bootstrap transition-opcode expert source differs"
             )
         value = child_values[name]
-        if bool(mx.any(value != 0)):
+        if (
+            name
+            != "controller.transition_processor_opcode_interaction_up"
+            and bool(mx.any(value != 0))
+        ):
             raise RuntimeError(
                 "unified recurrence bootstrap transition-opcode expert is not a no-op"
             )
@@ -3963,7 +4139,7 @@ def _merge_bootstrap_transition_opcode_expert_extension(
     return migrated, {
         "schema": "aura.unified_intrinsic.transition_opcode_expert_extension.v1",
         "migration_rule": (
-            "parent_exact_plus_zero_output_opcode_isolated_hidden_and_heads"
+            "parent_exact_plus_zero_output_opcode_isolated_interaction_hidden_and_heads"
         ),
         "parent_tensor_inventory_preserved": True,
         "behavior_before_training_preserved": True,
@@ -4641,6 +4817,24 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--direct-transition-curriculum",
+        choices=("closed_loop", "progressive"),
+        default="closed_loop",
+        help=(
+            "train only deployed full closed loops or first master verified "
+            "one-, two-, and four-transition windows before the closed-loop tail"
+        ),
+    )
+    parser.add_argument(
+        "--direct-transition-weakest-register-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "bounded extra weight for the worst active categorical register "
+            "during direct transition acquisition"
+        ),
+    )
+    parser.add_argument(
         "--transition-opcode-expert-routing",
         choices=("opcode", "uniform", "lesion"),
         default="opcode",
@@ -4883,6 +5077,20 @@ def main() -> int:
         raise ValueError(
             "direct transition processor requires public transition-only controller training"
         )
+    if (
+        args.direct_transition_curriculum != "closed_loop"
+        and not args.direct_transition_processor
+    ):
+        raise ValueError(
+            "direct transition curriculum requires direct transition processor training"
+        )
+    if (
+        not math.isfinite(args.direct_transition_weakest_register_weight)
+        or not 0.0 <= args.direct_transition_weakest_register_weight <= 2.0
+        or args.direct_transition_weakest_register_weight > 0.0
+        and not args.direct_transition_processor
+    ):
+        raise ValueError("direct transition weakest-register weight differs")
     if args.transition_opcode_expert_routing != "opcode" and (
         not args.direct_transition_processor or not args.public_action_program
     ):
@@ -5389,6 +5597,23 @@ def main() -> int:
             "direct_transition_processor": {
                 "enabled": args.direct_transition_processor,
                 "objective": "verified_state_public_action_history_to_next_state",
+                "curriculum": args.direct_transition_curriculum,
+                "register_loss_weights": list(STATE_SLOT_LOSS_WEIGHTS),
+                "weakest_register_weight": (
+                    args.direct_transition_weakest_register_weight
+                ),
+                "curriculum_stages": (
+                    [
+                        "verified_window_1",
+                        "verified_window_2",
+                        "verified_window_4",
+                        "closed_loop",
+                        "controlled_recovery",
+                        "closed_loop_final",
+                    ]
+                    if args.direct_transition_curriculum == "progressive"
+                    else ["closed_loop"]
+                ),
                 "deployed_transition_policy": "processor_authoritative",
                 "opcode_expert_routing": args.transition_opcode_expert_routing,
                 "transformer_graph_constructed": False,
@@ -5710,6 +5935,7 @@ def main() -> int:
                 with recurrence_adapter_scope(start=None, stop=None):
                     update_applied = False
                     process_policy: dict[str, Any] | None = None
+                    process_gradient_diagnostics: dict[str, Any] | None = None
                     bridge_state_targets = None
                     bridge_action_targets = None
                     bridge_teacher_policy = None
@@ -6031,6 +6257,20 @@ def main() -> int:
                                     if args.public_action_program
                                     else None
                                 )
+                                direct_curriculum = (
+                                    _direct_transition_curriculum_window(
+                                        step,
+                                        args.state_warmup_steps,
+                                        min(
+                                            max(state_spec.train_depths),
+                                            int(cohort_task.transition_trace.depth),
+                                            len(cohort_task.transition_program.actions),
+                                        ),
+                                        mode=args.direct_transition_curriculum,
+                                    )
+                                    if args.direct_transition_processor
+                                    else None
+                                )
 
                                 def process_objective(
                                     candidate: UnifiedTrainingBundle,
@@ -6042,9 +6282,10 @@ def main() -> int:
                                     public_actions: tuple[tuple[int, ...], ...] | None = (
                                         cohort_public_actions
                                     ),
+                                    curriculum: dict[str, Any] | None = direct_curriculum,
                                 ) -> Any:
                                     if args.direct_transition_processor:
-                                        if public_actions is None:
+                                        if public_actions is None or curriculum is None:
                                             raise RuntimeError(
                                                 "direct transition processor has no public actions"
                                             )
@@ -6056,6 +6297,28 @@ def main() -> int:
                                             public_action_values=public_actions,
                                             opcode_expert_routing=(
                                                 args.transition_opcode_expert_routing
+                                            ),
+                                            transition_start=curriculum[
+                                                "transition_start"
+                                            ],
+                                            transition_count=curriculum[
+                                                "transition_count"
+                                            ],
+                                            corrupt_transition=curriculum[
+                                                "corrupt_transition"
+                                            ],
+                                            corrupt_state_slot=(
+                                                1
+                                                if curriculum[
+                                                    "corrupt_state_slot"
+                                                ]
+                                                is None
+                                                else curriculum[
+                                                    "corrupt_state_slot"
+                                                ]
+                                            ),
+                                            weakest_register_weight=(
+                                                args.direct_transition_weakest_register_weight
                                             ),
                                         )[0]
                                     return unified_process_training_loss(
@@ -6092,6 +6355,20 @@ def main() -> int:
                                 cohort_losses.append(mx.stop_gradient(cohort_loss))
                                 cohort_gradients.append(cohort_gradient)
                             loss = mx.mean(mx.stack(cohort_losses))
+                            if (
+                                (step + 1) % args.eval_every == 0
+                                or step + 1 == args.max_steps
+                            ):
+                                process_gradient_diagnostics = (
+                                    _gradient_conflict_diagnostics(
+                                        cohort_gradients,
+                                        [
+                                            str(item.task_id)
+                                            for item in process_family_batch
+                                        ],
+                                        ownership_group="typed_state_transition",
+                                    )
+                                )
                             gradients = _mean_gradient_trees(cohort_gradients)
                         elif phase == "recurrence":
                             loss, gradients = _streamed_recurrent_objective_gradients(
@@ -6199,6 +6476,9 @@ def main() -> int:
                         rollin_totals,
                         initial_probability=args.student_rollin_probability,
                         final_probability=rollin_final_probability,
+                    )
+                    report["process_gradient_diagnostics"] = (
+                        process_gradient_diagnostics
                     )
                     history.append(report)
                     print(f"[eval {step}] {report}", flush=True)

@@ -1107,6 +1107,13 @@ def unified_typed_transition_processor_loss(
     transition_program: Any,
     public_action_values: Sequence[Sequence[int]],
     opcode_expert_routing: str = "opcode",
+    transition_start: int = 0,
+    transition_count: int | None = None,
+    corrupt_transition: int | None = None,
+    corrupt_state_slot: int = 1,
+    corrupt_state_offset: int = 1,
+    register_weights: Sequence[float] | None = None,
+    weakest_register_weight: float = 0.0,
 ) -> tuple[Any, dict[str, Any]]:
     """Train exact categorical transition algebra without a transformer graph.
 
@@ -1125,25 +1132,86 @@ def unified_typed_transition_processor_loss(
     if public_actions != action_targets.values:
         raise ValueError("public transition actions differ from the verified program")
 
-    action_history: list[Any] = []
-    losses: list[Any] = []
-    correct = mx.zeros((), dtype=mx.float32)
-    required = mx.zeros((), dtype=mx.float32)
-    state_probabilities = controller.exact_probabilities(
-        targets.initial_values,
-        slots=controller.config.state_slots,
-        cardinality=controller.config.state_cardinality,
-    )
-    active_transitions = min(
+    if (
+        type(transition_start) is not int
+        or transition_start < 0
+        or transition_count is not None
+        and (type(transition_count) is not int or transition_count < 1)
+        or corrupt_transition is not None
+        and (type(corrupt_transition) is not int or corrupt_transition < 0)
+        or type(corrupt_state_slot) is not int
+        or not 0 <= corrupt_state_slot < controller.config.state_slots - 1
+        or type(corrupt_state_offset) is not int
+        or not 0 < corrupt_state_offset < controller.config.state_cardinality
+        or register_weights is not None
+        and (
+            len(register_weights) != controller.config.state_slots
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0.0
+                for value in register_weights
+            )
+        )
+        or isinstance(weakest_register_weight, bool)
+        or not isinstance(weakest_register_weight, (int, float))
+        or not math.isfinite(float(weakest_register_weight))
+        or not 0.0 <= float(weakest_register_weight) <= 2.0
+    ):
+        raise ValueError("direct transition curriculum window differs")
+    resolved_register_weights = mx.array(
+        (
+            tuple(float(value) for value in register_weights)
+            if register_weights is not None
+            else STATE_SLOT_LOSS_WEIGHTS
+        ),
+        dtype=mx.float32,
+    )[None, :]
+    available_transitions = min(
         plan.iterations,
         int(transition_trace.depth),
         len(transition_program.actions),
     )
-    for action_values, next_values, masks in zip(
-        public_actions[:active_transitions],
-        targets.values[:active_transitions],
-        targets.masks[:active_transitions],
-        strict=True,
+    if transition_start >= available_transitions:
+        raise ValueError("direct transition curriculum starts after execution")
+    transition_stop = (
+        available_transitions
+        if transition_count is None
+        else min(available_transitions, transition_start + transition_count)
+    )
+    if corrupt_transition is not None and not (
+        transition_start <= corrupt_transition < transition_stop
+    ):
+        raise ValueError("direct transition corruption is outside its window")
+    action_history: list[Any] = [
+        controller.exact_probabilities(
+            action_values,
+            slots=controller.config.action_slots,
+            cardinality=controller.config.action_cardinality,
+        )
+        for action_values in public_actions[:transition_start]
+    ]
+    losses: list[Any] = []
+    correct = mx.zeros((), dtype=mx.float32)
+    required = mx.zeros((), dtype=mx.float32)
+    state_probabilities = controller.exact_probabilities(
+        (
+            targets.initial_values
+            if transition_start == 0
+            else targets.values[transition_start - 1]
+        ),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    for transition_index, (action_values, next_values, masks) in enumerate(
+        zip(
+            public_actions[transition_start:transition_stop],
+            targets.values[transition_start:transition_stop],
+            targets.masks[transition_start:transition_stop],
+            strict=True,
+        ),
+        start=transition_start,
     ):
         action_probabilities = controller.exact_probabilities(
             action_values,
@@ -1151,6 +1219,18 @@ def unified_typed_transition_processor_loss(
             cardinality=controller.config.action_cardinality,
         )
         action_history.append(action_probabilities)
+        if transition_index == corrupt_transition:
+            selected = mx.argmax(state_probabilities, axis=-1)
+            corrupted_values = selected.at[:, corrupt_state_slot].add(
+                corrupt_state_offset
+            ) % controller.config.state_cardinality
+            categories = mx.arange(controller.config.state_cardinality)[
+                None, None, :
+            ]
+            corrupted = (categories == corrupted_values[..., None]).astype(mx.float32)
+            state_probabilities = state_probabilities + mx.stop_gradient(
+                corrupted - state_probabilities
+            )
         history_memory = controller._typed_transition_memory(
             action_history,
             state_probabilities=state_probabilities,
@@ -1171,8 +1251,19 @@ def unified_typed_transition_processor_loss(
             labels,
             reduction="none",
         )
-        denominator = mx.maximum(mx.sum(mask), 1.0)
-        losses.append(mx.sum(token_losses * mask) / denominator)
+        weighted_mask = mask * resolved_register_weights
+        denominator = mx.maximum(mx.sum(weighted_mask), 1.0)
+        step_loss = mx.sum(token_losses * weighted_mask) / denominator
+        if float(weakest_register_weight) > 0.0:
+            active_register_losses = mx.where(
+                mask > 0.0,
+                token_losses,
+                mx.array(-1e9, dtype=token_losses.dtype),
+            )
+            step_loss = step_loss + float(weakest_register_weight) * mx.max(
+                active_register_losses
+            )
+        losses.append(step_loss)
         predictions = mx.argmax(logits, axis=-1)
         correct = correct + mx.sum((predictions == labels).astype(mx.float32) * mask)
         required = required + mx.sum(mask)
@@ -1195,13 +1286,31 @@ def unified_typed_transition_processor_loss(
         "public_actions_are_correctness_authority": False,
         "verified_state_teacher_available": True,
         "teacher_available_at_inference": False,
-        "initial_state_authority": "verified_public_initial_state",
+        "initial_state_authority": (
+            "verified_public_initial_state"
+            if transition_start == 0
+            else "training_only_verified_midtrace_state"
+        ),
         "rollout_state_authority": "student_prediction_after_initial",
         "closed_loop_student_rollout": True,
         "deployed_transition_policy": "processor_authoritative",
         "legacy_transition_logits_available": False,
         "opcode_expert_routing": opcode_expert_routing,
-        "active_transitions": active_transitions,
+        "active_transitions": transition_stop - transition_start,
+        "transition_start": transition_start,
+        "transition_stop": transition_stop,
+        "complete_public_prefix_visible": True,
+        "controlled_state_corruption": {
+            "enabled": corrupt_transition is not None,
+            "transition": corrupt_transition,
+            "slot": corrupt_state_slot if corrupt_transition is not None else None,
+            "offset": corrupt_state_offset if corrupt_transition is not None else None,
+            "runtime_correctness_oracle_available": False,
+        },
+        "register_loss_weights": [
+            float(value) for value in resolved_register_weights[0].tolist()
+        ],
+        "weakest_register_weight": float(weakest_register_weight),
         "post_terminal_transitions_trained": 0,
         "answer_tokens_exposed": False,
         "transformer_graph_constructed": False,

@@ -162,6 +162,8 @@ TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
     "transition_processor_output",
 )
 TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES: Final = (
+    "transition_processor_opcode_interaction_up",
+    "transition_processor_opcode_interaction_down",
     "transition_processor_opcode_hidden",
     "transition_processor_opcode_output",
 )
@@ -443,6 +445,10 @@ class UnifiedRecurrentController(nn.Module):
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x54504552),
             num=6,
+        )
+        (key_transition_opcode_interaction_up,) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x4F504958),
+            num=1,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -923,6 +929,28 @@ class UnifiedRecurrentController(nn.Module):
                 config.state_slots,
                 config.correction_rank,
                 config.state_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        opcode_interaction_rank = max(4, config.correction_rank // 8)
+        self.transition_processor_opcode_interaction_up = (
+            mx.random.normal(
+                (
+                    config.action_cardinality,
+                    config.state_slots,
+                    interaction_width,
+                    opcode_interaction_rank,
+                ),
+                key=key_transition_opcode_interaction_up,
+            ).astype(mx.float32)
+            / math.sqrt(interaction_width)
+        )
+        self.transition_processor_opcode_interaction_down = mx.zeros(
+            (
+                config.action_cardinality,
+                config.state_slots,
+                opcode_interaction_rank,
+                config.correction_rank,
             ),
             dtype=mx.float32,
         )
@@ -2359,6 +2387,19 @@ class UnifiedRecurrentController(nn.Module):
             routing = mx.zeros_like(opcode_probabilities)
         else:
             routing = opcode_probabilities
+        interaction_expert = nn.gelu(
+            mx.einsum(
+                "osie,bsi->bose",
+                self.transition_processor_opcode_interaction_up,
+                interactions,
+            )
+        )
+        processed = processed + mx.einsum(
+            "bo,oser,bose->bsr",
+            routing,
+            self.transition_processor_opcode_interaction_down,
+            interaction_expert,
+        )
         hidden_residual = mx.einsum(
             "bo,osri,bsi->bsr",
             routing,
@@ -3850,6 +3891,9 @@ class UnifiedRecurrentController(nn.Module):
                 "output_active": bool(mx.any(self.transition_processor_output != 0)),
                 "opcode_expert_output_active": bool(
                     mx.any(self.transition_processor_opcode_output != 0)
+                ),
+                "opcode_interaction_expert_active": bool(
+                    mx.any(self.transition_processor_opcode_interaction_down != 0)
                 ),
                 "lesionable": True,
                 "private_transition_trace_visible": False,

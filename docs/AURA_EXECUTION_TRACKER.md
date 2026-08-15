@@ -49749,3 +49749,48 @@ compatibility. The focused RLC transition set is `223 passed`. This checkpoint
 establishes information availability, not acquisition. Primitive-local then
 closed-loop compositional curriculum, gradient observability and verified
 error-recovery training remain required before the next bounded canary.
+
+## Checkpoint 2026-08-14-503: Train Composition, Specialization And Recovery
+
+CP502 made the complete public action prefix readable but did not teach the
+processor to use it. CP498 and CP500 also trained every program depth together,
+weighted all active state registers uniformly and provided no controlled
+examples of returning from a wrong student state. Those conditions left three
+different failures entangled: primitive transition acquisition, compositional
+rollout and recovery after the first error.
+
+Direct transition acquisition now supports a progressive curriculum over the
+real mathematics, coding, calibration and premise-audit programs. It begins
+with one-, two- and four-transition windows, advances to complete clean
+closed-loop programs, then introduces bounded single-register corruptions
+before returning to clean full-program acquisition. A mid-trace window receives
+the verified state at its training-only boundary and the complete preceding
+public action tape; every subsequent state is still the student's own hard
+prediction. Final evaluation always runs the deployed clean closed loop from
+the public initial state. No private state, answer or verifier result is added
+to runtime inputs.
+
+The objective now uses canonical register weights and a bounded weakest-active-
+register penalty so aggregate loss cannot hide a register that never learned.
+Controlled corruption identifies the altered transition, slot and offset in
+the receipt and explicitly records that no runtime correctness oracle exists.
+Evaluation-boundary diagnostics measure per-family gradient norms and pairwise
+cosines for the owned transition tensors. Zero-norm pairs remain unmeasured
+instead of being scored as compatible.
+
+Opcode specialization now branches on the raw state-action-history interaction
+features before the shared compression bottleneck, then retains the existing
+hidden and categorical expert surfaces. Opcode, uniform-router and lesion arms
+have identical tensor inventories. The new random input basis attaches through
+a zero output projection, so bootstrap migration remains bitwise inert; a
+behavior-changing migration is refused. The public tape reader is also included
+in the transition gradient-ownership group, closing a masking defect that would
+otherwise have left CP502's new reader frozen during acquisition.
+
+The source-bound compositional profile carries the curriculum, register loss,
+recovery schedule and gradient diagnostics in its signed identity. Focused
+contracts are `229 passed`. This checkpoint implements the remaining valid
+CP498 repair mechanisms; it does not establish the external review's predicted
+accuracies, decoded reasoning gain, resident-32B transfer, fusion or `WOW
+Signal`. Those claims remain gated on a bounded clean canary, matched lesions
+and fresh replication.

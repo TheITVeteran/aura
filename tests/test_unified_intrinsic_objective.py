@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
@@ -867,6 +869,171 @@ def test_direct_transition_tape_never_reads_future_public_actions() -> None:
         first_reads.append(reads[0])
 
     assert first_reads[0] == first_reads[1]
+
+
+def test_direct_transition_curriculum_keeps_prior_public_tape_for_midtrace_window() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=3,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 0), (3, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1), (2, 1, 1)),
+    )
+    observed_states: list[tuple[int, ...]] = []
+    observed_prefix_reads: list[tuple[float, ...]] = []
+    original = controller.typed_transition_processor_logits
+
+    def capture(
+        state_probabilities,
+        action_probabilities,
+        history_memory,
+        *,
+        opcode_expert_routing="opcode",
+    ):
+        mx.eval(state_probabilities, history_memory)
+        observed_states.append(
+            tuple(
+                int(value)
+                for value in mx.argmax(state_probabilities[0], axis=-1).tolist()
+            )
+        )
+        observed_prefix_reads.append(
+            tuple(float(value) for value in history_memory.flatten().tolist())
+        )
+        return original(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            opcode_expert_routing=opcode_expert_routing,
+        )
+
+    controller.typed_transition_processor_logits = capture
+    try:
+        _loss, receipt = unified_typed_transition_processor_loss(
+            controller,
+            _spec().plan_at(3),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=action_targets_from_program(program, 3).values,
+            transition_start=1,
+            transition_count=1,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    assert observed_states == [(1, 1, 0, 0, 0)]
+    assert len(observed_prefix_reads) == 1
+    assert receipt["initial_state_authority"] == "training_only_verified_midtrace_state"
+    assert receipt["transition_start"] == 1
+    assert receipt["transition_stop"] == 2
+    assert receipt["complete_public_prefix_visible"] is True
+
+
+def test_direct_transition_recovery_curriculum_injects_no_runtime_oracle() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=2,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1)),
+    )
+    observed: list[tuple[int, ...]] = []
+    original = controller.typed_transition_processor_logits
+
+    def capture(
+        state_probabilities,
+        action_probabilities,
+        history_memory,
+        *,
+        opcode_expert_routing="opcode",
+    ):
+        mx.eval(state_probabilities)
+        observed.append(
+            tuple(
+                int(value)
+                for value in mx.argmax(state_probabilities[0], axis=-1).tolist()
+            )
+        )
+        return original(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            opcode_expert_routing=opcode_expert_routing,
+        )
+
+    controller.typed_transition_processor_logits = capture
+    try:
+        _loss, receipt = unified_typed_transition_processor_loss(
+            controller,
+            _spec().plan_at(2),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=action_targets_from_program(program, 2).values,
+            corrupt_transition=0,
+            corrupt_state_slot=1,
+            corrupt_state_offset=2,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    assert observed[0] == (0, 2, 0, 0, 0)
+    assert receipt["controlled_state_corruption"] == {
+        "enabled": True,
+        "transition": 0,
+        "slot": 1,
+        "offset": 2,
+        "runtime_correctness_oracle_available": False,
+    }
+
+
+def test_direct_transition_loss_weights_value_registers_and_weakest_term() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=1,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1),),
+    )
+    public_actions = action_targets_from_program(program, 1).values
+
+    base, base_receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(1),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+    )
+    strongest, strongest_receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(1),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+        weakest_register_weight=0.25,
+    )
+
+    mx.eval(base, strongest)
+    assert base_receipt["register_loss_weights"] == [1.0, 4.0, 4.0, 4.0, 1.0]
+    assert strongest_receipt["weakest_register_weight"] == pytest.approx(0.25)
+    assert float(strongest.item() - base.item()) == pytest.approx(
+        0.25 * math.log(controller.config.state_cardinality),
+        rel=1e-5,
+    )
 
 
 def test_direct_transition_objective_learns_exact_trace() -> None:

@@ -62,6 +62,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _clip_gradient_norm,
     _configure_window_tissue,
     _deterministic_student_mix,
+    _direct_transition_curriculum_window,
     _dual_ridge_residual_readout,
     _evaluate,
     _evaluate_answer_bridge_admission,
@@ -69,6 +70,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _evaluate_process_admission,
     _freeze_dataset,
     _generate_student_rollin,
+    _gradient_conflict_diagnostics,
     _ground_state_value_embeddings,
     _initial_rollin_totals,
     _invocation_stop_step,
@@ -486,6 +488,26 @@ def test_bootstrap_transition_opcode_experts_are_exact_and_audited() -> None:
     active["controller.transition_processor_opcode_hidden"] = mx.ones((4, 2, 3))
     with pytest.raises(RuntimeError, match="expert is not a no-op"):
         _merge_bootstrap_transition_opcode_expert_extension(parent, active)
+
+    random_basis = dict(child)
+    random_basis["controller.transition_processor_opcode_interaction_up"] = (
+        mx.random.normal((4, 2, 3), key=mx.random.key(498))
+    )
+    migrated_basis, basis_receipt = (
+        _merge_bootstrap_transition_opcode_expert_extension(parent, random_basis)
+    )
+    assert basis_receipt is not None
+    assert set(migrated_basis) == set(random_basis)
+
+    behavior_changing = dict(random_basis)
+    behavior_changing["controller.transition_processor_opcode_interaction_down"] = (
+        mx.ones((4, 2, 3), dtype=mx.float32)
+    )
+    with pytest.raises(RuntimeError, match="expert is not a no-op"):
+        _merge_bootstrap_transition_opcode_expert_extension(
+            parent,
+            behavior_changing,
+        )
 
 
 def test_bootstrap_scoped_lora_query_extension_is_exact_and_audited() -> None:
@@ -1170,6 +1192,38 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
         )
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")
+
+
+def test_direct_transition_curriculum_reaches_every_scale_then_closed_loop() -> None:
+    stages = [
+        _direct_transition_curriculum_window(step, 20, 10, mode="progressive")
+        for step in range(20)
+    ]
+
+    assert {row["stage"] for row in stages[:3]} == {"verified_window_1"}
+    assert {row["stage"] for row in stages[3:6]} == {"verified_window_2"}
+    assert {row["stage"] for row in stages[6:9]} == {"verified_window_4"}
+    assert {row["stage"] for row in stages[9:14]} == {"closed_loop"}
+    assert {row["stage"] for row in stages[14:17]} == {"controlled_recovery"}
+    assert {row["stage"] for row in stages[17:]} == {"closed_loop"}
+    assert all(row["complete_public_prefix_visible"] for row in stages)
+    assert any(row["training_only_midtrace_initial_state"] for row in stages[:9])
+    assert all(row["transition_start"] == 0 for row in stages[9:])
+    assert all(row["transition_count"] == 10 for row in stages[9:])
+    assert all(row["corrupt_transition"] is not None for row in stages[14:17])
+    assert all(row["corrupt_state_slot"] in {1, 2, 3} for row in stages[14:17])
+    assert all(row["corrupt_transition"] is None for row in stages[17:])
+    assert _direct_transition_curriculum_window(
+        3, 8, 6, mode="closed_loop"
+    ) == {
+        "stage": "closed_loop",
+        "transition_start": 0,
+        "transition_count": 6,
+        "training_only_midtrace_initial_state": False,
+        "complete_public_prefix_visible": True,
+        "corrupt_transition": None,
+        "corrupt_state_slot": None,
+    }
 
 
 def test_dual_ridge_residual_readout_writes_exact_training_decision() -> None:
@@ -2616,6 +2670,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         "controller": {
             "state_transition_output": mx.array([0.0, 12.0]),
             "transition_memory_output": mx.array([0.0, 9.0]),
+            "transition_tape_output": mx.array([0.0, 8.0]),
             "transition_processor_output": mx.array([0.0, 11.0]),
             "transition_processor_opcode_output": mx.array([0.0, 10.0]),
             "state_value_embeddings": mx.array([0.0, 8.0]),
@@ -2646,6 +2701,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         mx.sqrt(
             mx.sum(flat["controller.state_transition_output"] ** 2)
             + mx.sum(flat["controller.transition_memory_output"] ** 2)
+            + mx.sum(flat["controller.transition_tape_output"] ** 2)
             + mx.sum(flat["controller.transition_processor_output"] ** 2)
             + mx.sum(flat["controller.transition_processor_opcode_output"] ** 2)
         ).item()
@@ -2663,6 +2719,40 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         mx.linalg.norm(flat["controller.action_value_embeddings"]).item()
     ) == pytest.approx(1.0)
     assert float(mx.linalg.norm(flat["controller.transport_bias"]).item()) == pytest.approx(0.5)
+
+
+def test_gradient_conflict_diagnostics_report_negative_and_unmeasured_pairs() -> None:
+    aligned = {
+        "controller": {
+            "transition_processor_output": mx.array([1.0, 0.0]),
+            "transport_bias": mx.array([5.0]),
+        }
+    }
+    opposed = {
+        "controller": {
+            "transition_processor_output": mx.array([-1.0, 0.0]),
+            "transport_bias": mx.array([5.0]),
+        }
+    }
+    empty = {
+        "controller": {
+            "transition_processor_output": mx.array([0.0, 0.0]),
+            "transport_bias": mx.array([5.0]),
+        }
+    }
+
+    report = _gradient_conflict_diagnostics(
+        [aligned, opposed, empty],
+        ["math", "coding", "premise"],
+        ownership_group="typed_state_transition",
+    )
+
+    assert report["parameter_count"] == 1
+    assert report["measured_pairs"] == 1
+    assert report["negative_pairs"] == 1
+    assert report["minimum_cosine"] == pytest.approx(-1.0)
+    assert report["mean_cosine"] == pytest.approx(-1.0)
+    assert sum(pair["measured"] for pair in report["pairs"]) == 1
 
 
 def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> None:
