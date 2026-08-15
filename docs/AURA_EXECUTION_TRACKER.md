@@ -49514,3 +49514,31 @@ The next bounded campaign keeps this processor, extends the inexpensive 1.5B
 acquisition window, holds exact-state supervision long enough to clear the
 `0.95` one-step readiness bar, then anneals toward autonomous states with
 explicit interim futility gates. Bridge, 32B and fusion work remain blocked.
+
+## Checkpoint 2026-08-14-492: Separate Transition Acquisition From Autonomous Roll-In
+
+CP490's processor improved exact deep transitions, but its linear teacher-
+forcing decay changed the input distribution from the first optimization
+step. The tissue therefore had to acquire typed transition algebra while also
+recovering from its own immature states. Its peak exactness and subsequent
+regression matched the scheduled-sampling failure predicted by the external
+reviews and made another identical run unjustified.
+
+Transition-only training now supports a signed teacher-forcing hold fraction.
+The initial exact-state rate remains fixed during that acquisition interval,
+then monotonically anneals to the declared terminal rate over the remaining
+steps. A new source-bound extended profile holds exact roll-in for `37.5%` of
+`512` steps, doubles the per-cell and held-out evidence, halves the state
+learning rate, evaluates every 32 steps and still reaches zero teacher forcing
+at terminal admission. The hold fraction is part of the campaign profile,
+command line and training identity; preparation, runtime validation,
+bootstrap binding and launch construction must all agree.
+
+Contracts cover the held and annealed schedule, invalid bounds, exact profile
+geometry and CLI serialization. Focused trainer, recurrence, objective and
+resident-campaign suites pass `206/206`; compilation and Ruff pass. This
+checkpoint changes optimization conditions only. CP493 must clear the exact
+one-step readiness bar, retain the gain under autonomous roll-in and improve
+unseen deep execution before processor/history lesions or answer emission are
+authorized. It carries no resident-32B, fusion, frontier or `WOW Signal`
+claim.

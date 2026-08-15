@@ -291,6 +291,7 @@ def _load_config(path: Path) -> dict[str, Any]:
             "process_family_acquisition",
             "process_neural_acquisition",
             "process_public_transition_acquisition",
+            "process_public_transition_extended_acquisition",
             "recovery",
         }
         or not isinstance(config.get("campaign_id"), str)
@@ -320,6 +321,7 @@ def _load_config(path: Path) -> dict[str, Any]:
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_extended_acquisition",
         "recovery",
     }
     expected_path_keys = (
@@ -1000,6 +1002,7 @@ def _trainer_command(
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_extended_acquisition",
         "recovery",
     }:
         bootstrap = config["bootstrap"]

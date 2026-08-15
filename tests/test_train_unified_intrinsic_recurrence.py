@@ -1054,6 +1054,19 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
     assert _process_training_policy(7, 8, "transition_only")[
         "teacher_forcing_probability"
     ] == pytest.approx(0.0)
+    held = [
+        _process_training_policy(
+            step,
+            8,
+            "transition_only",
+            teacher_hold_fraction=0.375,
+        )["teacher_forcing_probability"]
+        for step in range(8)
+    ]
+    assert held[:3] == [1.0, 1.0, 1.0]
+    assert held[3] == 1.0
+    assert held[-1] == 0.0
+    assert held[3:] == sorted(held[3:], reverse=True)
     assert _process_training_policy(
         3,
         8,
@@ -1068,6 +1081,13 @@ def test_factorized_process_curriculum_owns_each_stage_and_removes_teacher() -> 
             "transition_only",
             initial_teacher_probability=0.2,
             final_teacher_probability=0.8,
+        )
+    with pytest.raises(ValueError, match="teacher-forcing schedule"):
+        _process_training_policy(
+            0,
+            8,
+            "transition_only",
+            teacher_hold_fraction=1.0,
         )
     with pytest.raises(ValueError, match="too short"):
         _process_training_policy(0, 7, "factorized")

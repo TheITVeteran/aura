@@ -837,6 +837,7 @@ def _process_training_policy(
     *,
     initial_teacher_probability: float = 1.0,
     final_teacher_probability: float = 0.0,
+    teacher_hold_fraction: float = 0.0,
 ) -> dict[str, Any]:
     """Assign exclusive process objectives before autonomous integration.
 
@@ -862,6 +863,9 @@ def _process_training_policy(
         <= float(final_teacher_probability)
         <= float(initial_teacher_probability)
         <= 1.0
+        or isinstance(teacher_hold_fraction, bool)
+        or not isinstance(teacher_hold_fraction, (int, float))
+        or not 0.0 <= float(teacher_hold_fraction) < 1.0
     ):
         raise ValueError("process teacher-forcing schedule must decrease inside [0, 1]")
     if curriculum == "joint":
@@ -885,7 +889,16 @@ def _process_training_policy(
             "stage_progress": (step + 1) / total_steps,
         }
     if curriculum == "transition_only":
-        progress = 0.0 if total_steps == 1 else step / (total_steps - 1)
+        hold_steps = min(
+            total_steps - 1,
+            int(total_steps * float(teacher_hold_fraction)),
+        )
+        anneal_steps = total_steps - hold_steps
+        progress = (
+            0.0
+            if step < hold_steps or anneal_steps == 1
+            else (step - hold_steps) / (anneal_steps - 1)
+        )
         teacher_probability = float(initial_teacher_probability) + progress * (
             float(final_teacher_probability) - float(initial_teacher_probability)
         )
@@ -4373,6 +4386,12 @@ def main() -> int:
         help="final exact-state roll-in probability; inference is always zero",
     )
     parser.add_argument(
+        "--state-teacher-forcing-hold-fraction",
+        type=float,
+        default=0.0,
+        help="fraction of transition acquisition held at the initial exact-state rate",
+    )
+    parser.add_argument(
         "--max-gradient-norm",
         type=float,
         default=1.0,
@@ -4549,6 +4568,8 @@ def main() -> int:
         <= 1.0
     ):
         raise ValueError("state teacher-forcing schedule must decrease inside [0, 1]")
+    if not 0.0 <= args.state_teacher_forcing_hold_fraction < 1.0:
+        raise ValueError("state teacher-forcing hold fraction must be inside [0, 1)")
     if args.max_gradient_norm <= 0.0:
         raise ValueError("maximum gradient norm must be positive")
     if args.answer_bridge_inner_steps < 1:
@@ -5038,6 +5059,9 @@ def main() -> int:
             "state_teacher_forcing_probability": (args.state_teacher_forcing_probability),
             "state_teacher_forcing_final_probability": (
                 args.state_teacher_forcing_final_probability
+            ),
+            "state_teacher_forcing_hold_fraction": (
+                args.state_teacher_forcing_hold_fraction
             ),
             "max_gradient_norm": args.max_gradient_norm,
             "semantic_learning_rate": args.learning_rate,
@@ -5529,6 +5553,9 @@ def main() -> int:
                                 final_teacher_probability=(
                                     args.state_teacher_forcing_final_probability
                                 ),
+                                teacher_hold_fraction=(
+                                    args.state_teacher_forcing_hold_fraction
+                                ),
                             )
                             state_teacher_probability = process_policy[
                                 "teacher_forcing_probability"
@@ -5734,6 +5761,9 @@ def main() -> int:
                         ),
                         final_teacher_probability=(
                             args.state_teacher_forcing_final_probability
+                        ),
+                        teacher_hold_fraction=(
+                            args.state_teacher_forcing_hold_fraction
                         ),
                     )["component"]
                 if next_phase != phase or (

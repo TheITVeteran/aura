@@ -117,6 +117,7 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
         "process_family_acquisition",
         "process_neural_acquisition",
         "process_public_transition_acquisition",
+        "process_public_transition_extended_acquisition",
         "recovery",
     }
     if profile in bootstrap_profiles:
@@ -422,6 +423,22 @@ def test_public_transition_acquisition_removes_answer_and_microcode_authority() 
     assert training["answer_bridge_steps"] == 0
     assert "--public-action-program" in arguments
     assert "--analytic-action-readout-fit" not in arguments
+
+
+def test_extended_transition_acquisition_holds_teacher_before_autonomous_rollin() -> None:
+    training = _profile_training("process_public_transition_extended_acquisition")
+    arguments = _training_cli(training)
+
+    assert training["public_action_program"] is True
+    assert training["process_curriculum"] == "transition_only"
+    assert training["state_warmup_steps"] == training["max_steps"] == 512
+    assert training["state_teacher_forcing_hold_fraction"] == pytest.approx(0.375)
+    assert training["per_cell"] == 16
+    assert training["holdout_per_cell"] == 6
+    assert training["state_learning_rate"] == pytest.approx(0.0001)
+    assert arguments[arguments.index("--state-teacher-forcing-hold-fraction") + 1] == (
+        "0.375"
+    )
 
 
 def test_process_completion_signed_config_is_controller_admitted(
