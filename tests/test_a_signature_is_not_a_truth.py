@@ -725,3 +725,364 @@ def test_erased_history_is_diagnosed_before_the_missing_chain():
 
     with pytest.raises(ValueError, match="retains no entries"):
         GapLedger.from_dict(payload, evidence_class=CONTROL_EVIDENCE_CLASS)
+
+
+# ─────────────────────────── the attestation covers what runs
+
+
+def test_the_import_closure_reaches_past_the_named_roots():
+    closure = frontier_gap.first_party_import_closure(frontier_gap._EXECUTION_ROOTS)
+
+    assert len(closure) > len(frontier_gap._EXECUTION_ROOTS)
+    assert "core/brain/frontier_gap.py" in closure
+
+
+def test_a_relative_import_is_resolved_against_its_package():
+    """A scanner in this repo previously reported relatively-imported modules
+    as unreachable, and a retirement pass was built on that."""
+    closure = frontier_gap.first_party_import_closure(
+        ("core/brain/llm/latent_cortex/engine.py",)
+    )
+
+    assert any(path.startswith("core/brain/llm/latent_cortex/") for path in closure)
+
+
+def test_the_closure_walk_is_bounded():
+    closure = frontier_gap.first_party_import_closure(frontier_gap._EXECUTION_ROOTS)
+
+    assert len(closure) <= frontier_gap._MAX_COMPONENT_CLOSURE
+
+
+def test_a_truncated_walk_can_never_report_completeness():
+    """A bound that turns into a pass is the failure this check exists for."""
+    coverage = frontier_gap.source_component_coverage(
+        {path: "x" * 64 for path in frontier_gap._EXECUTION_ROOTS}
+    )
+
+    if coverage["closure_truncated"]:
+        assert coverage["complete"] is False
+
+
+def test_the_coverage_states_the_gap_rather_than_implying_none():
+    coverage = frontier_gap.source_component_coverage(
+        {path: "x" * 64 for path in frontier_gap._EXECUTION_ROOTS}
+    )
+
+    assert coverage["declared"] == len(frontier_gap._EXECUTION_ROOTS)
+    assert coverage["covered"] < coverage["closure_size"]
+    assert coverage["missing"]
+
+
+def test_the_report_can_require_complete_coverage():
+    parameters = inspect.signature(frontier_gap.validate_capability_report).parameters
+
+    assert "require_complete_component_coverage" in parameters
+
+
+# ─────────────────────────── the clean workspace is looked at
+
+
+def _provenance(**overrides):
+    base = {
+        "commit_sha": "a" * 40,
+        "tree_sha": "b" * 40,
+        "clean": True,
+        "issues": [],
+        "workspace_diff_sha256": "c" * 64,
+        "index_diff_sha256": "d" * 64,
+        "untracked_content_sha256": "e" * 64,
+        "workspace_state_sha256": "f" * 64,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_without_a_resolver_the_workspace_claim_stays_unresolved():
+    resolution = frontier_gap.resolve_workspace_state(
+        _provenance(), workspace_resolver=None
+    )
+
+    assert resolution["resolved"] is False
+    assert resolution["reason"] == "no_workspace_resolver_supplied"
+
+
+def test_a_matching_live_workspace_resolves():
+    provenance = _provenance()
+
+    resolution = frontier_gap.resolve_workspace_state(
+        provenance, workspace_resolver=lambda: dict(provenance)
+    )
+
+    assert resolution["resolved"] is True
+
+
+def test_a_dirty_tree_attesting_a_clean_one_is_caught():
+    provenance = _provenance()
+    observed = dict(provenance)
+    observed["clean"] = False
+
+    resolution = frontier_gap.resolve_workspace_state(
+        provenance, workspace_resolver=lambda: observed
+    )
+
+    assert resolution["resolved"] is False
+    assert "differs:clean" in resolution["mismatches"]
+
+
+def test_a_field_the_observer_never_measured_is_not_a_match():
+    provenance = _provenance()
+    observed = {key: value for key, value in provenance.items() if key != "tree_sha"}
+
+    resolution = frontier_gap.resolve_workspace_state(
+        provenance, workspace_resolver=lambda: observed
+    )
+
+    assert "unobserved:tree_sha" in resolution["mismatches"]
+
+
+def test_a_resolver_that_raises_reports_the_failure():
+    def broken():
+        raise OSError("no repository here")
+
+    resolution = frontier_gap.resolve_workspace_state(
+        _provenance(), workspace_resolver=broken
+    )
+
+    assert resolution["resolved"] is False
+    assert resolution["reason"].startswith("workspace_resolver_failed:")
+
+
+# ─────────────────────────── the window has to bracket the run
+
+
+def test_a_window_without_observation_times_is_unbracketed():
+    bracketing = frontier_gap.stability_bracketing(
+        {}, run_started=100.0, run_completed=200.0, subject="capability source"
+    )
+
+    assert bracketing["bracketed"] is False
+    assert bracketing["reason"] == "window_records_no_observation_times"
+
+
+def test_a_window_that_brackets_the_run_is_accepted():
+    bracketing = frontier_gap.stability_bracketing(
+        {"before_observed_at_unix": 99.0, "after_observed_at_unix": 201.0},
+        run_started=100.0,
+        run_completed=200.0,
+        subject="capability source",
+    )
+
+    assert bracketing["bracketed"] is True
+
+
+def test_a_first_observation_after_the_run_began_is_refused():
+    with pytest.raises(ValueError, match="first observed after the run began"):
+        frontier_gap.stability_bracketing(
+            {"before_observed_at_unix": 150.0, "after_observed_at_unix": 201.0},
+            run_started=100.0,
+            run_completed=200.0,
+            subject="capability source",
+        )
+
+
+def test_a_last_observation_before_the_run_finished_is_refused():
+    with pytest.raises(ValueError, match="last observed before the run completed"):
+        frontier_gap.stability_bracketing(
+            {"before_observed_at_unix": 99.0, "after_observed_at_unix": 150.0},
+            run_started=100.0,
+            run_completed=200.0,
+            subject="capability model",
+        )
+
+
+def test_out_of_order_observations_are_refused():
+    with pytest.raises(ValueError, match="out of order"):
+        frontier_gap.stability_bracketing(
+            {"before_observed_at_unix": 150.0, "after_observed_at_unix": 90.0},
+            run_started=200.0,
+            run_completed=300.0,
+            subject="capability source",
+        )
+
+
+# ─────────────────────────── the runtime names measured material
+
+
+def _runtime(**overrides):
+    base = {
+        "worker_implementation_sha256": "1" * 64,
+        "prompt_template_sha256": "2" * 64,
+        "tokenizer_sha256": "3" * 64,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_an_unattested_component_leaves_the_field_unbound():
+    binding = frontier_gap.runtime_identity_binding(
+        _runtime(), source_components={}, model_files={}, tokenizer_paths=()
+    )
+
+    assert binding["complete"] is False
+    assert "worker_implementation_sha256" in binding["unbound"]
+    assert all(
+        row["reason"] == "component_not_attested"
+        for row in binding["bindings"]
+        if row["field"] == "worker_implementation_sha256"
+    )
+
+
+def test_a_digest_that_differs_from_the_measured_component_is_unbound():
+    binding = frontier_gap.runtime_identity_binding(
+        _runtime(),
+        source_components={"core/brain/llm/mlx_worker.py": "9" * 64},
+        model_files={},
+        tokenizer_paths=(),
+    )
+
+    row = next(
+        item
+        for item in binding["bindings"]
+        if item["field"] == "worker_implementation_sha256"
+    )
+    assert row["bound"] is False
+    assert row["reason"] == "digest_differs_from_measured_component"
+
+
+def test_a_matching_component_binds():
+    binding = frontier_gap.runtime_identity_binding(
+        _runtime(),
+        source_components={"core/brain/llm/mlx_worker.py": "1" * 64},
+        model_files={},
+        tokenizer_paths=(),
+    )
+
+    row = next(
+        item
+        for item in binding["bindings"]
+        if item["field"] == "worker_implementation_sha256"
+    )
+    assert row["bound"] is True
+
+
+def test_the_tokenizer_digest_binds_to_the_tokenizer_role_files():
+    files = {"tokenizer.model": "aa" * 32, "config.json": "bb" * 32}
+    expected = sha256_json(sorted([files["tokenizer.model"]]))
+
+    binding = frontier_gap.runtime_identity_binding(
+        _runtime(tokenizer_sha256=expected),
+        source_components={},
+        model_files=files,
+        tokenizer_paths=("tokenizer.model",),
+    )
+
+    row = next(
+        item for item in binding["bindings"] if item["field"] == "tokenizer_sha256"
+    )
+    assert row["bound"] is True
+
+
+def test_no_tokenizer_role_files_leaves_the_tokenizer_unbound():
+    binding = frontier_gap.runtime_identity_binding(
+        _runtime(), source_components={}, model_files={}, tokenizer_paths=()
+    )
+
+    row = next(
+        item for item in binding["bindings"] if item["field"] == "tokenizer_sha256"
+    )
+    assert row["reason"] == "no_tokenizer_role_files"
+
+
+def test_the_report_can_require_bound_runtime_identity():
+    parameters = inspect.signature(frontier_gap.validate_capability_report).parameters
+
+    assert "require_bound_runtime_identity" in parameters
+
+
+# ─────────────────────────── the grader digest covers its runtime
+
+
+def test_the_environment_is_part_of_the_grader_digest():
+    environment = frontier_gap.grader_execution_environment()
+
+    for key in (
+        "python_version",
+        "python_implementation",
+        "dynamic_execution_gateway_sha256",
+        "allowed_builtins",
+    ):
+        assert key in environment
+
+
+def test_the_allowed_builtins_are_committed_to():
+    environment = frontier_gap.grader_execution_environment()
+
+    assert environment["allowed_builtins"] == sorted(
+        frontier_gap._CODE_GRADER_BUILTINS
+    )
+
+
+def test_the_digest_changes_when_the_environment_does(monkeypatch):
+    before = frontier_gap.grader_implementation_sha256("exact_integer.v2")
+    monkeypatch.setattr(
+        frontier_gap,
+        "grader_execution_environment",
+        lambda: {"python_version": "0.0.0"},
+    )
+
+    assert frontier_gap.grader_implementation_sha256("exact_integer.v2") != before
+
+
+def test_an_unknown_grader_still_refuses():
+    with pytest.raises(ValueError, match="unknown grader implementation"):
+        frontier_gap.grader_implementation_sha256("telepathy.v1")
+
+
+# ─────────────────────────── the hidden cases discriminate
+
+
+def test_the_battery_carries_adversarial_cases():
+    source = inspect.getsource(frontier_gap._coding_items)
+
+    assert "_ADVERSARIAL_HIDDEN_CASES" in source
+
+
+def test_the_adversarial_set_covers_the_structural_collisions():
+    cases = frontier_gap._ADVERSARIAL_HIDDEN_CASES
+
+    assert any(len(case) == 1 for case in cases), "single-element sum/max/min collision"
+    assert any(len(set(case)) == 1 and len(case) > 1 for case in cases), "all-equal"
+    assert any(case == tuple(reversed(sorted(case))) and len(case) > 2 for case in cases)
+
+
+def test_a_wrong_operation_cannot_pass_a_real_battery_item():
+    import re
+
+    items = [
+        item
+        for item in frontier_gap.build_battery(seed=5, per_class=3)
+        if item.task_class == "coding"
+    ]
+    item = items[0]
+    name = re.search(r"`(\w+)\(xs\)`", item.prompt).group(1)
+    operation = name.split("_case_")[0]
+
+    for shape in ("sum", "max", "min", "len"):
+        body = f"```python\ndef {name}(xs):\n    return {shape}(xs)\n```"
+        assert item.grade(body) is (shape == operation), shape
+
+
+def test_the_grader_is_metamorphic_over_order():
+    source = inspect.getsource(frontier_gap._code_grader)
+
+    assert "reversed(case)" in source
+    assert "order-invariant" in source
+
+
+def test_a_truncated_closure_still_contains_its_own_roots():
+    """A depth-first walk let the bound evict the files the closure started
+    from, so a truncated result could omit its own roots."""
+    closure = frontier_gap.first_party_import_closure(frontier_gap._EXECUTION_ROOTS)
+
+    for root in frontier_gap._EXECUTION_ROOTS:
+        assert root in closure, root

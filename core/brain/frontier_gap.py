@@ -18,7 +18,7 @@ import random
 import re
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -227,13 +227,41 @@ def _extract_python(text: str) -> str:
     return fenced.group(1).strip() if fenced else candidate
 
 
+# Cases the random sampler cannot be relied on to produce. The admissible
+# expression space is tiny — one return over sum/max/min/len of xs — so the
+# collisions are STRUCTURAL: sum, max and min all agree on a single-element
+# list; max and min agree when every element is equal; and a shape that returns
+# whatever sits first survives any draw whose answer happens to be there. Seven
+# random lists test none of that on purpose.
+_ADVERSARIAL_HIDDEN_CASES: tuple[tuple[int, ...], ...] = (
+    (7,),
+    (-7,),
+    (0, 0, 0, 0),
+    (5, 5, 5),
+    (-500, 500),
+    (500, -500),
+    (1, 2, 3, 4, 5),
+    (5, 4, 3, 2, 1),
+    (-1, -2, -3),
+)
+
+# The exact builtin set the restricted grader admits. Named so the grader
+# digest can commit to it: widening this changes what passes.
+_CODE_GRADER_BUILTINS: dict[str, Any] = {
+    "sum": sum,
+    "max": max,
+    "min": min,
+    "len": len,
+}
+
+
 def _code_grader(
     *,
     function_name: str,
     operation: str,
     hidden_cases: tuple[tuple[int, ...], ...],
 ) -> Callable[[str], bool]:
-    allowed_builtins = {"sum": sum, "max": max, "min": min, "len": len}
+    allowed_builtins = dict(_CODE_GRADER_BUILTINS)
     allowed_nodes = (
         ast.Module,
         ast.FunctionDef,
@@ -294,7 +322,15 @@ def _code_grader(
             candidate = namespace.get(function_name)
             if not callable(candidate):
                 return False
-            return all(candidate(list(case)) == expected_fn(case) for case in hidden_cases)
+            if not all(candidate(list(case)) == expected_fn(case) for case in hidden_cases):
+                return False
+            # Metamorphic: sum, max and min are order-invariant, so a shape
+            # that answers from a POSITION rather than the values passes every
+            # sampled case whose answer happens to sit there and fails here.
+            return all(
+                candidate(list(reversed(case))) == expected_fn(case)
+                for case in hidden_cases
+            )
         except (ArithmeticError, LookupError, RuntimeError, TypeError, ValueError):
             return False
 
@@ -308,15 +344,47 @@ _GRADER_COMPONENTS: dict[str, tuple[Callable[..., Any], ...]] = {
 }
 
 
+def grader_execution_environment() -> dict[str, Any]:
+    """What decides grading behaviour besides the grader's own source.
+
+    Hashing selected function source pinned the ALGORITHM. The restricted
+    hidden-execution grader parses with ``ast``, runs through the dynamic
+    execution gateway and evaluates against a fixed builtin set — so the Python
+    version, the gateway implementation and that builtin set all change what
+    "graded correct" means while the source digest stays put.
+    """
+
+    import sys
+
+    from core.runtime import dynamic_execution_gateway as gateway_module
+
+    return {
+        "python_version": ".".join(str(part) for part in sys.version_info[:3]),
+        "python_implementation": sys.implementation.name,
+        "ast_feature_version": ".".join(
+            str(part) for part in sys.version_info[:2]
+        ),
+        "dynamic_execution_gateway_sha256": hashlib.sha256(
+            inspect.getsource(gateway_module).encode("utf-8")
+        ).hexdigest(),
+        "allowed_builtins": sorted(_CODE_GRADER_BUILTINS),
+    }
+
+
 def grader_implementation_sha256(grader_id: str) -> str:
+    """Digest of the grader AND the environment that executes it."""
+
     components = _GRADER_COMPONENTS.get(grader_id)
     if not components:
         raise ValueError(f"unknown grader implementation: {grader_id}")
-    return hashlib.sha256(
-        "\n\n".join(inspect.getsource(component) for component in components).encode(
-            "utf-8"
-        )
-    ).hexdigest()
+    source = "\n\n".join(inspect.getsource(component) for component in components)
+    return sha256_json(
+        {
+            "grader_id": grader_id,
+            "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "environment": grader_execution_environment(),
+        }
+    )
 
 
 def _truth_commitment(*, nonce: bytes, label: str, value: Any) -> str:
@@ -444,9 +512,12 @@ def _coding_items(rng: random.Random, n: int, nonce: bytes) -> list[BatteryItem]
     for index in range(n):
         operation, label = rng.choice(operations)
         function_name = f"{operation}_case_{index}_{rng.getrandbits(32):08x}"
-        hidden_cases = tuple(
-            tuple(rng.randint(-500, 500) for _ in range(rng.randint(2, 10)))
-            for _case in range(7)
+        hidden_cases = (
+            *(
+                tuple(rng.randint(-500, 500) for _ in range(rng.randint(2, 10)))
+                for _case in range(7)
+            ),
+            *_ADVERSARIAL_HIDDEN_CASES,
         )
         prompt = (
             f"Write a Python function `{function_name}(xs)` returning the {label} "
@@ -969,6 +1040,22 @@ def validate_reference_artifact(
     source_identity_digest = require_sha256(
         signed.get("source_identity_sha256"), field_name="reference source identity"
     )
+    # A digest with the right SYNTAX is not an identity. The reference carried
+    # source_identity_sha256 and nothing else — no envelope to validate, no
+    # stability window, no resolution of the worker's own source — so the field
+    # only had to look like a hash. When the reference ships the envelope, it
+    # is validated and required to be the thing the digest names.
+    raw_source_identity = signed.get("source_identity")
+    reference_source_identity: dict[str, Any] | None = None
+    if raw_source_identity is not None:
+        reference_source_identity = validate_source_identity(
+            raw_source_identity,
+            trusted_release_keys=trusted_release_keys,
+        )
+        if reference_source_identity["identity_sha256"] != source_identity_digest:
+            raise ValueError(
+                "reference source identity envelope does not match its digest"
+            )
     reference_context = require_sha256(
         signed.get("reference_context_sha256"), field_name="reference context"
     )
@@ -1514,6 +1601,315 @@ def _finite_float(value: Any, *, field_name: str) -> float:
     return normalized
 
 
+SOURCE_COMPONENT_COVERAGE_SCHEMA = "aura.frontier_gap.source_component_coverage.v1"
+WORKSPACE_RESOLUTION_SCHEMA = "aura.frontier_gap.workspace_resolution.v1"
+
+# The execution roots whose import closure has to be attested. Naming eight
+# files by hand attested eight files; what determines behaviour is everything
+# they reach.
+_EXECUTION_ROOTS: tuple[str, ...] = (
+    "tools/measure_frontier_gap.py",
+    "core/brain/frontier_gap.py",
+    "core/brain/frontier_evidence_v5.py",
+    "core/brain/reasoning_amplifier_v2.py",
+    "core/brain/verifiers/registry.py",
+    "core/brain/llm/mlx_client.py",
+    "core/brain/llm/model_registry.py",
+    "core/runtime/dynamic_execution_gateway.py",
+)
+# The closure is walked from source, so it is bounded to keep an adversarial or
+# accidentally enormous import graph from turning validation into a crawl.
+_MAX_COMPONENT_CLOSURE = 512
+
+
+def first_party_import_closure(
+    roots: Iterable[str],
+    *,
+    repo_root: Any = None,
+) -> tuple[str, ...]:
+    """Every first-party module the execution roots reach, by static import.
+
+    A hand-written component list attests the files somebody remembered.
+    Imported helpers, configuration modules, prompt code and verifier
+    dependencies all shape execution while sitting outside it. This is the
+    computable answer: the transitive first-party imports of the roots.
+
+    Relative imports are resolved against the importing module's package,
+    which is where a previous scanner in this repo went wrong and reported
+    reachable modules as orphans.
+    """
+
+    from pathlib import Path as _Path
+
+    base = _Path(str(repo_root)) if repo_root is not None else _Path(__file__).resolve().parents[2]
+    seen: set[str] = set()
+    order: list[str] = []
+    # Breadth-first from the roots, and the roots are recorded BEFORE anything
+    # they import. A depth-first walk let the bound evict the very files the
+    # closure started from, so a truncated result could omit its own roots.
+    pending: list[str] = []
+    for root in roots:
+        relative = str(root)
+        if relative in seen:
+            continue
+        seen.add(relative)
+        order.append(relative)
+        pending.append(relative)
+    cursor = 0
+    while cursor < len(pending) and len(order) < _MAX_COMPONENT_CLOSURE:
+        relative = pending[cursor]
+        cursor += 1
+        target = base / relative
+        try:
+            tree = ast.parse(target.read_text("utf-8", errors="ignore"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        package = relative.rsplit("/", 1)[0].replace("/", ".")
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    parts = package.split(".")
+                    anchor = ".".join(parts[: len(parts) - node.level + 1])
+                    modules.append(f"{anchor}.{node.module}" if node.module else anchor)
+                elif node.module:
+                    modules.append(node.module)
+            for module in modules:
+                if not module.split(".")[0] in {"core", "interface", "tools"}:
+                    continue
+                candidate = module.replace(".", "/")
+                for suffix in (f"{candidate}.py", f"{candidate}/__init__.py"):
+                    if not (base / suffix).is_file():
+                        continue
+                    if suffix not in seen and len(order) < _MAX_COMPONENT_CLOSURE:
+                        seen.add(suffix)
+                        order.append(suffix)
+                        pending.append(suffix)
+                    break
+    return tuple(sorted(order))
+
+
+def source_component_coverage(
+    declared: Mapping[str, Any],
+    *,
+    repo_root: Any = None,
+) -> dict[str, Any]:
+    """What the attested component list covers of the real import closure.
+
+    Today the answer is a small fraction, and saying so is the point: the
+    attestation named eight files while the execution roots reach hundreds, so
+    imported helpers, configuration, prompt code and verifier dependencies
+    shaped execution while sitting outside execution_component_sha256. A
+    truncated walk can never report completeness — a bound that turns into a
+    pass is the failure mode this whole check exists to avoid.
+    """
+
+    closure = first_party_import_closure(_EXECUTION_ROOTS, repo_root=repo_root)
+    truncated = len(closure) >= _MAX_COMPONENT_CLOSURE
+    declared_paths = {str(path) for path in declared}
+    missing = sorted(set(closure) - declared_paths)
+    return {
+        "schema": SOURCE_COMPONENT_COVERAGE_SCHEMA,
+        "roots": list(_EXECUTION_ROOTS),
+        "closure_size": len(closure),
+        "closure_truncated": truncated,
+        "declared": len(declared_paths),
+        "covered": len(closure) - len(missing),
+        "complete": not missing and not truncated,
+        "missing": missing[:32],
+    }
+
+
+STABILITY_BRACKETING_SCHEMA = "aura.frontier_gap.stability_bracketing.v1"
+RUNTIME_IDENTITY_BINDING_SCHEMA = "aura.frontier_gap.runtime_identity_binding.v1"
+
+# Which source component each asserted runtime digest has to BE. The manifest
+# carried these as free hashes: base model and adapters were compared against
+# measured material, and the rest were asserted, so the effective runtime could
+# name code and controls that never ran.
+_RUNTIME_SOURCE_BINDINGS: dict[str, str] = {
+    "worker_implementation_sha256": "core/brain/llm/mlx_worker.py",
+    "prompt_template_sha256": "core/brain/llm/prompt_templates.py",
+}
+
+
+def runtime_identity_binding(
+    runtime_manifest: Mapping[str, Any],
+    *,
+    source_components: Mapping[str, Any],
+    model_files: Mapping[str, Any],
+    tokenizer_paths: Iterable[str],
+) -> dict[str, Any]:
+    """Tie each asserted runtime digest to material somebody measured.
+
+    ``base_model_manifest_sha256`` and ``adapters_sha256`` were already checked
+    against the stable model. The rest — the worker implementation, the prompt
+    template, the tokenizer — were free-floating digests: the asserted
+    effective runtime could differ from the code and controls that executed and
+    nothing compared them with anything.
+
+    A binding whose source component is not attested is reported UNBOUND rather
+    than silently skipped, because that is the same gap in a quieter form.
+    """
+
+    bindings: list[dict[str, Any]] = []
+    for field_name, component_path in _RUNTIME_SOURCE_BINDINGS.items():
+        asserted = str(runtime_manifest.get(field_name) or "")
+        measured = source_components.get(component_path)
+        bindings.append(
+            {
+                "field": field_name,
+                "bound_to": component_path,
+                "bound": bool(measured) and asserted == str(measured),
+                "reason": (
+                    ""
+                    if measured and asserted == str(measured)
+                    else "component_not_attested"
+                    if not measured
+                    else "digest_differs_from_measured_component"
+                ),
+            }
+        )
+    tokenizer_digests = sorted(
+        str(model_files[path]) for path in tokenizer_paths if path in model_files
+    )
+    asserted_tokenizer = str(runtime_manifest.get("tokenizer_sha256") or "")
+    tokenizer_bound = bool(tokenizer_digests) and asserted_tokenizer == sha256_json(
+        tokenizer_digests
+    )
+    bindings.append(
+        {
+            "field": "tokenizer_sha256",
+            "bound_to": "model_manifest:roles.tokenizer",
+            "bound": tokenizer_bound,
+            "reason": ""
+            if tokenizer_bound
+            else "no_tokenizer_role_files"
+            if not tokenizer_digests
+            else "digest_differs_from_tokenizer_role_files",
+        }
+    )
+    return {
+        "schema": RUNTIME_IDENTITY_BINDING_SCHEMA,
+        "bindings": bindings,
+        "complete": all(row["bound"] for row in bindings),
+        "unbound": [row["field"] for row in bindings if not row["bound"]],
+    }
+
+
+def _observation_time(raw: Any, key: str) -> float | None:
+    value = raw.get(key) if isinstance(raw, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(float(value)) else None
+
+
+def stability_bracketing(
+    window: Mapping[str, Any],
+    *,
+    run_started: float,
+    run_completed: float,
+    subject: str,
+) -> dict[str, Any]:
+    """Did the before/after measurements actually bracket the generation?
+
+    The window required two identical manifests and a self-hash, and recorded
+    no capture times at all — so two copies of one measurement satisfied it,
+    and nothing said whether either was taken while the run was happening. When
+    the window carries observation times they are checked against the run's own
+    chronology; when it does not, the window is reported UNBRACKETED rather
+    than counted as proof of stability across the measurement.
+    """
+
+    before_at = _observation_time(window, "before_observed_at_unix")
+    after_at = _observation_time(window, "after_observed_at_unix")
+    if before_at is None or after_at is None:
+        return {
+            "schema": STABILITY_BRACKETING_SCHEMA,
+            "subject": subject,
+            "bracketed": False,
+            "reason": "window_records_no_observation_times",
+        }
+    if before_at < 0.0 or after_at < before_at:
+        raise ValueError(f"{subject} stability observation times are out of order")
+    if before_at > run_started + 0.25:
+        raise ValueError(f"{subject} was first observed after the run began")
+    if after_at + 0.25 < run_completed:
+        raise ValueError(f"{subject} was last observed before the run completed")
+    return {
+        "schema": STABILITY_BRACKETING_SCHEMA,
+        "subject": subject,
+        "bracketed": True,
+        "reason": "",
+        "before_observed_at_unix": before_at,
+        "after_observed_at_unix": after_at,
+    }
+
+
+def resolve_workspace_state(
+    provenance: Mapping[str, Any],
+    *,
+    workspace_resolver: Callable[[], Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """Compare the report's clean-workspace claim with a live measurement.
+
+    ``clean``, ``issues`` and the three workspace digests are read FROM the
+    report and compared with constants. Every one of them is the worker's own
+    account of the checkout it ran from, so a dirty tree could attest a clean
+    one and nothing would look. ``workspace_resolver`` is the independent
+    observer: it returns the same fields measured from the live workspace.
+
+    Absent, the result is UNRESOLVED. A report validated away from the machine
+    that produced it has no workspace to inspect, and that is a different
+    answer from a workspace that was inspected and matched.
+    """
+
+    if workspace_resolver is None:
+        return {
+            "schema": WORKSPACE_RESOLUTION_SCHEMA,
+            "resolved": False,
+            "reason": "no_workspace_resolver_supplied",
+            "mismatches": [],
+        }
+    try:
+        observed = dict(workspace_resolver() or {})
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return {
+            "schema": WORKSPACE_RESOLUTION_SCHEMA,
+            "resolved": False,
+            "reason": f"workspace_resolver_failed:{type(exc).__name__}",
+            "mismatches": [],
+        }
+    mismatches: list[str] = []
+    for field_name in (
+        "commit_sha",
+        "tree_sha",
+        "clean",
+        "workspace_diff_sha256",
+        "index_diff_sha256",
+        "untracked_content_sha256",
+        "workspace_state_sha256",
+    ):
+        if field_name not in observed:
+            mismatches.append(f"unobserved:{field_name}")
+            continue
+        if observed[field_name] != provenance.get(field_name):
+            mismatches.append(f"differs:{field_name}")
+    observed_issues = observed.get("issues")
+    if observed_issues is not None and list(observed_issues) != list(
+        provenance.get("issues") or []
+    ):
+        mismatches.append("differs:issues")
+    return {
+        "schema": WORKSPACE_RESOLUTION_SCHEMA,
+        "resolved": not mismatches,
+        "reason": "" if not mismatches else "workspace_contradicts_the_report",
+        "mismatches": sorted(mismatches)[:16],
+    }
+
+
 def _validate_source_provenance(
     raw: Any,
     *,
@@ -1621,6 +2017,10 @@ def _validate_source_stability(
         **body,
         "stable": True,
         "window_sha256": sha256_json(body),
+        # Carried outside the hashed body so an existing signed window keeps
+        # its digest. Absent, the bracketing receipt says so.
+        "before_observed_at_unix": _observation_time(raw, "before_observed_at_unix"),
+        "after_observed_at_unix": _observation_time(raw, "after_observed_at_unix"),
     }
 
 
@@ -1797,6 +2197,8 @@ def _validate_model_stability(raw: Any, *, measurement_subject: str) -> dict[str
         **body,
         "stable": True,
         "window_sha256": sha256_json(body),
+        "before_observed_at_unix": _observation_time(raw, "before_observed_at_unix"),
+        "after_observed_at_unix": _observation_time(raw, "after_observed_at_unix"),
     }
 
 
@@ -1817,6 +2219,10 @@ def validate_capability_report(
     require_fresh_challenge: bool = False,
     output_token_counter: Callable[[str], int] | None = None,
     require_measured_output_tokens: bool = False,
+    workspace_resolver: Callable[[], Mapping[str, Any]] | None = None,
+    require_resolved_workspace: bool = False,
+    require_complete_component_coverage: bool = False,
+    require_bound_runtime_identity: bool = False,
 ) -> dict[str, Any]:
     """Recompute a v5 claim from signed execution and correctness evidence.
 
@@ -2296,6 +2702,63 @@ def validate_capability_report(
     normalized["candidate_model"] = model_stability
     normalized["effective_runtime_manifest"] = runtime_manifest
     normalized["model_manifest_resolution"] = model_resolution
+    # Derived AFTER the signed windows are verified: the provenance dicts are
+    # hashed into source_stability's window digest, so anything added to them
+    # would break the signature it is meant to describe.
+    normalized["source_component_coverage"] = source_component_coverage(
+        source_stability["after"].get("execution_component_sha256") or {}
+    )
+    if (
+        require_complete_component_coverage
+        and normalized["source_component_coverage"]["complete"] is not True
+    ):
+        raise ValueError(
+            "capability source attestation does not cover its execution closure: "
+            f"{normalized['source_component_coverage']['covered']}"
+            f"/{normalized['source_component_coverage']['closure_size']}"
+        )
+    normalized["workspace_resolution"] = resolve_workspace_state(
+        source_stability["after"],
+        workspace_resolver=workspace_resolver,
+    )
+    normalized["runtime_identity_binding"] = runtime_identity_binding(
+        runtime_manifest,
+        source_components=(
+            source_stability["after"].get("execution_component_sha256") or {}
+        ),
+        model_files=model_files,
+        tokenizer_paths=model_stability["before"]["roles"]["tokenizer"],
+    )
+    if (
+        require_bound_runtime_identity
+        and normalized["runtime_identity_binding"]["complete"] is not True
+    ):
+        raise ValueError(
+            "effective runtime identity is not bound to measured material: "
+            f"{','.join(normalized['runtime_identity_binding']['unbound'])}"
+        )
+    normalized["stability_bracketing"] = [
+        stability_bracketing(
+            source_stability,
+            run_started=float(run["payload"]["started_at_unix"]),
+            run_completed=float(run["payload"]["completed_at_unix"]),
+            subject="capability source",
+        ),
+        stability_bracketing(
+            model_stability,
+            run_started=float(run["payload"]["started_at_unix"]),
+            run_completed=float(run["payload"]["completed_at_unix"]),
+            subject="capability model",
+        ),
+    ]
+    if (
+        require_resolved_workspace
+        and normalized["workspace_resolution"]["resolved"] is not True
+    ):
+        raise ValueError(
+            "capability workspace was not independently resolved: "
+            f"{normalized['workspace_resolution']['reason']}"
+        )
     normalized["output_token_measurement"] = token_measurement
     return normalized
 
