@@ -150,6 +150,101 @@ def test_action_workspace_can_be_captured_for_training_only_readout_fit() -> Non
     assert trajectory[0].shape[:2] == (1, controller.config.action_slots)
 
 
+def test_public_action_signature_preserves_literals_state_depth_and_family() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    tokens = mx.array(
+        [
+            [100, 12, 19, 99, 14],
+            [101, 14, 99, 12, 19],
+        ]
+    )
+    state = mx.zeros(
+        (2, controller.config.state_slots, controller.config.state_cardinality),
+        dtype=mx.float32,
+    ).at[:, :, 0].add(1.0)
+
+    signature = controller._public_action_signature(
+        tokens,
+        state,
+        step=3,
+        width=64,
+    )
+    assert signature is not None
+    assert signature.shape == (2, controller.config.action_slots, 64)
+    assert not bool(mx.array_equal(signature[0], signature[1]))
+
+    changed_state = state.at[0, 0, 0].add(-1.0).at[0, 0, 3].add(1.0)
+    state_signature = controller._public_action_signature(
+        tokens,
+        changed_state,
+        step=3,
+        width=64,
+    )
+    next_depth_signature = controller._public_action_signature(
+        tokens,
+        state,
+        step=4,
+        width=64,
+    )
+    assert state_signature is not None
+    assert next_depth_signature is not None
+    assert not bool(mx.array_equal(signature[0], state_signature[0]))
+    assert not bool(mx.array_equal(signature, next_depth_signature))
+
+
+def test_action_kernel_capture_matches_runtime_public_signature() -> None:
+    patterns = tuple(
+        (opcode, (100 + opcode - OP_FRONTIER_TRAVERSE,))
+        for opcode in range(OP_FRONTIER_TRAVERSE, OP_FRONTIER_AUDIT + 1)
+    )
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=64,
+            correction_rank=8,
+            literal_digit_token_ids=tuple(range(10, 20)),
+            frontier_family_token_patterns=patterns,
+        )
+    )
+    evidence = mx.random.normal((1, 5, 64), key=mx.random.key(19_701))
+    hidden = mx.random.normal((1, 12, 64), key=mx.random.key(19_702))
+    tokens = mx.array([[100, 12, 19, 99, 14]])
+    state = mx.zeros(
+        (1, controller.config.state_slots, controller.config.state_cardinality),
+        dtype=mx.float32,
+    ).at[:, :, 0].add(1.0)
+    captured: list = []
+
+    controller.action_logits(
+        evidence,
+        hidden,
+        state_slot_start=5,
+        step=3,
+        token_ids=tokens,
+        state_probabilities=state,
+        action_kernel_feature_trajectory=captured,
+    )
+    expected = controller._public_action_signature(
+        tokens,
+        state,
+        step=3,
+        width=int(controller.action_family_output.shape[2]),
+    )
+    assert expected is not None
+    assert len(captured) == 1
+    assert bool(mx.array_equal(captured[0], expected))
+
+
 def test_action_workspace_causally_reads_complete_prior_process_memory() -> None:
     controller = _controller()
     controller.action_workspace_output = mx.random.normal(

@@ -1760,8 +1760,10 @@ def _fit_family_action_readout(
     workspace_width = int(controller.action_family_output.shape[2])
     cardinality = int(controller.action_family_output.shape[3])
     kernel_capacity = int(controller.action_family_kernel_prototypes.shape[2])
-    observations: dict[tuple[int, int], list[tuple[Any, Any, int]]] = {}
-    instruction_rows: list[tuple[int, list[tuple[int, Any, Any, int]]]] = []
+    observations: dict[tuple[int, int], list[tuple[Any, Any, Any, int]]] = {}
+    instruction_rows: list[
+        tuple[int, list[tuple[int, Any, Any, Any, int]]]
+    ] = []
     task_commitments: list[dict[str, Any]] = []
     depth = max(spec.train_depths)
 
@@ -1781,6 +1783,7 @@ def _fit_family_action_readout(
             state_targets = state_targets_from_trace(task.transition_trace, depth)
             action_targets = action_targets_from_program(task.transition_program, depth)
             workspaces: list[Any] = []
+            kernel_features: list[Any] = []
             base_logits: list[Any] = []
             unified_recurrent_hidden_states(
                 bundle.model,
@@ -1790,6 +1793,7 @@ def _fit_family_action_readout(
                 state_slot_start=int(prompt.shape[-1]),
                 action_logit_trajectory=base_logits,
                 action_workspace_trajectory=workspaces,
+                action_kernel_feature_trajectory=kernel_features,
                 state_teacher_values=state_targets.values,
                 action_teacher_values=action_targets.values,
                 initial_state_teacher_values=state_targets.initial_values,
@@ -1797,13 +1801,18 @@ def _fit_family_action_readout(
                 family_action_lesion=True,
                 process_only=True,
             )
-            if len(workspaces) != depth or len(base_logits) != depth:
+            if (
+                len(workspaces) != depth
+                or len(kernel_features) != depth
+                or len(base_logits) != depth
+            ):
                 raise RuntimeError("analytic action readout capture differs from the process")
-            mx.eval(*workspaces, *base_logits)
-            task_rows: list[tuple[int, Any, Any, int]] = []
-            for step, (workspace, logits, values, masks) in enumerate(
+            mx.eval(*workspaces, *kernel_features, *base_logits)
+            task_rows: list[tuple[int, Any, Any, Any, int]] = []
+            for step, (workspace, kernel_feature, logits, values, masks) in enumerate(
                 zip(
                     workspaces,
+                    kernel_features,
                     base_logits,
                     action_targets.values,
                     action_targets.masks,
@@ -1814,12 +1823,21 @@ def _fit_family_action_readout(
                     if not active:
                         continue
                     feature = np.asarray(workspace[0, slot], dtype=np.float64)
+                    structured = np.asarray(
+                        kernel_feature[0, slot], dtype=np.float64
+                    )
                     base = np.asarray(logits[0, slot], dtype=np.float64)
                     observations.setdefault((expert, slot), []).append(
-                        (feature, base, int(target))
+                        (feature, structured, base, int(target))
                     )
                     task_rows.append(
-                        (step * slot_count + slot, feature, base, int(target))
+                        (
+                            step * slot_count + slot,
+                            feature,
+                            structured,
+                            base,
+                            int(target),
+                        )
                     )
             instruction_rows.append((expert, task_rows))
             task_commitments.append(
@@ -1859,8 +1877,9 @@ def _fit_family_action_readout(
     cell_receipts: dict[str, Any] = {}
     for (expert, slot), rows in sorted(observations.items()):
         features = np.stack([row[0] for row in rows])
-        bases = np.stack([row[1] for row in rows])
-        labels = np.asarray([row[2] for row in rows], dtype=np.int64)
+        structured_features = np.stack([row[1] for row in rows])
+        bases = np.stack([row[2] for row in rows])
+        labels = np.asarray([row[3] for row in rows], dtype=np.int64)
         raw_weight, raw_bias, cell_report = _dual_ridge_residual_readout(
             features,
             bases,
@@ -1872,7 +1891,7 @@ def _fit_family_action_readout(
         fitted_bias[expert, slot] = raw_bias
         linear_logits = bases + features @ raw_weight + raw_bias
         kernel_parameters, kernel_report = _rbf_residual_readout(
-            features,
+            structured_features,
             linear_logits,
             labels,
             capacity=kernel_capacity,
@@ -1894,7 +1913,7 @@ def _fit_family_action_readout(
     after_correct = 0
     total = 0
     for expert, rows in instruction_rows:
-        for coordinate, feature, base, target in rows:
+        for coordinate, feature, structured, base, target in rows:
             slot = coordinate % slot_count
             before_correct += int(np.argmax(base) == target)
             corrected = (
@@ -1903,7 +1922,7 @@ def _fit_family_action_readout(
                 + fitted_bias[expert, slot]
             )
             normalized = (
-                feature - kernel_mean[expert, slot]
+                structured - kernel_mean[expert, slot]
             ) * kernel_inv_scale[expert, slot]
             distances = np.mean(
                 np.square(
@@ -1950,7 +1969,11 @@ def _fit_family_action_readout(
     after_sha256 = controller.parameter_sha256()
     body = {
         "schema": "aura.unified_intrinsic.analytic_action_readout_fit.v1",
-        "method": "training_only_affine_plus_rbf_residual_synaptic_write",
+        "method": "training_only_affine_workspace_plus_public_signature_rbf_write",
+        "affine_feature_source": "learned_recurrent_workspace",
+        "kernel_feature_source": (
+            "ordered_public_literals_current_state_depth_and_family"
+        ),
         "regularization": float(regularization),
         "target_logit_margin": float(margin),
         "training_tasks": len(task_commitments),
@@ -4759,7 +4782,13 @@ def main() -> int:
             "process_query_gradient_scale": args.process_query_gradient_scale,
             "analytic_action_readout": {
                 "enabled": args.analytic_action_readout_fit,
-                "method": "training_only_affine_plus_rbf_residual_synaptic_write",
+                "method": (
+                    "training_only_affine_workspace_plus_public_signature_rbf_write"
+                ),
+                "affine_feature_source": "learned_recurrent_workspace",
+                "kernel_feature_source": (
+                    "ordered_public_literals_current_state_depth_and_family"
+                ),
                 "regularization": args.analytic_action_readout_ridge,
                 "target_logit_margin": args.analytic_action_readout_margin,
                 "holdout_fit_authority": False,

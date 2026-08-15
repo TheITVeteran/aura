@@ -2090,6 +2090,7 @@ class UnifiedRecurrentController(nn.Module):
         family_action_lesion: bool = False,
         action_literal_binding_lesion: bool = False,
         action_workspace_trajectory: list[Any] | None = None,
+        action_kernel_feature_trajectory: list[Any] | None = None,
     ) -> Any:
         """Decode the next typed operation from public evidence and current state."""
 
@@ -2123,6 +2124,16 @@ class UnifiedRecurrentController(nn.Module):
         )
         if action_workspace_trajectory is not None:
             action_workspace_trajectory.append(workspace)
+        kernel_feature = self._public_action_signature(
+            token_ids,
+            state_probabilities,
+            step=step,
+            width=int(workspace.shape[-1]),
+        )
+        if kernel_feature is None:
+            kernel_feature = workspace
+        if action_kernel_feature_trajectory is not None:
+            action_kernel_feature_trajectory.append(kernel_feature)
         logits = logits + mx.einsum(
             "baw,awc->bac",
             workspace,
@@ -2131,6 +2142,7 @@ class UnifiedRecurrentController(nn.Module):
         logits = self._family_action_logits(
             logits,
             workspace,
+            kernel_feature,
             token_ids=token_ids,
             family_action_lesion=family_action_lesion,
         )
@@ -2308,6 +2320,94 @@ class UnifiedRecurrentController(nn.Module):
             expanded = nn.gelu(normalized @ self.action_workspace_ff_up[layer])
             workspace = workspace + expanded @ self.action_workspace_ff_down[layer]
         return self._workspace_norm(workspace)
+
+    def _public_action_signature(
+        self,
+        token_ids: Any | None,
+        state_probabilities: Any | None,
+        *,
+        step: int,
+        width: int,
+    ) -> Any | None:
+        """Expose ordered public literals and causal state to learned tissue."""
+
+        if (
+            token_ids is None
+            or state_probabilities is None
+            or not self.config.literal_digit_token_ids
+            or width < 19
+        ):
+            return None
+        contract = LiteralObservationContract(
+            self.config.literal_digit_token_ids,
+            max_value=self.config.numeric_observation_max_value,
+        )
+        values, masks = contract.observe(token_ids.tolist())
+        family_routes = self._frontier_family_routes(token_ids)
+        family_width = FRONTIER_ACTION_EXPERT_COUNT
+        fixed_width = (
+            self.config.state_slots
+            + self.config.depth_basis_size
+            + family_width
+            + 1
+        )
+        literal_slots = max(1, (width - fixed_width) // 2)
+        literal_rows: list[list[float]] = []
+        presence_rows: list[list[float]] = []
+        for value_row, mask_row in zip(values, masks, strict=True):
+            observed = [
+                int(value)
+                for value, present in zip(value_row, mask_row, strict=True)
+                if present
+            ][:literal_slots]
+            literal_rows.append(
+                [
+                    value / float(self.config.numeric_observation_max_value)
+                    for value in observed
+                ]
+                + [0.0] * (literal_slots - len(observed))
+            )
+            presence_rows.append(
+                [1.0] * len(observed) + [0.0] * (literal_slots - len(observed))
+            )
+        literal_features = mx.array(literal_rows, dtype=mx.float32)
+        presence_features = mx.array(presence_rows, dtype=mx.float32)
+        categories = mx.arange(self.config.state_cardinality, dtype=mx.float32)
+        state_features = (
+            mx.sum(state_probabilities.astype(mx.float32) * categories, axis=-1)
+            / float(self.config.state_cardinality - 1)
+        )
+        depth = mx.broadcast_to(
+            self.depth_features(step)[None, :],
+            (int(token_ids.shape[0]), self.config.depth_basis_size),
+        )
+        if family_routes is None:
+            family_routes = mx.zeros(
+                (int(token_ids.shape[0]), family_width), dtype=mx.float32
+            )
+        counts = mx.sum(presence_features, axis=-1, keepdims=True) / float(
+            literal_slots
+        )
+        signature = mx.concatenate(
+            (
+                literal_features,
+                presence_features,
+                state_features,
+                depth,
+                family_routes,
+                counts,
+            ),
+            axis=-1,
+        )
+        if int(signature.shape[-1]) < width:
+            signature = mx.pad(
+                signature,
+                ((0, 0), (0, width - int(signature.shape[-1]))),
+            )
+        return mx.broadcast_to(
+            signature[:, None, :],
+            (int(signature.shape[0]), self.config.action_slots, width),
+        )
 
     def _causal_action_logits(
         self,
@@ -2553,6 +2653,7 @@ class UnifiedRecurrentController(nn.Module):
         self,
         base_logits: Any,
         workspace: Any,
+        kernel_feature: Any,
         *,
         token_ids: Any | None,
         family_action_lesion: bool,
@@ -2576,7 +2677,7 @@ class UnifiedRecurrentController(nn.Module):
             self.action_family_output,
         ) + self.action_family_bias[None, :, :, :]
         normalized = (
-            workspace[:, None, :, None, :].astype(mx.float32)
+            kernel_feature[:, None, :, None, :].astype(mx.float32)
             - self.action_family_kernel_mean[None, :, :, None, :]
         ) * self.action_family_kernel_inv_scale[None, :, :, None, :]
         distance = mx.mean(
@@ -2901,6 +3002,12 @@ class UnifiedRecurrentController(nn.Module):
                     else "disabled"
                 ),
                 "private_transition_program_visible": False,
+                "affine_feature_source": "learned_recurrent_workspace",
+                "kernel_feature_source": (
+                    "ordered_public_literals_current_state_depth_and_family"
+                    if self.config.literal_digit_token_ids
+                    else "learned_recurrent_workspace"
+                ),
                 "parent_attachment": "exact_zero_output_noop",
                 "lesionable": True,
             },
@@ -2975,6 +3082,7 @@ def unified_recurrent_hidden_states(
     state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
     action_workspace_trajectory: list[Any] | None = None,
+    action_kernel_feature_trajectory: list[Any] | None = None,
     initial_state_logit_trajectory: list[Any] | None = None,
     decode_state_trajectory: list[Any] | None = None,
     recurrent_input_trajectory: list[Any] | None = None,
@@ -3209,6 +3317,7 @@ def unified_recurrent_hidden_states(
                     family_action_lesion=family_action_lesion,
                     action_literal_binding_lesion=action_literal_binding_lesion,
                     action_workspace_trajectory=action_workspace_trajectory,
+                    action_kernel_feature_trajectory=action_kernel_feature_trajectory,
                 )
                 action_probabilities = controller.straight_through_probabilities(
                     action_logits
