@@ -11,7 +11,7 @@ Test categories:
   5. Runtime integration: _dream_research_modules is callable
   6. Shadow-mode value proposal: 20-cycle accumulation without promotion
 """
-import json, sys, unittest, copy
+import json, re, sys, unittest, copy
 from pathlib import Path
 import numpy as np
 
@@ -300,13 +300,57 @@ class TestRuntimeIntegration(unittest.TestCase):
         self.assertIn("plasticity_governor", text)
 
     def test_boot_initializer_registers_research_services(self):
-        """cognitive_sensory.py registers Phase 3/4 modules."""
-        source = Path(__file__).resolve().parents[1] / "core" / "initializers" / "cognitive_sensory.py"
+        """The live boot initializer registers the Phase 3/4 modules.
+
+        This asserted against ``core/initializers/cognitive_sensory.py`` — a
+        second, unreachable copy of the initializer that no boot path called,
+        retired in 053b0a8ab. The obligation passed for years against a file
+        that could not register anything.
+        """
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "core" / "orchestrator" / "initializers" / "cognitive_sensory.py"
+        )
         text = source.read_text()
         self.assertIn("metacognitive_monitor", text)
         self.assertIn("intrinsic_motivation", text)
         self.assertIn("experience_distillery", text)
         self.assertIn("plasticity_governor", text)
+
+    def test_every_dream_research_read_has_a_registrar(self):
+        """A container read with no registrar anywhere is a permanent None.
+
+        Pair the readers to the writer by name rather than trusting a comment
+        that says "boot-registered singleton": that comment was in the source
+        the whole time these four resolved to None.
+        """
+        root = Path(__file__).resolve().parents[1]
+        tick = (root / "core" / "mind_tick.py").read_text()
+        initializer = (
+            root / "core" / "orchestrator" / "initializers" / "cognitive_sensory.py"
+        ).read_text()
+
+        read_names = set(
+            re.findall(r'ServiceContainer\.get\(\s*"([a-z0-9_]+)"', tick)
+        )
+        research = {
+            "metacognitive_monitor",
+            "intrinsic_motivation",
+            "experience_distillery",
+            "plasticity_governor",
+        }
+        exercised = research & read_names
+        self.assertTrue(exercised, "mind_tick no longer reads any research service")
+
+        unregistered = sorted(
+            name
+            for name in exercised
+            if f'"{name}"' not in initializer
+        )
+        self.assertFalse(
+            unregistered,
+            f"mind_tick reads these with no boot registrar: {unregistered}",
+        )
 
     def test_closed_loop_feeds_metacognitive(self):
         """ClosedCausalLoop continuously feeds the metacognitive monitor."""

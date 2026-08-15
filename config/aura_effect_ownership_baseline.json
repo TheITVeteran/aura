@@ -4177,7 +4177,7 @@
       "scope": "<module>.AuraKernel._process_storage_intents._append_to_file._sync_write"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -4887,6 +4887,14 @@
       "count": 1,
       "path": "core/resilience/fault_evidence.py",
       "scope": "<module>.FaultEvidenceStore.flush"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/resilience/immunity_hyphae.py",
+      "scope": "<module>.SignatureRepairRegistry._repair_pid_cleanup"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -5769,12 +5777,44 @@
       "scope": "<module>._record_sync"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/manifest_to_device.py",
+      "scope": "<module>.ManifestToDeviceSkill.__init__"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/manifest_to_device.py",
+      "scope": "<module>.ManifestToDeviceSkill.execute"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/skills/manim_renderer.py",
       "scope": "<module>.ManimRendererSkill.execute"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/memory_sync.py",
+      "scope": "<module>.MemorySyncSkill._push"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/memory_sync.py",
+      "scope": "<module>.MemorySyncSkill.execute"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -6479,6 +6519,14 @@
       "count": 1,
       "path": "core/skills/inter_agent_comm.py",
       "scope": "<module>.InterAgentCommSkill.execute"
+    },
+    {
+      "callee": "core.runtime.network_gateway.get_network_gateway().request",
+      "canonical_owner": false,
+      "category": "network_gateway",
+      "count": 1,
+      "path": "core/skills/manifest_to_device.py",
+      "scope": "<module>.ManifestToDeviceSkill.execute"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
@@ -11281,14 +11329,6 @@
       "scope": "<module>.SignatureRepairRegistry._repair_lock_cleanup"
     },
     {
-      "callee": "os.remove",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/resilience/immunity_hyphae.py",
-      "scope": "<module>.SignatureRepairRegistry._repair_pid_cleanup"
-    },
-    {
       "callee": "open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15313,6 +15353,14 @@
       "scope": "<module>.ManimRendererSkill.execute"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/skills/memory_sync.py",
+      "scope": "<module>.MemorySyncSkill._run_git"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -15834,6 +15882,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "831a7df1d1bb9856f4e4f77750ad7172c3314ad0c181a8be890bed1e3455a2bc",
+  "inventory_sha256": "136b46ce4a5ede10d1cb31a0a3cfcc463aec3e9d045ce2dc14a7c46d2de8faa2",
   "schema_version": 1
 }

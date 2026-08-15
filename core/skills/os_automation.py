@@ -51,6 +51,15 @@ _STRICT_CODE_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 _SNAPSHOT_SEPARATOR = "\x1e"
+
+# Every probe in _capture_desktop_snapshot states a budget except the
+# clipboard read, which awaited the pasteboard forever. A wedged pasteboard
+# server then wedged the whole verification pass — and a snapshot that never
+# returns is worse than one that returns with a named gap. Budgets follow the
+# other probes in the same method: the AppleScript inspection gets 5s, the
+# secondary probes get 4s.
+_SNAPSHOT_PROBE_TIMEOUT_S = 5.0
+_SNAPSHOT_SECONDARY_PROBE_TIMEOUT_S = 4.0
 _BASE_SNAPSHOT_SCRIPT = r'''
 on replaceText(findText, replacementText, sourceText)
     set oldDelimiters to AppleScript's text item delimiters
@@ -866,7 +875,7 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
         try:
             receipt = await inspect_script(
                 _BASE_SNAPSHOT_SCRIPT,
-                timeout_s=5.0,
+                timeout_s=_SNAPSHOT_PROBE_TIMEOUT_S,
                 source="os_automation.desktop_snapshot",
             )
             if bool(getattr(receipt, "success", False)):
@@ -916,7 +925,7 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
                 try:
                     browser_receipt = await inspect_script(
                         browser_script,
-                        timeout_s=4.0,
+                        timeout_s=_SNAPSHOT_SECONDARY_PROBE_TIMEOUT_S,
                         source="os_automation.browser_url_snapshot",
                     )
                     if bool(getattr(browser_receipt, "success", False)):
@@ -938,8 +947,16 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
             try:
                 from core.capabilities.clipboard_manager import get_clipboard_manager
 
-                clip_text = str(await get_clipboard_manager().get() or "")
+                clip_text = str(
+                    await asyncio.wait_for(
+                        get_clipboard_manager().get(),
+                        timeout=_SNAPSHOT_SECONDARY_PROBE_TIMEOUT_S,
+                    )
+                    or ""
+                )
                 values["clipboard_excerpt"] = clip_text[:1200]
+            except TimeoutError:
+                errors.append("clipboard_snapshot_timeout")
             except _OS_AUTOMATION_ERRORS as exc:
                 errors.append(f"clipboard_snapshot_exception:{type(exc).__name__}")
 

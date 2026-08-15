@@ -67,16 +67,14 @@ ALLOWED: dict[str, str] = {
         "vendor SDK builds its own transport; content is screened by "
         "_screen_for_egress before it is handed to the client"
     ),
-    # Both hold a google.genai client for grounded search, and both screen the
-    # query with filter_model_prompt before it is sent — a refusal drops the
-    # cloud leg and the local search pipeline answers instead.
+    # Holds a google.genai client for grounded search and screens the query
+    # with filter_model_prompt before it is sent — a refusal drops the cloud
+    # leg and the local search pipeline answers instead.
+    # (core/skills/grounded_search.py held the same waiver until the module was
+    # retired in 053b0a8ab; the ratchet's own stale-entry check removed it.)
     "core/brain/react_loop.py": (
         "vendor SDK for grounded search; query screened by filter_model_prompt, "
         "refusal falls through to the local Sovereign/DDG pipeline"
-    ),
-    "core/skills/grounded_search.py": (
-        "vendor SDK for grounded search; query screened by filter_model_prompt, "
-        "refusal returns a fallback instruction to the caller"
     ),
 }
 

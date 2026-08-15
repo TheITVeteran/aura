@@ -137,7 +137,20 @@ class SignatureRepairRegistry:
         pid_file = get_config().paths.pid_file
         if pid_file.exists():
             logger.warning("💉 Removing stale PID file: %s", pid_file)
-            pid_file.unlink(missing_ok=True)
+            # An immune repair that removes a file is still a consequential
+            # mutation, and a bare unlink here bypassed the one lane that
+            # records who removed what. Self-healing is exactly the code that
+            # must be answerable for it.
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            with local_internal_governed_scope(
+                "resilience.immunity_hyphae.pid_cleanup",
+                receipt_prefix="immunity-pid-cleanup",
+            ):
+                get_file_write_gateway().delete_file(
+                    pid_file, source="resilience.immunity_hyphae.pid_cleanup"
+                )
 
     def _repair_data_dirs(self):
         """Ensures common data structure exists."""

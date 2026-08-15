@@ -108,7 +108,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/senses/interaction_signals.py", "_voice_consumer", "get"),
         ("core/skills/sovereign_terminal.py", "_open_target", "wait"),
         ("core/state/state_repository.py", "_mutation_consumer_loop", "get"),
-        ("core/utils/context_assembler.py", "gather_full_context", "get"),
         ("core/utils/output_gate.py", "get_secondary_stream", "get"),
         ("core/utils/queues.py", "get", "get"),
     }

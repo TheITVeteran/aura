@@ -417,11 +417,6 @@
       "_save"
     ],
     [
-      "core/kernel/aura_kernel.py",
-      "tick",
-      "_record_dream_fragment"
-    ],
-    [
       "core/learning/compounding_scheduler.py",
       "_execute_cycle",
       "_save_state"

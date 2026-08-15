@@ -232,7 +232,7 @@ def register_core_pathways(mycelium: Any):
     mycelium.register_pathway(
         pathway_id="personality_introspect",
         pattern=r"(?:tell\s+me\s+about\s+yourself|introspect|self[- ]reflect|what\s+are\s+you\s+(?:feeling|thinking))",
-        skill_name="personality_skill",
+        skill_name="personality",
         param_map={},
         priority=5.0,
         activity_label="Aura is introspecting...",

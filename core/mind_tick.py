@@ -135,6 +135,19 @@ TICK_INTERVALS = {
     CognitiveMode.CRITICAL: 0.5,
 }
 
+# The longest budget any single tick stage is allowed: the dream-research
+# window. Every stage in the loop is bounded by an explicit wait_for, so a loop
+# that has made no progress for longer than its own longest bounded stage is
+# not slow — it is wedged past a bound it declared.
+#
+# The stall thresholds are derived from it rather than picked. They were 600s
+# stale and 900s hard against a 2s conversational tick: a loop could miss three
+# hundred consecutive beats and still report alive, which is far past any
+# conversation-readiness budget. Both stay overridable by env.
+MAX_BOUNDED_TICK_STAGE_S = 120.0
+DEFAULT_STALE_PROGRESS_S = MAX_BOUNDED_TICK_STAGE_S * 1.5
+DEFAULT_HARD_STALL_S = MAX_BOUNDED_TICK_STAGE_S * 2.0
+
 PhaseCallable = Callable[[AuraState], Awaitable[AuraState]]
 
 @dataclass
@@ -549,11 +562,15 @@ class MindTick:
             float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
             float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0),
         )
-        stale_progress_s = self._float_env("AURA_MIND_TICK_STALE_PROGRESS_S", 600.0)
+        stale_progress_s = self._float_env(
+            "AURA_MIND_TICK_STALE_PROGRESS_S", DEFAULT_STALE_PROGRESS_S
+        )
         if freshest_progress > 0.0 and (now - freshest_progress) <= stale_progress_s:
             return True
         active_started = float(getattr(self, "_active_tick_started_at", 0.0) or 0.0)
-        hard_stall_s = self._float_env("AURA_MIND_TICK_HARD_STALL_S", 900.0)
+        hard_stall_s = self._float_env(
+            "AURA_MIND_TICK_HARD_STALL_S", DEFAULT_HARD_STALL_S
+        )
         if (
             task_alive
             and active_started > 0.0
@@ -1703,11 +1720,24 @@ class MindTick:
                     _record_mind_degradation(exc)
                     logger.debug("MindTick local runtime health probe via gate failed: %s", exc)
                 if local_runtime_state == "offline":
-                    from core.brain.llm.mlx_client import get_mlx_client
-                    mlx_client = get_mlx_client()
-                    local_runtime_state = "online" if mlx_client.is_alive() else "offline"
+                    # ASK the registered client; never BUILD one. get_mlx_client()
+                    # resolves the model path and constructs a backend, which
+                    # can initialize MLX inside the rhythm process — the one
+                    # process that must stay free of model work. A health probe
+                    # that spawns the thing it is probing is not a probe.
+                    mlx_client = ServiceContainer.get("mlx_client", default=None)
+                    if mlx_client is not None and hasattr(mlx_client, "is_alive"):
+                        local_runtime_state = "online" if mlx_client.is_alive() else "offline"
+                    else:
+                        # No client registered: nobody has stood the lane up.
+                        # "unknown" is the truth; "offline" would be a verdict
+                        # this tick has no evidence for.
+                        local_runtime_state = "unknown"
                 current_state.health["capabilities"]["local_runtime"] = local_runtime_state
                 
+                # Unlike the MLX client, constructing this one starts nothing:
+                # __init__ only sets up the IPC handles for a sidecar that may
+                # or may not be running, so asking it is a real probe.
                 from core.senses.sensory_client import get_sensory_client
                 sensory_client = get_sensory_client()
                 current_state.health["capabilities"]["sensory_worker"] = "online" if sensory_client.is_alive() else "offline"

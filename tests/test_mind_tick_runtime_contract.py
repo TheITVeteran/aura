@@ -72,30 +72,59 @@ def test_mind_tick_liveness_requires_supervised_progress():
     assert tick.ensure_alive() is False
 
 
-def test_mind_tick_liveness_allows_active_bounded_tick_progress():
-    class RunningTask:
-        @staticmethod
-        def done():
-            return False
+class _RunningTask:
+    @staticmethod
+    def done():
+        return False
 
+
+def _tick_with_progress_age(age_s: float) -> MindTick:
     tick = MindTick.__new__(MindTick)
     tick._running = True
-    tick._task = RunningTask()
-    tick._started_at = time.time() - 700
-    tick._active_tick_started_at = time.time() - 700
+    tick._task = _RunningTask()
+    tick._started_at = time.time() - age_s
+    tick._active_tick_started_at = time.time() - age_s
     tick._active_tick_stage = "kernel_tick"
     tick._last_progress_label = "kernel_tick"
-    tick._last_successful_tick_at = time.time() - 700
-    tick._last_loop_progress_at = time.time() - 700
+    tick._last_successful_tick_at = time.time() - age_s
+    tick._last_loop_progress_at = time.time() - age_s
     tick._consecutive_loop_failures = 0
     tick._tick_count = 5
     tick._last_liveness_repair_at = 0.0
+    return tick
 
-    assert tick.ensure_alive() is True
+
+def test_mind_tick_liveness_allows_active_bounded_tick_progress():
+    """Inside the loop's own longest bounded stage, a tick in flight is alive."""
+    from core.mind_tick import MAX_BOUNDED_TICK_STAGE_S
+
+    tick = _tick_with_progress_age(MAX_BOUNDED_TICK_STAGE_S - 20.0)
+
+    assert tick.is_alive() is True
     status = tick.get_health_status()
     assert status["healthy"] is True
     assert status["active_tick_stage"] == "kernel_tick"
     assert status["last_progress_label"] == "kernel_tick"
+
+
+def test_a_ten_minute_stall_is_not_alive():
+    """The old thresholds were 600s stale and 900s hard against a 2s
+    conversational tick: three hundred missed beats still read as healthy."""
+    tick = _tick_with_progress_age(700.0)
+
+    assert tick.is_alive() is False
+
+
+def test_the_stall_thresholds_come_from_the_loops_own_budgets():
+    from core.mind_tick import (
+        DEFAULT_HARD_STALL_S,
+        DEFAULT_STALE_PROGRESS_S,
+        MAX_BOUNDED_TICK_STAGE_S,
+    )
+
+    assert DEFAULT_STALE_PROGRESS_S == MAX_BOUNDED_TICK_STAGE_S * 1.5
+    assert DEFAULT_HARD_STALL_S == MAX_BOUNDED_TICK_STAGE_S * 2.0
+    assert DEFAULT_HARD_STALL_S < 600.0, "still past a conversation budget"
 
 
 @pytest.mark.asyncio
@@ -887,3 +916,30 @@ def test_the_log_sieve_is_bounded_to_the_newest_logs():
     assert "reverse=True," in source
     assert "[:64]" in source
     assert "st_mtime" in source
+
+
+def test_the_health_probe_never_builds_a_model_client():
+    """`get_mlx_client()` resolves a model path and constructs a backend, which
+    can initialize MLX inside the one process that must stay free of it."""
+    source = _loop_source()
+
+    assert "from core.brain.llm.mlx_client import get_mlx_client" not in source
+    assert 'ServiceContainer.get("mlx_client", default=None)' in source
+
+
+def test_an_unregistered_client_is_unknown_not_offline():
+    """"offline" would be a verdict this tick has no evidence for."""
+    source = _loop_source()
+    marker = source.index('ServiceContainer.get("mlx_client", default=None)')
+    block = source[marker : marker + 900]
+
+    assert 'local_runtime_state = "unknown"' in block
+
+
+def test_the_cheap_sidecar_probe_is_still_a_probe():
+    """Constructing the sensory client starts nothing — __init__ only sets up
+    IPC handles — so asking it is a real observation."""
+    source = _loop_source()
+
+    assert "get_sensory_client()" in source
+    assert "sensory_client.is_alive()" in source

@@ -207,18 +207,25 @@ def test_legacy_orchestrator_module_is_a_package_shim():
     assert module.SystemStatus is orchestrator_package.SystemStatus
 
 
-def test_legacy_orchestrator_boot_module_is_a_package_shim():
-    shim_path = Path(__file__).resolve().parents[1] / "core" / "orchestrator_boot.py"
-    spec = importlib.util.spec_from_file_location("legacy_orchestrator_boot_shim", shim_path)
-    assert spec is not None
-    assert spec.loader is not None
+def test_the_retired_orchestrator_boot_shim_left_no_importers():
+    """The shim was retired in 053b0a8ab. A retirement is only finished when
+    nothing still imports the name: a shim test that keeps passing on a deleted
+    file would report a migration that never happened."""
+    repo = Path(__file__).resolve().parents[1]
+    shim_path = repo / "core" / "orchestrator_boot.py"
 
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    assert not shim_path.exists(), "the shim came back; update the migration story"
 
     import core.orchestrator.boot as boot_package
 
-    assert module.OrchestratorBootMixin is boot_package.OrchestratorBootMixin
+    assert hasattr(boot_package, "OrchestratorBootMixin")
+
+    referrers = []
+    for source in (repo / "core").rglob("*.py"):
+        text = source.read_text("utf-8", errors="ignore")
+        if "core.orchestrator_boot" in text or "from core import orchestrator_boot" in text:
+            referrers.append(str(source.relative_to(repo)))
+    assert not referrers, f"still importing the retired shim: {referrers}"
 
 
 def test_legacy_identity_module_is_a_package_shim():
@@ -581,13 +588,37 @@ async def test_sensory_gate_run_always_closes_browser_and_bus(monkeypatch):
     assert "bus.stop" in events
 
 
-def test_sensory_client_defers_async_lock_creation():
+def test_sensory_client_binds_no_event_loop_at_construction():
+    """The original defect was an asyncio.Lock built in __init__: it bound to
+    whichever loop touched it first, and a later camera read from a thread
+    failed with "bound to a different event loop". The lock names have since
+    changed; the invariant is that no asyncio primitive is held at all, which
+    a rename cannot quietly undo."""
+    import asyncio as _asyncio
+
     client = SensoryLocalClient()
 
-    assert client._lock is None
-    assert client._start_lock is None
+    loop_bound = {
+        name: value
+        for name, value in vars(client).items()
+        if isinstance(
+            value,
+            (_asyncio.Lock, _asyncio.Event, _asyncio.Condition, _asyncio.Queue),
+        )
+    }
+    assert not loop_bound, f"construction bound an event loop via {sorted(loop_bound)}"
+
+
+def test_sensory_client_starts_nothing_at_construction():
+    """The mind-tick health probe constructs this client to ask whether the
+    sidecar is alive. That is only a probe if __init__ spawns nothing."""
+    client = SensoryLocalClient()
+
+    assert client._process is None
     assert client._req_q is None
     assert client._res_q is None
+    assert client._running is False
+    assert client.is_alive() is False
 
 
 def test_sensory_client_releases_ipc_queues():

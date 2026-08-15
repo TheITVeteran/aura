@@ -959,5 +959,67 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         severity="critical",
     )
 
+    async def _research_cognition() -> None:
+        """Phase 3/4 research services the dream phase reads every cycle.
+
+        ``MindTick._dream_research`` asks the container for these four by name
+        and comments that they are "boot-registered singletons". Nothing ever
+        registered them: the only registrar was a second, unreachable copy of
+        this initializer at ``core/initializers/cognitive_sensory.py``, retired
+        in 053b0a8ab because nothing called it. Every read returned None and
+        every branch was skipped silently, so metacognitive reflection,
+        intrinsic-motivation feeding and EWC consolidation never ran.
+        """
+        from core.adaptation.intrinsic_motivation import IntrinsicMotivationEngine
+        from core.adaptation.plasticity_governor import get_plasticity_governor
+        from core.meta.experience_distillery import ExperienceDistillery
+        from core.meta.metacognitive_monitor import MetaCognitiveMonitor
+
+        services: list[tuple[str, Any, str, str]] = [
+            (
+                "metacognitive_monitor",
+                MetaCognitiveMonitor(),
+                "core/meta/metacognitive_monitor.py",
+                "dream-phase learning-condition assessment and strategy actions",
+            ),
+            (
+                "intrinsic_motivation",
+                IntrinsicMotivationEngine(),
+                "core/adaptation/intrinsic_motivation.py",
+                "competence/novelty rewards fed into the dynamic value graph",
+            ),
+            (
+                "experience_distillery",
+                ExperienceDistillery(),
+                "core/meta/experience_distillery.py",
+                "turning failure contexts into reusable lessons",
+            ),
+            (
+                "plasticity_governor",
+                get_plasticity_governor(),
+                "core/adaptation/plasticity_governor.py",
+                "EWC consolidation of weights during dream",
+            ),
+        ]
+        for name, instance, owner, required_for in services:
+            ServiceContainer.register_instance(
+                name,
+                instance,
+                required=False,
+                owner=owner,
+                registered_by="init_cognitive_sensory_layer",
+                required_for=required_for,
+                failure_policy="degrade_without_dream_research",
+            )
+            report["registered"][name] = instance.__class__.__name__
+        logger.info("🧠 Registered %d research cognition services.", len(services))
+
+    await _run_phase(
+        orchestrator,
+        "research_cognition",
+        "Skipped Phase 3/4 research cognition; dream-phase reflection and EWC stay inert",
+        _research_cognition,
+    )
+
     logger.info("🧬 [BOOT] Cognitive & Sensory Layer initialized.")
     return report

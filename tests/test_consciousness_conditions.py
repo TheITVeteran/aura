@@ -125,10 +125,20 @@ def _file_exists(relative_path: str) -> bool:
 
 
 def _read_source(relative_path: str) -> str:
-    """Read source code of a file relative to AURA_ROOT."""
+    """Read source code of a file relative to AURA_ROOT.
+
+    A missing file used to read as an empty string. Every scorer below then
+    found none of its markers and fell to the ``else`` branch, so a module
+    that had been deleted still scored FUNCTIONAL — two points out of three
+    for code that was not there. Absent is absent; say so.
+    """
     fpath = AURA_ROOT / relative_path
     if not fpath.exists():
-        return ""
+        raise FileNotFoundError(
+            f"{relative_path} does not exist: a condition cannot be scored "
+            f"against a module that was retired. Point the test at the live "
+            f"module or score the condition ABSENT."
+        )
     return fpath.read_text(errors="replace")
 
 
@@ -553,9 +563,8 @@ class TestCondition06_InternalSemantics:
     CONDITION = "C06_internal_semantics"
 
     def test_existence(self):
-        """NeologismEngine and SemanticBridge exist."""
+        """The NeologismEngine exists and holds a private lexicon."""
         assert _file_exists("core/consciousness/neologism_engine.py")
-        assert _file_exists("core/consciousness/semantic_bridge.py")
 
         src = _read_source("core/consciousness/neologism_engine.py")
         assert "private_lexicon" in src.lower() or "_LEXICON_PATH" in src, "No private lexicon"
@@ -575,17 +584,32 @@ class TestCondition06_InternalSemantics:
                       "Private lexicon persisted to disk; recurrence tracked cross-session")
 
     def test_indispensability(self):
-        """Semantic bridge uses learned projections (trainable LatentProjector)."""
-        src = _read_source("core/consciousness/semantic_bridge.py")
-        has_training = "BridgeTrainer" in src
-        has_projector = "LatentProjector" in src
-        has_loss = "loss" in src.lower()
+        """The private lexicon reaches the prompt, or it is private and inert.
 
-        assert has_projector, "No trainable projector in semantic bridge"
+        This axis used to be scored on ``core/consciousness/semantic_bridge.py``
+        — a torch projector with no importer anywhere, retired as unreachable in
+        053b0a8ab. Nothing ever trained it, so it was never evidence for this
+        condition; it only looked like evidence. The live coupling is the one
+        that matters: the engine is registered at boot and its lexicon block is
+        assembled into the prompt, which is what makes a self-made word able to
+        change an answer.
+        """
+        assert not _file_exists("core/consciousness/semantic_bridge.py"), (
+            "semantic_bridge.py is back; if it now has importers, score it"
+        )
 
-        score = SCORE_CONSTITUTIVE if (has_training and has_projector and has_loss) else SCORE_FUNCTIONAL
+        boot = _read_source("core/orchestrator/main.py")
+        registered = "neologism_engine" in boot and "get_neologism_engine" in boot
+
+        gate = _read_source("core/brain/inference_gate.py")
+        reaches_prompt = "get_neologism_engine" in gate and 'segments.add("neologisms"' in gate
+
+        assert registered, "NeologismEngine is not registered at boot"
+        assert reaches_prompt, "the private lexicon never reaches the prompt"
+
+        score = SCORE_CONSTITUTIVE if (registered and reaches_prompt) else SCORE_FUNCTIONAL
         _record_score(self.CONDITION, "indispensability", score,
-                      "Trainable LatentProjector with orthogonal loss and MSE training")
+                      "Private lexicon registered at boot and assembled into the prompt")
 
     def test_longitudinal(self):
         """Neologism concepts are distance-gated and require recurrence to persist."""

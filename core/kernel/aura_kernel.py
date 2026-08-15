@@ -496,11 +496,17 @@ class AuraKernel:
             "latest": samples[-32:],
         }
 
-    def _record_dream_fragment(self, objective: str, phase: Any, phase_name: str) -> None:
-        """Record a dream fragment (interrupted background cognition) to disk for offline dreaming consolidation."""
+    async def _record_dream_fragment(self, objective: str, phase: Any, phase_name: str) -> None:
+        """Record a dream fragment (interrupted background cognition) to disk for offline dreaming consolidation.
+
+        Written on the async lane. Every caller is a preemption path — a user
+        request is already waiting on the kernel lock — so this was a blocking
+        append plus fsync at the exact moment the loop had somebody waiting on
+        it. The yield was supposed to be the fast part.
+        """
         try:
             from core.config import config
-            from core.governance_context import governed_scope_sync
+            from core.governance_context import governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             fragment_file = config.paths.data_dir / "dream_fragments.jsonl"
@@ -524,8 +530,8 @@ class AuraKernel:
                 },
             }
             source = "kernel.preemption.dream_fragment"
-            with governed_scope_sync(_kernel_file_write_decision(source)):
-                get_file_write_gateway().append_text(
+            async with governed_scope(_kernel_file_write_decision(source)):
+                await get_file_write_gateway().append_text_async(
                     fragment_file,
                     json.dumps(fragment_entry) + "\n",
                     source=source,
@@ -1254,7 +1260,7 @@ class AuraKernel:
                         "⚡ Background tick yielding to priority user request — aborting remaining phases after %s.",
                         phase_name,
                     )
-                    self._record_dream_fragment(objective, phase, phase_name)
+                    await self._record_dream_fragment(objective, phase, phase_name)
                     break
 
                 # Skip background-only phases during user-facing ticks so the
@@ -1345,14 +1351,14 @@ class AuraKernel:
                                 "⚡ Background tick ending early after %s timeout so stale response generation does not pin the foreground lane.",
                                 phase_name,
                             )
-                            self._record_dream_fragment(objective, phase, phase_name)
+                            await self._record_dream_fragment(objective, phase, phase_name)
                             break
                         if not priority and self._user_priority_pending.is_set():
                             logger.info(
                                 "⚡ Background tick releasing kernel lock after timed-out %s for a waiting priority request.",
                                 phase_name,
                             )
-                            self._record_dream_fragment(objective, phase, phase_name)
+                            await self._record_dream_fragment(objective, phase, phase_name)
                             break
                         continue
                 except asyncio.CancelledError as phase_err:
