@@ -193,3 +193,25 @@ file is rejected before execution.
 The structured memory mechanism is now durable and independently replayable.
 The claim boundary is unchanged: process-to-answer emission and broader
 reasoning evidence remain open.
+
+## CP522 addendum
+
+CP522 connects the sealed recurrent mathematics memory to the existing neural
+objective producer and confidence-bound answer-selection path. For a recognized
+bounded separated-subset objective, the producer now loads only the admitted
+tissue, rolls its own sparse memory from public values, and emits a candidate
+whose receipt binds the tissue and every recurrent state. The independent
+objective verifier recomputes the answer without importing the tissue. A wrong
+ordinary decode is replaced only when that verifier proves exact dominance.
+
+The answer-boundary contracts use the real sealed artifact. They prove that a
+teacher-removed memory execution reaches a correct answer, that a no-write
+lesion destroys the candidate before promotion, and that private verifier state
+is absent from the student roll-in. The bounded claim is registered in
+`core/organism/model_validation.py` with those tests.
+
+This closes production-causal structured answer emission for the measured
+grammar. It does not yet establish task-disjoint free decoding through the base
+model, open-domain transfer, resident-32B gain, or a WOW Signal. Canonical
+objective rendering remains an answer formatter; the next gate must require the
+model's own decoder to carry the recurrent result under matched controls.

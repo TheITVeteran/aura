@@ -31,6 +31,7 @@ do unaided, lives here.
 
 from __future__ import annotations
 
+import ast
 from functools import lru_cache
 from typing import Any
 
@@ -42,9 +43,11 @@ from core.brain.llm.latent_cortex.neural_transition_tissue import (
 from core.brain.llm.latent_cortex.objective_program_verifier import (
     _BOOLEAN_OBJECTIVE_RE,
     _MODULAR_OBJECTIVE_RE,
+    _SEPARATED_SUBSET_RE,
     _boolean_expected,
     _execute_objective,
     _modular_expected,
+    _separated_subset_expected,
     build_solution_receipt,
 )
 from core.brain.llm.latent_cortex.systematic_neural_alu import (
@@ -54,6 +57,11 @@ from core.brain.llm.latent_cortex.systematic_neural_alu import (
 )
 from core.brain.llm.latent_cortex.typed_action_compiler import (
     compile_public_transition_program,
+)
+from core.learning.recurrent_work_memory_tissue import (
+    MathematicsMemoryTissue,
+    execute_mathematics_memory,
+    load_mathematics_memory_tissue,
 )
 
 __all__ = [
@@ -73,16 +81,68 @@ def _resident_systematic_neural_alu() -> SystematicNeuralALU:
     return load_systematic_neural_alu()
 
 
+@lru_cache(maxsize=1)
+def _resident_mathematics_memory_tissue() -> MathematicsMemoryTissue:
+    return load_mathematics_memory_tissue()
+
+
+def _neural_mathematics_memory_expected(
+    objective: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Execute a bounded public subset objective through sealed memory tissue."""
+
+    match = _SEPARATED_SUBSET_RE.match(objective)
+    if match is None:
+        return None
+    try:
+        raw_values = ast.literal_eval(match.group("values"))
+        if not isinstance(raw_values, list) or any(
+            type(value) is not int for value in raw_values
+        ):
+            return None
+        tissue = _resident_mathematics_memory_tissue()
+        execution = execute_mathematics_memory(
+            tissue,
+            choose=int(match.group("count")),
+            gap=int(match.group("separation")),
+            low=int(match.group("low")),
+            high=int(match.group("high")),
+            values=tuple(raw_values),
+        )
+    except (FileNotFoundError, OSError, OverflowError, RuntimeError, ValueError):
+        return None
+    expected = {
+        "count": execution.count,
+        "witness": list(execution.witness),
+    }
+    crosscheck, crosscheck_receipt = _separated_subset_expected(match)
+    if crosscheck != expected:
+        raise RuntimeError(
+            "neural recurrent memory and independent subset verifier disagree"
+        )
+    return "separated_subset_count", expected, {
+        "engine": "mathematics_memory_tissue.v1",
+        "teacher_available": False,
+        "tissue_sha256": tissue.parameter_sha256(),
+        "student_rollin": execution.receipt(),
+        "independent_crosscheck": crosscheck_receipt,
+        "independent_crosscheck_match": True,
+    }
+
+
 def neural_compiled_transition_expected(
     objective: str,
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Run learned neural tissue and independently verify its public result.
+    """Run admitted neural tissue and independently verify its public result.
 
-    Returns ``None`` when the objective does not compile to a transition
-    program. When the sealed artifact is missing the caller falls back to the
-    deterministic path, because an unavailable student is not a failed one.
+    Returns ``None`` when no admitted neural executor covers the objective.
+    When a sealed artifact is missing the caller falls back to the deterministic
+    path, because an unavailable student is not a failed one.
     """
 
+    memory_execution = _neural_mathematics_memory_expected(objective)
+    if memory_execution is not None:
+        return memory_execution
     try:
         program = compile_public_transition_program(objective)
     except ValueError:

@@ -1151,6 +1151,31 @@ def install_runtime_validation() -> dict[str, Any]:
             owner="core/brain/llm/latent_cortex/objective_program_verifier.py",
         )
     )
+    suite.add_test(
+        ValidationTest(
+            name="recurrent_memory_tissue_enters_complete_engine",
+            description=(
+                "sealed teacher-removed recurrent work memory computes and emits "
+                "a verifier-confirmed separated-subset answer"
+            ),
+            required_capability="",
+            observation=Observation(
+                name="recurrent_memory_candidate_is_verified",
+                value=True,
+                source=(
+                    "tests/test_recurrent_work_memory_answer_bridge.py and "
+                    "artifacts/closeout/latent_cortex/cp519_mathematics_memory_canary.json"
+                ),
+            ),
+            predict=lambda _m: _recurrent_memory_complete_engine_contract_holds(),
+            score=lambda p, o: boolean_score(
+                bool(p),
+                expected=bool(o.value),
+                subject="recurrent memory complete-engine candidate",
+            ),
+            owner="core/brain/llm/latent_cortex/neural_objective_producer.py",
+        )
+    )
 
     suite.add_test(
         ValidationTest(
@@ -1300,6 +1325,26 @@ def install_runtime_validation() -> dict[str, Any]:
                 "unseen moduli. Boolean production retains the exhaustive CP196 tissue. "
                 "Public action selection is still a strict symbolic compiler; open-domain "
                 "depth gain and resident-model execution remain unmeasured."
+            ),
+        )
+    )
+    suite.add_claim(
+        Claim(
+            statement=(
+                "For the bounded separated-subset grammar, Aura's sealed recurrent "
+                "work-memory tissue can compute a verifier-confirmed answer from the "
+                "public objective and enter the complete answer-selection engine."
+            ),
+            test="recurrent_memory_tissue_enters_complete_engine",
+            owner="core/brain/llm/latent_cortex/neural_objective_producer.py",
+            asserted_in="docs/AURA_EXECUTION_TRACKER.md",
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note=(
+                "The admitted tissue was exact on 300 fresh held-out tasks while "
+                "matched initialization and write/read/reset lesions failed. The "
+                "complete-engine contract independently verifies the emitted JSON. "
+                "This does not establish open-domain transfer, resident-32B gain, "
+                "free-form neural decoding, or a WOW Signal."
             ),
         )
     )
@@ -2219,6 +2264,38 @@ def _neural_complete_engine_contract_holds() -> bool:
         and execution.get("teacher_available") is False
         and execution.get("student_rollin", {}).get("transition_count") == 8
         and candidate.endswith(task.answer)
+        and verdict is not None
+        and verdict.get("outcome") == "verified"
+    )
+
+
+def _recurrent_memory_complete_engine_contract_holds() -> bool:
+    from core.brain.llm.latent_cortex.frontier_tasks import generate_task
+    from core.brain.llm.latent_cortex.neural_objective_producer import (
+        solve_objective_program_neural,
+    )
+    from core.brain.llm.latent_cortex.objective_program_verifier import (
+        verify_objective_program,
+    )
+
+    task = generate_task("mathematics", seed=1_037, difficulty=3)
+    objective = task.public.prompt
+    solved = solve_objective_program_neural(objective)
+    if solved is None:
+        return False
+    candidate, receipt = solved
+    verdict = verify_objective_program(candidate, objective=objective)
+    execution = receipt.get("execution", {})
+    student_rollin = execution.get("student_rollin", {})
+    return bool(
+        isinstance(execution, dict)
+        and execution.get("engine") == "mathematics_memory_tissue.v1"
+        and execution.get("teacher_available") is False
+        and execution.get("independent_crosscheck_match") is True
+        and isinstance(student_rollin, dict)
+        and student_rollin.get("teacher_available") is False
+        and student_rollin.get("verifier_available") is False
+        and student_rollin.get("student_memory_rollin") is True
         and verdict is not None
         and verdict.get("outcome") == "verified"
     )

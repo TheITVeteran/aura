@@ -489,6 +489,60 @@ def test_certified_recurrent_program_replaces_wrong_complete_engine_candidates()
     )
 
 
+def test_sealed_recurrent_memory_replaces_a_wrong_mathematics_decode():
+    from core.brain.llm.latent_cortex.frontier_tasks import generate_task
+
+    task = generate_task("mathematics", seed=1_037, difficulty=3)
+    wrong = 'FINAL_ANSWER: {"count":0,"witness":[]}'
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left=wrong,
+        right=wrong,
+        repaired=wrong,
+        objective=task.public.prompt,
+    )
+
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text=wrong,
+        baseline_tokens=_encode(wrong),
+        encode=_encode,
+        decode=_decode,
+        enabled=True,
+        margin=0.05,
+        max_output_tokens=512,
+    )
+
+    producer = private["objective_program_solution_receipt"]
+    execution = producer["execution"]
+    assert execution["engine"] == "mathematics_memory_tissue.v1"
+    assert execution["student_rollin"]["teacher_available"] is False
+    assert execution["student_rollin"]["verifier_available"] is False
+    assert receipt["baseline_quality"]["basis"] == "deterministic_exact_refutation"
+    assert receipt["decision"] == "replace"
+    assert receipt["accepted_output"]["source"] == "objective_program_solution"
+    assert task.score(_decode(tokens)).correct is True
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence=private,
+        expected_objective=objective,
+        expected_selected_branch=0,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=512,
+        expected_output_text=_decode(tokens),
+        expected_output_tokens=tokens,
+    )
+
+
 def test_public_objective_solver_replaces_wrong_fenced_json_incumbent():
     objective = (
         "Evaluate this 2-operation expression with 1=true, 0=false, and xor meaning "
