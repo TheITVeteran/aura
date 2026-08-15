@@ -86,6 +86,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -972,6 +973,7 @@ def _direct_transition_curriculum_window(
             "complete_public_prefix_visible": True,
             "corrupt_transition": None,
             "corrupt_state_slot": None,
+            "corrupt_state_offset": None,
         }
 
     stage_stop = (
@@ -996,7 +998,8 @@ def _direct_transition_curriculum_window(
                 "training_only_midtrace_initial_state": False,
                 "complete_public_prefix_visible": True,
                 "corrupt_transition": recovery_index % transition_depth,
-                "corrupt_state_slot": 1 + recovery_index % 3,
+                "corrupt_state_slot": recovery_index % 4,
+                "corrupt_state_offset": 1 + (recovery_index // 4) % 3,
             }
         return {
             "stage": "closed_loop",
@@ -1006,6 +1009,7 @@ def _direct_transition_curriculum_window(
             "complete_public_prefix_visible": True,
             "corrupt_transition": None,
             "corrupt_state_slot": None,
+            "corrupt_state_offset": None,
         }
     width = min(widths[stage_index], transition_depth)
     stage_start = 0 if stage_index == 0 else stage_stop[stage_index - 1]
@@ -1019,6 +1023,7 @@ def _direct_transition_curriculum_window(
         "complete_public_prefix_visible": True,
         "corrupt_transition": None,
         "corrupt_state_slot": None,
+        "corrupt_state_offset": None,
     }
 
 
@@ -1210,6 +1215,7 @@ def _gradient_ownership_group(name: str) -> str:
             "controller.transition_memory_",
             "controller.transition_tape_",
             "controller.transition_processor_",
+            "controller.transition_replay_",
         )
     ):
         return "typed_state_transition"
@@ -2361,6 +2367,7 @@ def _capture_autonomous_process(
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Capture one prefix-only autonomous process execution without decoding."""
@@ -2382,6 +2389,7 @@ def _capture_autonomous_process(
         transition_processor_lesion=transition_processor_lesion,
         transition_processor_mode=transition_processor_mode,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
+        transition_replay_mode=transition_replay_mode,
         transition_history_lesion=transition_history_lesion,
     )
     if len(initial_state_logits) != 1:
@@ -2919,6 +2927,7 @@ def _evaluate_process_admission(
     public_action_program: bool = False,
     transition_processor_lesion: bool = False,
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
 ) -> dict[str, Any]:
     """Require exact teacher-removed state/action execution on every unseen task."""
@@ -2952,6 +2961,7 @@ def _evaluate_process_admission(
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
+                    transition_replay_mode=transition_replay_mode,
                     transition_history_lesion=transition_history_lesion,
                 )
                 if public_action_program
@@ -2983,6 +2993,7 @@ def _evaluate_process_admission(
             "authoritative" if public_action_program else "residual"
         ),
         "transition_opcode_expert_routing": transition_opcode_expert_routing,
+        "transition_replay_mode": transition_replay_mode,
         "transition_action_history_available": not transition_history_lesion,
         "transition_action_history_lesioned": transition_history_lesion,
         "depth": depth,
@@ -3596,6 +3607,12 @@ def _bootstrap_bundle_from_checkpoint(
             child_values,
         )
     )
+    bundle_values, transition_replay_extension = (
+        _merge_bootstrap_transition_replay_extension(
+            bundle_values,
+            child_values,
+        )
+    )
     bundle_values, codebook_extension = _merge_bootstrap_codebook_extension(
         bundle_values,
         child_values,
@@ -3653,6 +3670,8 @@ def _bootstrap_bundle_from_checkpoint(
         result["transition_opcode_expert_extension"] = (
             transition_opcode_expert_extension
         )
+    if transition_replay_extension is not None:
+        result["transition_replay_extension"] = transition_replay_extension
     return result
 
 
@@ -4248,6 +4267,58 @@ def _merge_bootstrap_transition_opcode_expert_extension(
     }
 
 
+def _merge_bootstrap_transition_replay_extension(
+    parent_values: dict[str, Any],
+    child_values: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Attach state-independent public-prefix recovery as an exact no-op."""
+
+    expected = {f"controller.{name}" for name in TRANSITION_REPLAY_PARAMETER_NAMES}
+    missing = expected - set(parent_values)
+    if not missing:
+        return dict(parent_values), None
+    if missing != expected:
+        raise RuntimeError(
+            "unified recurrence bootstrap transition-replay inventory differs: "
+            + ",".join(sorted(missing))
+        )
+    migrated = dict(parent_values)
+    tensor_receipts: dict[str, dict[str, Any]] = {}
+    for name in sorted(expected):
+        if name not in child_values:
+            raise RuntimeError(
+                "unified recurrence bootstrap transition-replay source differs"
+            )
+        value = child_values[name]
+        migrated[name] = value
+        tensor_receipts[name] = {
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "sha256": _tensor_sha256(value),
+        }
+    for output_name in (
+        "controller.transition_replay_output",
+        "controller.transition_replay_opcode_output",
+    ):
+        if bool(mx.any(migrated[output_name] != 0)):
+            raise RuntimeError(
+                "unified recurrence bootstrap transition replay is not a no-op"
+            )
+    return migrated, {
+        "schema": "aura.unified_intrinsic.transition_replay_extension.v1",
+        "migration_rule": (
+            "parent_exact_plus_zero_candidate_state_independent_public_prefix_replay"
+        ),
+        "parent_tensor_inventory_preserved": True,
+        "behavior_before_training_preserved": True,
+        "query_conditioning": "fixed_state_register_and_action_field_queries",
+        "future_action_visible": False,
+        "private_transition_trace_visible": False,
+        "new_tensor_names": sorted(expected),
+        "tensors": tensor_receipts,
+    }
+
+
 def _merge_bootstrap_codebook_extension(
     parent_values: dict[str, Any],
     child_values: dict[str, Any],
@@ -4322,6 +4393,7 @@ def _evaluate_depth(
     *,
     public_action_program: bool = False,
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
 ) -> dict[str, float]:
     """Evaluate one depth and release its MLX graph before the next depth."""
 
@@ -4345,6 +4417,7 @@ def _evaluate_depth(
             "authoritative" if public_action_program else "residual"
         ),
         transition_opcode_expert_routing=transition_opcode_expert_routing,
+        transition_replay_mode=transition_replay_mode,
         answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
         # Evaluation consumes only the final answer loss. Decoding every
         # recurrent intermediate through the resident 32B coda retains a
@@ -4428,6 +4501,7 @@ def _evaluate(
     envelope: Any,
     public_action_program: bool = False,
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
@@ -4493,6 +4567,7 @@ def _evaluate(
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
+                    transition_replay_mode=transition_replay_mode,
                 )
                 totals[depth] += metrics["loss"]
                 if "state_accuracy" in metrics:
@@ -4948,6 +5023,21 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--transition-replay-mode",
+        choices=("disabled", "active", "forced", "lesion"),
+        default="disabled",
+        help=(
+            "blend, force, or lesion the state-independent public-prefix "
+            "transition replay candidate"
+        ),
+    )
+    parser.add_argument(
+        "--transition-replay-auxiliary-weight",
+        type=float,
+        default=0.5,
+        help="bounded auxiliary weight for the public-prefix replay candidate",
+    )
+    parser.add_argument(
         "--analytic-action-readout-ridge",
         type=float,
         default=1e-3,
@@ -5207,6 +5297,17 @@ def main() -> int:
         raise ValueError(
             "transition opcode routing controls require direct public transition training"
         )
+    if args.transition_replay_mode != "disabled" and (
+        not args.direct_transition_processor or not args.public_action_program
+    ):
+        raise ValueError(
+            "transition replay requires direct public transition training"
+        )
+    if (
+        not math.isfinite(args.transition_replay_auxiliary_weight)
+        or not 0.0 <= args.transition_replay_auxiliary_weight <= 2.0
+    ):
+        raise ValueError("transition replay auxiliary weight must be inside [0, 2]")
     if (
         not math.isfinite(args.analytic_action_readout_ridge)
         or args.analytic_action_readout_ridge <= 0.0
@@ -5727,6 +5828,16 @@ def main() -> int:
                 ),
                 "deployed_transition_policy": "processor_authoritative",
                 "opcode_expert_routing": args.transition_opcode_expert_routing,
+                "transition_replay": {
+                    "mode": args.transition_replay_mode,
+                    "auxiliary_weight": args.transition_replay_auxiliary_weight,
+                    "evidence": "ordered_public_action_prefix_only",
+                    "state_independent_candidate": True,
+                    "runtime_correctness_oracle_available": False,
+                },
+                "controlled_recovery_target": (
+                    "true_transition_from_corrupted_state"
+                ),
                 "transformer_graph_constructed": False,
                 "readout_graph_constructed": False,
             },
@@ -6429,8 +6540,24 @@ def main() -> int:
                                                     "corrupt_state_slot"
                                                 ]
                                             ),
+                                            corrupt_state_offset=(
+                                                1
+                                                if curriculum[
+                                                    "corrupt_state_offset"
+                                                ]
+                                                is None
+                                                else curriculum[
+                                                    "corrupt_state_offset"
+                                                ]
+                                            ),
                                             weakest_register_weight=(
                                                 args.direct_transition_weakest_register_weight
+                                            ),
+                                            transition_replay_mode=(
+                                                args.transition_replay_mode
+                                            ),
+                                            replay_auxiliary_weight=(
+                                                args.transition_replay_auxiliary_weight
                                             ),
                                         )[0]
                                     return unified_process_training_loss(
@@ -6452,6 +6579,9 @@ def main() -> int:
                                         ),
                                         transition_opcode_expert_routing=(
                                             args.transition_opcode_expert_routing
+                                        ),
+                                        transition_replay_mode=(
+                                            args.transition_replay_mode
                                         ),
                                     )[0]
 
@@ -6591,6 +6721,7 @@ def main() -> int:
                         transition_opcode_expert_routing=(
                             args.transition_opcode_expert_routing
                         ),
+                        transition_replay_mode=args.transition_replay_mode,
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
@@ -6671,6 +6802,7 @@ def main() -> int:
                 transition_opcode_expert_routing=(
                     args.transition_opcode_expert_routing
                 ),
+                transition_replay_mode=args.transition_replay_mode,
             )
             final_ladder["step"] = step
             final_ladder["optimization_phase"] = _optimization_phase(
@@ -6737,6 +6869,7 @@ def main() -> int:
                 transition_opcode_expert_routing=(
                     args.transition_opcode_expert_routing
                 ),
+                transition_replay_mode=args.transition_replay_mode,
             )
             if args.answer_bridge_steps == 0 and step >= args.max_steps
             else None

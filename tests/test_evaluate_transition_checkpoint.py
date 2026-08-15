@@ -11,6 +11,7 @@ from core.learning.unified_intrinsic_recurrence import (
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -45,6 +46,7 @@ def _checkpoint(
         | set(TRANSITION_PROCESSOR_PARAMETER_NAMES)
         | set(TRANSITION_TAPE_READER_PARAMETER_NAMES)
         | set(TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES)
+        | set(TRANSITION_REPLAY_PARAMETER_NAMES)
     ) - set(omit or ())
     path = tmp_path / "checkpoint.safetensors"
     mx.save_safetensors(
@@ -128,7 +130,7 @@ def test_checkpoint_evaluator_zero_attaches_complete_older_extensions(
         "transition_processor_opcode_interaction_up",
         "transition_processor_opcode_interaction_down",
         "transition_processor_opcode_hidden",
-    }
+    } | set(TRANSITION_REPLAY_PARAMETER_NAMES)
     _source, _path = _checkpoint(tmp_path, monkeypatch, omit=missing)
 
     loaded, receipt = evaluator._load_controller(tmp_path)

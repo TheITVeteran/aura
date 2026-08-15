@@ -39,6 +39,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -90,6 +91,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_transition_memory_extension,
     _merge_bootstrap_transition_opcode_expert_extension,
     _merge_bootstrap_transition_processor_extension,
+    _merge_bootstrap_transition_replay_extension,
     _merge_bootstrap_transition_tape_reader_extension,
     _model_identity,
     _model_lane_purpose,
@@ -509,6 +511,36 @@ def test_bootstrap_transition_opcode_experts_are_exact_and_audited() -> None:
             parent,
             behavior_changing,
         )
+
+
+def test_bootstrap_transition_replay_is_exact_and_audited() -> None:
+    parent = {"controller.transition_processor_output": mx.ones((2, 3))}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.zeros((2, 3), dtype=mx.float32)
+            for name in TRANSITION_REPLAY_PARAMETER_NAMES
+        },
+    }
+
+    migrated, receipt = _merge_bootstrap_transition_replay_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["private_transition_trace_visible"] is False
+    assert set(migrated) == set(child)
+
+    partial = dict(parent)
+    partial["controller.transition_replay_key"] = child[
+        "controller.transition_replay_key"
+    ]
+    with pytest.raises(RuntimeError, match="transition-replay inventory differs"):
+        _merge_bootstrap_transition_replay_extension(partial, child)
+
+    active = dict(child)
+    active["controller.transition_replay_output"] = mx.ones((2, 3))
+    with pytest.raises(RuntimeError, match="replay is not a no-op"):
+        _merge_bootstrap_transition_replay_extension(parent, active)
 
 
 def test_bootstrap_scoped_lora_query_extension_is_exact_and_audited() -> None:
@@ -1212,7 +1244,8 @@ def test_direct_transition_curriculum_reaches_every_scale_then_closed_loop() -> 
     assert all(row["transition_start"] == 0 for row in stages[9:])
     assert all(row["transition_count"] == 10 for row in stages[9:])
     assert all(row["corrupt_transition"] is not None for row in stages[14:17])
-    assert all(row["corrupt_state_slot"] in {1, 2, 3} for row in stages[14:17])
+    assert all(row["corrupt_state_slot"] in {0, 1, 2, 3} for row in stages[14:17])
+    assert all(row["corrupt_state_offset"] is not None for row in stages[14:17])
     assert all(row["corrupt_transition"] is None for row in stages[17:])
     assert _direct_transition_curriculum_window(
         3, 8, 6, mode="closed_loop"
@@ -1224,6 +1257,7 @@ def test_direct_transition_curriculum_reaches_every_scale_then_closed_loop() -> 
         "complete_public_prefix_visible": True,
         "corrupt_transition": None,
         "corrupt_state_slot": None,
+        "corrupt_state_offset": None,
     }
 
 
@@ -2273,9 +2307,10 @@ def test_process_admission_propagates_processor_and_history_lesions(
             "public_action_values": ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
             "microcode_lesion": True,
             "transition_processor_lesion": True,
-            "transition_processor_mode": "authoritative",
-            "transition_opcode_expert_routing": "opcode",
-            "transition_history_lesion": True,
+                "transition_processor_mode": "authoritative",
+                "transition_opcode_expert_routing": "opcode",
+                "transition_replay_mode": "disabled",
+                "transition_history_lesion": True,
         }
     ]
     assert report["transition_processor_available"] is False
@@ -3352,8 +3387,10 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
         *,
         public_action_program=False,
         transition_opcode_expert_routing="opcode",
+        transition_replay_mode="disabled",
     ):
         assert transition_opcode_expert_routing == "opcode"
+        assert transition_replay_mode == "disabled"
         observed.append((depth, public_action_program))
         return {"loss": float(depth)}
 

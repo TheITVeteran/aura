@@ -26,6 +26,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_REPLAY_PARAMETER_NAMES,
     TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
@@ -84,6 +85,7 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
             "transition_processor_opcode_interaction_down",
         },
         {"transition_processor_opcode_hidden"},
+        set(TRANSITION_REPLAY_PARAMETER_NAMES),
     )
     available = {
         name.removeprefix("bundle.controller."): value
@@ -118,7 +120,7 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
     extension_names = set(TRANSITION_TAPE_READER_PARAMETER_NAMES) | (
         set(TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES)
         - {"transition_processor_opcode_output"}
-    )
+    ) | set(TRANSITION_REPLAY_PARAMETER_NAMES)
     extension = sorted(extension_names - set(available))
     return controller, {
         "checkpoint_file": str(weights_path.resolve()),
@@ -137,6 +139,8 @@ def _evaluate_task(
     depth: int,
     *,
     routing: str,
+    replay_mode: str = "disabled",
+    state_history_arm: str = "intact",
 ) -> dict[str, Any]:
     trace = task.transition_trace
     program = task.transition_program
@@ -149,6 +153,14 @@ def _evaluate_task(
         slots=controller.config.state_slots,
         cardinality=controller.config.state_cardinality,
     )
+    initial_state = state
+    if state_history_arm not in {
+        "intact",
+        "state_lesion",
+        "history_lesion",
+        "combined_lesion",
+    }:
+        raise ValueError("transition state/history arm differs")
     action_history: list[Any] = []
     logits: list[Any] = []
     for action_values in actions:
@@ -163,18 +175,43 @@ def _evaluate_task(
         if terminal:
             decision = mx.log(mx.maximum(state, 1e-6))
         else:
-            memory = controller._typed_transition_memory(
-                action_history,
-                state_probabilities=state,
-                action_probabilities=action,
+            processor_state = (
+                initial_state
+                if state_history_arm in {"state_lesion", "combined_lesion"}
+                else state
+            )
+            memory = (
+                mx.zeros(
+                    (
+                        int(state.shape[0]),
+                        controller.config.state_slots,
+                        controller.config.correction_rank,
+                    ),
+                    dtype=mx.float32,
+                )
+                if state_history_arm in {"history_lesion", "combined_lesion"}
+                else controller._typed_transition_memory(
+                    action_history,
+                    state_probabilities=processor_state,
+                    action_probabilities=action,
+                )
             )
             decision = controller.resolve_transition_processor_logits(
                 None,
-                state,
+                processor_state,
                 action,
                 memory,
                 transition_processor_mode="authoritative",
                 opcode_expert_routing=routing,
+            )
+            decision, _replay_candidate, _replay_gate = (
+                controller.typed_transition_replay_logits(
+                    decision,
+                    action_history,
+                    action_probabilities=action,
+                    replay_mode=replay_mode,
+                    opcode_expert_routing=routing,
+                )
             )
         mx.eval(decision)
         logits.append(decision)
@@ -227,6 +264,8 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--depths", default="1,3,5,9,10,12,16")
     parser.add_argument("--routings", default="opcode,uniform,lesion")
+    parser.add_argument("--replay-modes", default="disabled")
+    parser.add_argument("--state-history-arms", default="intact")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -234,28 +273,47 @@ def main() -> int:
     _train, holdout = _load_frozen_dataset(args.dataset.resolve(strict=True))
     depths = tuple(int(value) for value in args.depths.split(",") if value)
     routings = tuple(value for value in args.routings.split(",") if value)
+    replay_modes = tuple(value for value in args.replay_modes.split(",") if value)
+    state_history_arms = tuple(
+        value for value in args.state_history_arms.split(",") if value
+    )
     arms: dict[str, Any] = {}
     for routing in routings:
-        depth_reports = {}
-        for depth in depths:
-            task_rows = [
-                {
-                    "family": task.family,
-                    "task_id": task.task_id,
-                    **_evaluate_task(controller, task, depth, routing=routing),
-                }
-                for task in holdout
-            ]
-            depth_reports[f"T{depth}"] = {
-                **_aggregate(task_rows),
-                "families": {
-                    family: _aggregate(
-                        [row for row in task_rows if row["family"] == family]
-                    )
-                    for family in sorted({row["family"] for row in task_rows})
-                },
-            }
-        arms[routing] = depth_reports
+        for replay_mode in replay_modes:
+            for state_history_arm in state_history_arms:
+                arm_name = (
+                    routing
+                    if replay_modes == ("disabled",)
+                    and state_history_arms == ("intact",)
+                    else f"{routing}:{replay_mode}:{state_history_arm}"
+                )
+                depth_reports = {}
+                for depth in depths:
+                    task_rows = [
+                        {
+                            "family": task.family,
+                            "task_id": task.task_id,
+                            **_evaluate_task(
+                                controller,
+                                task,
+                                depth,
+                                routing=routing,
+                                replay_mode=replay_mode,
+                                state_history_arm=state_history_arm,
+                            ),
+                        }
+                        for task in holdout
+                    ]
+                    depth_reports[f"T{depth}"] = {
+                        **_aggregate(task_rows),
+                        "families": {
+                            family: _aggregate(
+                                [row for row in task_rows if row["family"] == family]
+                            )
+                            for family in sorted({row["family"] for row in task_rows})
+                        },
+                    }
+                arms[arm_name] = depth_reports
     body = {
         "schema": REPORT_SCHEMA,
         "checkpoint": checkpoint,
@@ -263,6 +321,8 @@ def main() -> int:
         "holdout_tasks": len(holdout),
         "depths": list(depths),
         "routings": list(routings),
+        "replay_modes": list(replay_modes),
+        "state_history_arms": list(state_history_arms),
         "runtime_contract": {
             "transition_processor_mode": "authoritative",
             "legacy_transition_logits_available": False,
@@ -273,6 +333,8 @@ def main() -> int:
             "future_public_action_visible": False,
             "private_transition_trace_visible": False,
             "public_actions_are_correctness_authority": False,
+            "replay_candidate_reads_recurrent_state": False,
+            "replay_candidate_reads_public_prefix": True,
             "terminal_state_structurally_preserved": True,
         },
         "arms": arms,
@@ -291,14 +353,16 @@ def main() -> int:
         schema_version=1,
         schema_name=REPORT_SCHEMA,
     )
+    primary_arm = "opcode" if "opcode" in arms else next(iter(arms))
     print(
         json.dumps(
             {
                 "output": str(args.output.resolve()),
                 "report_sha256": report["report_sha256"],
-                "opcode": {
+                "primary_arm": primary_arm,
+                "primary_active_value_exact_accuracy": {
                     depth: values["active_value_exact_accuracy"]
-                    for depth, values in arms["opcode"].items()
+                    for depth, values in arms[primary_arm].items()
                 },
             },
             sort_keys=True,

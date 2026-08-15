@@ -49901,3 +49901,56 @@ authoritative evaluation. CP505 does not admit autonomous process execution,
 decoded gain, resident transfer, fusion, frontier reasoning or `WOW Signal`.
 CP507's PCGrad mechanism remains unmeasured and is the next bounded matched
 experiment; no Kimi forecast or plotted hypothetical is treated as evidence.
+
+## Checkpoint 2026-08-14-509: PCGrad Does Not Solve The Transition Machine
+
+The source-frozen CP509 canary completed all 192 steps in one detached attempt
+with its launchd controller, trainer process group, memory sentinel and sleep
+inhibitor intact. The independent model-free evaluator reproduced the trainer:
+opcode routing reached T1 `0.65625`, T16 `0.34444`, one complete T16 trajectory
+and `0.11224` recovery after a wrong predecessor. Uniform and expert-lesion
+controls each reached T16 `0.31389` with no complete trajectory. Premise audit
+remained `0.025`.
+
+PCGrad projected eight negative cohort components, but the final six family
+pair cosines were already nearly orthogonal: mean `-0.000445`, minimum
+`-0.01436`. Its T16 result was `0.0125` below the otherwise matched CP505 mean
+arm. Destructive family-gradient cancellation is therefore not the primary
+remaining blocker. Opcode specialization remains causally useful by
+`+0.03056` against its lesion, but it is insufficient for autonomous process
+admission. The signed verdict and three-arm evidence are frozen under
+`artifacts/closeout/latent_cortex/cp509_pcgrad_compositional_transition_canary_verdict.json`.
+
+## Checkpoint 2026-08-14-510: Recover From Evidence Outside A Broken State
+
+The recurrent processor previously asked both its local transition and its
+recovery features through the same potentially wrong categorical state. Once
+that state left the verified manifold, there was no independent evidence path
+capable of proposing a repair. Controlled-recovery training compounded the
+problem: it corrupted the input state but still supervised the next state from
+the original clean timeline, teaching an impossible jump rather than the real
+transition from the perturbed state.
+
+The controller now has an independent causal reader over only the ordered
+public action prefix. Fixed register-and-field queries preserve action-field
+and position identity without reading the recurrent state, future actions,
+private trace, answer tokens or a runtime verifier. It emits an independently
+decoded replay candidate. Active serving blends that candidate through a
+learned consistency gate; forced replay and replay lesion are explicit
+scientific arms. Zero candidate heads make bootstrap attachment exactly
+behavior-preserving for every prior checkpoint.
+
+Controlled recovery now derives its training label from the canonical public
+transition applied to the corrupted state and current public instruction. The
+canonical machine remains training-only authority and is removed from runtime.
+Recovery rotates across program counter and all three value registers with
+multiple offsets; no clean future state re-enters the forward rollout.
+
+The frozen checkpoint evaluator now loads replay tissue as an all-or-none
+extension and can cross replay modes with intact, state-lesioned,
+history-lesioned and combined-lesion executions. This separates useful
+stateful recurrence from a public-prefix recovery bypass. Focused recurrence,
+objective, trainer, migration and evaluator contracts are `196 passed`;
+repository smoke is `104 passed`. This is an implemented mechanism, not a gain
+claim. A bounded fresh replay canary and matched lesions remain required before
+decoded-answer or resident-32B work resumes.

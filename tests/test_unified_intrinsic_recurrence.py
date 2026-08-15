@@ -1486,6 +1486,102 @@ def test_typed_transition_processor_has_an_independent_lesion() -> None:
     assert not bool(mx.allclose(intact, lesioned))
 
 
+def test_public_prefix_replay_attaches_as_noop_and_has_independent_lesion() -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (0, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    first = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    second = controller.exact_probabilities(
+        (9, 2, 0, 3, 4, 5, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    local = controller.typed_transition_processor_logits(
+        state,
+        second,
+        controller._typed_transition_memory(
+            (first, second),
+            state_probabilities=state,
+            action_probabilities=second,
+        ),
+    )
+
+    attached, candidate, gate = controller.typed_transition_replay_logits(
+        local,
+        (first, second),
+        action_probabilities=second,
+        replay_mode="active",
+    )
+    lesioned, _candidate, lesion_gate = controller.typed_transition_replay_logits(
+        local,
+        (first, second),
+        action_probabilities=second,
+        replay_mode="lesion",
+    )
+    mx.eval(local, attached, candidate, gate, lesioned, lesion_gate)
+    assert bool(mx.array_equal(attached, local))
+    assert bool(mx.array_equal(lesioned, local))
+    assert bool(mx.all(candidate == 0))
+    assert bool(mx.all(lesion_gate == 0))
+
+
+def test_forced_public_prefix_replay_is_state_independent_and_order_sensitive() -> None:
+    controller = _controller()
+    controller.transition_replay_output = mx.random.normal(
+        controller.transition_replay_output.shape,
+        key=mx.random.key(4981),
+    )
+    first = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    second = controller.exact_probabilities(
+        (9, 2, 0, 3, 4, 5, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    local_a = mx.random.normal(
+        (1, controller.config.state_slots, controller.config.state_cardinality),
+        key=mx.random.key(4982),
+    )
+    local_b = mx.random.normal(
+        local_a.shape,
+        key=mx.random.key(4983),
+    )
+
+    forced_a, _candidate_a, _gate_a = controller.typed_transition_replay_logits(
+        local_a,
+        (first, second),
+        action_probabilities=second,
+        replay_mode="forced",
+    )
+    forced_b, _candidate_b, _gate_b = controller.typed_transition_replay_logits(
+        local_b,
+        (first, second),
+        action_probabilities=second,
+        replay_mode="forced",
+    )
+    reversed_prefix, _candidate_c, _gate_c = (
+        controller.typed_transition_replay_logits(
+            local_a,
+            (second, first),
+            action_probabilities=first,
+            replay_mode="forced",
+        )
+    )
+    mx.eval(forced_a, forced_b, reversed_prefix)
+    assert bool(mx.array_equal(forced_a, forced_b))
+    assert not bool(mx.allclose(forced_a, reversed_prefix))
+
+
 def test_authoritative_transition_matches_the_direct_training_surface() -> None:
     controller = _controller()
     controller.transition_processor_output = mx.random.normal(

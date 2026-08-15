@@ -27,6 +27,7 @@ from core.learning.recurrent_state_schema import (
     state_targets_from_trace,
 )
 from core.learning.unified_intrinsic_recurrence import (
+    TRANSITION_REPLAY_MODES,
     UnifiedRecurrentController,
     unified_recurrent_hidden_states,
 )
@@ -192,6 +193,7 @@ def unified_answer_and_recurrent_trajectory(
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
     initial_state_logit_trajectory: list[Any] | None = None,
     action_logit_trajectory: list[Any] | None = None,
@@ -263,6 +265,7 @@ def unified_answer_and_recurrent_trajectory(
         transition_processor_lesion=transition_processor_lesion,
         transition_processor_mode=transition_processor_mode,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
+        transition_replay_mode=transition_replay_mode,
         transition_history_lesion=transition_history_lesion,
     )
     answer_start = int(tokens.shape[-1]) + state_slots - 1
@@ -979,6 +982,7 @@ def unified_process_training_loss(
     microcode_lesion: bool = False,
     transition_processor_mode: str = "residual",
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
 ) -> tuple[Any, dict[str, Any]]:
     """Train the autonomous typed process without constructing answer graphs.
 
@@ -1033,6 +1037,7 @@ def unified_process_training_loss(
         microcode_lesion=microcode_lesion,
         transition_processor_mode=transition_processor_mode,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
+        transition_replay_mode=transition_replay_mode,
         process_only=True,
         detach_problem_evidence=False,
     )
@@ -1114,14 +1119,16 @@ def unified_typed_transition_processor_loss(
     corrupt_state_offset: int = 1,
     register_weights: Sequence[float] | None = None,
     weakest_register_weight: float = 0.0,
+    transition_replay_mode: str = "disabled",
+    replay_auxiliary_weight: float = 0.5,
 ) -> tuple[Any, dict[str, Any]]:
     """Train exact categorical transition algebra without a transformer graph.
 
     The verified state trace remains training-only supervision. Actions come
     from the independently compiled public prompt program, matching the
     teacher-free runtime surface. The objective reaches only typed transition
-    memory and processor tensors; it cannot turn the frozen transformer or
-    readout into a parallel answer producer.
+    memory, processor, and public-prefix replay tensors; it cannot turn the
+    frozen transformer or readout into a parallel answer producer.
     """
 
     if transition_trace is None or transition_program is None:
@@ -1158,6 +1165,11 @@ def unified_typed_transition_processor_loss(
         or not isinstance(weakest_register_weight, (int, float))
         or not math.isfinite(float(weakest_register_weight))
         or not 0.0 <= float(weakest_register_weight) <= 2.0
+        or transition_replay_mode not in TRANSITION_REPLAY_MODES
+        or isinstance(replay_auxiliary_weight, bool)
+        or not isinstance(replay_auxiliary_weight, (int, float))
+        or not math.isfinite(float(replay_auxiliary_weight))
+        or not 0.0 <= float(replay_auxiliary_weight) <= 2.0
     ):
         raise ValueError("direct transition curriculum window differs")
     resolved_register_weights = mx.array(
@@ -1193,6 +1205,8 @@ def unified_typed_transition_processor_loss(
         for action_values in public_actions[:transition_start]
     ]
     losses: list[Any] = []
+    replay_losses: list[Any] = []
+    replay_gate_means: list[Any] = []
     correct = mx.zeros((), dtype=mx.float32)
     required = mx.zeros((), dtype=mx.float32)
     state_probabilities = controller.exact_probabilities(
@@ -1231,12 +1245,23 @@ def unified_typed_transition_processor_loss(
             state_probabilities = state_probabilities + mx.stop_gradient(
                 corrupted - state_probabilities
             )
+        labels = mx.array((next_values,), dtype=mx.int32)
+        if transition_index == corrupt_transition:
+            recovery_logits, recognized = controller.microcode_transition_logits(
+                state_probabilities,
+                action_probabilities,
+                action_probability_history=action_history,
+            )
+            mx.eval(recovery_logits, recognized)
+            if not bool(mx.all(recognized).item()):
+                raise ValueError("controlled recovery instruction is not executable")
+            labels = mx.stop_gradient(mx.argmax(recovery_logits, axis=-1))
         history_memory = controller._typed_transition_memory(
             action_history,
             state_probabilities=state_probabilities,
             action_probabilities=action_probabilities,
         )
-        logits = controller.resolve_transition_processor_logits(
+        local_logits = controller.resolve_transition_processor_logits(
             None,
             state_probabilities,
             action_probabilities,
@@ -1244,7 +1269,13 @@ def unified_typed_transition_processor_loss(
             transition_processor_mode="authoritative",
             opcode_expert_routing=opcode_expert_routing,
         )
-        labels = mx.array((next_values,), dtype=mx.int32)
+        logits, replay_candidate, replay_gate = controller.typed_transition_replay_logits(
+            local_logits,
+            action_history,
+            action_probabilities=action_probabilities,
+            replay_mode=transition_replay_mode,
+            opcode_expert_routing=opcode_expert_routing,
+        )
         mask = mx.array((masks,), dtype=mx.float32)
         token_losses = nn.losses.cross_entropy(
             logits.astype(mx.float32),
@@ -1254,6 +1285,18 @@ def unified_typed_transition_processor_loss(
         weighted_mask = mask * resolved_register_weights
         denominator = mx.maximum(mx.sum(weighted_mask), 1.0)
         step_loss = mx.sum(token_losses * weighted_mask) / denominator
+        if transition_replay_mode not in ("disabled", "lesion"):
+            replay_token_losses = nn.losses.cross_entropy(
+                replay_candidate.astype(mx.float32),
+                labels,
+                reduction="none",
+            )
+            replay_step_loss = (
+                mx.sum(replay_token_losses * weighted_mask) / denominator
+            )
+            replay_losses.append(replay_step_loss)
+            replay_gate_means.append(mx.mean(replay_gate))
+            step_loss = step_loss + float(replay_auxiliary_weight) * replay_step_loss
         if float(weakest_register_weight) > 0.0:
             active_register_losses = mx.where(
                 mask > 0.0,
@@ -1306,6 +1349,26 @@ def unified_typed_transition_processor_loss(
             "slot": corrupt_state_slot if corrupt_transition is not None else None,
             "offset": corrupt_state_offset if corrupt_transition is not None else None,
             "runtime_correctness_oracle_available": False,
+            "target_authority": (
+                "true_transition_from_corrupted_state"
+                if corrupt_transition is not None
+                else "verified_trace_next_state"
+            ),
+        },
+        "transition_replay": {
+            "mode": transition_replay_mode,
+            "state_independent_public_prefix": True,
+            "auxiliary_weight": float(replay_auxiliary_weight),
+            "auxiliary_loss": (
+                float(mx.mean(mx.stack(replay_losses)).item())
+                if replay_losses
+                else None
+            ),
+            "mean_gate": (
+                float(mx.mean(mx.stack(replay_gate_means)).item())
+                if replay_gate_means
+                else None
+            ),
         },
         "register_loss_weights": [
             float(value) for value in resolved_register_weights[0].tolist()

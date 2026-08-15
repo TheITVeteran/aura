@@ -1,0 +1,2132 @@
+{
+  "payload": {
+    "arms": {
+      "lesion": {
+        "T1": {
+          "active_state_exact_accuracy": 0.625,
+          "active_trajectory_exact": 0.625,
+          "active_value_exact_accuracy": 0.625,
+          "conditional_transition_counts": {
+            "correct_after_correct": 0,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 0,
+            "wrong_predecessors": 0
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.5,
+              "active_trajectory_exact": 0.5,
+              "active_value_exact_accuracy": 0.5,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.5,
+              "first_error_histogram": {
+                "1": 4,
+                "None": 4
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            }
+          },
+          "first_error_fraction": 0.625,
+          "first_error_histogram": {
+            "1": 12,
+            "None": 20
+          },
+          "p_correct_given_previous_correct": null,
+          "p_correct_given_previous_wrong": null
+        },
+        "T10": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T12": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T16": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T3": {
+          "active_state_exact_accuracy": 0.5104166666666666,
+          "active_trajectory_exact": 0.40625,
+          "active_value_exact_accuracy": 0.5104166666666666,
+          "conditional_transition_counts": {
+            "correct_after_correct": 29,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 36,
+            "wrong_predecessors": 28
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.8333333333333334,
+              "active_trajectory_exact": 0.625,
+              "active_value_exact_accuracy": 0.8333333333333334,
+              "conditional_transition_counts": {
+                "correct_after_correct": 12,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 15,
+                "wrong_predecessors": 1
+              },
+              "first_error_fraction": 0.8333333333333334,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "None": 5
+              },
+              "p_correct_given_previous_correct": 0.8,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 16,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 16,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 16
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.5104166666666666,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "None": 13
+          },
+          "p_correct_given_previous_correct": 0.8055555555555556,
+          "p_correct_given_previous_wrong": 0.0
+        },
+        "T5": {
+          "active_state_exact_accuracy": 0.43333333333333335,
+          "active_trajectory_exact": 0.25,
+          "active_value_exact_accuracy": 0.43333333333333335,
+          "conditional_transition_counts": {
+            "correct_after_correct": 45,
+            "correct_after_wrong": 1,
+            "correct_predecessors": 58,
+            "wrong_predecessors": 54
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.525,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.525,
+              "conditional_transition_counts": {
+                "correct_after_correct": 12,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 21,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.5,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5714285714285714,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 32,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 32,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.4270833333333333,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "None": 8
+          },
+          "p_correct_given_previous_correct": 0.7758620689655172,
+          "p_correct_given_previous_wrong": 0.018518518518518517
+        },
+        "T9": {
+          "active_state_exact_accuracy": 0.3194444444444444,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3194444444444444,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 10,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 95
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.4722222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.4722222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 8,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 30
+              },
+              "first_error_fraction": 0.2777777777777778,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.26666666666666666
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2638888888888889,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.10526315789473684
+        }
+      },
+      "opcode": {
+        "T1": {
+          "active_state_exact_accuracy": 0.65625,
+          "active_trajectory_exact": 0.65625,
+          "active_value_exact_accuracy": 0.65625,
+          "conditional_transition_counts": {
+            "correct_after_correct": 0,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 0,
+            "wrong_predecessors": 0
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.5,
+              "active_trajectory_exact": 0.5,
+              "active_value_exact_accuracy": 0.5,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.5,
+              "first_error_histogram": {
+                "1": 4,
+                "None": 4
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.125,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.125,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.125,
+              "first_error_histogram": {
+                "1": 7,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            }
+          },
+          "first_error_fraction": 0.65625,
+          "first_error_histogram": {
+            "1": 11,
+            "None": 21
+          },
+          "p_correct_given_previous_correct": null,
+          "p_correct_given_previous_wrong": null
+        },
+        "T10": {
+          "active_state_exact_accuracy": 0.34444444444444444,
+          "active_trajectory_exact": 0.03125,
+          "active_value_exact_accuracy": 0.34444444444444444,
+          "conditional_transition_counts": {
+            "correct_after_correct": 58,
+            "correct_after_wrong": 11,
+            "correct_predecessors": 86,
+            "wrong_predecessors": 98
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.225,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "4": 4
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.6527777777777778,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.6527777777777778,
+              "conditional_transition_counts": {
+                "correct_after_correct": 38,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 46,
+                "wrong_predecessors": 18
+              },
+              "first_error_fraction": 0.6388888888888888,
+              "first_error_histogram": {
+                "6": 4,
+                "7": 3,
+                "9": 1
+              },
+              "p_correct_given_previous_correct": 0.8260869565217391,
+              "p_correct_given_previous_wrong": 0.05555555555555555
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.025,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.025,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 31
+              },
+              "first_error_fraction": 0.025,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2847222222222222,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "4": 4,
+            "6": 4,
+            "7": 3,
+            "9": 1,
+            "None": 1
+          },
+          "p_correct_given_previous_correct": 0.6744186046511628,
+          "p_correct_given_previous_wrong": 0.11224489795918367
+        },
+        "T12": {
+          "active_state_exact_accuracy": 0.34444444444444444,
+          "active_trajectory_exact": 0.03125,
+          "active_value_exact_accuracy": 0.34444444444444444,
+          "conditional_transition_counts": {
+            "correct_after_correct": 58,
+            "correct_after_wrong": 11,
+            "correct_predecessors": 86,
+            "wrong_predecessors": 98
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.225,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "4": 4
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.6527777777777778,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.6527777777777778,
+              "conditional_transition_counts": {
+                "correct_after_correct": 38,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 46,
+                "wrong_predecessors": 18
+              },
+              "first_error_fraction": 0.6388888888888888,
+              "first_error_histogram": {
+                "6": 4,
+                "7": 3,
+                "9": 1
+              },
+              "p_correct_given_previous_correct": 0.8260869565217391,
+              "p_correct_given_previous_wrong": 0.05555555555555555
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.025,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.025,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 31
+              },
+              "first_error_fraction": 0.025,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2847222222222222,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "4": 4,
+            "6": 4,
+            "7": 3,
+            "9": 1,
+            "None": 1
+          },
+          "p_correct_given_previous_correct": 0.6744186046511628,
+          "p_correct_given_previous_wrong": 0.11224489795918367
+        },
+        "T16": {
+          "active_state_exact_accuracy": 0.34444444444444444,
+          "active_trajectory_exact": 0.03125,
+          "active_value_exact_accuracy": 0.34444444444444444,
+          "conditional_transition_counts": {
+            "correct_after_correct": 58,
+            "correct_after_wrong": 11,
+            "correct_predecessors": 86,
+            "wrong_predecessors": 98
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.225,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "4": 4
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.6527777777777778,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.6527777777777778,
+              "conditional_transition_counts": {
+                "correct_after_correct": 38,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 46,
+                "wrong_predecessors": 18
+              },
+              "first_error_fraction": 0.6388888888888888,
+              "first_error_histogram": {
+                "6": 4,
+                "7": 3,
+                "9": 1
+              },
+              "p_correct_given_previous_correct": 0.8260869565217391,
+              "p_correct_given_previous_wrong": 0.05555555555555555
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.025,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.025,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 31
+              },
+              "first_error_fraction": 0.025,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2847222222222222,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "4": 4,
+            "6": 4,
+            "7": 3,
+            "9": 1,
+            "None": 1
+          },
+          "p_correct_given_previous_correct": 0.6744186046511628,
+          "p_correct_given_previous_wrong": 0.11224489795918367
+        },
+        "T3": {
+          "active_state_exact_accuracy": 0.5104166666666666,
+          "active_trajectory_exact": 0.40625,
+          "active_value_exact_accuracy": 0.5104166666666666,
+          "conditional_transition_counts": {
+            "correct_after_correct": 28,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 36,
+            "wrong_predecessors": 28
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.75,
+              "active_trajectory_exact": 0.5,
+              "active_value_exact_accuracy": 0.75,
+              "conditional_transition_counts": {
+                "correct_after_correct": 10,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 14,
+                "wrong_predecessors": 2
+              },
+              "first_error_fraction": 0.75,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "None": 4
+              },
+              "p_correct_given_previous_correct": 0.7142857142857143,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 16,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 16,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.041666666666666664,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.041666666666666664,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 15
+              },
+              "first_error_fraction": 0.041666666666666664,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.5104166666666666,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "None": 13
+          },
+          "p_correct_given_previous_correct": 0.7777777777777778,
+          "p_correct_given_previous_wrong": 0.0
+        },
+        "T5": {
+          "active_state_exact_accuracy": 0.45,
+          "active_trajectory_exact": 0.28125,
+          "active_value_exact_accuracy": 0.45,
+          "conditional_transition_counts": {
+            "correct_after_correct": 45,
+            "correct_after_wrong": 2,
+            "correct_predecessors": 58,
+            "wrong_predecessors": 54
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.525,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.525,
+              "conditional_transition_counts": {
+                "correct_after_correct": 11,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 20,
+                "wrong_predecessors": 12
+              },
+              "first_error_fraction": 0.45,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "4": 4
+              },
+              "p_correct_given_previous_correct": 0.55,
+              "p_correct_given_previous_wrong": 0.16666666666666666
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 32,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 32,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.025,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.025,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 31
+              },
+              "first_error_fraction": 0.025,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.43125,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "4": 4,
+            "None": 9
+          },
+          "p_correct_given_previous_correct": 0.7758620689655172,
+          "p_correct_given_previous_wrong": 0.037037037037037035
+        },
+        "T9": {
+          "active_state_exact_accuracy": 0.35,
+          "active_trajectory_exact": 0.03125,
+          "active_value_exact_accuracy": 0.35,
+          "conditional_transition_counts": {
+            "correct_after_correct": 58,
+            "correct_after_wrong": 9,
+            "correct_predecessors": 86,
+            "wrong_predecessors": 90
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.25,
+              "active_trajectory_exact": 0.125,
+              "active_value_exact_accuracy": 0.25,
+              "conditional_transition_counts": {
+                "correct_after_correct": 2,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "None": 1
+              },
+              "p_correct_given_previous_correct": 0.4,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.4722222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.4722222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 8,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 30
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 2,
+                "3": 2,
+                "4": 4
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.26666666666666666
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.6527777777777778,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.6527777777777778,
+              "conditional_transition_counts": {
+                "correct_after_correct": 38,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 46,
+                "wrong_predecessors": 18
+              },
+              "first_error_fraction": 0.6388888888888888,
+              "first_error_histogram": {
+                "6": 4,
+                "7": 3,
+                "9": 1
+              },
+              "p_correct_given_previous_correct": 0.8260869565217391,
+              "p_correct_given_previous_wrong": 0.05555555555555555
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.025,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.025,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 1,
+                "wrong_predecessors": 31
+              },
+              "first_error_fraction": 0.025,
+              "first_error_histogram": {
+                "1": 7,
+                "2": 1
+              },
+              "p_correct_given_previous_correct": 0.0,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2909722222222222,
+          "first_error_histogram": {
+            "1": 11,
+            "2": 6,
+            "3": 2,
+            "4": 4,
+            "6": 4,
+            "7": 3,
+            "9": 1,
+            "None": 1
+          },
+          "p_correct_given_previous_correct": 0.6744186046511628,
+          "p_correct_given_previous_wrong": 0.1
+        }
+      },
+      "uniform": {
+        "T1": {
+          "active_state_exact_accuracy": 0.625,
+          "active_trajectory_exact": 0.625,
+          "active_value_exact_accuracy": 0.625,
+          "conditional_transition_counts": {
+            "correct_after_correct": 0,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 0,
+            "wrong_predecessors": 0
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.5,
+              "active_trajectory_exact": 0.5,
+              "active_value_exact_accuracy": 0.5,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.5,
+              "first_error_histogram": {
+                "1": 4,
+                "None": 4
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": null
+            }
+          },
+          "first_error_fraction": 0.625,
+          "first_error_histogram": {
+            "1": 12,
+            "None": 20
+          },
+          "p_correct_given_previous_correct": null,
+          "p_correct_given_previous_wrong": null
+        },
+        "T10": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T12": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T16": {
+          "active_state_exact_accuracy": 0.3138888888888889,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3138888888888889,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 12,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 103
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.45,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.45,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 10,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 38
+              },
+              "first_error_fraction": 0.25,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.2631578947368421
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2569444444444444,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.11650485436893204
+        },
+        "T3": {
+          "active_state_exact_accuracy": 0.5104166666666666,
+          "active_trajectory_exact": 0.40625,
+          "active_value_exact_accuracy": 0.5104166666666666,
+          "conditional_transition_counts": {
+            "correct_after_correct": 29,
+            "correct_after_wrong": 0,
+            "correct_predecessors": 36,
+            "wrong_predecessors": 28
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.8333333333333334,
+              "active_trajectory_exact": 0.625,
+              "active_value_exact_accuracy": 0.8333333333333334,
+              "conditional_transition_counts": {
+                "correct_after_correct": 12,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 15,
+                "wrong_predecessors": 1
+              },
+              "first_error_fraction": 0.8333333333333334,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "None": 5
+              },
+              "p_correct_given_previous_correct": 0.8,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 16,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 16,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 16
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.5104166666666666,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "None": 13
+          },
+          "p_correct_given_previous_correct": 0.8055555555555556,
+          "p_correct_given_previous_wrong": 0.0
+        },
+        "T5": {
+          "active_state_exact_accuracy": 0.43333333333333335,
+          "active_trajectory_exact": 0.25,
+          "active_value_exact_accuracy": 0.43333333333333335,
+          "conditional_transition_counts": {
+            "correct_after_correct": 45,
+            "correct_after_wrong": 1,
+            "correct_predecessors": 58,
+            "wrong_predecessors": 54
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.525,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.525,
+              "conditional_transition_counts": {
+                "correct_after_correct": 12,
+                "correct_after_wrong": 1,
+                "correct_predecessors": 21,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.5,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5714285714285714,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 1.0,
+              "active_trajectory_exact": 1.0,
+              "active_value_exact_accuracy": 1.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 32,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 32,
+                "wrong_predecessors": 0
+              },
+              "first_error_fraction": 1.0,
+              "first_error_histogram": {
+                "None": 8
+              },
+              "p_correct_given_previous_correct": 1.0,
+              "p_correct_given_previous_wrong": null
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.4270833333333333,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "None": 8
+          },
+          "p_correct_given_previous_correct": 0.7758620689655172,
+          "p_correct_given_previous_wrong": 0.018518518518518517
+        },
+        "T9": {
+          "active_state_exact_accuracy": 0.3194444444444444,
+          "active_trajectory_exact": 0.0,
+          "active_value_exact_accuracy": 0.3194444444444444,
+          "conditional_transition_counts": {
+            "correct_after_correct": 52,
+            "correct_after_wrong": 10,
+            "correct_predecessors": 81,
+            "wrong_predecessors": 95
+          },
+          "families": {
+            "frontier_calibration": {
+              "active_state_exact_accuracy": 0.20833333333333331,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.20833333333333331,
+              "conditional_transition_counts": {
+                "correct_after_correct": 1,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 5,
+                "wrong_predecessors": 11
+              },
+              "first_error_fraction": 0.20833333333333331,
+              "first_error_histogram": {
+                "1": 4,
+                "2": 3,
+                "3": 1
+              },
+              "p_correct_given_previous_correct": 0.2,
+              "p_correct_given_previous_wrong": 0.0
+            },
+            "frontier_coding": {
+              "active_state_exact_accuracy": 0.4722222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.4722222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 18,
+                "correct_after_wrong": 8,
+                "correct_predecessors": 34,
+                "wrong_predecessors": 30
+              },
+              "first_error_fraction": 0.2777777777777778,
+              "first_error_histogram": {
+                "2": 1,
+                "3": 2,
+                "4": 5
+              },
+              "p_correct_given_previous_correct": 0.5294117647058824,
+              "p_correct_given_previous_wrong": 0.26666666666666666
+            },
+            "frontier_mathematics": {
+              "active_state_exact_accuracy": 0.5972222222222222,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.5972222222222222,
+              "conditional_transition_counts": {
+                "correct_after_correct": 33,
+                "correct_after_wrong": 2,
+                "correct_predecessors": 42,
+                "wrong_predecessors": 22
+              },
+              "first_error_fraction": 0.5694444444444444,
+              "first_error_histogram": {
+                "6": 7,
+                "7": 1
+              },
+              "p_correct_given_previous_correct": 0.7857142857142857,
+              "p_correct_given_previous_wrong": 0.09090909090909091
+            },
+            "frontier_misleading_premise": {
+              "active_state_exact_accuracy": 0.0,
+              "active_trajectory_exact": 0.0,
+              "active_value_exact_accuracy": 0.0,
+              "conditional_transition_counts": {
+                "correct_after_correct": 0,
+                "correct_after_wrong": 0,
+                "correct_predecessors": 0,
+                "wrong_predecessors": 32
+              },
+              "first_error_fraction": 0.0,
+              "first_error_histogram": {
+                "1": 8
+              },
+              "p_correct_given_previous_correct": null,
+              "p_correct_given_previous_wrong": 0.0
+            }
+          },
+          "first_error_fraction": 0.2638888888888889,
+          "first_error_histogram": {
+            "1": 12,
+            "2": 4,
+            "3": 3,
+            "4": 5,
+            "6": 7,
+            "7": 1
+          },
+          "p_correct_given_previous_correct": 0.6419753086419753,
+          "p_correct_given_previous_wrong": 0.10526315789473684
+        }
+      }
+    },
+    "checkpoint": {
+      "checkpoint_file": "/Users/bryan/.aura/training-campaigns/cp509-pcgrad-compositional-transition-canary-1p5b-20260814/training-output/checkpoint_generations/checkpoint_latest-step-00000192-ba7af1b08a204e1ca6091d57d7bd6c25/bundle.safetensors",
+      "checkpoint_identity_sha256": "79616f944a4b9d9e6d68b15caca0f478485e8c984697f35f7ce4108cab3048a3",
+      "checkpoint_receipt_sha256": "56be599d2c8064bb6228aa6b66fa0a2e5ccffd71e741f731853493badc749a7d",
+      "checkpoint_sha256": "27c6090c057c2b3f30cbf18fdb60fedd2a6fc0eaf8cf73479550916f01913de3",
+      "checkpoint_step": 192,
+      "loaded_transition_tensor_names": [
+        "action_value_embeddings",
+        "transition_memory_candidate_bias",
+        "transition_memory_candidate_input",
+        "transition_memory_candidate_recurrent",
+        "transition_memory_cross_input",
+        "transition_memory_cross_recurrent",
+        "transition_memory_depth",
+        "transition_memory_input",
+        "transition_memory_output",
+        "transition_memory_reset_bias",
+        "transition_memory_reset_input",
+        "transition_memory_reset_recurrent",
+        "transition_memory_update_bias",
+        "transition_memory_update_input",
+        "transition_memory_update_recurrent",
+        "transition_processor_action_left",
+        "transition_processor_action_right",
+        "transition_processor_history_projection",
+        "transition_processor_interaction_bias",
+        "transition_processor_interaction_down",
+        "transition_processor_interaction_up",
+        "transition_processor_opcode_hidden",
+        "transition_processor_opcode_interaction_down",
+        "transition_processor_opcode_interaction_up",
+        "transition_processor_opcode_output",
+        "transition_processor_output",
+        "transition_processor_state_projection",
+        "transition_tape_action_query",
+        "transition_tape_key",
+        "transition_tape_output",
+        "transition_tape_position_key",
+        "transition_tape_position_value",
+        "transition_tape_state_query",
+        "transition_tape_value"
+      ],
+      "zero_attached_extensions": [
+        "transition_replay_gate_bias",
+        "transition_replay_gate_weight",
+        "transition_replay_key",
+        "transition_replay_opcode_output",
+        "transition_replay_output",
+        "transition_replay_position_key",
+        "transition_replay_position_value",
+        "transition_replay_projection",
+        "transition_replay_query",
+        "transition_replay_value"
+      ]
+    },
+    "claim_not_supported": [
+      "prompt_to_initial_state_accuracy",
+      "prompt_to_public_action_accuracy",
+      "decoded_answer_gain",
+      "resident_32b_transfer",
+      "wow_signal"
+    ],
+    "dataset": "/Users/bryan/.aura/training-campaigns/cp509-pcgrad-compositional-transition-canary-1p5b-20260814/inputs/dataset.json",
+    "depths": [
+      1,
+      3,
+      5,
+      9,
+      10,
+      12,
+      16
+    ],
+    "holdout_tasks": 32,
+    "replay_modes": [
+      "disabled"
+    ],
+    "report_sha256": "5157149d57ffddc4bdff1c707f5ed85556c3035e6d732d1ce2a682970c8cba65",
+    "routings": [
+      "opcode",
+      "uniform",
+      "lesion"
+    ],
+    "runtime_contract": {
+      "complete_public_action_prefix_visible": true,
+      "exact_microcode_available": false,
+      "future_public_action_visible": false,
+      "initial_state_authority": "verified_public_initial_state",
+      "legacy_transition_logits_available": false,
+      "private_transition_trace_visible": false,
+      "public_actions_are_correctness_authority": false,
+      "public_tape_query_uses_current_state_and_action": true,
+      "replay_candidate_reads_public_prefix": true,
+      "replay_candidate_reads_recurrent_state": false,
+      "terminal_state_structurally_preserved": true,
+      "transition_processor_mode": "authoritative"
+    },
+    "schema": "aura.unified_intrinsic.authoritative_checkpoint_evaluation.v1",
+    "state_history_arms": [
+      "intact"
+    ]
+  },
+  "schema": "aura.unified_intrinsic.authoritative_checkpoint_evaluation.v1",
+  "schema_name": "aura.unified_intrinsic.authoritative_checkpoint_evaluation.v1",
+  "schema_version": 1
+}

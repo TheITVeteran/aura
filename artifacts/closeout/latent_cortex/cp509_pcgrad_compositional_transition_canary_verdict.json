@@ -1,0 +1,70 @@
+{
+  "schema": "aura.unified_intrinsic.compositional_canary_verdict.v1",
+  "campaign_id": "cp509-pcgrad-compositional-transition-canary-1p5b-20260814",
+  "source_commit": "e5446f94b9084860b9e1a802779f1c3fa1ba68d8",
+  "campaign_config_sha256": "e8c48229a07f399a21d61b37b4e423991e59b37686c2fd2c44764baadc0a92b1",
+  "dataset_identity_sha256": "2b650e9caecbc8f84b932ce690662316b342039da40f8a25047194022848f7db",
+  "checkpoint": {
+    "step": 192,
+    "checkpoint_sha256": "27c6090c057c2b3f30cbf18fdb60fedd2a6fc0eaf8cf73479550916f01913de3",
+    "receipt_sha256": "56be599d2c8064bb6228aa6b66fa0a2e5ccffd71e741f731853493badc749a7d",
+    "training_receipt_sha256": "9811f79f063d9c5aab0d58762fc5d6a911964b85d89dbc4e86173beaca0fafec"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "steps": 192,
+    "elapsed_minutes": 17.892,
+    "halt_reason": "max_steps"
+  },
+  "authoritative_evaluation": {
+    "report": "artifacts/closeout/latent_cortex/cp509_pcgrad_compositional_transition_canary_authoritative_evaluation.json",
+    "report_sha256": "5157149d57ffddc4bdff1c707f5ed85556c3035e6d732d1ce2a682970c8cba65",
+    "opcode": {
+      "t1_active_state_exact": 0.65625,
+      "t16_active_state_exact": 0.34444444444444444,
+      "t16_active_trajectory_exact": 0.03125,
+      "t16_recovery_after_wrong": 0.11224489795918367
+    },
+    "uniform_router": {
+      "t16_active_state_exact": 0.3138888888888889,
+      "t16_active_trajectory_exact": 0.0,
+      "t16_recovery_after_wrong": 0.11650485436893204
+    },
+    "expert_lesion": {
+      "t16_active_state_exact": 0.3138888888888889,
+      "t16_active_trajectory_exact": 0.0,
+      "t16_recovery_after_wrong": 0.11650485436893204
+    },
+    "opcode_minus_lesion_t16_active_state_exact": 0.030555555555555558,
+    "opcode_family_t16_active_state_exact": {
+      "frontier_calibration": 0.25,
+      "frontier_coding": 0.45,
+      "frontier_mathematics": 0.6527777777777778,
+      "frontier_misleading_premise": 0.025
+    }
+  },
+  "verdict": "not_admitted",
+  "supported_claims": [
+    "PCGrad was exercised under the frozen matched CP505 campaign geometry and completed in one detached attempt.",
+    "Opcode-conditioned transition tissue retains a bounded positive state-execution effect against matched uniform and lesioned controls."
+  ],
+  "unsupported_claims": [
+    "PCGrad materially improves compositional transition execution",
+    "reliable autonomous process execution",
+    "positive recurrence-depth effect",
+    "general decoded reasoning gain",
+    "resident-32B transfer",
+    "fusion eligibility",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "blocking_observations": [
+    "Only one of 32 opcode-routed depth-16 trajectories is completely correct.",
+    "T16 active state exact accuracy is 0.0125 below the matched CP505 mean-gradient arm.",
+    "Recovery after an incorrect predecessor is 0.11224489795918367.",
+    "Premise-audit state execution remains at 0.025.",
+    "Final family-gradient mean cosine is -0.000445 with only 0.01436 maximum negative magnitude, so destructive cross-family alignment is not the primary residual blocker."
+  ],
+  "next_bounded_mechanism": "Train an independently decoded public-prefix replay candidate, correct controlled-recovery supervision to the true transition from the corrupted state, and adjudicate state, history, replay and processor lesions separately."
+}

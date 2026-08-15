@@ -676,6 +676,55 @@ def test_direct_transition_objective_reaches_only_categorical_processor() -> Non
     assert receipt["opcode_expert_routing"] == "opcode"
 
 
+def test_direct_transition_replay_gets_verified_prefix_only_supervision() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=2,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1)),
+    )
+    public_actions = action_targets_from_program(program, 2).values
+
+    def objective(candidate: UnifiedRecurrentController):
+        return unified_typed_transition_processor_loss(
+            candidate,
+            _spec().plan_at(2),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=public_actions,
+            transition_replay_mode="active",
+            replay_auxiliary_weight=1.0,
+        )[0]
+
+    loss, gradients = nn.value_and_grad(controller, objective)(controller)
+    flat = dict(tree_flatten(gradients))
+    mx.eval(loss, gradients)
+
+    assert float(loss.item()) > 0.0
+    assert float(mx.max(mx.abs(flat["transition_replay_output"]))) > 0.0
+    assert (
+        float(mx.max(mx.abs(flat["transition_replay_opcode_output"]))) > 0.0
+    )
+    _loss, receipt = unified_typed_transition_processor_loss(
+        controller,
+        _spec().plan_at(2),
+        transition_trace=trace,
+        transition_program=program,
+        public_action_values=public_actions,
+        transition_replay_mode="active",
+        replay_auxiliary_weight=1.0,
+    )
+    assert receipt["transition_replay"]["state_independent_public_prefix"] is True
+    assert receipt["transition_replay"]["auxiliary_loss"] is not None
+    assert receipt["answer_tokens_exposed"] is False
+
+
 def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
     controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
     trace = StructuredTransitionTrace(
@@ -993,6 +1042,7 @@ def test_direct_transition_recovery_curriculum_injects_no_runtime_oracle() -> No
         "slot": 1,
         "offset": 2,
         "runtime_correctness_oracle_available": False,
+        "target_authority": "true_transition_from_corrupted_state",
     }
 
 

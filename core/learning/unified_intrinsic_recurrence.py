@@ -167,6 +167,18 @@ TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES: Final = (
     "transition_processor_opcode_hidden",
     "transition_processor_opcode_output",
 )
+TRANSITION_REPLAY_PARAMETER_NAMES: Final = (
+    "transition_replay_key",
+    "transition_replay_value",
+    "transition_replay_position_key",
+    "transition_replay_position_value",
+    "transition_replay_query",
+    "transition_replay_projection",
+    "transition_replay_output",
+    "transition_replay_opcode_output",
+    "transition_replay_gate_weight",
+    "transition_replay_gate_bias",
+)
 TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES: Final = (
     # The public action tape is embedded before it enters transition memory.
     # A frozen transition machine is not reproducible without this codebook.
@@ -179,6 +191,12 @@ TRANSITION_PROCESSOR_MODES: Final = (
 TRANSITION_OPCODE_EXPERT_ROUTING_MODES: Final = (
     "opcode",
     "uniform",
+    "lesion",
+)
+TRANSITION_REPLAY_MODES: Final = (
+    "disabled",
+    "active",
+    "forced",
     "lesion",
 )
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
@@ -454,6 +472,17 @@ class UnifiedRecurrentController(nn.Module):
         (key_transition_opcode_interaction_up,) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x4F504958),
             num=1,
+        )
+        (
+            key_transition_replay_key,
+            key_transition_replay_value,
+            key_transition_replay_position_key,
+            key_transition_replay_position_value,
+            key_transition_replay_query,
+            key_transition_replay_projection,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x52504C59),
+            num=6,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
@@ -986,6 +1015,99 @@ class UnifiedRecurrentController(nn.Module):
                 config.correction_rank,
                 config.state_cardinality,
             ),
+            dtype=mx.float32,
+        )
+        # A recurrent state cannot repair itself if every recovery feature is
+        # queried through that same state.  This separate causal reader sees
+        # only the public action prefix, preserving field and order identity.
+        # Its candidate heads attach at exact zero, so old checkpoints and the
+        # disabled/lesioned arm remain behavior-identical before training.
+        replay_scale = 1.0 / math.sqrt(config.correction_rank)
+        self.transition_replay_key = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_replay_key,
+            ).astype(mx.float32)
+            * replay_scale
+        )
+        self.transition_replay_value = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_replay_value,
+            ).astype(mx.float32)
+            * replay_scale
+        )
+        self.transition_replay_position_key = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_replay_position_key,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.transition_replay_position_value = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_replay_position_value,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.transition_replay_query = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.action_slots,
+                    config.correction_rank,
+                ),
+                key=key_transition_replay_query,
+            ).astype(mx.float32)
+            * replay_scale
+        )
+        self.transition_replay_projection = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.action_slots,
+                    config.correction_rank,
+                    config.correction_rank,
+                ),
+                key=key_transition_replay_projection,
+            ).astype(mx.float32)
+            / math.sqrt(config.action_slots * config.correction_rank)
+        )
+        self.transition_replay_output = mx.zeros(
+            (
+                config.state_slots,
+                config.correction_rank,
+                config.state_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        self.transition_replay_opcode_output = mx.zeros(
+            (
+                config.action_cardinality,
+                config.state_slots,
+                config.correction_rank,
+                config.state_cardinality,
+            ),
+            dtype=mx.float32,
+        )
+        # Gate features are local confidence, replay confidence, categorical
+        # disagreement and normalized prefix depth.  Zero replay logits
+        # makes attachment exact even though the gate itself remains trainable.
+        self.transition_replay_gate_weight = mx.zeros(
+            (config.state_slots, 4),
+            dtype=mx.float32,
+        )
+        self.transition_replay_gate_bias = mx.zeros(
+            (config.state_slots,),
             dtype=mx.float32,
         )
         # The legacy action head is a single cross-attention read. Broad
@@ -2293,6 +2415,138 @@ class UnifiedRecurrentController(nn.Module):
             basis,
         )
 
+    def typed_transition_replay_logits(
+        self,
+        local_logits: Any,
+        action_probability_history: Sequence[Any],
+        *,
+        action_probabilities: Any,
+        replay_mode: str = "active",
+        opcode_expert_routing: str = "opcode",
+    ) -> tuple[Any, Any, Any]:
+        """Recover from the public action prefix without reading recurrent state.
+
+        The replay candidate is trained against verified next-state labels, but
+        those labels are never runtime inputs.  Its query is fixed per state
+        register and action field, so a wrong recurrent state cannot corrupt
+        the evidence used to propose a repair.
+        """
+
+        if replay_mode not in TRANSITION_REPLAY_MODES:
+            raise ValueError("typed transition replay mode differs")
+        if opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
+            raise ValueError("typed transition replay routing differs")
+        batch_size = int(local_logits.shape[0])
+        if local_logits.shape != (
+            batch_size,
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ) or action_probabilities.shape != (
+            batch_size,
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("typed transition replay categories differ")
+        if not action_probability_history or any(
+            item.shape
+            != (
+                batch_size,
+                self.config.action_slots,
+                self.config.action_cardinality,
+            )
+            for item in action_probability_history
+        ):
+            raise ValueError("typed transition replay prefix differs")
+        if replay_mode in ("disabled", "lesion"):
+            zero_gate = mx.zeros(
+                (batch_size, self.config.state_slots), dtype=mx.float32
+            )
+            return local_logits, mx.stop_gradient(local_logits), zero_gate
+
+        committed = mx.stack(
+            tuple(item.astype(mx.float32) for item in action_probability_history),
+            axis=1,
+        )
+        keys = mx.einsum("btac,acr->btar", committed, self.transition_replay_key)
+        values = mx.einsum("btac,acr->btar", committed, self.transition_replay_value)
+        positions = mx.stack(
+            tuple(self.depth_features(step) for step in range(len(action_probability_history))),
+            axis=0,
+        )
+        keys = keys + (
+            positions @ self.transition_replay_position_key
+        )[None, :, None, :]
+        values = values + (
+            positions @ self.transition_replay_position_value
+        )[None, :, None, :]
+        attention = mx.softmax(
+            mx.einsum(
+                "sar,btar->bsat",
+                self.transition_replay_query,
+                keys,
+            )
+            / math.sqrt(self.config.correction_rank),
+            axis=-1,
+        )
+        read = mx.einsum("bsat,btar->bsar", attention, values)
+        replay_features = nn.gelu(
+            mx.einsum(
+                "bsai,saio->bso",
+                read,
+                self.transition_replay_projection,
+            )
+        )
+        opcode_probabilities = action_probabilities[:, 0, :].astype(mx.float32)
+        if opcode_expert_routing == "uniform":
+            routing = mx.full_like(
+                opcode_probabilities,
+                1.0 / float(self.config.action_cardinality),
+            )
+        elif opcode_expert_routing == "lesion":
+            routing = mx.zeros_like(opcode_probabilities)
+        else:
+            routing = opcode_probabilities
+        replay_candidate = mx.einsum(
+            "bsr,src->bsc",
+            replay_features,
+            self.transition_replay_output,
+        ) + mx.einsum(
+            "bo,osrc,bsr->bsc",
+            routing,
+            self.transition_replay_opcode_output,
+            replay_features,
+        )
+        local_probabilities = mx.softmax(local_logits.astype(mx.float32), axis=-1)
+        replay_probabilities = mx.softmax(replay_candidate.astype(mx.float32), axis=-1)
+        gate_features = mx.stack(
+            (
+                mx.max(local_probabilities, axis=-1),
+                mx.max(replay_probabilities, axis=-1),
+                1.0 - mx.sum(local_probabilities * replay_probabilities, axis=-1),
+                mx.full(
+                    (batch_size, self.config.state_slots),
+                    min(1.0, len(action_probability_history) / 16.0),
+                    dtype=mx.float32,
+                ),
+            ),
+            axis=-1,
+        )
+        gate = mx.sigmoid(
+            mx.einsum(
+                "bsf,sf->bs",
+                gate_features,
+                self.transition_replay_gate_weight,
+            )
+            + self.transition_replay_gate_bias[None, :]
+        )
+        if replay_mode == "forced":
+            return replay_candidate, replay_candidate, mx.ones_like(gate)
+        return (
+            local_logits + gate[..., None] * replay_candidate,
+            replay_candidate,
+            gate,
+        )
+
     def typed_transition_processor_logits(
         self,
         state_probabilities: Any,
@@ -2476,6 +2730,7 @@ class UnifiedRecurrentController(nn.Module):
         transition_processor_lesion: bool = False,
         transition_processor_mode: str = "residual",
         opcode_expert_routing: str = "opcode",
+        transition_replay_mode: str = "disabled",
     ) -> Any:
         """Predict one shared typed transition from state plus immutable evidence."""
 
@@ -2488,6 +2743,8 @@ class UnifiedRecurrentController(nn.Module):
             raise ValueError("state transition processor mode differs")
         if opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
             raise ValueError("state transition opcode routing differs")
+        if transition_replay_mode not in TRANSITION_REPLAY_MODES:
+            raise ValueError("state transition replay mode differs")
 
         if (
             len(problem_evidence.shape) != 3
@@ -2599,6 +2856,18 @@ class UnifiedRecurrentController(nn.Module):
                 transition_processor_mode=transition_processor_mode,
                 opcode_expert_routing=opcode_expert_routing,
             )
+            if transition_replay_mode not in ("disabled", "lesion"):
+                if action_probability_history is None:
+                    raise ValueError("state transition replay has no public prefix")
+                learned_logits, _replay_candidate, _replay_gate = (
+                    self.typed_transition_replay_logits(
+                        learned_logits,
+                        action_probability_history,
+                        action_probabilities=action_probabilities,
+                        replay_mode=transition_replay_mode,
+                        opcode_expert_routing=opcode_expert_routing,
+                    )
+                )
         if state_probabilities is None or action_probabilities is None:
             return learned_logits
         state_values = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
@@ -3831,6 +4100,7 @@ class UnifiedRecurrentController(nn.Module):
             *TRANSITION_TAPE_READER_PARAMETER_NAMES,
             *TRANSITION_PROCESSOR_PARAMETER_NAMES,
             *TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
+            *TRANSITION_REPLAY_PARAMETER_NAMES,
             "literal_value_embeddings",
             "literal_grounding_logit",
             "state_literal_copy_logit",
@@ -3902,6 +4172,19 @@ class UnifiedRecurrentController(nn.Module):
                 ),
                 "lesionable": True,
                 "private_transition_trace_visible": False,
+            },
+            "state_transition_replay": {
+                "architecture": "state_independent_causal_public_prefix_reader",
+                "query_conditioning": "fixed_state_register_and_action_field_queries",
+                "future_action_visible": False,
+                "private_transition_trace_visible": False,
+                "bootstrap_contract": "zero_candidate_exact_parent_noop",
+                "shared_output_active": bool(mx.any(self.transition_replay_output != 0)),
+                "opcode_output_active": bool(
+                    mx.any(self.transition_replay_opcode_output != 0)
+                ),
+                "learned_consistency_gate": True,
+                "lesionable": True,
             },
             "numeric_observation": {
                 "max_value": self.config.numeric_observation_max_value,
@@ -4037,6 +4320,7 @@ def unified_recurrent_hidden_states(
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
     transition_opcode_expert_routing: str = "opcode",
+    transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
     process_tape_lesion: bool = False,
     process_only: bool = False,
@@ -4067,6 +4351,8 @@ def unified_recurrent_hidden_states(
         raise ValueError("unified recurrence transition processor mode differs")
     if transition_opcode_expert_routing not in TRANSITION_OPCODE_EXPERT_ROUTING_MODES:
         raise ValueError("unified recurrence opcode routing differs")
+    if transition_replay_mode not in TRANSITION_REPLAY_MODES:
+        raise ValueError("unified recurrence transition replay mode differs")
     if adaptive_halt and controller.config.minimum_iterations > plan.iterations:
         raise ValueError("minimum iterations exceed the recurrence plan")
     if caches is not None:
@@ -4323,6 +4609,7 @@ def unified_recurrent_hidden_states(
                     transition_processor_lesion=transition_processor_lesion,
                     transition_processor_mode=transition_processor_mode,
                     opcode_expert_routing=transition_opcode_expert_routing,
+                    transition_replay_mode=transition_replay_mode,
                 )
                 next_state_probabilities = (
                     controller.straight_through_probabilities(state_logits)
@@ -4733,6 +5020,8 @@ __all__ = [
     "TRANSITION_TAPE_READER_PARAMETER_NAMES",
     "TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES",
     "TRANSITION_PROCESSOR_PARAMETER_NAMES",
+    "TRANSITION_REPLAY_MODES",
+    "TRANSITION_REPLAY_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",
