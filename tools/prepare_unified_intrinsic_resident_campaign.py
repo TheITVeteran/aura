@@ -667,7 +667,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "state_schema": "semantic_v2",
             "task_source": "frontier_process",
             "families": "coding,calibration,misleading_premise",
-            "task_depths": "5,9,10",
+            "task_depths": "3,5,10",
             "train_depths": "1,3,5,9,10",
             "heldout_depths": "12,16",
             "per_cell": 64,

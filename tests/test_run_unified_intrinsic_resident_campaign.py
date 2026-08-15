@@ -511,6 +511,7 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
 
     assert training["state_schema"] == "semantic_v2"
     assert training["families"] == "coding,calibration,misleading_premise"
+    assert training["task_depths"] == "3,5,10"
     assert training["window_tissue_mode"] == "controller_only"
     assert training["public_action_program"] is True
     assert training["direct_transition_processor"] is True
