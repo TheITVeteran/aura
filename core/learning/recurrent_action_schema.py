@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 
-RECURRENT_ACTION_SCHEMA: Final = "aura.recurrent_action_target.v3"
+RECURRENT_ACTION_SCHEMA: Final = "aura.recurrent_action_target.v4"
 ACTION_SLOT_NAMES: Final = (
     "opcode",
     "arg0",
@@ -36,6 +36,51 @@ OP_FRONTIER_INFER: Final = 12
 OP_FRONTIER_SCHEDULE: Final = 13
 OP_FRONTIER_CALIBRATE: Final = 14
 OP_FRONTIER_AUDIT: Final = 15
+OP_PAIR_SET: Final = 16
+OP_PAIR_ADD: Final = 17
+OP_PAIR_MUL_IMMEDIATE: Final = 18
+OP_PAIR_SUB_IMMEDIATE: Final = 19
+OP_PAIR_SIGNED_SUB_IMMEDIATE: Final = 20
+OP_PAIR_DIV: Final = 21
+OP_RATIO_CHOICE: Final = 22
+OP_RATIO_BAND: Final = 23
+OP_SIGNED_PAIR_ADD_IMMEDIATE: Final = 24
+OP_SIGNED_RANKED_GREATER: Final = 25
+OP_RANKED_COMMIT: Final = 26
+OP_SET_SCALAR: Final = 27
+OP_PAIR_COPY: Final = 28
+OP_PAIR_EUCLID_STEP: Final = 29
+OP_PAIR_PRODUCT: Final = 30
+MAX_RECURRENT_OPCODE: Final = OP_PAIR_PRODUCT
+SEMANTIC_MICRO_OPCODES: Final = frozenset(
+    range(OP_PAIR_SET, MAX_RECURRENT_OPCODE + 1)
+)
+SEMANTIC_MICRO_ACTION_FIELD_NAMES: Final = (
+    "micro_opcode",
+    "arg0",
+    "arg1",
+    "arg2",
+    "arg3",
+    "arg4",
+    "arg5",
+)
+_SEMANTIC_MICRO_ARGUMENT_COUNTS: Final = {
+    OP_PAIR_SET: 3,
+    OP_PAIR_ADD: 3,
+    OP_PAIR_MUL_IMMEDIATE: 2,
+    OP_PAIR_SUB_IMMEDIATE: 2,
+    OP_PAIR_SIGNED_SUB_IMMEDIATE: 2,
+    OP_PAIR_DIV: 3,
+    OP_RATIO_CHOICE: 3,
+    OP_RATIO_BAND: 3,
+    OP_SIGNED_PAIR_ADD_IMMEDIATE: 2,
+    OP_SIGNED_RANKED_GREATER: 6,
+    OP_RANKED_COMMIT: 4,
+    OP_SET_SCALAR: 2,
+    OP_PAIR_COPY: 2,
+    OP_PAIR_EUCLID_STEP: 2,
+    OP_PAIR_PRODUCT: 3,
+}
 
 _OPCODE_LABELS: Final = {
     OP_COPY_VALUE: "copy value",
@@ -54,6 +99,21 @@ _OPCODE_LABELS: Final = {
     OP_FRONTIER_SCHEDULE: "commit one feasible schedule action",
     OP_FRONTIER_CALIBRATE: "advance one exact calibration stage",
     OP_FRONTIER_AUDIT: "audit one premise-bearing evidence row",
+    OP_PAIR_SET: "write one radix pair",
+    OP_PAIR_ADD: "add two radix pairs",
+    OP_PAIR_MUL_IMMEDIATE: "multiply one radix pair by an immediate",
+    OP_PAIR_SUB_IMMEDIATE: "subtract an immediate from a radix pair",
+    OP_PAIR_SIGNED_SUB_IMMEDIATE: "subtract and encode a signed radix pair",
+    OP_PAIR_DIV: "divide one radix pair by an exact radix-pair divisor",
+    OP_RATIO_CHOICE: "compare an exact ratio with one half",
+    OP_RATIO_BAND: "classify an exact ratio confidence band",
+    OP_SIGNED_PAIR_ADD_IMMEDIATE: "add an immediate to a signed radix pair",
+    OP_SIGNED_RANKED_GREATER: "compare signed scores with a stable tie break",
+    OP_RANKED_COMMIT: "commit a conditionally selected ranked candidate",
+    OP_SET_SCALAR: "write one scalar register",
+    OP_PAIR_COPY: "copy one radix pair",
+    OP_PAIR_EUCLID_STEP: "advance one radix-pair Euclidean reduction step",
+    OP_PAIR_PRODUCT: "multiply two immediate values into a radix pair",
 }
 
 
@@ -194,6 +254,20 @@ def _canonical_instruction(
         # exposing those values as targets taught the decoder to predict the
         # answer instead of selecting an evidence row and its operands.
         arguments[:5] = action[:5]
+    elif (
+        family
+        in {
+            "frontier_coding",
+            "frontier_calibration",
+            "frontier_misleading_premise",
+        }
+        and field_names == SEMANTIC_MICRO_ACTION_FIELD_NAMES
+    ):
+        opcode = action[0]
+        argument_count = _SEMANTIC_MICRO_ARGUMENT_COUNTS.get(opcode)
+        if argument_count is None:
+            raise ValueError("semantic micro-instruction opcode is unsupported")
+        arguments[:argument_count] = action[1 : 1 + argument_count]
     else:
         raise ValueError("structured action has no canonical micro-instruction")
     instruction = (opcode, *arguments, terminal)
@@ -364,8 +438,26 @@ __all__ = [
     "OP_FRONTIER_SCHEDULE",
     "OP_FRONTIER_SIMULATE",
     "OP_FRONTIER_TRAVERSE",
+    "MAX_RECURRENT_OPCODE",
+    "OP_PAIR_ADD",
+    "OP_PAIR_DIV",
+    "OP_PAIR_COPY",
+    "OP_PAIR_EUCLID_STEP",
+    "OP_PAIR_PRODUCT",
+    "SEMANTIC_MICRO_OPCODES",
+    "OP_PAIR_MUL_IMMEDIATE",
+    "OP_PAIR_SET",
+    "OP_PAIR_SUB_IMMEDIATE",
+    "OP_PAIR_SIGNED_SUB_IMMEDIATE",
+    "OP_RANKED_COMMIT",
+    "OP_RATIO_BAND",
+    "OP_RATIO_CHOICE",
+    "OP_SET_SCALAR",
+    "OP_SIGNED_PAIR_ADD_IMMEDIATE",
+    "OP_SIGNED_RANKED_GREATER",
     "OP_SUB_MOD",
     "RECURRENT_ACTION_SCHEMA",
+    "SEMANTIC_MICRO_ACTION_FIELD_NAMES",
     "RecurrentActionTargets",
     "action_targets_from_program",
     "action_value_semantic_label",

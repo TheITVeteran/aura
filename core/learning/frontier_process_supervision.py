@@ -29,12 +29,33 @@ from core.learning.recurrence_curriculum import (
     StructuredTransitionProgram,
     StructuredTransitionTrace,
 )
+from core.learning.public_frontier_action_compiler import (
+    compile_public_frontier_raw_actions,
+)
+from core.learning.recurrent_action_schema import (
+    ACTION_NULL,
+    OP_PAIR_ADD,
+    OP_PAIR_COPY,
+    OP_PAIR_DIV,
+    OP_PAIR_EUCLID_STEP,
+    OP_PAIR_MUL_IMMEDIATE,
+    OP_PAIR_PRODUCT,
+    OP_PAIR_SET,
+    OP_PAIR_SUB_IMMEDIATE,
+    OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_RANKED_COMMIT,
+    OP_RATIO_BAND,
+    OP_RATIO_CHOICE,
+    OP_SET_SCALAR,
+    OP_SIGNED_PAIR_ADD_IMMEDIATE,
+    OP_SIGNED_RANKED_GREATER,
+)
 from core.learning.recurrent_work_memory import (
     MathematicsWorkMemoryTrace,
     compile_mathematics_work_memory,
 )
 
-FRONTIER_PROCESS_SCHEMA: Final = "aura.frontier_process_supervision.v1"
+FRONTIER_PROCESS_SCHEMA: Final = "aura.frontier_process_supervision.v2"
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -131,6 +152,156 @@ def _program(
         state_trace=trace,
         action_field_names=action_field_names,
         actions=tuple(actions),
+    )
+
+
+def _semantic_micro_states(
+    *,
+    family: str,
+    initial_state: tuple[int, ...],
+    actions: tuple[tuple[int, ...], ...],
+) -> list[tuple[int, ...]]:
+    """Execute the private reference semantics for answer-blind micro-actions."""
+
+    if (
+        len(initial_state) < 5
+        or initial_state[0] != 0
+        or initial_state[-1] != 0
+        or not actions
+    ):
+        raise ValueError("semantic micro-program initial state is invalid")
+    states = [initial_state]
+    values = list(initial_state[1:-1])
+
+    def pair(low_slot: int) -> int:
+        if not 0 <= low_slot < len(values) - 1:
+            raise ValueError("semantic micro-program pair address is invalid")
+        return values[low_slot] + PROCESS_RADIX * values[low_slot + 1]
+
+    def write_pair(low_slot: int, value: int) -> None:
+        if not 0 <= low_slot < len(values) - 1 or not 0 <= value <= MAX_PROCESS_INTEGER:
+            raise ValueError("semantic micro-program pair result is outside its bank")
+        values[low_slot], values[low_slot + 1] = _digits(value)
+
+    def signed_decode(encoded: int) -> int:
+        return encoded // 2 if encoded % 2 == 0 else -((encoded + 1) // 2)
+
+    def signed_encode(value: int) -> int:
+        encoded = value * 2 if value >= 0 else (-value * 2) - 1
+        if encoded > MAX_PROCESS_INTEGER:
+            raise ValueError("semantic micro-program signed result is outside its bank")
+        return encoded
+
+    for step, action in enumerate(actions, 1):
+        if (
+            len(action) != 7
+            or any(type(value) is not int or not 0 <= value < ACTION_NULL for value in action)
+        ):
+            raise ValueError("semantic micro-program action is invalid")
+        opcode, arg0, arg1, arg2, arg3, arg4, arg5 = action
+        if opcode == OP_PAIR_SET:
+            write_pair(arg0, arg1 + PROCESS_RADIX * arg2)
+        elif opcode == OP_PAIR_ADD:
+            write_pair(arg0, pair(arg1) + pair(arg2))
+        elif opcode == OP_PAIR_MUL_IMMEDIATE:
+            write_pair(arg0, pair(arg0) * arg1)
+        elif opcode == OP_PAIR_PRODUCT:
+            write_pair(arg0, arg1 * arg2)
+        elif opcode == OP_PAIR_SUB_IMMEDIATE:
+            result = pair(arg0) - arg1
+            if result < 0:
+                raise ValueError("semantic unsigned subtraction underflowed")
+            write_pair(arg0, result)
+        elif opcode == OP_PAIR_SIGNED_SUB_IMMEDIATE:
+            write_pair(arg0, signed_encode(pair(arg0) - arg1))
+        elif opcode == OP_PAIR_COPY:
+            write_pair(arg0, pair(arg1))
+        elif opcode == OP_PAIR_EUCLID_STEP:
+            left = pair(arg0)
+            right = pair(arg1)
+            write_pair(arg0, right if right else left)
+            write_pair(arg1, left % right if right else 0)
+        elif opcode == OP_PAIR_DIV:
+            numerator = pair(arg1)
+            denominator = pair(arg2)
+            if denominator < 1 or numerator % denominator:
+                raise ValueError("semantic pair division is not exact")
+            write_pair(arg0, numerator // denominator)
+        elif opcode in {OP_RATIO_CHOICE, OP_RATIO_BAND}:
+            if not 0 <= arg0 < len(values):
+                raise ValueError("semantic ratio destination is invalid")
+            numerator = pair(arg1)
+            denominator = pair(arg2)
+            if denominator < 1:
+                raise ValueError("semantic ratio denominator is invalid")
+            if opcode == OP_RATIO_CHOICE:
+                values[arg0] = int(2 * numerator >= denominator) + 1
+            else:
+                percentage = (100 * numerator) // denominator
+                values[arg0] = (
+                    1
+                    if percentage < 50
+                    else 2
+                    if percentage < 70
+                    else 3
+                    if percentage < 90
+                    else 4
+                )
+        elif opcode == OP_SIGNED_PAIR_ADD_IMMEDIATE:
+            delta = signed_decode(arg1)
+            write_pair(arg0, signed_encode(signed_decode(pair(arg0)) + delta))
+        elif opcode == OP_SIGNED_RANKED_GREATER:
+            if not all(0 <= slot < len(values) for slot in (arg0, arg4, arg5)):
+                raise ValueError("semantic ranked comparison address is invalid")
+            candidate = signed_decode(pair(arg1))
+            incumbent = signed_decode(pair(arg2))
+            values[arg0] = int(
+                values[arg5] == 0
+                or candidate > incumbent
+                or (candidate == incumbent and arg3 < values[arg4])
+            )
+        elif opcode == OP_RANKED_COMMIT:
+            if not 0 <= arg0 < len(values):
+                raise ValueError("semantic ranked commit flag is invalid")
+            if values[arg0]:
+                values[0] = arg2
+                write_pair(1, pair(arg1))
+                values[3] = arg3
+            values[4] = 1
+        elif opcode == OP_SET_SCALAR:
+            if not 0 <= arg0 < len(values):
+                raise ValueError("semantic scalar destination is invalid")
+            values[arg0] = arg1
+        else:
+            raise ValueError(f"semantic micro-program opcode {opcode} is unsupported")
+        if any(not 0 <= value < ACTION_NULL for value in values):
+            raise ValueError("semantic micro-program state left the categorical bank")
+        states.append((step, *values, int(step == len(actions))))
+    return states
+
+
+def _semantic_micro_program(
+    *,
+    family: str,
+    public_prompt: str,
+    field_names: tuple[str, ...],
+    initial_state: tuple[int, ...],
+) -> StructuredTransitionProgram:
+    action_field_names, actions = compile_public_frontier_raw_actions(
+        public_prompt,
+        family,
+    )
+    states = _semantic_micro_states(
+        family=family,
+        initial_state=initial_state,
+        actions=actions,
+    )
+    return _program(
+        family=family,
+        field_names=field_names,
+        states=states,
+        action_field_names=action_field_names,
+        actions=list(actions),
     )
 
 
@@ -260,14 +431,11 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
         encoded.extend((0, 0) * (4 - len(names)))
         return tuple(encoded)
 
-    states = [(0, 0, *balance_registers({}), 0)]
-    actions: list[tuple[int, ...]] = []
     balances: dict[str, int] = {}
-    step = 0
     for case_index, case in enumerate(cases):
         balances = {}
         pressures: list[int] = []
-        for event_index, event in enumerate(case):
+        for event in case:
             if not isinstance(event, tuple) or len(event) != 2:
                 raise ValueError("frontier coding event is invalid")
             name, delta = event
@@ -276,25 +444,13 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
                 del balances[name]
             pressure = sum(abs(value) for value in balances.values())
             pressures.append(pressure)
-            step += 1
-            actions.append(
-                (
-                    case_index,
-                    names.index(name),
-                    delta + 3,
-                    pressure,
-                    len(balances),
-                    int(event_index + 1 == len(case)),
-                )
-            )
-            states.append((step, case_index, *balance_registers(balances), 0))
         expected_return = returns[case_index]
         expected_state = [[name, balances[name]] for name in sorted(balances)]
         if expected_return != {"state": expected_state, "pressure": pressures}:
             raise ValueError("frontier coding process differs from verified answer")
-    states[-1] = (*states[-1][:-1], 1)
-    return _program(
+    program = _semantic_micro_program(
         family="frontier_coding",
+        public_prompt=prompt,
         field_names=(
             "pc",
             "case_index",
@@ -308,17 +464,17 @@ def _coding(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgra
             "balance3_hi",
             "done",
         ),
-        states=states,
-        action_field_names=(
-            "case_index",
-            "name_index",
-            "signed_delta",
-            "pressure",
-            "active_count",
-            "case_terminal",
-        ),
-        actions=actions,
+        initial_state=(0, 0, *balance_registers({}), 0),
     )
+    expected_terminal = (
+        program.state_trace.depth,
+        len(cases) - 1,
+        *balance_registers(balances),
+        1,
+    )
+    if program.state_trace.states[-1] != expected_terminal:
+        raise RuntimeError("frontier coding micro-program differs from public execution")
+    return program
 
 
 def _scientific(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
@@ -449,26 +605,9 @@ def _calibration(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
         raise ValueError("frontier calibration public evidence differs from verified answer")
     num_lo, num_hi = _digits(posterior.numerator)
     den_lo, den_hi = _digits(posterior.denominator)
-    actions = [
-        (
-            prior.numerator,
-            prior.denominator,
-            likelihood_h.numerator,
-            likelihood_h.denominator,
-            likelihood_not_h.numerator,
-            likelihood_not_h.denominator,
-        ),
-        (0, 0, 0, 0, 0, 0),
-        (0, 0, 0, 0, 0, 0),
-    ]
-    states = [
-        (0, 0, 0, 0, 0, 0, 0, 0),
-        (1, num_lo, num_hi, den_lo, den_hi, 0, 0, 0),
-        (2, num_lo, num_hi, den_lo, den_hi, choice + 1, 0, 0),
-        (3, num_lo, num_hi, den_lo, den_hi, choice + 1, band + 1, 1),
-    ]
-    return _program(
+    program = _semantic_micro_program(
         family="frontier_calibration",
+        public_prompt=prompt,
         field_names=(
             "pc",
             "numerator_lo",
@@ -477,19 +616,27 @@ def _calibration(expected: dict[str, Any], prompt: str) -> StructuredTransitionP
             "denominator_hi",
             "choice",
             "confidence_band",
+            "scratch_lo",
+            "scratch_hi",
             "done",
         ),
-        states=states,
-        action_field_names=(
-            "prior_numerator",
-            "prior_denominator",
-            "likelihood_h_numerator",
-            "likelihood_h_denominator",
-            "likelihood_not_h_numerator",
-            "likelihood_not_h_denominator",
-        ),
-        actions=actions,
+        initial_state=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     )
+    expected_terminal = (
+        program.state_trace.depth,
+        num_lo,
+        num_hi,
+        den_lo,
+        den_hi,
+        choice + 1,
+        band + 1,
+        0,
+        0,
+        1,
+    )
+    if program.state_trace.states[-1] != expected_terminal:
+        raise RuntimeError("frontier calibration micro-program differs from Bayes evidence")
+    return program
 
 
 def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgram:
@@ -502,43 +649,19 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
     best_index = 0
     names = sorted(row["name"] for row in rows)
     best_score = -10_000
-    states = [(0, 0, 0, 0, 0, 0, 0)]
-    actions: list[tuple[int, ...]] = []
     for index, row in enumerate(rows):
         score = row["impact"] * row["reliability"] - row["cost"]
-        score_lo, score_hi = _signed_digits(score)
         if score > best_score or (score == best_score and row["name"] < rows[best_index]["name"]):
             best_index = index
             best_score = score
-        best_lo, best_hi = _signed_digits(best_score)
-        actions.append(
-            (
-                index,
-                row["impact"],
-                row["reliability"],
-                row["cost"],
-                names.index(row["name"]),
-                0,
-            )
-        )
-        states.append(
-            (
-                index + 1,
-                best_index,
-                best_lo,
-                best_hi,
-                names.index(rows[best_index]["name"]),
-                1,
-                int(index + 1 == len(rows)),
-            )
-        )
     winner = rows[best_index]["name"]
     if winner != expected.get("actual_winner") or best_score != expected.get("actual_score"):
         raise ValueError("frontier premise process differs from verified answer")
     if bool(match.group("claim") == winner) is not expected.get("premise_valid"):
         raise ValueError("frontier premise validity differs from verified answer")
-    return _program(
+    program = _semantic_micro_program(
         family="frontier_misleading_premise",
+        public_prompt=prompt,
         field_names=(
             "pc",
             "winner_index",
@@ -546,19 +669,25 @@ def _premise(expected: dict[str, Any], prompt: str) -> StructuredTransitionProgr
             "score_hi",
             "winner_name_rank",
             "has_winner",
+            "candidate_score_lo",
+            "candidate_score_hi",
+            "candidate_wins",
             "done",
         ),
-        states=states,
-        action_field_names=(
-            "row_index",
-            "impact",
-            "reliability",
-            "cost",
-            "name_rank",
-            "reserved",
-        ),
-        actions=actions,
+        initial_state=(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     )
+    best_lo, best_hi = _signed_digits(best_score)
+    expected_prefix = (
+        program.state_trace.depth,
+        best_index,
+        best_lo,
+        best_hi,
+        names.index(winner),
+        1,
+    )
+    if program.state_trace.states[-1][: len(expected_prefix)] != expected_prefix:
+        raise RuntimeError("frontier premise micro-program differs from public ranking")
+    return program
 
 
 _COMPILERS = {

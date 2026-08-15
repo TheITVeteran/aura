@@ -18,12 +18,30 @@ from fractions import Fraction
 from typing import Any, Final
 
 from core.learning.recurrent_action_schema import (
+    ACTION_CARDINALITY,
     ACTION_NULL,
     ACTION_SLOT_NAMES,
+    OP_PAIR_ADD,
+    OP_PAIR_COPY,
+    OP_PAIR_DIV,
+    OP_PAIR_EUCLID_STEP,
+    OP_PAIR_MUL_IMMEDIATE,
+    OP_PAIR_PRODUCT,
+    OP_PAIR_SET,
+    OP_PAIR_SUB_IMMEDIATE,
+    OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_RANKED_COMMIT,
+    OP_RATIO_BAND,
+    OP_RATIO_CHOICE,
+    OP_SET_SCALAR,
+    OP_SIGNED_PAIR_ADD_IMMEDIATE,
+    OP_SIGNED_RANKED_GREATER,
+    RECURRENT_ACTION_SCHEMA,
+    SEMANTIC_MICRO_ACTION_FIELD_NAMES,
     canonical_instruction_from_public_fields,
 )
 
-PUBLIC_FRONTIER_ACTION_SCHEMA: Final = "aura.public_frontier_action_program.v1"
+PUBLIC_FRONTIER_ACTION_SCHEMA: Final = "aura.public_frontier_action_program.v2"
 PROCESS_RADIX: Final = 31
 MAX_PROCESS_INTEGER: Final = PROCESS_RADIX**2 - 1
 
@@ -50,31 +68,21 @@ _PREMISE_RE = re.compile(
 
 _FIELD_NAMES = {
     "frontier_mathematics": ("arg0", "arg1", "arg2", "arg3", "arg4", "arg5"),
-    "frontier_coding": (
-        "case_index",
-        "name_index",
-        "signed_delta",
-        "pressure",
-        "active_count",
-        "case_terminal",
-    ),
-    "frontier_calibration": (
-        "prior_numerator",
-        "prior_denominator",
-        "likelihood_h_numerator",
-        "likelihood_h_denominator",
-        "likelihood_not_h_numerator",
-        "likelihood_not_h_denominator",
-    ),
-    "frontier_misleading_premise": (
-        "row_index",
-        "impact",
-        "reliability",
-        "cost",
-        "name_rank",
-        "reserved",
-    ),
+    "frontier_coding": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
+    "frontier_calibration": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
+    "frontier_misleading_premise": SEMANTIC_MICRO_ACTION_FIELD_NAMES,
 }
+
+
+def _micro(opcode: int, *arguments: int) -> tuple[int, ...]:
+    if (
+        type(opcode) is not int
+        or not 0 <= opcode < ACTION_NULL
+        or len(arguments) > 6
+        or any(type(value) is not int or not 0 <= value < ACTION_NULL for value in arguments)
+    ):
+        raise ValueError("public semantic micro-instruction is invalid")
+    return (opcode, *arguments, *(0 for _index in range(6 - len(arguments))))
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -124,7 +132,10 @@ class PublicFrontierActionProgram:
             or not self.values
             or any(
                 len(row) != len(ACTION_SLOT_NAMES)
-                or any(type(value) is not int or not 0 <= value < 33 for value in row)
+                or any(
+                    type(value) is not int or not 0 <= value < ACTION_CARDINALITY
+                    for value in row
+                )
                 for row in self.values
             )
         ):
@@ -148,6 +159,8 @@ class PublicFrontierActionProgram:
             "public_prompt_sha256": self.public_prompt_sha256,
             "steps": len(self.values),
             "action_slot_names": list(ACTION_SLOT_NAMES),
+            "recurrent_action_schema": RECURRENT_ACTION_SCHEMA,
+            "instruction_dialect": "semantic_micro_v2",
             "program_sha256": self.program_sha256,
             "source": "public_objective_literals_and_order_only",
             "verifier_answer_available": False,
@@ -204,10 +217,16 @@ def _coding(prompt: str) -> list[tuple[int, ...]]:
         names = sorted({event[0] for case in cases for event in case})
     except (TypeError, IndexError):
         raise ValueError("public coding events are invalid") from None
+    if len(names) > 4:
+        raise ValueError("public coding process exceeds four balance registers")
     actions: list[tuple[int, ...]] = []
     for case_index, case in enumerate(cases):
         if not isinstance(case, list) or not case:
             raise ValueError("public coding case is invalid")
+        if case_index:
+            for name_index in range(4):
+                actions.append(_micro(OP_PAIR_SET, 1 + 2 * name_index, 0, 0))
+            actions.append(_micro(OP_SET_SCALAR, 0, case_index))
         for event in case:
             if (
                 not isinstance(event, tuple)
@@ -217,7 +236,14 @@ def _coding(prompt: str) -> list[tuple[int, ...]]:
             ):
                 raise ValueError("public coding event is invalid")
             name, delta = event
-            actions.append((case_index, names.index(name), delta + 3, 0, 0, 0))
+            encoded_delta = delta * 2 if delta >= 0 else (-delta * 2) - 1
+            actions.append(
+                _micro(
+                    OP_SIGNED_PAIR_ADD_IMMEDIATE,
+                    1 + 2 * names.index(name),
+                    encoded_delta,
+                )
+            )
     return actions
 
 
@@ -233,17 +259,24 @@ def _calibration(prompt: str) -> list[tuple[int, ...]]:
         raise ValueError("public calibration fractions are invalid") from None
     if any(not 0 <= value <= 1 for value in (prior, likelihood_h, likelihood_not_h)):
         raise ValueError("public calibration fractions are outside probability bounds")
+    # value0/1 = posterior numerator, value2/3 = denominator,
+    # value4 = choice, value5 = band, value6/7 = scratch pair.
     return [
-        (
-            prior.numerator,
-            prior.denominator,
-            likelihood_h.numerator,
-            likelihood_h.denominator,
-            likelihood_not_h.numerator,
-            likelihood_not_h.denominator,
-        ),
-        (0, 0, 0, 0, 0, 0),
-        (0, 0, 0, 0, 0, 0),
+        _micro(OP_PAIR_SET, 0, prior.numerator, 0),
+        _micro(OP_PAIR_MUL_IMMEDIATE, 0, likelihood_h.numerator),
+        _micro(OP_PAIR_MUL_IMMEDIATE, 0, likelihood_not_h.denominator),
+        _micro(OP_PAIR_SET, 6, prior.denominator, 0),
+        _micro(OP_PAIR_SUB_IMMEDIATE, 6, prior.numerator),
+        _micro(OP_PAIR_MUL_IMMEDIATE, 6, likelihood_not_h.numerator),
+        _micro(OP_PAIR_MUL_IMMEDIATE, 6, likelihood_h.denominator),
+        _micro(OP_PAIR_ADD, 2, 0, 6),
+        _micro(OP_PAIR_COPY, 4, 0),
+        _micro(OP_PAIR_COPY, 6, 2),
+        *(_micro(OP_PAIR_EUCLID_STEP, 4, 6) for _step in range(14)),
+        _micro(OP_PAIR_DIV, 0, 0, 4),
+        _micro(OP_PAIR_DIV, 2, 2, 4),
+        _micro(OP_RATIO_CHOICE, 4, 0, 2),
+        _micro(OP_RATIO_BAND, 5, 0, 2),
     ]
 
 
@@ -264,7 +297,18 @@ def _premise(prompt: str) -> list[tuple[int, ...]]:
         operands = (row["impact"], row["reliability"], row["cost"])
         if not isinstance(row["name"], str) or any(type(value) is not int for value in operands):
             raise ValueError("public premise row values are invalid")
-        actions.append((index, *operands, names.index(row["name"]), 0))
+        rank = names.index(row["name"])
+        # value0 = winner index, value1/2 = signed winner score,
+        # value3 = winner rank, value4 = has-winner, value5/6 = candidate,
+        # value7 = comparison decision.
+        actions.extend(
+            (
+                _micro(OP_PAIR_PRODUCT, 5, row["impact"], row["reliability"]),
+                _micro(OP_PAIR_SIGNED_SUB_IMMEDIATE, 5, row["cost"]),
+                _micro(OP_SIGNED_RANKED_GREATER, 7, 5, 1, rank, 3, 4),
+                _micro(OP_RANKED_COMMIT, 7, 5, index, rank),
+            )
+        )
     return actions
 
 
@@ -282,13 +326,10 @@ def compile_public_frontier_actions(
 ) -> PublicFrontierActionProgram:
     """Compile answer-blind public operands for a supported frontier family."""
 
-    if not isinstance(public_prompt, str) or not public_prompt or public_prompt != public_prompt.strip():
-        raise ValueError("public frontier prompt is invalid")
-    compiler = _COMPILERS.get(family)
-    if compiler is None:
-        raise ValueError("frontier family has no answer-blind public action compiler")
-    raw_actions = compiler(public_prompt)
-    field_names = _FIELD_NAMES[family]
+    field_names, raw_actions = compile_public_frontier_raw_actions(
+        public_prompt,
+        family,
+    )
     values = tuple(
         canonical_instruction_from_public_fields(
             family,
@@ -306,8 +347,27 @@ def compile_public_frontier_actions(
     )
 
 
+def compile_public_frontier_raw_actions(
+    public_prompt: str,
+    family: str,
+) -> tuple[tuple[str, ...], tuple[tuple[int, ...], ...]]:
+    """Return the answer-blind source actions before canonical projection."""
+
+    if not isinstance(public_prompt, str) or not public_prompt or public_prompt != public_prompt.strip():
+        raise ValueError("public frontier prompt is invalid")
+    compiler = _COMPILERS.get(family)
+    if compiler is None:
+        raise ValueError("frontier family has no answer-blind public action compiler")
+    raw_actions = tuple(compiler(public_prompt))
+    if not raw_actions:
+        raise ValueError("public frontier action program is empty")
+    field_names = _FIELD_NAMES[family]
+    return field_names, raw_actions
+
+
 __all__ = [
     "PUBLIC_FRONTIER_ACTION_SCHEMA",
     "PublicFrontierActionProgram",
     "compile_public_frontier_actions",
+    "compile_public_frontier_raw_actions",
 ]

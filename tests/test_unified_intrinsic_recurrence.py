@@ -16,6 +16,7 @@ from core.learning.recurrent_action_schema import (  # noqa: E402
     ACTION_NULL,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_TRAVERSE,
+    OP_PAIR_SET,
 )
 from core.learning.recurrent_answer_emission import (  # noqa: E402
     RecurrentAnswerEmissionContract,
@@ -239,6 +240,50 @@ def test_semantic_controller_initial_state_uses_registered_public_topology() -> 
         0,
         0,
     )
+
+
+def test_semantic_controller_receipt_names_its_actual_register_bank() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(hidden_size=64, correction_rank=8, state_slots=11)
+    )
+
+    assert controller.receipt()["state_transition_memory"]["state_register_order"] == [
+        "pc",
+        "value0",
+        "value1",
+        "value2",
+        "value3",
+        "value4",
+        "value5",
+        "value6",
+        "value7",
+        "value8",
+        "done",
+    ]
+
+
+def test_semantic_microcode_rejects_out_of_bank_pair_address() -> None:
+    controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(hidden_size=64, correction_rank=8, state_slots=11)
+    )
+    state = controller.exact_probabilities(
+        (0,) * 11,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (OP_PAIR_SET, 8, 1, 0, ACTION_NULL, ACTION_NULL, ACTION_NULL, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    logits, recognized = controller.microcode_transition_logits(state, action)
+    mx.eval(logits, recognized)
+
+    assert bool(recognized[0])
+    assert tuple(int(value) for value in mx.argmax(logits[0], axis=-1).tolist()) == (
+        ACTION_NULL,
+    ) * 11
 
 
 def test_action_kernel_capture_matches_runtime_public_signature() -> None:

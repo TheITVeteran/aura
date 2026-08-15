@@ -35,6 +35,7 @@ from core.learning.recurrent_action_schema import (
     ACTION_CARDINALITY,
     ACTION_NULL,
     ACTION_SLOT_NAMES,
+    MAX_RECURRENT_OPCODE,
     OP_ADD_MOD,
     OP_BOOL_AND,
     OP_BOOL_NOT,
@@ -49,7 +50,22 @@ from core.learning.recurrent_action_schema import (
     OP_FRONTIER_SIMULATE,
     OP_FRONTIER_TRAVERSE,
     OP_MUL_MOD,
+    OP_PAIR_ADD,
+    OP_PAIR_COPY,
+    OP_PAIR_DIV,
+    OP_PAIR_EUCLID_STEP,
+    OP_PAIR_MUL_IMMEDIATE,
+    OP_PAIR_PRODUCT,
+    OP_PAIR_SET,
+    OP_PAIR_SUB_IMMEDIATE,
+    OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_RANKED_COMMIT,
     OP_REGISTER_AFFINE,
+    OP_RATIO_BAND,
+    OP_RATIO_CHOICE,
+    OP_SET_SCALAR,
+    OP_SIGNED_PAIR_ADD_IMMEDIATE,
+    OP_SIGNED_RANKED_GREATER,
     OP_SUB_MOD,
 )
 from core.learning.recurrent_answer_emission import RecurrentAnswerEmissionContract
@@ -66,6 +82,7 @@ from core.learning.recurrent_state_schema import (
     STATE_CARDINALITY,
     STATE_INVALID,
     STATE_SLOT_NAMES,
+    state_slot_names,
 )
 
 UNIFIED_INTRINSIC_RECURRENCE_SCHEMA: Final = "aura.unified_intrinsic_recurrence.v1"
@@ -2798,7 +2815,7 @@ class UnifiedRecurrentController(nn.Module):
                 opcode = action_values[:, 0]
                 recognized = (
                     (opcode >= OP_COPY_VALUE)
-                    & (opcode <= OP_FRONTIER_AUDIT)
+                    & (opcode <= MAX_RECURRENT_OPCODE)
                     & (opcode != ACTION_NULL)
                 )
                 next_pc = mx.minimum(
@@ -2972,6 +2989,66 @@ class UnifiedRecurrentController(nn.Module):
             & (slots >= 1)
             & (slots <= audit_last_slot)
         )
+
+        pair_destination = (
+            (opcode == OP_PAIR_SET)
+            | (opcode == OP_PAIR_ADD)
+            | (opcode == OP_PAIR_MUL_IMMEDIATE)
+            | (opcode == OP_PAIR_PRODUCT)
+            | (opcode == OP_PAIR_SUB_IMMEDIATE)
+            | (opcode == OP_PAIR_SIGNED_SUB_IMMEDIATE)
+            | (opcode == OP_PAIR_DIV)
+            | (opcode == OP_PAIR_COPY)
+            | (opcode == OP_SIGNED_PAIR_ADD_IMMEDIATE)
+        ) & (arg0 < self.config.state_slots - 2)
+        pair_low_slot = arg0 + 1
+        writable = writable | (
+            pair_destination[:, None]
+            & (
+                (slots == pair_low_slot[:, None])
+                | (slots == (pair_low_slot + 1)[:, None])
+            )
+        )
+
+        euclid = (
+            (opcode == OP_PAIR_EUCLID_STEP)
+            & (arg0 < self.config.state_slots - 2)
+            & (arg1 < self.config.state_slots - 2)
+        )
+        euclid_left = arg0 + 1
+        euclid_right = arg1 + 1
+        writable = writable | (
+            euclid[:, None]
+            & (
+                (slots == euclid_left[:, None])
+                | (slots == (euclid_left + 1)[:, None])
+                | (slots == euclid_right[:, None])
+                | (slots == (euclid_right + 1)[:, None])
+            )
+        )
+
+        scalar_destination = (
+            (opcode == OP_RATIO_CHOICE)
+            | (opcode == OP_RATIO_BAND)
+            | (opcode == OP_SIGNED_RANKED_GREATER)
+            | (opcode == OP_SET_SCALAR)
+        ) & (arg0 < self.config.state_slots - 2)
+        writable = writable | (
+            scalar_destination[:, None] & (slots == (arg0 + 1)[:, None])
+        )
+
+        ranked_commit = opcode == OP_RANKED_COMMIT
+        valid_flag = arg0 < self.config.state_slots - 2
+        flag_value = mx.take_along_axis(
+            state,
+            mx.minimum(arg0 + 1, self.config.state_slots - 1)[:, None],
+            axis=1,
+        )[:, 0]
+        commit_selected = ranked_commit & valid_flag & (flag_value != 0)
+        writable = writable | (
+            commit_selected[:, None] & (slots >= 1) & (slots <= 4)
+        )
+        writable = writable | (ranked_commit[:, None] & (slots == 5))
         return writable
 
     def state_transition_logits(
@@ -3181,7 +3258,7 @@ class UnifiedRecurrentController(nn.Module):
         opcode = action[:, 0]
         arguments = action[:, 1:7]
         terminal = action[:, 7]
-        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= OP_FRONTIER_AUDIT)
+        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= MAX_RECURRENT_OPCODE)
         recognized = recognized & (opcode != ACTION_NULL)
 
         pc = mx.minimum(state[:, 0] + 1, self.config.state_cardinality - 1)
@@ -3546,8 +3623,248 @@ class UnifiedRecurrentController(nn.Module):
         if len(values) >= 5:
             values[3] = mx.where(is_audit & candidate_wins, arg4, values[3])
             values[4] = mx.where(is_audit, 1, values[4])
+
+        semantic_opcode = (opcode >= OP_PAIR_SET) & (
+            opcode <= MAX_RECURRENT_OPCODE
+        )
+        semantic_invalid = semantic_opcode & (len(values) < 8)
+
+        def valid_value_address(index: Any) -> Any:
+            return index < len(values)
+
+        def valid_pair_address(index: Any) -> Any:
+            return index < len(values) - 1
+
+        pair_set = opcode == OP_PAIR_SET
+        pair_add = opcode == OP_PAIR_ADD
+        pair_multiply = opcode == OP_PAIR_MUL_IMMEDIATE
+        pair_subtract = opcode == OP_PAIR_SUB_IMMEDIATE
+        pair_signed_subtract = opcode == OP_PAIR_SIGNED_SUB_IMMEDIATE
+        pair_divide = opcode == OP_PAIR_DIV
+        ratio_choice = opcode == OP_RATIO_CHOICE
+        ratio_band = opcode == OP_RATIO_BAND
+        signed_add = opcode == OP_SIGNED_PAIR_ADD_IMMEDIATE
+        ranked_greater = opcode == OP_SIGNED_RANKED_GREATER
+        ranked_commit = opcode == OP_RANKED_COMMIT
+        set_scalar = opcode == OP_SET_SCALAR
+        pair_copy = opcode == OP_PAIR_COPY
+        pair_euclid = opcode == OP_PAIR_EUCLID_STEP
+        pair_product = opcode == OP_PAIR_PRODUCT
+        semantic_invalid = semantic_invalid | (
+            pair_set & ~valid_pair_address(arg0)
+        ) | (
+            pair_add
+            & ~(
+                valid_pair_address(arg0)
+                & valid_pair_address(arg1)
+                & valid_pair_address(arg2)
+            )
+        ) | (
+            (pair_multiply | pair_subtract | pair_signed_subtract | signed_add)
+            & ~valid_pair_address(arg0)
+        ) | (
+            pair_product & ~valid_pair_address(arg0)
+        ) | (
+            pair_copy
+            & ~(valid_pair_address(arg0) & valid_pair_address(arg1))
+        ) | (
+            pair_euclid
+            & ~(
+                valid_pair_address(arg0)
+                & valid_pair_address(arg1)
+                & (arg0 != arg1)
+            )
+        ) | (
+            pair_divide
+            & ~(
+                valid_pair_address(arg0)
+                & valid_pair_address(arg1)
+                & valid_pair_address(arg2)
+            )
+        ) | (
+            (ratio_choice | ratio_band)
+            & ~(
+                valid_value_address(arg0)
+                & valid_pair_address(arg1)
+                & valid_pair_address(arg2)
+            )
+        ) | (
+            ranked_greater
+            & ~(
+                valid_value_address(arg0)
+                & valid_pair_address(arg1)
+                & valid_pair_address(arg2)
+                & valid_value_address(arg4)
+                & valid_value_address(arg5)
+            )
+        ) | (
+            ranked_commit
+            & ~(valid_value_address(arg0) & valid_pair_address(arg1))
+        ) | (
+            set_scalar & ~valid_value_address(arg0)
+        )
+
+        def read_value_slot(index: Any) -> Any:
+            bank = mx.stack(values, axis=1)
+            bounded = mx.minimum(index, len(values) - 1)
+            return mx.take_along_axis(bank, bounded[:, None], axis=1)[:, 0]
+
+        def write_value_slot(index: Any, result: Any, authority: Any) -> None:
+            for slot_index in range(len(values)):
+                values[slot_index] = mx.where(
+                    authority & (index == slot_index),
+                    result,
+                    values[slot_index],
+                )
+
+        def read_pair(low_index: Any) -> Any:
+            return read_value_slot(low_index) + PROCESS_RADIX * read_value_slot(
+                low_index + 1
+            )
+
+        def write_pair(low_index: Any, result: Any, authority: Any) -> None:
+            valid_address = low_index < len(values) - 1
+            write_value_slot(
+                low_index,
+                result % PROCESS_RADIX,
+                authority & valid_address,
+            )
+            write_value_slot(
+                low_index + 1,
+                result // PROCESS_RADIX,
+                authority & valid_address,
+            )
+
+        pair_set_result = arg1 + PROCESS_RADIX * arg2
+        write_pair(arg0, pair_set_result, pair_set)
+
+        pair_add_result = read_pair(arg1) + read_pair(arg2)
+        write_pair(arg0, pair_add_result, pair_add)
+
+        pair_multiply_result = read_pair(arg0) * arg1
+        write_pair(arg0, pair_multiply_result, pair_multiply)
+
+        write_pair(arg0, arg1 * arg2, pair_product)
+
+        pair_subtract_result = read_pair(arg0) - arg1
+        semantic_invalid = semantic_invalid | (
+            pair_subtract & (pair_subtract_result < 0)
+        )
+        write_pair(arg0, mx.maximum(pair_subtract_result, 0), pair_subtract)
+
+        signed_difference = read_pair(arg0) - arg1
+        signed_difference_encoded = mx.where(
+            signed_difference >= 0,
+            2 * signed_difference,
+            (-2 * signed_difference) - 1,
+        )
+        write_pair(arg0, signed_difference_encoded, pair_signed_subtract)
+
+        write_pair(arg0, read_pair(arg1), pair_copy)
+
+        euclid_left = read_pair(arg0)
+        euclid_right = read_pair(arg1)
+        euclid_next_left = mx.where(euclid_right == 0, euclid_left, euclid_right)
+        euclid_next_right = mx.where(
+            euclid_right == 0,
+            0,
+            euclid_left % mx.maximum(euclid_right, 1),
+        )
+        write_pair(arg0, euclid_next_left, pair_euclid)
+        write_pair(arg1, euclid_next_right, pair_euclid)
+
+        divide_numerator = read_pair(arg1)
+        divide_denominator = read_pair(arg2)
+        semantic_invalid = semantic_invalid | (
+            pair_divide
+            & (
+                (divide_denominator == 0)
+                | (
+                    divide_numerator % mx.maximum(divide_denominator, 1)
+                    != 0
+                )
+            )
+        )
+        divide_result = divide_numerator // mx.maximum(divide_denominator, 1)
+        write_pair(arg0, divide_result, pair_divide)
+
+        ratio_numerator = read_pair(arg1)
+        ratio_denominator = read_pair(arg2)
+        semantic_invalid = semantic_invalid | (
+            (ratio_choice | ratio_band) & (ratio_denominator == 0)
+        )
+        choice_result = (2 * ratio_numerator >= ratio_denominator).astype(
+            mx.int32
+        ) + 1
+        percentage = (100 * ratio_numerator) // mx.maximum(ratio_denominator, 1)
+        band_result = mx.where(
+            percentage < 50,
+            1,
+            mx.where(percentage < 70, 2, mx.where(percentage < 90, 3, 4)),
+        )
+        write_value_slot(arg0, choice_result, ratio_choice)
+        write_value_slot(arg0, band_result, ratio_band)
+
+        signed_current_encoded = read_pair(arg0)
+        signed_current = mx.where(
+            (signed_current_encoded % 2) == 0,
+            signed_current_encoded // 2,
+            -((signed_current_encoded + 1) // 2),
+        )
+        signed_immediate = mx.where(
+            (arg1 % 2) == 0,
+            arg1 // 2,
+            -((arg1 + 1) // 2),
+        )
+        signed_result = signed_current + signed_immediate
+        signed_result_encoded = mx.where(
+            signed_result >= 0,
+            2 * signed_result,
+            (-2 * signed_result) - 1,
+        )
+        write_pair(arg0, signed_result_encoded, signed_add)
+
+        candidate_encoded = read_pair(arg1)
+        incumbent_encoded = read_pair(arg2)
+        candidate_score = mx.where(
+            (candidate_encoded % 2) == 0,
+            candidate_encoded // 2,
+            -((candidate_encoded + 1) // 2),
+        )
+        incumbent_score = mx.where(
+            (incumbent_encoded % 2) == 0,
+            incumbent_encoded // 2,
+            -((incumbent_encoded + 1) // 2),
+        )
+        incumbent_rank = read_value_slot(arg4)
+        has_incumbent = read_value_slot(arg5)
+        ranked_result = (
+            (has_incumbent == 0)
+            | (candidate_score > incumbent_score)
+            | ((candidate_score == incumbent_score) & (arg3 < incumbent_rank))
+        ).astype(mx.int32)
+        write_value_slot(arg0, ranked_result, ranked_greater)
+
+        commit_selected = ranked_commit & (read_value_slot(arg0) != 0)
+        candidate_pair = read_pair(arg1)
+        if len(values) >= 5:
+            values[0] = mx.where(commit_selected, arg2, values[0])
+            values[1] = mx.where(
+                commit_selected,
+                candidate_pair % PROCESS_RADIX,
+                values[1],
+            )
+            values[2] = mx.where(
+                commit_selected,
+                candidate_pair // PROCESS_RADIX,
+                values[2],
+            )
+            values[3] = mx.where(commit_selected, arg3, values[3])
+            values[4] = mx.where(ranked_commit, 1, values[4])
+
+        write_value_slot(arg0, arg1, set_scalar)
         next_values = mx.stack((pc, *values, terminal), axis=1)
-        invalid = mx.any(state == STATE_INVALID, axis=1) | mx.any(
+        invalid = semantic_invalid | mx.any(state == STATE_INVALID, axis=1) | mx.any(
             (next_values < 0) | (next_values >= self.config.state_cardinality),
             axis=1,
         )
@@ -4479,7 +4796,9 @@ class UnifiedRecurrentController(nn.Module):
                     "slot_preserving_gated_summary_plus_causal_public_tape_reader"
                 ),
                 "field_order": list(ACTION_SLOT_NAMES),
-                "state_register_order": list(STATE_SLOT_NAMES),
+                "state_register_order": list(
+                    state_slot_names(self.config.state_slots)
+                ),
                 "current_and_prior_actions_visible": True,
                 "future_actions_visible": False,
                 "private_transition_trace_visible": False,

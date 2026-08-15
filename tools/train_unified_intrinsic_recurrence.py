@@ -36,6 +36,7 @@ from core.learning.public_frontier_action_compiler import (  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
     ACTION_CARDINALITY,
     ACTION_SLOT_NAMES,
+    MAX_RECURRENT_OPCODE,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_TRAVERSE,
     action_targets_from_program,
@@ -4481,7 +4482,7 @@ def _merge_bootstrap_codebook_extension(
     parent_action = parent_values[action_key]
     child_action = child_values[action_key]
     start = OP_FRONTIER_TRAVERSE
-    stop = OP_FRONTIER_AUDIT + 1
+    stop = MAX_RECURRENT_OPCODE + 1
     if (
         len(parent_action.shape) != 3
         or parent_action.shape[0] != len(ACTION_SLOT_NAMES)
@@ -4506,7 +4507,7 @@ def _merge_bootstrap_codebook_extension(
     migrated = dict(parent_values)
     migrated[action_key] = migrated_action
     return migrated, {
-        "schema": "aura.unified_intrinsic.semantic_codebook_extension.v1",
+        "schema": "aura.unified_intrinsic.semantic_codebook_extension.v2",
         "tensor": action_key,
         "slot": "opcode",
         "slot_index": 0,

@@ -50250,3 +50250,26 @@ It must measure train/holdout opcode-value support and provide coverage-complete
 primitive acquisition so learned tissue masters public semantic transitions
 before recurrence, answer emission, resident transfer, fusion or `WOW Signal`
 claims proceed.
+
+## Checkpoint 2026-08-15-546: Replace Monolithic Solvers With Public Micro-Programs
+
+The three non-Markov semantic families no longer ask one opcode to implement an
+entire domain algorithm. Coding, calibration and premise audit now compile
+public objective operands into a versioned, answer-blind micro-instruction set:
+radix-pair writes, arithmetic, exact division, Euclidean reduction, signed
+accumulation, ratio classification and stable ranked selection. The private
+reference interpreter constructs training targets from the same public action
+tape and independently verifies every terminal state; it is not available to
+the learned treatment at evaluation or runtime.
+
+Legacy opcodes remain loadable. Bootstrap migration refreshes every changed
+semantic codebook row through opcode 30, receipts name the actual five- or
+eleven-slot register topology, malformed register addresses produce the
+absorbing invalid state instead of clamped execution, and public compiler
+receipts bind both action schema and instruction dialect. Exact public/private
+execution, migration, receipt and invalid-address contracts pass `76/76`.
+
+This establishes a learnable finite operation vocabulary, not a reasoning-gain
+claim. The next gate is coverage-complete primitive and short-composition
+acquisition by the lesioned learned processor, followed by fresh closed-loop
+semantic programs only if primitive holdout execution is exact.

@@ -167,11 +167,11 @@ def test_bootstrap_codebook_extension_replaces_only_new_opcode_rows() -> None:
 
     assert receipt is not None
     assert receipt["value_start_inclusive"] == 9
-    assert receipt["value_stop_exclusive"] == 16
+    assert receipt["value_stop_exclusive"] == 31
     assert bool(
         mx.array_equal(
-            migrated["controller.action_value_embeddings"][0, 9:16],
-            child["controller.action_value_embeddings"][0, 9:16],
+            migrated["controller.action_value_embeddings"][0, 9:31],
+            child["controller.action_value_embeddings"][0, 9:31],
         )
     )
     assert bool(

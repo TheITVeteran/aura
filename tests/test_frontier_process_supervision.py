@@ -28,6 +28,21 @@ from core.learning.recurrent_action_schema import (
     OP_FRONTIER_SCHEDULE,
     OP_FRONTIER_SIMULATE,
     OP_FRONTIER_TRAVERSE,
+    OP_PAIR_ADD,
+    OP_PAIR_COPY,
+    OP_PAIR_DIV,
+    OP_PAIR_EUCLID_STEP,
+    OP_PAIR_MUL_IMMEDIATE,
+    OP_PAIR_PRODUCT,
+    OP_PAIR_SET,
+    OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_PAIR_SUB_IMMEDIATE,
+    OP_RANKED_COMMIT,
+    OP_RATIO_BAND,
+    OP_RATIO_CHOICE,
+    OP_SET_SCALAR,
+    OP_SIGNED_PAIR_ADD_IMMEDIATE,
+    OP_SIGNED_RANKED_GREATER,
     action_targets_from_program,
 )
 from core.learning.recurrent_state_schema import (
@@ -41,13 +56,28 @@ from tools.unified_intrinsic_tokenization_contract import (
 )
 
 _EXPECTED_OPCODES = {
-    "novel_algorithms": OP_FRONTIER_TRAVERSE,
-    "mathematics": OP_FRONTIER_ENUMERATE,
-    "coding": OP_FRONTIER_SIMULATE,
-    "scientific_inference": OP_FRONTIER_INFER,
-    "long_horizon_planning": OP_FRONTIER_SCHEDULE,
-    "calibration": OP_FRONTIER_CALIBRATE,
-    "misleading_premise": OP_FRONTIER_AUDIT,
+    "novel_algorithms": {OP_FRONTIER_TRAVERSE},
+    "mathematics": {OP_FRONTIER_ENUMERATE},
+    "coding": {OP_PAIR_SET, OP_SET_SCALAR, OP_SIGNED_PAIR_ADD_IMMEDIATE},
+    "scientific_inference": {OP_FRONTIER_INFER},
+    "long_horizon_planning": {OP_FRONTIER_SCHEDULE},
+    "calibration": {
+        OP_PAIR_SET,
+        OP_PAIR_ADD,
+        OP_PAIR_MUL_IMMEDIATE,
+        OP_PAIR_SUB_IMMEDIATE,
+        OP_PAIR_COPY,
+        OP_PAIR_EUCLID_STEP,
+        OP_PAIR_DIV,
+        OP_RATIO_CHOICE,
+        OP_RATIO_BAND,
+    },
+    "misleading_premise": {
+        OP_PAIR_PRODUCT,
+        OP_PAIR_SIGNED_SUB_IMMEDIATE,
+        OP_SIGNED_RANKED_GREATER,
+        OP_RANKED_COMMIT,
+    },
 }
 
 
@@ -77,7 +107,7 @@ def test_every_frontier_domain_compiles_into_recurrent_process_targets(domain: s
             )
             assert len(state_targets.values) == training.depth + 1
             assert len(action_targets.values) == training.depth + 1
-            assert all(row[0] == _EXPECTED_OPCODES[domain] for row in action_targets.values[:-1])
+            assert {row[0] for row in action_targets.values[:-1]} == _EXPECTED_OPCODES[domain]
             assert action_targets.values[-1] == (ACTION_NULL,) * len(action_targets.values[-1])
 
 
@@ -183,12 +213,17 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     # never the running winner/score. Planning masks fields not consumed by the
     # executable transition.
     assert all(row[4:7] == (ACTION_NULL,) * 3 for row in novel_targets.values)
-    # Name rank is a public tie-break operand.  The private running winner and
-    # score remain absent; the final argument is still unused.
-    assert all(row[6] == ACTION_NULL for row in audit_targets.values)
-    assert tuple(row[1] for row in audit_targets.values) == tuple(
-        range(audit.state_trace.depth)
-    )
+    # Semantic-v2 actions carry public operands and primitive schedules. The
+    # private running winner, score, balances and posterior never appear as one
+    # monolithic family instruction.
+    assert OP_FRONTIER_AUDIT not in {row[0] for row in audit_targets.values}
+    assert OP_FRONTIER_SIMULATE not in {row[0] for row in coding_targets.values}
+    assert OP_FRONTIER_CALIBRATE not in {
+        row[0] for row in calibration_targets.values
+    }
+    assert {row[0] for row in audit_targets.values} == _EXPECTED_OPCODES[
+        "misleading_premise"
+    ]
     assert all(
         row[3] == ACTION_NULL and row[5:7] == (ACTION_NULL,) * 2
         for row in planning_targets.values
@@ -197,12 +232,13 @@ def test_frontier_actions_execute_results_instead_of_copying_teacher_answers() -
     expected_prediction_digits = scientific.state_trace.states[-1][2:4]
     assert final_science_action[2:4] != expected_prediction_digits
     assert all(value != ACTION_NULL for value in final_science_action)
-    assert all(row[4:7] == (ACTION_NULL,) * 3 for row in coding_targets.values)
-    assert all(value != ACTION_NULL for value in calibration_targets.values[0])
-    assert all(
-        row[1:7] == (ACTION_NULL,) * 6
-        for row in calibration_targets.values[1:]
-    )
+    signed_updates = [
+        row for row in coding_targets.values
+        if row[0] == OP_SIGNED_PAIR_ADD_IMMEDIATE
+    ]
+    assert signed_updates
+    assert all(row[3:7] == (ACTION_NULL,) * 4 for row in signed_updates)
+    assert sum(row[0] == OP_PAIR_EUCLID_STEP for row in calibration_targets.values) == 14
     assert all(value != ACTION_NULL for value in mathematics_targets.values[0])
     assert all(
         row[4:7] == (ACTION_NULL,) * 3
