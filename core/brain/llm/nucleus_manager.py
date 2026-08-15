@@ -48,6 +48,50 @@ _CONSTITUTIVE_ORIGINS = frozenset({
     "agency_core",
 })
 _NUCLEUS_MODEL_TYPES = frozenset({"brainstem", "cortex"})
+
+
+def _with_requested_lane(kwargs: dict[str, Any], model: str | None) -> dict[str, Any]:
+    """Carry the caller's requested model into lane selection.
+
+    ``generate_stream``, ``generate_text`` and ``generate_json`` all accepted a
+    ``model`` parameter — the provider interface advertises that control — and
+    all three dropped it on the floor. A caller could ask for a lane, be served
+    by the other one, and have no way to tell.
+
+    A recognised lane name is honoured. An unrecognised one is refused rather
+    than silently ignored, because "I could not give you that" and "I gave you
+    that" must not look the same.
+    """
+    merged = dict(kwargs or {})
+    requested = str(model or "").strip().lower()
+    if not requested:
+        return merged
+    if requested in _NUCLEUS_MODEL_TYPES:
+        merged["requested_model_type"] = requested
+        return merged
+    _record_nucleus_degradation(
+        ValueError(f"unknown model {model!r} requested"),
+        action="served the request from lane selection rather than the unknown requested model",
+        severity="warning",
+        extra={"requested_model": str(model)[:80]},
+    )
+    merged["requested_model_unavailable"] = str(model)[:80]
+    return merged
+
+
+def _internal_execution_scope() -> bool:
+    """Whether this call is the runtime's own governed work.
+
+    A governed scope is entered on the stack for the duration of the work. A
+    caller composing kwargs cannot arrange to be inside one, which is exactly
+    the property an origin string does not have.
+    """
+    try:
+        from core.governance_context import is_governed
+
+        return bool(is_governed())
+    except (ImportError, AttributeError, RuntimeError):
+        return False
 _NUCLEUS_RECOVERABLE_ERRORS = (
     ImportError,
     AttributeError,
@@ -218,7 +262,30 @@ class NucleusManager(LLMProvider):
                 await asyncio.sleep(1)
         
     def _select_model_type(self, origin: str) -> str:
-        return "brainstem" if origin in _CONSTITUTIVE_ORIGINS else "cortex"
+        """Which lane serves this request.
+
+        A plain origin string chose it. `origin` arrives in kwargs from
+        whoever composed the call, so any caller could claim `health_monitor`
+        or `agency_core` and be routed with constitutive semantics — the label
+        was doing authorization work that a label cannot do.
+
+        A constitutive origin is honoured only from inside a governed scope,
+        which the runtime enters on the stack for the duration of its own work
+        and a caller cannot arrange by passing a keyword. An unbacked claim
+        routes to Cortex, like any other request, and is recorded.
+        """
+        name = str(origin or "").strip()
+        if name not in _CONSTITUTIVE_ORIGINS:
+            return "cortex"
+        if _internal_execution_scope():
+            return "brainstem"
+        _record_nucleus_degradation(
+            RuntimeError(f"constitutive origin {name!r} claimed outside a governed scope"),
+            action="routed the request to the ordinary lane",
+            severity="warning",
+            extra={"origin": name},
+        )
+        return "cortex"
 
     def _ensure_model_entry(self, name: str) -> dict[str, Any]:
         entry = self.models.setdefault(name, _empty_model_entry())
@@ -456,9 +523,51 @@ class NucleusManager(LLMProvider):
             cleaned = cleaned.replace(token, "")
         return cleaned
 
+    def last_lane_receipt(self) -> dict[str, Any]:
+        """Which model answered the last request, and whether that was the one
+        lane selection chose.
+
+        Callers received a plain string either way, so a user request answered
+        by Brainstem and constitutive work answered by Cortex were
+        indistinguishable from correctly routed ones. This is the seam a caller
+        can read to tell.
+        """
+        return {
+            "served_by": self._last_served_lane,
+            "substituted": bool(self._last_lane_substituted),
+        }
+
+    def last_lane_receipt(self) -> dict[str, Any]:
+        """Which model answered the last request, and whether that was the one
+        lane selection chose.
+
+        Callers received a plain string either way, so a user request answered
+        by Brainstem and constitutive work answered by Cortex were
+        indistinguishable from correctly routed ones. This is the seam a caller
+        can read to tell.
+        """
+        return {
+            "served_by": self._last_served_lane,
+            "substituted": bool(self._last_lane_substituted),
+        }
+
     def _format_prompt(self, prompt: str, system_prompt: str | None = None, prefill: str | None = None) -> str:
-        """Formats the prompt using ChatML for Qwen-Instruct models."""
-        s_msg = system_prompt if system_prompt else self._anchor_text
+        """Formats the prompt using ChatML for Qwen-Instruct models.
+
+        The anchor used to be an ELSE: a caller system prompt replaced it, and
+        _apply_anchor only reinjected the grounding text after a shared token
+        threshold had been crossed. So an ordinary request carrying any system
+        prompt could omit Aura's identity and evidence constraints entirely,
+        and how long it stayed omitted depended on a counter shared with every
+        other caller.
+
+        The anchor composes WITH a caller's prompt now. A caller may add
+        instructions; it may not remove the ones that are not its to remove.
+        """
+        if system_prompt and self._anchor_text:
+            s_msg = f"{self._anchor_text}\n\n{system_prompt}"
+        else:
+            s_msg = system_prompt or self._anchor_text
 
         # Strip ChatML control tokens from every interpolated segment so
         # untrusted content cannot break out of its role.
@@ -502,15 +611,31 @@ class NucleusManager(LLMProvider):
         """Route to appropriate internal model."""
         origin = kwargs.get("origin", "unknown")
         logger.debug("generate_text_async called with origin: %s", origin)
-        model_type = self._select_model_type(origin)
+        model_type = str(
+            kwargs.get("requested_model_type") or self._select_model_type(origin)
+        )
         logger.debug("Routing to: %s", model_type)
 
         await self.load_model(model_type)
         if not self.models.get(model_type, {}).get("loaded"): # Use .get for safety
-            # Fallback to brainstem if cortex isn't ready or vice-versa
+            # Fallback to brainstem if cortex isn't ready or vice-versa.
+            #
+            # The swap used to happen silently and the alternate lane's text
+            # was returned as an ordinary string: user requests answered by
+            # Brainstem, constitutive work answered by Cortex, and no caller
+            # able to tell which model produced what it received. Which model
+            # answered is part of the answer.
             alt_type = "brainstem" if model_type == "cortex" else "cortex"
             await self.load_model(alt_type)
             if self.models.get(alt_type, {}).get("loaded"):
+                _record_nucleus_degradation(
+                    RuntimeError(f"{model_type} lane unavailable; served by {alt_type}"),
+                    action=f"answered from the {alt_type} lane instead of {model_type}",
+                    severity="degraded",
+                    extra={"requested_model": model_type, "served_by": alt_type, "origin": origin},
+                )
+                self._last_served_lane = alt_type
+                self._last_lane_substituted = True
                 model_type = alt_type
             else:
                 logger.error("❌ Both Nucleus models failed to load.")
@@ -523,6 +648,10 @@ class NucleusManager(LLMProvider):
                     extra={"requested_model": model_type, "origin": origin},
                 )
                 return "[NUCLEUS ERROR] Internal inference offline."
+
+        else:
+            self._last_served_lane = model_type
+            self._last_lane_substituted = False
 
         try:
             from mlx_lm import generate
@@ -586,7 +715,9 @@ class NucleusManager(LLMProvider):
     async def generate_stream_async(self, prompt: str, system_prompt: str | None = None, **kwargs):
         """Streaming version of generate_text_async."""
         origin = kwargs.get("origin", "unknown")
-        model_type = self._select_model_type(origin)
+        model_type = str(
+            kwargs.get("requested_model_type") or self._select_model_type(origin)
+        )
 
         await self.load_model(model_type)
         if not self._ensure_model_entry(model_type).get("loaded"):
@@ -864,19 +995,35 @@ class NucleusManager(LLMProvider):
 
     async def generate_stream(self, prompt: str, system_prompt: str | None = None, model: str | None = None, **kwargs):
         """Implements abstract generate_stream by delegating to generate_stream_async."""
+        kwargs = _with_requested_lane(kwargs, model)
         async for chunk in self.generate_stream_async(prompt, system_prompt, **kwargs):
             yield chunk
 
     def generate_text(self, prompt: str, system_prompt: str | None = None, model: str | None = None) -> str:
-        """Synchronous wrapper for generate_text_async."""
+        """Synchronous wrapper for generate_text_async.
+
+        The outer handler used to cover errors from ``run_until_complete`` as
+        well as from loop discovery, so a failure that happened AFTER
+        generation began fell into ``asyncio.run`` and ran the whole request a
+        second time — a second model call, a second set of effects, from a
+        caller that asked once. Loop discovery is the only thing inside the
+        boundary now.
+        """
+        kwargs = _with_requested_lane({}, model)
         try:
             loop = asyncio.get_running_loop()
-            if loop.is_running():
-                # This is tricky in async environments, but for CLI/scripts it works
-                return "[NUCLEUS ERROR] Sync call in async loop."
-            return loop.run_until_complete(self.generate_text_async(prompt, system_prompt))
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            return asyncio.run(self.generate_text_async(prompt, system_prompt))
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            # Running a coroutine to completion from inside a live loop is not
+            # possible; the caller has to await the async form.
+            return "[NUCLEUS ERROR] Sync call in async loop."
+
+        coro = self.generate_text_async(prompt, system_prompt, **kwargs)
+        if loop is not None:
+            return loop.run_until_complete(coro)
+        return asyncio.run(coro)
 
     def generate_json(self, prompt: str, schema: dict[str, Any], system_prompt: str | None = None, model: str | None = None) -> dict[str, Any]:
         """Synchronous wrapper for JSON extraction with schema enforcement.
@@ -898,7 +1045,7 @@ class NucleusManager(LLMProvider):
                 + ", ".join(str(k) for k in properties)
                 + ". Output only the JSON."
             )
-        text = self.generate_text(f"{prompt}{schema_hint}", system_prompt)
+        text = self.generate_text(f"{prompt}{schema_hint}", system_prompt, model=model)
         result = extract_json(text)
         if not isinstance(result, dict):
             return {"error": "nucleus_json_extraction_failed", "raw": str(text)[:500]}
