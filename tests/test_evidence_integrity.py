@@ -20,12 +20,15 @@ import pytest
 from tools.check_evidence_integrity import (
     ASSERTING_FLOOR,
     CLASSIFICATION_RANK,
+    RETRACTION_SCHEMA,
     IntegrityFailure,
     ROOT,
+    _covers,
     check,
     cited_artifacts,
     load_retraction,
     parse_claims,
+    retracted_paths,
 )
 
 RETRACTION_SCHEMA = "aura.evidence_retraction.v1"
@@ -299,3 +302,64 @@ def test_claim_fourteen_is_not_asserting_in_the_live_matrix():
         f"claim 14 is classified {claims[14]['classification']!r} while its primary "
         "evidence carries a retraction"
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-file retraction
+#
+# `retracted_files` had been in the schema since the agi_live withdrawal and
+# nothing read it, so a retraction was all-or-nothing on a directory. That is
+# unusable for `artifacts/proof_bundle/latest`, which holds nineteen unrelated
+# artifacts and needs exactly one of them withdrawn.
+# ---------------------------------------------------------------------------
+
+
+def test_named_files_narrow_a_retraction_to_those_files():
+    record = {"schema": RETRACTION_SCHEMA, "status": "retracted",
+              "retracted_files": ["UNDENIABLE_RSI.json"]}
+    withdrawn = retracted_paths("artifacts/proof_bundle/latest", record)
+    assert withdrawn == ["artifacts/proof_bundle/latest/UNDENIABLE_RSI.json"]
+    assert _covers("artifacts/proof_bundle/latest/UNDENIABLE_RSI.json", withdrawn[0])
+    assert not _covers("artifacts/proof_bundle/latest/BOOT_HEALTH.json", withdrawn[0])
+
+
+def test_an_empty_file_list_still_retracts_the_whole_directory():
+    """The agi_live behaviour, and the fail-closed default."""
+    for record in (
+        {"schema": RETRACTION_SCHEMA, "status": "retracted"},
+        {"schema": RETRACTION_SCHEMA, "status": "retracted", "retracted_files": []},
+        {"schema": RETRACTION_SCHEMA, "status": "retracted", "retracted_files": "oops"},
+    ):
+        assert retracted_paths("artifacts/current/agi_live", record) == [
+            "artifacts/current/agi_live"
+        ]
+
+
+def test_citing_a_bundle_still_reaches_a_retracted_file_inside_it():
+    """A claim resting on the bundle rests on the withdrawn part of it."""
+    withdrawn = retracted_paths(
+        "artifacts/proof_bundle/latest",
+        {"schema": RETRACTION_SCHEMA, "status": "retracted",
+         "retracted_files": ["UNDENIABLE_RSI.json"]},
+    )
+    assert _covers("artifacts/proof_bundle/latest", withdrawn[0])
+
+
+def test_the_rsi_bundle_carries_its_withdrawal():
+    path = ROOT / "artifacts" / "proof_bundle" / "latest" / "RETRACTION.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["schema"] == RETRACTION_SCHEMA
+    assert record["status"] == "retracted"
+    assert record["retracted_files"] == ["UNDENIABLE_RSI.json"]
+    assert record["current_verdict"] == "BOUNDED_SELF_OPTIMIZATION"
+
+
+def test_the_retracted_rsi_measurement_was_left_intact():
+    """The improver curve stays on the record exactly as it was published."""
+    bundle = json.loads(
+        (ROOT / "artifacts" / "proof_bundle" / "latest" / "UNDENIABLE_RSI.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert bundle["lineage_verdict"]["improver_curve"] == [0.578, 0.8696, 0.9536, 1.0]
+    assert bundle["lineage_verdict"]["verdict"] == "UNDENIABLE_RSI"

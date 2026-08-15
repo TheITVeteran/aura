@@ -7,7 +7,12 @@ import pytest
 
 from core.learning.recursive_self_improvement import ImprovementPlan, RecursiveSelfImprovementLoop
 from core.learning.rsi_gauntlet import RSIGauntlet
-from core.learning.rsi_lineage import RSIGenerationRecord, RSILineageLedger, evaluate_lineage
+from core.learning.rsi_lineage import (
+    PROVENANCE_MEASURED,
+    RSIGenerationRecord,
+    RSILineageLedger,
+    evaluate_lineage,
+)
 from core.runtime.hot_swap import HotSwapRegistry
 from core.self_modification.formal_verifier import verify_mutation
 
@@ -17,7 +22,14 @@ async def test_rsi_gauntlet_runs_machine_checkable_suite(tmp_path: Path):
     result = await RSIGauntlet(Path.cwd(), artifact_dir=tmp_path, max_source_files=800).run()
 
     assert result.passed is True
-    assert result.verdict in {"WEAK_RSI", "STRONG_RSI", "UNDENIABLE_RSI"}
+    # The gauntlet's own checks pass. Its lineage verdict is BOUNDED, and that
+    # is the honest reading: the ledger holds the autonomous engine's measured
+    # generations alongside fixture records whose improver score is authored,
+    # and a strong verdict needs every generation measured. The suite used to
+    # require WEAK_RSI or better here, so a passing gauntlet depended on an
+    # improver curve that `0.09 * generation_index` guaranteed.
+    assert result.verdict == "BOUNDED_SELF_OPTIMIZATION"
+    assert any("not measured" in reason for reason in result.lineage_verdict.reasons)
     assert {check.name for check in result.checks} >= {
         "source_self_model",
         "formal_verifier_boundaries",
@@ -127,6 +139,7 @@ def test_rsi_lineage_detects_tamper_and_scores_monotone_records(tmp_path: Path):
             hidden_eval_score=0.2,
             promoted=True,
             improver_score=0.1,
+            improver_provenance=PROVENANCE_MEASURED,
         )
     )
     ledger.append(
@@ -141,6 +154,7 @@ def test_rsi_lineage_detects_tamper_and_scores_monotone_records(tmp_path: Path):
             hidden_eval_score=0.4,
             promoted=True,
             improver_score=0.3,
+            improver_provenance=PROVENANCE_MEASURED,
         )
     )
 

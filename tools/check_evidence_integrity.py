@@ -132,14 +132,43 @@ def cited_artifacts(evidence: str) -> list[str]:
     return [match.group("path").rstrip("/") for match in _ARTIFACT_PATH.finditer(evidence)]
 
 
-def _covers(cited: str, retracted_dir: str) -> bool:
-    """Does citing ``cited`` mean leaning on ``retracted_dir``?
+def retracted_paths(retracted_dir: str, record: dict[str, Any]) -> list[str]:
+    """The paths this retraction actually withdraws.
+
+    `retracted_files` has been in the schema since the agi_live retraction and
+    nothing read it, so a retraction could only ever be all-or-nothing on a
+    directory. That is wrong for a bundle: `artifacts/proof_bundle/latest`
+    holds nineteen independent artifacts, and withdrawing UNDENIABLE_RSI.json
+    must not withdraw BOOT_HEALTH.json beside it.
+
+    An empty or missing list still means the whole directory, which keeps the
+    agi_live behaviour and keeps a malformed sidecar failing closed.
+    """
+    files = record.get("retracted_files")
+    if not isinstance(files, list) or not files:
+        return [retracted_dir]
+    named = [
+        f"{retracted_dir}/{str(name).strip().lstrip('/')}"
+        for name in files
+        if str(name).strip()
+    ]
+    return named or [retracted_dir]
+
+
+def _covers(cited: str, retracted: str) -> bool:
+    """Does citing ``cited`` mean leaning on ``retracted``?
 
     Citing a directory cites everything under it, so `artifacts/current/` picks
     up a retraction three levels down. Citing a file inside a retracted bundle
-    counts too.
+    counts too, and citing the directory that contains a retracted file counts:
+    a claim resting on a bundle rests on the withdrawn part of it until the row
+    says otherwise.
     """
-    return cited == retracted_dir or cited.startswith(retracted_dir + "/") or retracted_dir.startswith(cited + "/")
+    return (
+        cited == retracted
+        or cited.startswith(retracted + "/")
+        or retracted.startswith(cited + "/")
+    )
 
 
 def check(root: Path = ROOT) -> dict[str, Any]:
@@ -177,7 +206,8 @@ def check(root: Path = ROOT) -> dict[str, Any]:
             continue
         for cited in cited_artifacts(claim["evidence"]):
             for retracted_dir, record in retractions.items():
-                if not _covers(cited, retracted_dir):
+                withdrawn = retracted_paths(retracted_dir, record)
+                if not any(_covers(cited, path) for path in withdrawn):
                     continue
                 # An asserting claim may still NAME retracted evidence when it
                 # is naming it as retracted — that is how a row explains its own
@@ -192,6 +222,7 @@ def check(root: Path = ROOT) -> dict[str, Any]:
                         "problem": "asserting_claim_cites_retracted_evidence",
                         "classification": claim["classification"],
                         "artifact": retracted_dir,
+                        "retracted_paths": withdrawn,
                         "detail": record.get("reason", "")[:400],
                     }
                 )

@@ -14,7 +14,13 @@ from typing import Any, Callable, Dict, List
 
 from core.learning.architecture_search import baseline_text_heuristic, routed_algorithmic_solver
 from core.learning.hidden_eval_repro import HiddenEvalPack
-from core.learning.rsi_lineage import RSIGenerationRecord, RSILineageLedger, RSILineageVerdict, evaluate_lineage
+from core.learning.rsi_lineage import (
+    PROVENANCE_AUTHORED,
+    RSIGenerationRecord,
+    RSILineageLedger,
+    RSILineageVerdict,
+    evaluate_lineage,
+)
 from core.promotion.dynamic_benchmark import Task
 
 
@@ -51,11 +57,25 @@ class SuccessorLabResult:
 class SuccessorLab:
     """Produce G1-G4 controlled successor records against fresh hidden packs."""
 
-    STRATEGIES: List[tuple[str, str, Callable[[Task], Any], float]] = [
-        ("Aura-G1", "arithmetic_router", _solve_arithmetic, 0.30),
-        ("Aura-G2", "arithmetic_sort_router", _solve_arithmetic_sort, 0.50),
-        ("Aura-G3", "full_task_router", _solve_all, 0.75),
-        ("Aura-G4", "full_task_router_with_reproduction", _solve_all, 0.90),
+    #: The four successors, in order. Each is a solver a developer wrote.
+    #:
+    #: There used to be a fourth column here — 0.30, 0.50, 0.75, 0.90 — read
+    #: into `improver_score`, so this lab reported a rising improver curve that
+    #: was four numbers typed in ascending order. Nothing in the lab improves
+    #: an improver: the succession is a fixed list, and the intelligence that
+    #: produced each solver was human and is not being measured. The column is
+    #: gone and the records declare `PROVENANCE_AUTHORED`, which keeps the
+    #: lab's verdict at BOUNDED_SELF_OPTIMIZATION where it belongs.
+    #: G4 runs `_solve_all`, the same function as G3. It is kept so the lab
+    #: still exercises a four-entry lineage, and it is not promoted, because
+    #: measured against the same hidden families it adds nothing. The blended
+    #: score used to promote it anyway: the authored column rose 0.75 to 0.90
+    #: and carried `after_score` past G3 on a capability that had not moved.
+    STRATEGIES: List[tuple[str, str, Callable[[Task], Any]]] = [
+        ("Aura-G1", "arithmetic_router", _solve_arithmetic),
+        ("Aura-G2", "arithmetic_sort_router", _solve_arithmetic_sort),
+        ("Aura-G3", "full_task_router", _solve_all),
+        ("Aura-G4", "full_task_router_with_reproduction", _solve_all),
     ]
 
     def __init__(self, artifact_dir: Path | str, *, seed: int = 9917, tasks_per_generation: int = 40):
@@ -68,20 +88,21 @@ class SuccessorLab:
     def run(self) -> SuccessorLabResult:
         records: List[RSIGenerationRecord] = []
         parent = "Aura-G0"
-        previous_hidden = self._score_solver(
+        previous_score = self._score_solver(
             HiddenEvalPack(seed=self.seed, answer_salt="successor-g0", task_count=self.tasks_per_generation),
             baseline_text_heuristic,
         )
-        previous_score = self._capability_score(previous_hidden, 0.10)
-        for idx, (generation_id, strategy_name, solver, improver_score) in enumerate(self.STRATEGIES, start=1):
+        for idx, (generation_id, strategy_name, solver) in enumerate(self.STRATEGIES, start=1):
             pack = HiddenEvalPack(
                 seed=self.seed + idx,
                 answer_salt=f"successor-{generation_id}",
                 task_count=self.tasks_per_generation,
             )
             start = time.time()
-            hidden_score = self._score_solver(pack, solver)
-            after_score = self._capability_score(hidden_score, improver_score)
+            # The capability curve is the hidden-eval score. It used to be
+            # `0.80 * hidden + 0.20 * improver`, which folded the authored
+            # column into the capability measurement as well.
+            after_score = self._score_solver(pack, solver)
             record = RSIGenerationRecord(
                 generation_id=generation_id,
                 parent_generation_id=parent,
@@ -90,11 +111,16 @@ class SuccessorLab:
                 artifact_hashes={"hidden_manifest": pack.manifest_hash()},
                 baseline_score=previous_score,
                 after_score=after_score,
-                hidden_eval_score=hidden_score,
+                hidden_eval_score=after_score,
                 promoted=after_score > previous_score,
                 ablation_result=f"{strategy_name}_beats_parent",
                 time_to_valid_improvement_s=round(time.time() - start, 6),
-                improver_score=improver_score,
+                improver_score=0.0,
+                improver_provenance=PROVENANCE_AUTHORED,
+                improver_measurement={
+                    "reason": "successor solvers are written by a developer; "
+                    "this lab measures capability, not an improver"
+                },
             )
             self.ledger.append(record)
             records.append(record)
@@ -109,10 +135,6 @@ class SuccessorLab:
     @staticmethod
     def _score_solver(pack: HiddenEvalPack, solver: Callable[[Task], Any]) -> float:
         return pack.evaluate(solver).score
-
-    @staticmethod
-    def _capability_score(hidden_score: float, improver_score: float) -> float:
-        return round(0.80 * hidden_score + 0.20 * improver_score, 6)
 
 
 __all__ = ["SuccessorLab", "SuccessorLabResult"]
