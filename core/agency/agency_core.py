@@ -766,6 +766,36 @@ class EngagementMode(StrEnum):
     OBSERVING = "observing"                        # Watching/listening without speaking
 
 
+#: AgencyState fields the health endpoint may publish. Scalars and flags — the
+#: numbers that answer "is this subsystem working". The list fields
+#: (pending_goals, unshared_observations, topics_to_discuss) and
+#: perceptual_buffer / current_ambient_context are deliberately absent: their
+#: SIZES are published instead, because a health consumer needs to see a queue
+#: growing and does not need to read what is in it.
+_AGENCY_STATUS_FIELDS = (
+    "last_user_interaction",
+    "last_self_initiated_contact",
+    "last_observation_comment",
+    "last_skill_use",
+    "last_agency_action_time",
+    "boot_time",
+    "safemode",
+    "engagement_mode",
+    "conversation_depth",
+    "user_responsiveness",
+    "initiative_energy",
+    "social_hunger",
+    "curiosity_pressure",
+    "frustration_level",
+    "confidence",
+    "last_goal_genesis_time",
+    "camera_active",
+    "mic_active",
+    "last_visual_change",
+    "last_audio_event",
+)
+
+
 class AgencyState(BaseModel):
     """The full internal state of Aura's agency at any moment."""
 
@@ -3337,12 +3367,32 @@ class AgencyCore:
 
     # ── Subsystem Health ──────────────────────────────────────
     def get_status(self) -> dict[str, Any]:
-        """Return full agency status for the health endpoint.
-        Standardized Pydantic-compatible output.
+        """Return agency status for the health endpoint.
+
+        This began with ``self.state.model_dump()`` — the whole AgencyState —
+        so every health consumer received the ambient screen context, the
+        perceptual buffer, the queued visual and audio observations Aura had
+        not yet chosen to share, the pending goals and the topics she was
+        thinking about raising. A health endpoint answers "is this subsystem
+        working"; it is not a window into what she has seen and not mentioned.
+
+        The counters that answer that question are published; the contents are
+        not. Anything that genuinely needs the buffers reads the state object.
         """
-        data = self.state.model_dump()
-        # Add derived metrics
-        degraded = bool(self._last_viability_error or self._last_tool_routing_error)
+        data = {
+            field: getattr(self.state, field)
+            for field in _AGENCY_STATUS_FIELDS
+            if hasattr(self.state, field)
+        }
+        # Sizes, not contents: enough to see a queue growing without reading it.
+        data.update({
+            "pending_goal_count": len(self.state.pending_goals or []),
+            "unshared_observation_count": len(self.state.unshared_observations or []),
+            "topics_to_discuss_count": len(self.state.topics_to_discuss or []),
+            "perceptual_buffer_keys": sorted(self.state.perceptual_buffer or {}),
+            "ambient_context_present": bool(self.state.current_ambient_context),
+        })
+        degraded = self._degraded_reasons()
         loop_task = getattr(self, "_cognitive_loop_task", None)
         loop_running = False
         if loop_task is not None:
@@ -3359,6 +3409,7 @@ class AgencyCore:
         data.update({
             "status": "degraded" if degraded else "active",
             "alive": not degraded,
+            "degraded_reasons": degraded,
             "pathways_active": len(self._pathway_registry),
             "idle_seconds": float(round(float(time.time() - self.state.last_user_interaction), 1)),
             "engagement_mode": self.state.engagement_mode.value,
@@ -3375,6 +3426,39 @@ class AgencyCore:
             },
         })
         return data
+
+    def _degraded_reasons(self) -> list[str]:
+        """Everything currently wrong, not two remembered strings.
+
+        Liveness was `bool(self._last_viability_error or
+        self._last_tool_routing_error)`. Both are sticky: one earlier
+        tool-routing failure held `alive` false until a later successful tool
+        call happened to clear it, so a subsystem that had recovered kept
+        reporting dead — and the reverse was worse, because nothing else could
+        make it report degraded at all. A stopped cognitive loop, an empty
+        pathway registry, a swarm at capacity with every shard failing: all of
+        them read "active".
+
+        A reason list rather than a boolean, so a consumer can see WHICH of
+        them is true and a recovered subsystem stops carrying an old one.
+        """
+        reasons: list[str] = []
+        if self._last_viability_error:
+            reasons.append(f"viability:{str(self._last_viability_error)[:120]}")
+        if self._last_tool_routing_error:
+            reasons.append(f"tool_routing:{str(self._last_tool_routing_error)[:120]}")
+        if not self._pathway_registry:
+            reasons.append("no_pathways_registered")
+        if not isinstance(getattr(self, "_action_queue", None), list):
+            reasons.append("action_queue_missing")
+        loop_task = getattr(self, "_cognitive_loop_task", None)
+        if loop_task is not None:
+            try:
+                if loop_task.done():
+                    reasons.append("cognitive_loop_stopped")
+            except (AttributeError, RuntimeError):
+                pass  # a task-like double that cannot answer is not evidence
+        return reasons
 
     def is_alive(self) -> bool:
         """Synchronous liveness probe for the runtime health contract."""
