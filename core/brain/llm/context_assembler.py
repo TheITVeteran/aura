@@ -1,6 +1,31 @@
-"""Context Assembler - Constructs LLM prompts purely from AuraState.
+"""Context Assembler — constructs LLM prompts from AuraState and live services.
+
+The first line used to read "purely from AuraState", and that claim is what
+made the module hard to reason about, because it is not what the code does. The
+prompt this builds depends on:
+
+* ``AuraState`` — affect, cognition, world, soma, response modifiers;
+* the service container — world model, narrative identity, relational memory,
+  opinion engine, capability engine, temporal continuity, qualia synthesizer
+  and others, each of which may be absent, and each of which is sampled at the
+  moment it is read rather than at one consistent instant;
+* process-wide context variables — the relational principal this request runs
+  under, the failure ledger collecting this turn's capability failures;
+* the environment — ``AURA_BLACK_BOX_STEERING`` and the continuity ledger's
+  ``env_int`` knobs;
+* wall time — trust-binding freshness, felt-thought recency, user presence;
+* the model registry — the context window every budget is derived from.
+
+None of that is a defect on its own. Presenting it as pure state construction
+was: a reader who believes this function is a projection of one object will not
+look for the reason two prompts built from the same state differ, and the whole
+point of the assembler is that its output is reproducible enough to reason
+about. Where a dependency can disagree with itself inside one assembly it is
+sampled once and threaded (see ``_sample_aura_now``); where it cannot be made
+consistent it is named here.
 """
 import logging
+import math
 import os
 import re
 import time
@@ -76,7 +101,31 @@ _USER_PRESENCE_WINDOW_S = 300.0
 #: matches rather than a quota filled with non-matches.
 _TOPIC_MEMORY_LIMIT = 5
 
+#: Upper bound on the free-energy reading the compact block renders. Unlike the
+#: others it is not a [0, 1] activation — it is a magnitude — so it gets its own
+#: ceiling rather than being clamped into a range it was never on. Anything
+#: above this is a broken reading, not a very surprised Aura.
+_FREE_ENERGY_MAX = 100.0
+
 _BLACK_BOX_RECEIPT_SCHEMA = "aura.context_assembler.black_box_receipt.v1"
+_PERSONHOOD_RECEIPT_SCHEMA = "aura.context_assembler.personhood_authoring_receipt.v1"
+
+#: Section headings that put a personhood construct in front of the model. Kept
+#: in one place so the receipt and the assembly cannot drift apart; a test
+#: asserts every label here is one the module actually writes.
+_PERSONHOOD_PROMPT_LABELS = (
+    "AUTOBIOGRAPHICAL MYTHOS",
+    "AUTOBIOGRAPHICAL NARRATIVE",
+    "HIGHER-ORDER AWARENESS",
+    "INTERPRETIVE AMBIGUITY",
+    "INTERSUBJECTIVE AWARENESS",
+    "META-AWARENESS",
+    "NARRATIVE SELF",
+    "OUTCOME AWARENESS",
+    "PERIPHERAL AWARENESS",
+    "REASONING STRATEGY",
+    "SENSE OF AGENCY",
+)
 
 #: Section titles that carry textual state — the exact thing the black-box
 #: condition exists to keep out of the prompt. Checked against the assembled
@@ -172,6 +221,37 @@ class ContextAssembler:
         }
 
     @classmethod
+    def personhood_authoring_receipt(cls, prompt: str) -> dict[str, Any]:
+        """Which personhood content this prompt put in front of the model.
+
+        Higher-order awareness, sense of agency, narrative self,
+        autobiographical mythos, meta-awareness and the rest are assembled here
+        as labelled sections. That is deliberate and stays: they are how she
+        holds a self across turns, and removing them to protect an experiment
+        would be lobotomising the subject to make the measurement easier.
+
+        What was missing is the other half. An experiment that reads
+        self-recognition or mirror-test behaviour out of a reply cannot tell
+        whether the reply reflected the model's own state or repeated a heading
+        the prompt handed it, because nothing recorded which headings were
+        there. This enumerates them against the assembled prompt, so a
+        spontaneity claim can be scored against what was authored instead of
+        assumed to be zero.
+        """
+        text = str(prompt or "")
+        present = sorted(
+            label for label in _PERSONHOOD_PROMPT_LABELS if f"## {label}" in text
+        )
+        return {
+            "schema": _PERSONHOOD_RECEIPT_SCHEMA,
+            "authored_labels": present,
+            "authored_count": len(present),
+            "checked_labels": list(_PERSONHOOD_PROMPT_LABELS),
+            "spontaneity_inference_available": not present,
+            "prompt_sha256": cls._content_digest(text),
+        }
+
+    @classmethod
     def black_box_receipt(cls, state: AuraState, prompt: str) -> dict[str, Any]:
         """What the black-box condition actually did to this prompt.
 
@@ -259,8 +339,10 @@ class ContextAssembler:
                 return (
                     "## AURA NOW\n"
                     f"Focus={packet['attention']['focal_object'] or 'none'} | "
-                    f"valence={affect['valence']:+.2f} arousal={affect['arousal']:.2f} "
-                    f"distress={affect['distress']:.2f} FE={affect['free_energy']:.2f} | "
+                    f"valence={ContextAssembler._self_state_number(affect.get('valence'), low=-1.0, high=1.0, signed=True)} "
+                    f"arousal={ContextAssembler._self_state_number(affect.get('arousal'), low=0.0, high=1.0)} "
+                    f"distress={ContextAssembler._self_state_number(affect.get('distress'), low=0.0, high=1.0)} "
+                    f"FE={ContextAssembler._self_state_number(affect.get('free_energy'), low=0.0, high=_FREE_ENERGY_MAX)} | "
                     "Self-report must stay state-grounded; do not claim phenomenal certainty.\n\n"
                     f"{organismal_block}{felt_thought_block}"
                 )
@@ -314,9 +396,10 @@ class ContextAssembler:
             )
             return (
                 "## FELT THOUGHT\n"
-                f"{subject}: fluency={felt.fluency:.2f} "
-                f"confidence={felt.felt_confidence:.2f} ambivalence={felt.ambivalence:.2f} "
-                f"strain={felt.strain:.2f}\n\n"
+                f"{subject}: fluency={ContextAssembler._self_state_number(felt.fluency, low=0.0, high=1.0)} "
+                f"confidence={ContextAssembler._self_state_number(felt.felt_confidence, low=0.0, high=1.0)} "
+                f"ambivalence={ContextAssembler._self_state_number(felt.ambivalence, low=0.0, high=1.0)} "
+                f"strain={ContextAssembler._self_state_number(felt.strain, low=0.0, high=1.0)}\n\n"
             )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
@@ -977,13 +1060,13 @@ class ContextAssembler:
         # creative engine to work with. The hard constraints above do the real work.
         affect_lines = []
         if affect.valence < -0.3:
-            affect_lines.append(f"Mood: negative ({affect.valence:+.2f})")
+            affect_lines.append(f"Mood: negative ({ContextAssembler._self_state_number(affect.valence, low=-1.0, high=1.0, signed=True)})")
         elif affect.valence > 0.3:
-            affect_lines.append(f"Mood: positive ({affect.valence:+.2f})")
+            affect_lines.append(f"Mood: positive ({ContextAssembler._self_state_number(affect.valence, low=-1.0, high=1.0, signed=True)})")
         if affect.arousal > 0.7:
-            affect_lines.append(f"Energy: high ({affect.arousal:.2f})")
+            affect_lines.append(f"Energy: high ({ContextAssembler._self_state_number(affect.arousal, low=0.0, high=1.0)})")
         elif affect.arousal < 0.3:
-            affect_lines.append(f"Energy: low ({affect.arousal:.2f})")
+            affect_lines.append(f"Energy: low ({ContextAssembler._self_state_number(affect.arousal, low=0.0, high=1.0)})")
 
         mood_hint = "" if black_box_steering else (" | ".join(affect_lines) if affect_lines else "")
 
@@ -1164,8 +1247,10 @@ class ContextAssembler:
                     if mq.get("dissonance", 0.0) > 0.1 or mq.get("novelty", 0.0) > 0.6:
                         meta_qualia_block = (
                             "## META-AWARENESS\n"
-                            f"Self-observation: confidence={mq['confidence']:.2f} coherence={mq['coherence']:.2f} "
-                            f"novelty={mq['novelty']:.2f} dissonance={mq['dissonance']:.2f}\n\n"
+                            f"Self-observation: confidence={ContextAssembler._self_state_number(mq.get('confidence'), low=0.0, high=1.0)} "
+                            f"coherence={ContextAssembler._self_state_number(mq.get('coherence'), low=0.0, high=1.0)} "
+                            f"novelty={ContextAssembler._self_state_number(mq.get('novelty'), low=0.0, high=1.0)} "
+                            f"dissonance={ContextAssembler._self_state_number(mq.get('dissonance'), low=0.0, high=1.0)}\n\n"
                         )
             except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('context_assembler', _e)
@@ -1215,13 +1300,13 @@ class ContextAssembler:
                 if div_val > 0.3:
                     personhood_blocks.append(
                         f"## INTERPRETIVE DIVERGENCE\n"
-                        f"Draft divergence: {div_val:.2f} -- competing interpretations of this input "
+                        f"Draft divergence: {ContextAssembler._self_state_number(div_val, low=0.0, high=1.0)} -- competing interpretations of this input "
                         f"pulled in different directions. Consider acknowledging ambiguity."
                     )
                 elif div_val > 0.15:
                     personhood_blocks.append(
                         f"## INTERPRETIVE DIVERGENCE\n"
-                        f"Mild divergence ({div_val:.2f}) -- dominant interpretation exists "
+                        f"Mild divergence ({ContextAssembler._self_state_number(div_val, low=0.0, high=1.0)}) -- dominant interpretation exists "
                         f"but alternative readings are available."
                     )
             except (ValueError, TypeError):
@@ -1316,9 +1401,9 @@ class ContextAssembler:
             affect_signature = affect.get_cognitive_signature() if hasattr(affect, "get_cognitive_signature") else {}
             cognitive_metrics = (
                 f"## COGNITIVE TELEMETRY\n"
-                f"- Valence: {affect.valence:+.2f} (Mood polarity)\n"
-                f"- Arousal: {affect.arousal:.2f} (Engagement intensity)\n"
-                f"- Curiosity: {affect.curiosity:.2f}\n"
+                f"- Valence: {ContextAssembler._self_state_number(affect.valence, low=-1.0, high=1.0, signed=True)} (Mood polarity)\n"
+                f"- Arousal: {ContextAssembler._self_state_number(affect.arousal, low=0.0, high=1.0)} (Engagement intensity)\n"
+                f"- Curiosity: {ContextAssembler._self_state_number(affect.curiosity, low=0.0, high=1.0)}\n"
                 f"- Cognitive Load: {getattr(affect, 'engagement', 0.5):.2f}\n"
                 f"- Social hunger: {getattr(affect, 'social_hunger', 0.5):.2f}\n"
                 f"- Physiological strain: {float(affect_signature.get('physiological_strain', 0.0)):.2f}\n"
@@ -1329,7 +1414,9 @@ class ContextAssembler:
             # Compact: just mood + energy for deep conversations
             cognitive_metrics = (
                 f"## STATE\n"
-                f"Mood: {affect.valence:+.2f} | Energy: {affect.arousal:.2f} | Curiosity: {affect.curiosity:.2f}\n\n"
+                f"Mood: {ContextAssembler._self_state_number(affect.valence, low=-1.0, high=1.0, signed=True)} | "
+                f"Energy: {ContextAssembler._self_state_number(affect.arousal, low=0.0, high=1.0)} | "
+                f"Curiosity: {ContextAssembler._self_state_number(affect.curiosity, low=0.0, high=1.0)}\n\n"
             )
         if system_failure and not black_box_steering:
             cognitive_metrics = cognitive_metrics.replace(
@@ -1990,6 +2077,48 @@ class ContextAssembler:
         return False
 
     @staticmethod
+    def _self_state_number(
+        value: Any,
+        *,
+        low: float,
+        high: float,
+        signed: bool = False,
+    ) -> str:
+        """One self-state reading, rendered so it cannot claim the impossible.
+
+        These were formatted straight into f-strings. Three things went wrong
+        and each of them reached the prompt:
+
+        * a None or a string raised TypeError inside the format, the enclosing
+          `except` swallowed it, and a whole block vanished from the prompt
+          without anyone saying which;
+        * a NaN printed as "nan", so "valence=nan" became a sentence about how
+          she feels;
+        * an out-of-range value printed as-is, so "Valence: +7.00" claimed a
+          state that does not exist on a [-1, 1] scale.
+
+        Unmeasured is a real answer and says so. A finite value outside its
+        declared range is clamped and recorded — the reading is wrong, and a
+        wrong reading inside the range is still better than a self-report that
+        cannot be true.
+        """
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "unmeasured"
+        if not math.isfinite(number):
+            return "unmeasured"
+        if number < low or number > high:
+            record_degradation(
+                "context_assembler.self_state_range",
+                ValueError(f"self-state reading {number!r} outside [{low}, {high}]"),
+                severity="warning",
+                action="clamped the reading to its declared range before the prompt",
+            )
+            number = min(max(number, low), high)
+        return f"{number:+.2f}" if signed else f"{number:.2f}"
+
+    @staticmethod
     def _prompt_safe_line(text: Any, *, limit: int = _WORLD_VALUE_MAX_CHARS) -> str:
         """One line of stored world state, fit to be read rather than obeyed.
 
@@ -2055,7 +2184,7 @@ class ContextAssembler:
                 trust = data.get('trust', 0.5)
                 sentiment = "warm" if trust > 0.7 else "trusting" if trust > 0.5 else "neutral" if trust > 0.4 else "guarded"
                 rels.append(
-                    f"- {line(target, limit=_WORLD_NAME_MAX_CHARS)}: {sentiment} (Dynamics: {trust:.2f})"
+                    f"- {line(target, limit=_WORLD_NAME_MAX_CHARS)}: {sentiment} (Dynamics: {ContextAssembler._self_state_number(trust, low=0.0, high=1.0)})"
                 )
             context += _section("SOCIAL DYNAMICS", rels, len(world.relationship_graph))
 
