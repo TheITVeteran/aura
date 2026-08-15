@@ -1133,6 +1133,7 @@ def unified_typed_transition_processor_loss(
     transition_start: int = 0,
     transition_count: int | None = None,
     corrupt_transition: int | None = None,
+    corrupt_state_mode: str = "single_slot_offset",
     corrupt_state_slot: int = 1,
     corrupt_state_offset: int = 1,
     register_weights: Sequence[float] | None = None,
@@ -1168,6 +1169,7 @@ def unified_typed_transition_processor_loss(
         and (type(transition_count) is not int or transition_count < 1)
         or corrupt_transition is not None
         and (type(corrupt_transition) is not int or corrupt_transition < 0)
+        or corrupt_state_mode not in {"single_slot_offset", "coherent_trace_state"}
         or type(corrupt_state_slot) is not int
         or not 0 <= corrupt_state_slot < controller.config.state_slots - 1
         or type(corrupt_state_offset) is not int
@@ -1218,6 +1220,7 @@ def unified_typed_transition_processor_loss(
         transition_start <= corrupt_transition < transition_stop
     ):
         raise ValueError("direct transition corruption is outside its window")
+    coherent_corruption_source: int | None = None
     action_history: list[Any] = [
         controller.exact_probabilities(
             action_values,
@@ -1230,7 +1233,12 @@ def unified_typed_transition_processor_loss(
     replay_losses: list[Any] = []
     replay_gate_means: list[Any] = []
     correct = mx.zeros((), dtype=mx.float32)
+    verified_trace_correct = mx.zeros((), dtype=mx.float32)
     required = mx.zeros((), dtype=mx.float32)
+    off_reference_transitions = mx.zeros((), dtype=mx.int32)
+    dynamic_target_differences = mx.zeros((), dtype=mx.int32)
+    reference_inconsistencies = mx.zeros((), dtype=mx.int32)
+    all_instructions_recognized = mx.array(True)
     state_probabilities = controller.exact_probabilities(
         (
             targets.initial_values
@@ -1256,10 +1264,33 @@ def unified_typed_transition_processor_loss(
         )
         action_history.append(action_probabilities)
         if transition_index == corrupt_transition:
-            selected = mx.argmax(state_probabilities, axis=-1)
-            corrupted_values = selected.at[:, corrupt_state_slot].add(
-                corrupt_state_offset
-            ) % controller.config.state_cardinality
+            if corrupt_state_mode == "coherent_trace_state":
+                reference_states = (targets.initial_values,) + targets.values[
+                    :available_transitions
+                ]
+                current_reference = (
+                    targets.initial_values
+                    if transition_index == 0
+                    else targets.values[transition_index - 1]
+                )
+                for distance in range(len(reference_states)):
+                    candidate_index = (
+                        transition_index + corrupt_state_offset + distance
+                    ) % len(reference_states)
+                    if reference_states[candidate_index] != current_reference:
+                        coherent_corruption_source = candidate_index
+                        break
+                if coherent_corruption_source is None:
+                    raise ValueError("coherent recovery trace has no alternate state")
+                corrupted_values = mx.array(
+                    (reference_states[coherent_corruption_source],),
+                    dtype=mx.int32,
+                )
+            else:
+                selected = mx.argmax(state_probabilities, axis=-1)
+                corrupted_values = selected.at[:, corrupt_state_slot].add(
+                    corrupt_state_offset
+                ) % controller.config.state_cardinality
             categories = mx.arange(controller.config.state_cardinality)[
                 None, None, :
             ]
@@ -1267,17 +1298,45 @@ def unified_typed_transition_processor_loss(
             state_probabilities = state_probabilities + mx.stop_gradient(
                 corrupted - state_probabilities
             )
-        labels = mx.array((next_values,), dtype=mx.int32)
-        if transition_index == corrupt_transition:
-            recovery_logits, recognized = controller.microcode_transition_logits(
-                state_probabilities,
-                action_probabilities,
-                action_probability_history=action_history,
-            )
-            mx.eval(recovery_logits, recognized)
-            if not bool(mx.all(recognized).item()):
-                raise ValueError("controlled recovery instruction is not executable")
-            labels = mx.stop_gradient(mx.argmax(recovery_logits, axis=-1))
+        transition_authority, recognized = controller.microcode_transition_logits(
+            state_probabilities,
+            action_probabilities,
+            action_probability_history=action_history,
+        )
+        all_instructions_recognized = all_instructions_recognized & mx.all(recognized)
+        labels = mx.stop_gradient(mx.argmax(transition_authority, axis=-1))
+        gold_labels = mx.array((next_values,), dtype=mx.int32)
+        prior_values = (
+            targets.initial_values
+            if transition_index == 0
+            else targets.values[transition_index - 1]
+        )
+        prior_masks = (
+            targets.initial_masks
+            if transition_index == 0
+            else targets.masks[transition_index - 1]
+        )
+        committed_values = mx.argmax(state_probabilities, axis=-1)
+        prior_values_array = mx.array((prior_values,), dtype=mx.int32)
+        prior_mask = mx.array((prior_masks,), dtype=mx.bool_)
+        next_mask = mx.array((masks,), dtype=mx.bool_)
+        on_reference = mx.all(
+            (~prior_mask) | (committed_values == prior_values_array),
+            axis=-1,
+        )
+        target_matches_reference = mx.all(
+            (~next_mask) | (labels == gold_labels),
+            axis=-1,
+        )
+        off_reference_transitions = off_reference_transitions + mx.sum(
+            (~on_reference).astype(mx.int32)
+        )
+        dynamic_target_differences = dynamic_target_differences + mx.sum(
+            (~target_matches_reference).astype(mx.int32)
+        )
+        reference_inconsistencies = reference_inconsistencies + mx.sum(
+            (on_reference & ~target_matches_reference).astype(mx.int32)
+        )
         history_memory = controller._typed_transition_memory(
             action_history,
             state_probabilities=state_probabilities,
@@ -1331,6 +1390,9 @@ def unified_typed_transition_processor_loss(
         losses.append(step_loss)
         predictions = mx.argmax(logits, axis=-1)
         correct = correct + mx.sum((predictions == labels).astype(mx.float32) * mask)
+        verified_trace_correct = verified_trace_correct + mx.sum(
+            (predictions == gold_labels).astype(mx.float32) * mask
+        )
         required = required + mx.sum(mask)
         # Match deployment exactly: after the public initial state, recurrent
         # execution consumes its own hard categorical decision.  The
@@ -1339,14 +1401,38 @@ def unified_typed_transition_processor_loss(
         state_probabilities = controller.straight_through_probabilities(logits)
     if not losses:
         raise ValueError("direct transition training has no active transitions")
+    mx.eval(
+        all_instructions_recognized,
+        off_reference_transitions,
+        dynamic_target_differences,
+        reference_inconsistencies,
+    )
+    if not bool(all_instructions_recognized.item()):
+        raise ValueError("public transition instruction is not executable")
+    if int(reference_inconsistencies.item()) != 0:
+        raise ValueError("exact transition authority differs from the verified trace")
     loss = mx.mean(mx.stack(losses))
-    accuracy = correct / mx.maximum(required, 1.0)
+    local_transition_accuracy = correct / mx.maximum(required, 1.0)
+    verified_trace_position_accuracy = verified_trace_correct / mx.maximum(
+        required,
+        1.0,
+    )
     return loss, {
         "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
         "objective": "verified_typed_transition_processor",
         "depth": plan.iterations,
         "transitions": len(losses),
-        "state_accuracy": float(accuracy.item()),
+        # Compatibility alias. New consumers should use the named metrics
+        # below so local transition acquisition is never confused with
+        # agreement at a nominal position in the verified trace.
+        "state_accuracy": float(local_transition_accuracy.item()),
+        "local_transition_accuracy": float(local_transition_accuracy.item()),
+        "verified_trace_position_accuracy": float(
+            verified_trace_position_accuracy.item()
+        ),
+        "verified_trace_position_accuracy_scope": (
+            "diagnostic_nominal_step_comparison_including_off_reference_states"
+        ),
         "public_action_program": True,
         "public_actions_are_correctness_authority": False,
         "verified_state_teacher_available": True,
@@ -1357,6 +1443,13 @@ def unified_typed_transition_processor_loss(
             else "training_only_verified_midtrace_state"
         ),
         "rollout_state_authority": "student_prediction_after_initial",
+        "transition_target_authority": (
+            "exact_transition_from_actual_committed_state"
+        ),
+        "gold_trace_used_after_initial": "consistency_check_only",
+        "off_reference_transition_count": int(off_reference_transitions.item()),
+        "dynamic_target_difference_count": int(dynamic_target_differences.item()),
+        "reference_inconsistency_count": int(reference_inconsistencies.item()),
         "closed_loop_student_rollout": True,
         "deployed_transition_policy": "processor_authoritative",
         "legacy_transition_logits_available": False,
@@ -1368,8 +1461,15 @@ def unified_typed_transition_processor_loss(
         "controlled_state_corruption": {
             "enabled": corrupt_transition is not None,
             "transition": corrupt_transition,
-            "slot": corrupt_state_slot if corrupt_transition is not None else None,
+            "mode": corrupt_state_mode if corrupt_transition is not None else None,
+            "slot": (
+                corrupt_state_slot
+                if corrupt_transition is not None
+                and corrupt_state_mode == "single_slot_offset"
+                else None
+            ),
             "offset": corrupt_state_offset if corrupt_transition is not None else None,
+            "coherent_trace_source_index": coherent_corruption_source,
             "runtime_correctness_oracle_available": False,
             "target_authority": (
                 "true_transition_from_corrupted_state"

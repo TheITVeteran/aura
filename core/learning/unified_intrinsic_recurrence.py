@@ -64,6 +64,7 @@ from core.learning.recurrent_opcode_grounding import (
 from core.learning.recurrent_state_schema import (
     SEMANTIC_STATE_SLOT_NAMES,
     STATE_CARDINALITY,
+    STATE_INVALID,
     STATE_SLOT_NAMES,
 )
 
@@ -2716,12 +2717,27 @@ class UnifiedRecurrentController(nn.Module):
             opcode_expert_routing=opcode_expert_routing,
         )
         if transition_processor_mode == "authoritative":
-            return processor_logits
-        if legacy_logits is None:
-            raise ValueError("residual transition processor requires legacy logits")
-        if legacy_logits.shape != processor_logits.shape:
-            raise ValueError("legacy and typed transition logits differ")
-        return legacy_logits + processor_logits
+            resolved = processor_logits
+        else:
+            if legacy_logits is None:
+                raise ValueError("residual transition processor requires legacy logits")
+            if legacy_logits.shape != processor_logits.shape:
+                raise ValueError("legacy and typed transition logits differ")
+            resolved = legacy_logits + processor_logits
+        # STATE_INVALID is an explicit absorbing fault state, not another value
+        # the learned processor may reinterpret. This structural latch carries
+        # no task answer and prevents one corrupt register from being laundered
+        # into apparently valid recurrent execution on the next step.
+        state_values = mx.argmax(state_probabilities, axis=-1)
+        invalid = mx.any(state_values == STATE_INVALID, axis=-1)
+        categories = mx.arange(self.config.state_cardinality)[None, None, :]
+        invalid_logits = mx.log(
+            mx.maximum(
+                (categories == STATE_INVALID).astype(mx.float32),
+                1e-6,
+            )
+        )
+        return mx.where(invalid[:, None, None], invalid_logits, resolved)
 
     def state_transition_logits(
         self,
@@ -3292,6 +3308,16 @@ class UnifiedRecurrentController(nn.Module):
             values[3] = mx.where(is_audit & candidate_wins, arg4, values[3])
             values[4] = mx.where(is_audit, 1, values[4])
         next_values = mx.stack((pc, *values, terminal), axis=1)
+        invalid = mx.any(state == STATE_INVALID, axis=1) | mx.any(
+            (next_values < 0) | (next_values >= self.config.state_cardinality),
+            axis=1,
+        )
+        next_values = mx.where(
+            invalid[:, None],
+            mx.full_like(next_values, STATE_INVALID),
+            next_values,
+        )
+        recognized = recognized | invalid
         categories = mx.arange(self.config.state_cardinality)[None, None, :]
         exact = (next_values[..., None] == categories).astype(mx.float32)
         return mx.log(mx.maximum(exact, 1e-6)), recognized

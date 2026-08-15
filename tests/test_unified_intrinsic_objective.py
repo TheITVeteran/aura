@@ -21,7 +21,10 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
 from core.learning.recurrent_action_schema import (  # noqa: E402
     action_targets_from_program,
 )
-from core.learning.recurrent_state_schema import state_targets_from_trace  # noqa: E402
+from core.learning.recurrent_state_schema import (  # noqa: E402
+    STATE_INVALID,
+    state_targets_from_trace,
+)
 from core.learning.unified_intrinsic_objective import (  # noqa: E402
     UnifiedIntrinsicTrainingSpec,
     readout_fingerprint,
@@ -761,7 +764,11 @@ def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
             ),
             -8.0,
         )
-        predicted = (7, 9, 0, 0, 0)
+        predicted = (
+            (7, 9, 0, 0, 0)
+            if len(observed_inputs) == 1
+            else (8, 0, 0, 0, 1)
+        )
         for slot, value in enumerate(predicted):
             logits = logits.at[0, slot, value].add(16.0)
         return logits
@@ -784,11 +791,88 @@ def test_direct_transition_objective_rolls_its_own_prediction_forward() -> None:
     assert len(observed_inputs) == 2
     assert receipt["closed_loop_student_rollout"] is True
     assert receipt["rollout_state_authority"] == "student_prediction_after_initial"
+    assert (
+        receipt["transition_target_authority"]
+        == "exact_transition_from_actual_committed_state"
+    )
+    assert receipt["gold_trace_used_after_initial"] == "consistency_check_only"
+    assert receipt["off_reference_transition_count"] == 1
+    assert receipt["dynamic_target_difference_count"] == 1
+    assert receipt["reference_inconsistency_count"] == 0
+    assert receipt["state_accuracy"] == receipt["local_transition_accuracy"]
+    assert receipt["local_transition_accuracy"] > (
+        receipt["verified_trace_position_accuracy"]
+    )
+    assert receipt["verified_trace_position_accuracy_scope"] == (
+        "diagnostic_nominal_step_comparison_including_off_reference_states"
+    )
     assert receipt["post_terminal_transitions_trained"] == 0
     assert receipt["active_transitions"] == 2
 
 
-def test_direct_transition_forward_path_is_invariant_to_future_gold_states() -> None:
+def test_invalid_recurrent_state_is_an_absorbing_structural_latch() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    state = controller.exact_probabilities(
+        (0, STATE_INVALID, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (0, 1, 32, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    history = controller._typed_transition_memory(
+        (action,),
+        state_probabilities=state,
+        action_probabilities=action,
+    )
+
+    learned = controller.resolve_transition_processor_logits(
+        None,
+        state,
+        action,
+        history,
+        transition_processor_mode="authoritative",
+    )
+    exact, recognized = controller.microcode_transition_logits(
+        state,
+        action,
+        action_probability_history=(action,),
+    )
+    mx.eval(learned, exact, recognized)
+
+    expected = [STATE_INVALID] * controller.config.state_slots
+    assert mx.argmax(learned, axis=-1)[0].tolist() == expected
+    assert mx.argmax(exact, axis=-1)[0].tolist() == expected
+    assert bool(mx.all(recognized).item()) is True
+
+
+def test_out_of_vocabulary_transition_result_enters_invalid_latch() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    state = controller.exact_probabilities(
+        (0, 0, 0, 0, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (15, 1, 31, 31, 0, 0, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    exact, recognized = controller.microcode_transition_logits(
+        state,
+        action,
+        action_probability_history=(action,),
+    )
+    mx.eval(exact, recognized)
+
+    assert mx.argmax(exact, axis=-1)[0].tolist() == [STATE_INVALID] * 5
+    assert bool(mx.all(recognized).item()) is True
+
+
+def test_direct_transition_refuses_gold_that_disagrees_with_public_execution() -> None:
     controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
 
     def evidence(value: int) -> tuple[StructuredTransitionTrace, StructuredTransitionProgram]:
@@ -804,14 +888,16 @@ def test_direct_transition_forward_path_is_invariant_to_future_gold_states() -> 
             actions=((0, 0, 0), (0, 0, 0)),
         )
 
-    trace_a, program_a = evidence(0)
-    trace_b, program_b = evidence(1)
+    trace_a, program_a = evidence(1)
+    trace_b, program_b = evidence(0)
     public_actions = action_targets_from_program(program_a, 2).values
     assert public_actions == action_targets_from_program(program_b, 2).values
     captures: list[list[tuple[tuple[int, ...], tuple[float, ...]]]] = []
     original = controller.typed_transition_processor_logits
 
-    for trace, program in ((trace_a, program_a), (trace_b, program_b)):
+    for index, (trace, program) in enumerate(
+        ((trace_a, program_a), (trace_b, program_b))
+    ):
         run: list[tuple[tuple[int, ...], tuple[float, ...]]] = []
 
         def capture(
@@ -842,18 +928,31 @@ def test_direct_transition_forward_path_is_invariant_to_future_gold_states() -> 
 
         controller.typed_transition_processor_logits = capture
         try:
-            unified_typed_transition_processor_loss(
-                controller,
-                _spec().plan_at(2),
-                transition_trace=trace,
-                transition_program=program,
-                public_action_values=public_actions,
-            )
+            if index == 0:
+                unified_typed_transition_processor_loss(
+                    controller,
+                    _spec().plan_at(2),
+                    transition_trace=trace,
+                    transition_program=program,
+                    public_action_values=public_actions,
+                )
+            else:
+                with pytest.raises(
+                    ValueError,
+                    match="exact transition authority differs",
+                ):
+                    unified_typed_transition_processor_loss(
+                        controller,
+                        _spec().plan_at(2),
+                        transition_trace=trace,
+                        transition_program=program,
+                        public_action_values=public_actions,
+                    )
         finally:
             controller.typed_transition_processor_logits = original
         captures.append(run)
 
-    assert captures[0] == captures[1]
+    assert captures[0][0] == captures[1][0]
 
 
 def test_direct_transition_tape_never_reads_future_public_actions() -> None:
@@ -1039,11 +1138,68 @@ def test_direct_transition_recovery_curriculum_injects_no_runtime_oracle() -> No
     assert receipt["controlled_state_corruption"] == {
         "enabled": True,
         "transition": 0,
+        "mode": "single_slot_offset",
         "slot": 1,
         "offset": 2,
+        "coherent_trace_source_index": None,
         "runtime_correctness_oracle_available": False,
         "target_authority": "true_transition_from_corrupted_state",
     }
+
+
+def test_recovery_curriculum_transplants_a_coherent_off_path_state() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+    trace = StructuredTransitionTrace(
+        family="boolean",
+        depth=2,
+        field_names=("pc", "value", "done"),
+        states=((0, 0, 0), (1, 1, 0), (2, 0, 1)),
+    )
+    program = StructuredTransitionProgram(
+        state_trace=trace,
+        action_field_names=("opcode", "operand", "has_operand"),
+        actions=((0, 1, 1), (1, 0, 1)),
+    )
+    observed: list[tuple[int, ...]] = []
+    original = controller.typed_transition_processor_logits
+
+    def capture(
+        state_probabilities,
+        action_probabilities,
+        history_memory,
+        *,
+        opcode_expert_routing="opcode",
+    ):
+        mx.eval(state_probabilities)
+        observed.append(
+            tuple(int(value) for value in mx.argmax(state_probabilities[0], axis=-1).tolist())
+        )
+        return original(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            opcode_expert_routing=opcode_expert_routing,
+        )
+
+    controller.typed_transition_processor_logits = capture
+    try:
+        _loss, receipt = unified_typed_transition_processor_loss(
+            controller,
+            _spec().plan_at(2),
+            transition_trace=trace,
+            transition_program=program,
+            public_action_values=action_targets_from_program(program, 2).values,
+            corrupt_transition=0,
+            corrupt_state_mode="coherent_trace_state",
+            corrupt_state_offset=1,
+        )
+    finally:
+        controller.typed_transition_processor_logits = original
+
+    assert observed[0] == (1, 1, 0, 0, 0)
+    assert receipt["controlled_state_corruption"]["mode"] == "coherent_trace_state"
+    assert receipt["controlled_state_corruption"]["slot"] is None
+    assert receipt["controlled_state_corruption"]["coherent_trace_source_index"] == 1
 
 
 def test_direct_transition_loss_weights_value_registers_and_weakest_term() -> None:

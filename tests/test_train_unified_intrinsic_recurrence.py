@@ -1268,7 +1268,11 @@ def test_direct_transition_curriculum_reaches_every_scale_then_closed_loop() -> 
     assert all(row["transition_start"] == 0 for row in stages[9:])
     assert all(row["transition_count"] == 10 for row in stages[9:])
     assert all(row["corrupt_transition"] is not None for row in stages[14:17])
-    assert all(row["corrupt_state_slot"] in {0, 1, 2, 3} for row in stages[14:17])
+    assert all(
+        row["corrupt_state_mode"] == "coherent_trace_state"
+        for row in stages[14:17]
+    )
+    assert all(row["corrupt_state_slot"] is None for row in stages[14:17])
     assert all(row["corrupt_state_offset"] is not None for row in stages[14:17])
     assert all(row["corrupt_transition"] is None for row in stages[17:])
     assert _direct_transition_curriculum_window(
@@ -1280,6 +1284,7 @@ def test_direct_transition_curriculum_reaches_every_scale_then_closed_loop() -> 
         "training_only_midtrace_initial_state": False,
         "complete_public_prefix_visible": True,
         "corrupt_transition": None,
+        "corrupt_state_mode": None,
         "corrupt_state_slot": None,
         "corrupt_state_offset": None,
     }

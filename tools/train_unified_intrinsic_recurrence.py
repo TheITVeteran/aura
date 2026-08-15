@@ -1018,6 +1018,7 @@ def _direct_transition_curriculum_window(
             "training_only_midtrace_initial_state": False,
             "complete_public_prefix_visible": True,
             "corrupt_transition": None,
+            "corrupt_state_mode": None,
             "corrupt_state_slot": None,
             "corrupt_state_offset": None,
         }
@@ -1044,8 +1045,9 @@ def _direct_transition_curriculum_window(
                 "training_only_midtrace_initial_state": False,
                 "complete_public_prefix_visible": True,
                 "corrupt_transition": recovery_index % transition_depth,
-                "corrupt_state_slot": recovery_index % 4,
-                "corrupt_state_offset": 1 + (recovery_index // 4) % 3,
+                "corrupt_state_mode": "coherent_trace_state",
+                "corrupt_state_slot": None,
+                "corrupt_state_offset": 1 + recovery_index % transition_depth,
             }
         return {
             "stage": "closed_loop",
@@ -1054,6 +1056,7 @@ def _direct_transition_curriculum_window(
             "training_only_midtrace_initial_state": False,
             "complete_public_prefix_visible": True,
             "corrupt_transition": None,
+            "corrupt_state_mode": None,
             "corrupt_state_slot": None,
             "corrupt_state_offset": None,
         }
@@ -1068,6 +1071,7 @@ def _direct_transition_curriculum_window(
         "training_only_midtrace_initial_state": transition_start > 0,
         "complete_public_prefix_visible": True,
         "corrupt_transition": None,
+        "corrupt_state_mode": None,
         "corrupt_state_slot": None,
         "corrupt_state_offset": None,
     }
@@ -5923,7 +5927,9 @@ def main() -> int:
             "process_query_gradient_scale": args.process_query_gradient_scale,
             "direct_transition_processor": {
                 "enabled": args.direct_transition_processor,
-                "objective": "verified_state_public_action_history_to_next_state",
+                "objective": (
+                    "actual_committed_state_public_action_history_to_exact_next_state"
+                ),
                 "curriculum": args.direct_transition_curriculum,
                 "register_loss_weights": list(register_loss_weights),
                 "weakest_register_weight": (
@@ -5953,6 +5959,11 @@ def main() -> int:
                 "controlled_recovery_target": (
                     "true_transition_from_corrupted_state"
                 ),
+                "all_rollout_target_authority": (
+                    "exact_transition_from_actual_committed_state"
+                ),
+                "gold_trace_after_initial": "consistency_check_only",
+                "invalid_state_policy": "absorbing_structural_latch",
                 "transformer_graph_constructed": False,
                 "readout_graph_constructed": False,
             },
@@ -6649,6 +6660,10 @@ def main() -> int:
                                             corrupt_transition=curriculum[
                                                 "corrupt_transition"
                                             ],
+                                            corrupt_state_mode=(
+                                                curriculum["corrupt_state_mode"]
+                                                or "single_slot_offset"
+                                            ),
                                             corrupt_state_slot=(
                                                 1
                                                 if curriculum[

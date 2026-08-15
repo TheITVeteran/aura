@@ -90,3 +90,33 @@ and uncited measurements are not treated as observations.
 7. Replicate on sealed fresh 1.5B cohorts.
 8. Retrain width-correct resident-32B tissue, shadow it, and independently verify.
 9. Reserve `WOW Signal` for the powered resident result, never for a canary.
+
+## CP513-CP514 addendum
+
+CP513 implemented the primitive-coverage admission required by ordered step 3.
+The admission freezes task identity disjointness, opcode and operand support,
+state and action masks, depth support, and zero exact-program overlap. It is a
+development cohort gate. Because it inspects holdout structure, it is not an
+untouched replication verdict and cannot support a WOW claim.
+
+The r9 semantic canary reached step 208 under the older objective. Its step-192
+evaluation had perfect action parsing but zero T1 state-value exactness, zero
+active-trajectory exactness at every depth, and a best heldout relative gain of
+-0.1525. The checkpoint and signed stop receipts remain preserved under
+`/Users/bryan/.aura/training-campaigns/cp512-semantic-transition-canary-r9-1p5b-20260815`.
+No positive capability claim follows from that run.
+
+CP514 found that the older closed-loop objective used the student's committed
+state as input but retained the reference trajectory's next state as the label
+after the student left that trajectory. That made the supervised relation
+path-dependent rather than one stationary transition law. CP514 changes every
+training transition target to the exact next state of the state actually
+committed by the student, uses the reference trace after initialization only as
+a consistency check, injects coherent alternate trace states for recovery, and
+makes the explicit invalid state absorbing. It also reports local-transition
+accuracy separately from nominal verified-trace-position agreement. The r9
+checkpoint must not be resumed or migrated into this changed objective.
+
+Ordered step 3 is now implemented at the contract level. Its empirical closeout
+requires a fresh source-bound canary from a new initialization. Mathematics and
+addressable work memory remain ordered step 4.
