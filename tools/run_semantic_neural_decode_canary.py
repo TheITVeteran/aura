@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -258,6 +259,18 @@ def _git(*args: str) -> str:
     ).stdout.strip()
 
 
+def _resolve_source_commit(explicit: str) -> str:
+    source_commit = explicit.strip().lower()
+    if source_commit:
+        if re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+            raise ValueError("semantic decode source commit is not a full Git identity")
+        return source_commit
+    source_commit = _git("rev-parse", "HEAD")
+    if _git("status", "--porcelain", "--untracked-files=all"):
+        raise RuntimeError("semantic decode canary requires clean measured source")
+    return source_commit
+
+
 def _prompt_tokens(tokenizer: Any, objective: str, context: str = "") -> tuple[int, ...]:
     content = objective if not context else f"{objective}\n\n{context}"
     return tuple(
@@ -380,6 +393,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
     parser.add_argument("--max-tokens", type=int, default=384)
     parser.add_argument("--surface-profile", choices=SURFACE_PROFILES, default="canonical")
+    parser.add_argument(
+        "--source-commit",
+        default="",
+        help=(
+            "bind a preverified Git commit when a contained supervisor forbids "
+            "child process creation"
+        ),
+    )
     return parser
 
 
@@ -407,9 +428,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         if args.resident_manifest is not None
         else None
     )
-    source_commit = _git("rev-parse", "HEAD")
-    if _git("status", "--porcelain", "--untracked-files=all"):
-        raise RuntimeError("semantic decode canary requires clean measured source")
+    source_commit = _resolve_source_commit(args.source_commit)
 
     from mlx_lm import load
 

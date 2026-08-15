@@ -16,6 +16,7 @@ from tools.run_semantic_neural_decode_canary import (
     _grade,
     _lane_kwargs,
     _resident_manifest_identity,
+    _resolve_source_commit,
     _state_prefill,
     _summary,
     _task_cohort,
@@ -146,6 +147,19 @@ def test_semantic_decode_journal_is_fsynced_and_receipt_chained(tmp_path):
     assert rows[0]["receipt_sha256"] == first
     assert rows[1]["previous_receipt_sha256"] == first
     assert rows[1]["receipt_sha256"] == second
+
+
+def test_explicit_source_commit_avoids_git_subprocess(monkeypatch):
+    monkeypatch.setattr(
+        "tools.run_semantic_neural_decode_canary._git",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("git must not execute")),
+    )
+    assert _resolve_source_commit("A" * 40) == "a" * 40
+
+
+def test_explicit_source_commit_requires_full_git_identity():
+    with pytest.raises(ValueError, match="full Git identity"):
+        _resolve_source_commit("not-a-commit")
 
 
 def test_semantic_state_prefill_is_state_grounded_and_leaves_model_suffix():
