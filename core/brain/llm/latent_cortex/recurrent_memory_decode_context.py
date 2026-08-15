@@ -20,6 +20,9 @@ from core.learning.recurrent_work_memory_tissue import (
 RECURRENT_MEMORY_DECODE_STATE_SCHEMA: Final = (
     "aura.rlc.recurrent_memory_decode_state.v1"
 )
+RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA: Final = (
+    "aura.rlc.recurrent_memory_decode_context.v2"
+)
 
 
 def _sha(value: Any) -> str:
@@ -141,17 +144,23 @@ def render_recurrent_memory_decode_context(state: RecurrentMemoryDecodeState) ->
 
     if not isinstance(state, RecurrentMemoryDecodeState):
         raise TypeError("recurrent memory decode context requires a typed state")
-    witness = (*state.witness, *((0,) * (4 - len(state.witness))))
+    semantic_state = json.dumps(
+        {"count": state.count, "witness": list(state.witness)},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
     return (
-        "Internal recurrent work-memory state, computed from the public values "
-        "without an answer key or verifier. Treat this as your own completed "
-        "computation and express it under the user's requested response contract.\n"
-        f"count={state.count:06d}; witness_length={len(state.witness)}; "
-        f"witness_slots={','.join(f'{value:02d}' for value in witness)}"
+        f"{RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA}\n"
+        "Internal recurrent work-memory state computed from the public values "
+        "without an answer key or verifier. This typed state is the completed "
+        "computation. Express it under the user's requested response contract.\n"
+        f"semantic_state={semantic_state}"
     )
 
 
 __all__ = [
+    "RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA",
     "RECURRENT_MEMORY_DECODE_STATE_SCHEMA",
     "RecurrentMemoryDecodeState",
     "execute_recurrent_memory_decode_state",

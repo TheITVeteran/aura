@@ -8,6 +8,7 @@ import pytest
 
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task
 from core.brain.llm.latent_cortex.recurrent_memory_decode_context import (
+    RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA,
     RecurrentMemoryDecodeState,
     execute_recurrent_memory_decode_state,
     render_recurrent_memory_decode_context,
@@ -28,16 +29,19 @@ def test_decode_state_comes_from_the_sealed_student_rollin() -> None:
     assert state.receipt()["answer_key_available"] is False
 
 
-def test_decode_context_leaves_wording_to_the_model_and_has_fixed_width_slots() -> None:
+def test_decode_context_leaves_wording_to_the_model_and_preserves_semantics() -> None:
     task = generate_task("mathematics", seed=1_203, difficulty=3)
     state = execute_recurrent_memory_decode_state(task.public.prompt)
 
     context = render_recurrent_memory_decode_context(state)
 
     assert "FINAL_ANSWER" not in context
-    assert f"count={state.count:06d}" in context
-    assert "witness_slots=" in context
-    assert len(context.rsplit("witness_slots=", 1)[1].split(",")) == 4
+    assert context.startswith(RECURRENT_MEMORY_DECODE_CONTEXT_SCHEMA)
+    assert f'"count":{state.count}' in context
+    assert f'"witness":{list(state.witness)}'.replace(" ", "") in context
+    assert "witness_length" not in context
+    assert "witness_slots" not in context
+    assert ":0" not in context
 
 
 def test_no_write_lesion_changes_the_semantic_state_before_decode() -> None:
