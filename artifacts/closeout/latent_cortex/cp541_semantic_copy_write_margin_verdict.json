@@ -1,0 +1,80 @@
+{
+  "schema": "aura.unified_intrinsic.semantic_copy_write_margin_verdict.v1",
+  "campaign_id": "cp541-semantic-copy-write-margin-20260815",
+  "source_commit": "e13c5afb91eaf836e58d54df06cb9401f42366e1",
+  "source_tree": "dc684a5c6ed84f550e6341290b99bfd9ef02d03f",
+  "source_manifest_sha256": "40d89beb302207c45bf423b6031b2b1f652b7b82eb16ef7d908042e586aef571",
+  "campaign_config_sha256": "dfd67efa2efe9512be656877a9bef068206028f17b427d38f5811d5d75956b99",
+  "dataset_identity_sha256": "796f20a33bfc05f0f8620fc1c30a6acd57ba1bdb17dbfe5ff9a0a01924a61ceb",
+  "tokenized_dataset_identity_sha256": "13c691fbcc5e919bd172b415b1690727e795947aae72527a827f5864100904e7",
+  "profile": "process_semantic_copy_write_canary",
+  "transition_policy": {
+    "mode": "copy_write",
+    "copy_prior_logit_bias": 0.01,
+    "state_schema": "semantic_v2",
+    "replay_mode": "disabled",
+    "gradient_combiner": "balanced_mean",
+    "dataset_seed": 2026081511,
+    "initialization_seed": 2026081512
+  },
+  "checkpoint": {
+    "step": 112,
+    "checkpoint_sha256": "e7b4564e3a16907b9dfbfc1590c1d94e6996fd774ef97de05570b886e8490cd6",
+    "checkpoint_identity_sha256": "96cb25cade625cc9f81b873b02a48a14ef33183a9acd839c2793852b92baafd8",
+    "checkpoint_receipt_sha256": "e2dafd027d4a95c7ab37a94071547214fcc38603addc2d1261a5848a7e08c5f5"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "duration_seconds": 749.284952,
+    "detached_receipt_sha256": "d664c4190e8e677f6aaf71f154a022c06b90a41fa73439d9b935ed205417fa6b",
+    "halt_reason": "preregistered_exact_execution_futility_at_step_96",
+    "stop_signal": 15,
+    "process_group_empty": true,
+    "lineage_empty": true,
+    "descendant_cleanup_verified": true
+  },
+  "observations": {
+    "step_32": {
+      "t1_categorical_state_accuracy": 0.6730248977740606,
+      "t16_categorical_state_accuracy": 0.34324833732615745,
+      "t1_active_state_exact_accuracy": 0.0,
+      "active_trajectory_exact_accuracy": 0.0,
+      "first_error_step": 1
+    },
+    "step_64": {
+      "t1_categorical_state_accuracy": 0.703327938914299,
+      "t16_categorical_state_accuracy": 0.41299434777142274,
+      "t1_active_state_exact_accuracy": 0.0,
+      "active_trajectory_exact_accuracy": 0.0,
+      "first_error_step": 1,
+      "heldout_depth_helps": false
+    },
+    "step_96": {
+      "t1_categorical_state_accuracy": 0.7702471166849136,
+      "t16_categorical_state_accuracy": 0.4343575327657163,
+      "t1_active_state_exact_accuracy": 0.0,
+      "active_trajectory_exact_accuracy": 0.0,
+      "first_error_step": 1,
+      "heldout_depth_helps": true,
+      "best_heldout_relative_gain": 0.10921327435028969
+    }
+  },
+  "verdict": "not_admitted_exact_execution_futility",
+  "supported_claims": [
+    "A fresh 0.01-margin initialization improved average categorical state accuracy through step 96.",
+    "The same tissue produced no exact first transition and no exact trajectory on any of 36 held-out tasks.",
+    "Every held-out task first diverged at transition one, so later average-depth improvement did not establish executable recurrence.",
+    "The fixed retention margin was not the sole remaining cause of semantic transition failure."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous semantic-state execution",
+    "positive exact recurrence-depth effect",
+    "multi-domain decoded reasoning gain",
+    "resident-32B semantic transfer",
+    "runtime promotion or weight fusion",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "next_bounded_mechanism": "Constrain learned writes to the registers publicly addressed by each canonical opcode, copy every non-writable register exactly, and require exact T1 acquisition before any deep or answer-level campaign."
+}

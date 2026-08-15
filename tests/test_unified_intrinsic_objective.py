@@ -1242,7 +1242,10 @@ def test_direct_transition_loss_weights_value_registers_and_weakest_term() -> No
     )
 
 
-@pytest.mark.parametrize("transition_processor_mode", ["authoritative", "copy_write"])
+@pytest.mark.parametrize(
+    "transition_processor_mode",
+    ["authoritative", "copy_write", "masked_copy_write"],
+)
 def test_direct_transition_objective_learns_exact_trace(
     transition_processor_mode: str,
 ) -> None:
@@ -1269,7 +1272,9 @@ def test_direct_transition_objective_learns_exact_trace(
             public_action_values=public_actions,
             transition_processor_mode=transition_processor_mode,
             transition_copy_prior_logit_bias=(
-                0.01 if transition_processor_mode == "copy_write" else 2.0
+                0.01
+                if transition_processor_mode in {"copy_write", "masked_copy_write"}
+                else 2.0
             ),
         )[0]
 
@@ -1281,7 +1286,9 @@ def test_direct_transition_objective_learns_exact_trace(
         public_action_values=public_actions,
         transition_processor_mode=transition_processor_mode,
         transition_copy_prior_logit_bias=(
-            0.01 if transition_processor_mode == "copy_write" else 2.0
+            0.01
+            if transition_processor_mode in {"copy_write", "masked_copy_write"}
+            else 2.0
         ),
     )
     legacy_before = mx.array(controller.state_transition_output)
@@ -1298,7 +1305,9 @@ def test_direct_transition_objective_learns_exact_trace(
         public_action_values=public_actions,
         transition_processor_mode=transition_processor_mode,
         transition_copy_prior_logit_bias=(
-            0.01 if transition_processor_mode == "copy_write" else 2.0
+            0.01
+            if transition_processor_mode in {"copy_write", "masked_copy_write"}
+            else 2.0
         ),
     )
     mx.eval(initial_loss, final_loss, legacy_before, controller.state_transition_output)
@@ -1308,7 +1317,9 @@ def test_direct_transition_objective_learns_exact_trace(
     assert final_receipt["state_accuracy"] == 1.0
     assert final_receipt["transition_processor_mode"] == transition_processor_mode
     assert final_receipt["transition_copy_prior_logit_bias"] == (
-        0.01 if transition_processor_mode == "copy_write" else 2.0
+        0.01
+        if transition_processor_mode in {"copy_write", "masked_copy_write"}
+        else 2.0
     )
     assert mx.array_equal(controller.state_transition_output, legacy_before).item()
 

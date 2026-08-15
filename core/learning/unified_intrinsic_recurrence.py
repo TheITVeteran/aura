@@ -191,6 +191,7 @@ TRANSITION_PROCESSOR_MODES: Final = (
     "residual",
     "authoritative",
     "copy_write",
+    "masked_copy_write",
 )
 TRANSITION_COPY_PRIOR_LOGIT_BIAS: Final = 2.0
 TRANSITION_OPCODE_EXPERT_ROUTING_MODES: Final = (
@@ -2749,7 +2750,7 @@ class UnifiedRecurrentController(nn.Module):
         )
         if transition_processor_mode == "authoritative":
             resolved = processor_logits
-        elif transition_processor_mode == "copy_write":
+        elif transition_processor_mode in {"copy_write", "masked_copy_write"}:
             # A register machine is sparse by construction: most operations
             # retain most of the committed state. Predicting every register
             # from scratch spends gradient on relearning identity and lets an
@@ -2757,10 +2758,31 @@ class UnifiedRecurrentController(nn.Module):
             # enough to make a zero-attached processor an exact copy, while a
             # learned candidate can still override any register. It carries no
             # target, private trace, opcode semantics, or future information.
-            resolved = processor_logits + (
+            writable_logits = processor_logits + (
                 float(transition_copy_prior_logit_bias)
                 * state_probabilities.astype(mx.float32)
             )
+            if transition_processor_mode == "copy_write":
+                resolved = writable_logits
+            else:
+                # Sparse register updates are part of the public instruction
+                # contract. A learned operation may choose the new value of a
+                # writable register, but it may not corrupt state that the
+                # instruction does not address. This mask depends only on the
+                # committed state and canonical public action, never on a
+                # private trace or future target.
+                write_authority = self.transition_write_authority_mask(
+                    state_probabilities,
+                    action_probabilities,
+                )
+                copied_logits = mx.log(
+                    mx.maximum(state_probabilities.astype(mx.float32), 1e-6)
+                )
+                resolved = mx.where(
+                    write_authority[..., None],
+                    writable_logits,
+                    copied_logits,
+                )
         else:
             if legacy_logits is None:
                 raise ValueError("residual transition processor requires legacy logits")
@@ -2781,6 +2803,132 @@ class UnifiedRecurrentController(nn.Module):
             )
         )
         return mx.where(invalid[:, None, None], invalid_logits, resolved)
+
+    def transition_write_authority_mask(
+        self,
+        state_probabilities: Any,
+        action_probabilities: Any,
+    ) -> Any:
+        """Return public opcode-qualified register write authority.
+
+        The result is conservative: a register is writable when the canonical
+        instruction can change it for the current public operands and committed
+        state. Non-writable registers are exact copies in ``masked_copy_write``.
+        """
+
+        if state_probabilities.shape[1:] != (
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ) or action_probabilities.shape[1:] != (
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("transition write authority differs from its schema")
+        state = mx.argmax(state_probabilities, axis=-1).astype(mx.int32)
+        action = mx.argmax(action_probabilities, axis=-1).astype(mx.int32)
+        opcode = action[:, 0]
+        arg0, arg1, arg2, arg3, arg4, _arg5 = (
+            action[:, index] for index in range(1, 7)
+        )
+        slots = mx.arange(self.config.state_slots)[None, :]
+        recognized = (
+            (opcode >= OP_COPY_VALUE)
+            & (opcode <= OP_FRONTIER_AUDIT)
+            & (opcode != ACTION_NULL)
+        )
+        writable = recognized[:, None] & (
+            (slots == 0) | (slots == self.config.state_slots - 1)
+        )
+
+        scalar = (opcode >= OP_COPY_VALUE) & (opcode <= OP_BOOL_XOR)
+        writable = writable | (scalar[:, None] & (slots == 1))
+
+        register = (opcode == OP_REGISTER_AFFINE) & (arg0 < 3)
+        writable = writable | (
+            register[:, None] & (slots == (arg0[:, None] + 1))
+        )
+
+        first_three = (
+            (opcode == OP_FRONTIER_TRAVERSE)
+            | (opcode == OP_FRONTIER_ENUMERATE)
+            | (opcode == OP_FRONTIER_SCHEDULE)
+        )
+        writable = writable | (
+            first_three[:, None] & (slots >= 1) & (slots <= 3)
+        )
+
+        infer = opcode == OP_FRONTIER_INFER
+        writable = writable | (infer[:, None] & (slots == 1))
+        writable = writable | (
+            (infer & (arg0 == 3))[:, None] & (slots >= 2) & (slots <= 3)
+        )
+
+        simulate = opcode == OP_FRONTIER_SIMULATE
+        writable = writable | (simulate[:, None] & (slots == 1))
+        same_case = state[:, 1] == arg0
+        if self.config.state_slots >= len(SEMANTIC_STATE_SLOT_NAMES):
+            reset_balances = simulate & ~same_case
+            writable = writable | (
+                reset_balances[:, None] & (slots >= 2) & (slots <= 9)
+            )
+            selected_balance = simulate & same_case & (arg1 < 4)
+            selected_low_slot = 2 + (2 * arg1)
+            writable = writable | (
+                selected_balance[:, None]
+                & (
+                    (slots == selected_low_slot[:, None])
+                    | (slots == (selected_low_slot + 1)[:, None])
+                )
+            )
+        else:
+            writable = writable | (
+                simulate[:, None] & (slots >= 2) & (slots <= 3)
+            )
+
+        calibrate = opcode == OP_FRONTIER_CALIBRATE
+        pc = state[:, 0]
+        if self.config.state_slots >= len(SEMANTIC_STATE_SLOT_NAMES):
+            writable = writable | (
+                (calibrate & (pc == 0))[:, None] & (slots >= 1) & (slots <= 4)
+            )
+            writable = writable | (
+                (calibrate & (pc == 1))[:, None] & (slots == 5)
+            )
+            writable = writable | (
+                (calibrate & (pc >= 2))[:, None] & (slots == 6)
+            )
+        else:
+            writable = writable | (
+                (calibrate & (pc == 0))[:, None] & (slots >= 1) & (slots <= 2)
+            )
+            writable = writable | (
+                (calibrate & (pc >= 1))[:, None] & (slots >= 1) & (slots <= 3)
+            )
+
+        audit = opcode == OP_FRONTIER_AUDIT
+        encoded_score = state[:, 2] + PROCESS_RADIX * state[:, 3]
+        current_score = mx.where(
+            (encoded_score % 2) == 0,
+            encoded_score // 2,
+            -((encoded_score + 1) // 2),
+        )
+        candidate_score = arg1 * arg2 - arg3
+        if self.config.state_slots >= len(SEMANTIC_STATE_SLOT_NAMES):
+            candidate_wins = (
+                (state[:, 5] == 0)
+                | (candidate_score > current_score)
+                | ((candidate_score == current_score) & (arg4 < state[:, 4]))
+            )
+            audit_last_slot = 5
+        else:
+            candidate_wins = (pc == 0) | (candidate_score > current_score)
+            audit_last_slot = 3
+        writable = writable | (
+            (audit & candidate_wins)[:, None]
+            & (slots >= 1)
+            & (slots <= audit_last_slot)
+        )
+        return writable
 
     def state_transition_logits(
         self,

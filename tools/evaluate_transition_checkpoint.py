@@ -109,7 +109,7 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
     processor_identity = identity.get("direct_transition_processor", {})
     if (
         isinstance(processor_identity, dict)
-        and processor_identity.get("mode") == "copy_write"
+        and processor_identity.get("mode") in {"copy_write", "masked_copy_write"}
         and not optional_cross_register <= set(available)
     ):
         raise RuntimeError("copy-write checkpoint has no cross-register tissue")

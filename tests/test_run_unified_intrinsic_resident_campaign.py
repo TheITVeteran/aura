@@ -583,6 +583,24 @@ def test_semantic_copy_write_canary_binds_repaired_transition_dynamics() -> None
     )
 
 
+def test_semantic_masked_copy_write_canary_binds_structural_authority() -> None:
+    training = _profile_training("process_semantic_masked_copy_write_canary")
+    arguments = _training_cli(training)
+
+    assert training["state_schema"] == "semantic_v2"
+    assert training["transition_processor_mode"] == "masked_copy_write"
+    assert training["transition_copy_prior_logit_bias"] == 0.01
+    assert training["seed"] == 2026081513
+    assert training["init_seed"] == 2026081514
+    assert training["transition_replay_mode"] == "disabled"
+    assert training["max_steps"] == training["state_warmup_steps"] == 192
+    assert "process_semantic_masked_copy_write_canary" not in BOOTSTRAP_PROFILES
+    assert "process_semantic_masked_copy_write_canary" in OPTIONAL_BOOTSTRAP_PROFILES
+    assert arguments[arguments.index("--transition-processor-mode") + 1] == (
+        "masked_copy_write"
+    )
+
+
 def test_semantic_transition_canary_accepts_only_optional_exact_continuation() -> None:
     _validate_bootstrap_profile(
         "process_semantic_transition_canary",
@@ -598,6 +616,14 @@ def test_semantic_transition_canary_accepts_only_optional_exact_continuation() -
     )
     _validate_bootstrap_profile(
         "process_semantic_copy_write_canary",
+        present=True,
+    )
+    _validate_bootstrap_profile(
+        "process_semantic_masked_copy_write_canary",
+        present=False,
+    )
+    _validate_bootstrap_profile(
+        "process_semantic_masked_copy_write_canary",
         present=True,
     )
     with pytest.raises(RuntimeError, match="does_not_accept"):

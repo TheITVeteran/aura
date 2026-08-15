@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -21,6 +22,9 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
     ScopedLoRALinear,
     recurrence_adapter_scope,
+)
+from core.learning.frontier_process_supervision import (  # noqa: E402
+    frontier_process_task_battery,
 )
 from core.learning.recurrent_answer_emission import (  # noqa: E402
     RecurrentAnswerEmissionContract,
@@ -69,6 +73,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _evaluate,
     _evaluate_answer_bridge_admission,
     _evaluate_answer_bridge_diagnostic,
+    _evaluate_depth,
     _evaluate_process_admission,
     _freeze_dataset,
     _fresh_public_transition_acquisition,
@@ -3522,11 +3527,13 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
         transition_copy_prior_logit_bias=2.0,
         transition_opcode_expert_routing="opcode",
         transition_replay_mode="disabled",
+        direct_transition_processor=False,
     ):
         assert transition_processor_mode == "authoritative"
         assert transition_copy_prior_logit_bias == 2.0
         assert transition_opcode_expert_routing == "opcode"
         assert transition_replay_mode == "disabled"
+        assert direct_transition_processor is False
         observed.append((depth, public_action_program))
         return {"loss": float(depth)}
 
@@ -3552,3 +3559,47 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
 
     assert observed == [(depth, True) for depth in spec.depths]
     assert report["ce"] == {f"T{depth}": float(depth) for depth in spec.depths}
+
+
+def test_direct_transition_interim_evaluation_never_runs_language_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    bundle.controller = UnifiedRecurrentController(
+        UnifiedRecurrenceConfig(
+            hidden_size=32,
+            correction_rank=4,
+            state_slots=11,
+            minimum_iterations=1,
+        )
+    )
+    task = frontier_process_task_battery(
+        ("coding",),
+        (1,),
+        1,
+        seed=2026081515,
+    )[0]
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.unified_answer_and_recurrent_trajectory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("direct transition interim evaluation loaded the model path")
+        ),
+    )
+
+    report = _evaluate_depth(
+        bundle,
+        mx.array([[1]]),
+        mx.array([[2]]),
+        task,
+        UnifiedIntrinsicTrainingSpec(2, 4, (1,), (3,)),
+        3,
+        public_action_program=True,
+        transition_processor_mode="masked_copy_write",
+        transition_copy_prior_logit_bias=0.01,
+        direct_transition_processor=True,
+    )
+
+    assert math.isfinite(report["loss"])
+    assert report["initial_state_accuracy"] == 1.0
+    assert report["action_accuracy"] == 1.0
+    assert "active_state_exact_accuracy" in report

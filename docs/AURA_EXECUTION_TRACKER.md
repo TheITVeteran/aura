@@ -50158,3 +50158,26 @@ The launch profile now binds new dataset and initialization seeds in addition
 to the measured `0.01` margin. Tests require all three values in the generated
 trainer command, preventing a nominally fresh campaign from silently replaying
 the adjudication set.
+
+## Checkpoint 2026-08-15-541: Stop Averaging Over A Broken State Machine
+
+The fresh-source `0.01` copy-margin canary reached a durable step-112
+checkpoint in one healthy detached attempt. At step 96 its average categorical
+state accuracy had risen to `0.7702` at T1 and `0.4344` at T16, but exact
+execution remained `0/36` at every measured depth. Every task diverged on the
+first transition and no complete trajectory was correct. The apparent `10.9%`
+held-out depth improvement was therefore an average over partially correct
+registers, not evidence that recurrence executed a program.
+
+The campaign was stopped at its preregistered futility boundary. Its exact
+source, fresh dataset and initialization seeds, checkpoint, detached receipt,
+stop signal and empty descendant lineage are frozen in
+`artifacts/closeout/latent_cortex/cp541_semantic_copy_write_margin_verdict.json`.
+The verdict is `not_admitted_exact_execution_futility`; it supports no answer
+bridge, resident transfer, fusion, frontier or `WOW Signal` claim.
+
+The next mechanism changes the machine rather than its score. Public opcodes
+will receive structural write authority: learned tissue may choose values only
+for registers that the current instruction can mutate, while every other
+register is copied exactly. Exact T1 acquisition remains the first continuation
+gate.

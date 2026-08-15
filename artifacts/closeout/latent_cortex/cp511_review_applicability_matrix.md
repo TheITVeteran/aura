@@ -391,3 +391,13 @@ evaluator and campaign identity. Zero remains a diagnostic lesion only;
 trainable copy-write profiles require a positive margin. The next fresh canary
 uses the empirically localized `0.01` value. It does not change the exactness,
 lesion, replication, answer-decode, resident-transfer or WOW proof bars.
+
+## CP541 addendum
+
+The fresh `0.01`-margin canary improved average register accuracy but remained
+exactly wrong from transition one on all 36 held-out tasks through step 96.
+This refutes the margin-only repair. The next implementation takes the review
+recommendation literally at the transition boundary: opcode-addressed
+registers remain learned writes, while registers outside the public write set
+are structural exact copies. The policy carries no future target or private
+trace and must still acquire exact T1 transitions before deeper claims exist.

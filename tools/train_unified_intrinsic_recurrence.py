@@ -3113,7 +3113,8 @@ def _evaluate_process_admission(
         ),
         "transition_copy_prior_logit_bias": (
             float(transition_copy_prior_logit_bias)
-            if public_action_program and transition_processor_mode == "copy_write"
+            if public_action_program
+            and transition_processor_mode in {"copy_write", "masked_copy_write"}
             else 0.0
         ),
         "transition_opcode_expert_routing": transition_opcode_expert_routing,
@@ -4535,6 +4536,7 @@ def _evaluate_depth(
     transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
+    direct_transition_processor: bool = False,
 ) -> dict[str, float]:
     """Evaluate one depth and release its MLX graph before the next depth."""
 
@@ -4543,33 +4545,35 @@ def _evaluate_depth(
     public_actions = (
         _public_actions_for_task(task, depth) if public_action_program else None
     )
-    recurrent_states, _states, losses, state_logits = unified_answer_and_recurrent_trajectory(
-        bundle.model,
-        prompt,
-        answer,
-        spec.plan_at(depth),
-        bundle.controller,
-        use_state_slots=(getattr(task, "transition_trace", None) is not None),
-        initial_state_logit_trajectory=initial_state_logits,
-        action_logit_trajectory=action_logits,
-        public_action_values=public_actions,
-        microcode_lesion=public_action_program,
-        transition_processor_mode=(
-            transition_processor_mode if public_action_program else "residual"
-        ),
-        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
-        transition_opcode_expert_routing=transition_opcode_expert_routing,
-        transition_replay_mode=transition_replay_mode,
-        answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
-        # Evaluation consumes only the final answer loss. Decoding every
-        # recurrent intermediate through the resident 32B coda retains a
-        # depth-sized family of lazy Metal graphs; T16 alone can cross the
-        # host safety ceiling before the caller gets a chance to reclaim.
-        final_answer_only=True,
-    )
-    loss = float(losses[-1].item())
     trace = getattr(task, "transition_trace", None)
     if trace is None:
+        if direct_transition_processor:
+            raise ValueError("direct transition evaluation has no exact state trace")
+        recurrent_states, _states, losses, state_logits = (
+            unified_answer_and_recurrent_trajectory(
+                bundle.model,
+                prompt,
+                answer,
+                spec.plan_at(depth),
+                bundle.controller,
+                use_state_slots=False,
+                initial_state_logit_trajectory=initial_state_logits,
+                action_logit_trajectory=action_logits,
+                public_action_values=public_actions,
+                microcode_lesion=public_action_program,
+                transition_processor_mode=(
+                    transition_processor_mode if public_action_program else "residual"
+                ),
+                transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
+                transition_opcode_expert_routing=transition_opcode_expert_routing,
+                transition_replay_mode=transition_replay_mode,
+                answer_digit_pointer_enabled=(
+                    not str(getattr(task, "family", "")).startswith("frontier_")
+                ),
+                final_answer_only=True,
+            )
+        )
+        loss = float(losses[-1].item())
         return {"loss": loss}
 
     targets = state_targets_from_trace(
@@ -4577,6 +4581,104 @@ def _evaluate_depth(
         depth,
         state_slots=bundle.controller.config.state_slots,
     )
+    if direct_transition_processor:
+        if not public_action_program or public_actions is None:
+            raise ValueError("direct transition evaluation has no public action program")
+        state = bundle.controller.exact_probabilities(
+            targets.initial_values,
+            slots=bundle.controller.config.state_slots,
+            cardinality=bundle.controller.config.state_cardinality,
+        )
+        initial_state_logits.append(mx.log(mx.maximum(state, 1e-6)))
+        action_history: list[Any] = []
+        state_logits = []
+        recurrent_states = []
+        for action_values in public_actions:
+            action = bundle.controller.exact_probabilities(
+                action_values,
+                slots=bundle.controller.config.action_slots,
+                cardinality=bundle.controller.config.action_cardinality,
+            )
+            action_history.append(action)
+            current_values = mx.argmax(state, axis=-1)
+            if bool((current_values[0, -1] == 1).item()):
+                decision = mx.log(mx.maximum(state, 1e-6))
+            else:
+                memory = bundle.controller._typed_transition_memory(
+                    action_history,
+                    state_probabilities=state,
+                    action_probabilities=action,
+                )
+                decision = bundle.controller.resolve_transition_processor_logits(
+                    None,
+                    state,
+                    action,
+                    memory,
+                    transition_processor_mode=transition_processor_mode,
+                    opcode_expert_routing=transition_opcode_expert_routing,
+                    transition_copy_prior_logit_bias=(
+                        transition_copy_prior_logit_bias
+                    ),
+                )
+                decision, _candidate, _gate = (
+                    bundle.controller.typed_transition_replay_logits(
+                        decision,
+                        action_history,
+                        action_probabilities=action,
+                        replay_mode=transition_replay_mode,
+                        opcode_expert_routing=transition_opcode_expert_routing,
+                    )
+                )
+            mx.eval(decision)
+            state_logits.append(decision)
+            recurrent_states.append(decision)
+            state = bundle.controller.straight_through_probabilities(decision)
+        action_logits = [
+            bundle.controller.exact_probabilities(
+                row,
+                slots=bundle.controller.config.action_slots,
+                cardinality=bundle.controller.config.action_cardinality,
+            )
+            for row in public_actions
+        ]
+        state_loss, _state_accuracy, _step_accuracy = structured_state_loss(
+            bundle.controller,
+            recurrent_states,
+            targets,
+            public_token_count=0,
+            state_logits=state_logits,
+        )
+        mx.eval(state_loss, *action_logits)
+        loss = float(state_loss.item())
+    else:
+        recurrent_states, _states, losses, state_logits = (
+            unified_answer_and_recurrent_trajectory(
+                bundle.model,
+                prompt,
+                answer,
+                spec.plan_at(depth),
+                bundle.controller,
+                use_state_slots=True,
+                initial_state_logit_trajectory=initial_state_logits,
+                action_logit_trajectory=action_logits,
+                public_action_values=public_actions,
+                microcode_lesion=public_action_program,
+                transition_processor_mode=(
+                    transition_processor_mode if public_action_program else "residual"
+                ),
+                transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
+                transition_opcode_expert_routing=transition_opcode_expert_routing,
+                transition_replay_mode=transition_replay_mode,
+                answer_digit_pointer_enabled=(
+                    not str(getattr(task, "family", "")).startswith("frontier_")
+                ),
+                # Evaluation consumes only the final answer loss. Decoding every
+                # recurrent intermediate through the resident 32B coda retains
+                # a depth-sized family of lazy Metal graphs.
+                final_answer_only=True,
+            )
+        )
+        loss = float(losses[-1].item())
     _state_loss, state_accuracy, _step_accuracy = structured_state_loss(
         bundle.controller,
         recurrent_states,
@@ -4650,6 +4752,7 @@ def _evaluate(
     transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
+    direct_transition_processor: bool = False,
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.recurrence_adapter import (
         recurrence_adapter_scope,
@@ -4721,6 +4824,7 @@ def _evaluate(
                         transition_opcode_expert_routing
                     ),
                     transition_replay_mode=transition_replay_mode,
+                    direct_transition_processor=direct_transition_processor,
                 )
                 totals[depth] += metrics["loss"]
                 if "state_accuracy" in metrics:
@@ -5473,7 +5577,7 @@ def main() -> int:
     if (
         not math.isfinite(args.transition_copy_prior_logit_bias)
         or not 0.0 <= args.transition_copy_prior_logit_bias <= 8.0
-        or args.transition_processor_mode == "copy_write"
+        or args.transition_processor_mode in {"copy_write", "masked_copy_write"}
         and args.transition_copy_prior_logit_bias <= 0.0
     ):
         raise ValueError(
@@ -6981,6 +7085,9 @@ def main() -> int:
                             args.transition_opcode_expert_routing
                         ),
                         transition_replay_mode=args.transition_replay_mode,
+                        direct_transition_processor=(
+                            args.direct_transition_processor
+                        ),
                     )
                     report["step"] = step
                     report["optimization_phase"] = next_phase
@@ -7066,6 +7173,7 @@ def main() -> int:
                     args.transition_opcode_expert_routing
                 ),
                 transition_replay_mode=args.transition_replay_mode,
+                direct_transition_processor=args.direct_transition_processor,
             )
             final_ladder["step"] = step
             final_ladder["optimization_phase"] = _optimization_phase(
