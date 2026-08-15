@@ -766,3 +766,63 @@ def test_a_cold_cortex_no_longer_abandons_the_tick():
         assert "LLM health: dead tiers" in rendered, "the escalation was lost"
         return
     raise AssertionError("the deferred-cortex branch was not found")
+
+
+def test_a_revision_keeps_what_she_actually_said():
+    """Overwriting a committed message in place is how a system stops being
+    able to audit itself."""
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod)
+
+    assert '"original_content": original_content' in source
+    assert '"original_sha256"' in source
+    assert '"revised_by": "metacognitive_monitor"' in source
+    assert '"revised_at_unix"' in source
+
+
+def test_the_revision_receipt_is_attached_to_the_message_it_revised():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod)
+    revised = source.index('revised_msg["content"] = report.revised_response')
+    receipt = source.index('revised_msg["revision"] = {')
+
+    assert revised < receipt, "the original is captured after being overwritten"
+    assert "original_content = revised_msg.get(\"content\", \"\")" in source
+
+
+def test_a_surprise_observation_is_recorded_as_a_correlation():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod)
+
+    assert 'reported_by="mind_tick.prediction_surprise"' in source
+    assert "recorded a CORRELATION" in source
+    assert "learned new observation from surprise signal" not in source
+
+
+def test_the_world_model_only_upgrades_on_an_intervention():
+    """The distinction the tick's language was blurring."""
+    from core.brain.causal_world_model import CausalEdge
+
+    edge = CausalEdge(source="a", target="b")
+
+    assert edge.relationship == "correlates_with"
+    assert edge.is_causal is False
+
+
+def test_a_named_reporter_reaches_the_confidence_model():
+    import inspect as _inspect
+
+    from core.brain import causal_world_model
+
+    source = _inspect.getsource(causal_world_model.CausalWorldModel.add_observation)
+
+    assert "reported_by" in source

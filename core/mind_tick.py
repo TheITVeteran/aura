@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import sqlite3
@@ -1543,7 +1544,31 @@ class MindTick:
                                     breaker.record_success()
                                     if report.revision_needed and report.revised_response:
                                         logger.warning("⚖️ MindTick: Metacognitive violation! Revising...")
-                                        current_state.cognition.working_memory[-1]["content"] = report.revised_response
+                                        # A revision REPLACED the committed
+                                        # message in place. What she actually
+                                        # said was gone — no original to
+                                        # compare against, no record that a
+                                        # revision happened, and nothing a
+                                        # reader could use to see the
+                                        # correction. Overwriting a memory is
+                                        # how a system stops being able to
+                                        # audit itself.
+                                        revised_msg = current_state.cognition.working_memory[-1]
+                                        original_content = revised_msg.get("content", "")
+                                        revised_msg["content"] = report.revised_response
+                                        revised_msg["revision"] = {
+                                            "schema": "aura.mind_tick.metacognitive_revision.v1",
+                                            "original_content": original_content,
+                                            "original_sha256": hashlib.sha256(
+                                                str(original_content).encode("utf-8")
+                                            ).hexdigest(),
+                                            "revised_by": "metacognitive_monitor",
+                                            "reason": str(
+                                                getattr(report, "reason", "") or "metacognitive_violation"
+                                            )[:240],
+                                            "revised_at_unix": time.time(),
+                                            "tick": self._tick_count,
+                                        }
                                         current_state = current_state.derive("metacognitive_revision")
                                 except _MIND_BOUNDARY_ERRORS as e:
                                     detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
@@ -1578,7 +1603,14 @@ class MindTick:
                             current_state.affect.arousal = min(1.0, current_state.affect.arousal + error.surprise_signal * 0.2)
                             current_state.affect.curiosity = min(1.0, current_state.affect.curiosity + error.surprise_signal * 0.1)
 
-                            # Disconnected logic re-attached: When surprise is high, log the causal link
+                            # A prediction and the surprise that followed it
+                            # are a CORRELATION. The world model already knows
+                            # that — edges enter as `correlates_with` and are
+                            # upgraded to `causes` only by an intervention with
+                            # a receipt — but this call said "causal link" and
+                            # reported no reporter, so the distinct-reporter
+                            # confidence added in CP126 462e62cb could not see
+                            # who observed it and every tick looked anonymous.
                             try:
                                 cwm = ServiceContainer.get("causal_world_model", default=None)
                                 if cwm and error.surprise_signal > 0.4:
@@ -1587,9 +1619,13 @@ class MindTick:
                                     cwm.add_observation(
                                         source=safe_prediction,
                                         target=safe_actual,
-                                        correlation=error.surprise_signal
+                                        correlation=error.surprise_signal,
+                                        reported_by="mind_tick.prediction_surprise",
                                     )
-                                    logger.info("🌐 CausalWorldModel learned new observation from surprise signal.")
+                                    logger.info(
+                                        "🌐 CausalWorldModel recorded a CORRELATION from a surprise "
+                                        "signal; it stays correlational until an intervention says otherwise."
+                                    )
                             except _MIND_BOUNDARY_ERRORS as cwm_e:
                                 _record_mind_degradation(cwm_e)
                                 logger.error("Failed to record causal observation in MindTick: %s", cwm_e)
