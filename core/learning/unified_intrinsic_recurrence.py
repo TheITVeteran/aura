@@ -126,6 +126,22 @@ ACTION_LITERAL_BINDING_PARAMETER_NAMES: Final = (
     "action_literal_binding_output",
     "action_literal_binding_family_output",
 )
+TRANSITION_MEMORY_PARAMETER_NAMES: Final = (
+    "transition_memory_input",
+    "transition_memory_reset_input",
+    "transition_memory_reset_recurrent",
+    "transition_memory_reset_bias",
+    "transition_memory_update_input",
+    "transition_memory_update_recurrent",
+    "transition_memory_update_bias",
+    "transition_memory_candidate_input",
+    "transition_memory_candidate_recurrent",
+    "transition_memory_cross_input",
+    "transition_memory_cross_recurrent",
+    "transition_memory_candidate_bias",
+    "transition_memory_depth",
+    "transition_memory_output",
+)
 ACTION_LITERAL_BINDING_TRANSFORMS: Final = (
     "identity",
     "unsigned_radix_low",
@@ -359,6 +375,21 @@ class UnifiedRecurrentController(nn.Module):
             mx.random.key(config.initialization_seed ^ 0x42494E44),
             num=2,
         )
+        (
+            key_transition_memory_input,
+            key_transition_memory_reset_input,
+            key_transition_memory_reset_recurrent,
+            key_transition_memory_update_input,
+            key_transition_memory_update_recurrent,
+            key_transition_memory_candidate_input,
+            key_transition_memory_candidate_recurrent,
+            key_transition_memory_cross_input,
+            key_transition_memory_cross_recurrent,
+            key_transition_memory_depth,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x54524D45),
+            num=10,
+        )
         scale = 1.0 / math.sqrt(config.hidden_size)
         self.correction_a = (
             mx.random.normal(
@@ -569,6 +600,120 @@ class UnifiedRecurrentController(nn.Module):
                 key=key_state_action,
             ).astype(mx.float32)
             * scale
+        )
+        # Keep every typed action field in its own recurrent cell. The former
+        # history summary compressed the complete instruction into one vector
+        # with a fixed 0.5 decay, which made order observable but did not give
+        # the transition a durable representation of each operand. This GRU-
+        # style tape retains field identity and learns what to keep, replace,
+        # or expose to each state register. Its output is exactly zero at
+        # attachment, preserving parent behavior until transition supervision
+        # trains the new tissue.
+        transition_scale = 1.0 / math.sqrt(config.correction_rank)
+        transition_shape = (
+            config.action_slots,
+            config.correction_rank,
+            config.correction_rank,
+        )
+        self.transition_memory_input = (
+            mx.random.normal(
+                (config.action_slots, config.hidden_size, config.correction_rank),
+                key=key_transition_memory_input,
+            ).astype(mx.float32)
+            * scale
+        )
+        self.transition_memory_reset_input = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_reset_input,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        self.transition_memory_reset_recurrent = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_reset_recurrent,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        self.transition_memory_reset_bias = mx.zeros(
+            (config.action_slots, config.correction_rank),
+            dtype=mx.float32,
+        )
+        self.transition_memory_update_input = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_update_input,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        self.transition_memory_update_recurrent = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_update_recurrent,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        self.transition_memory_update_bias = mx.zeros(
+            (config.action_slots, config.correction_rank),
+            dtype=mx.float32,
+        )
+        self.transition_memory_candidate_input = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_candidate_input,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        self.transition_memory_candidate_recurrent = (
+            mx.random.normal(
+                transition_shape,
+                key=key_transition_memory_candidate_recurrent,
+            ).astype(mx.float32)
+            * transition_scale
+        )
+        transition_cross_scale = 1.0 / math.sqrt(
+            config.action_slots * config.correction_rank
+        )
+        transition_cross_shape = (
+            config.action_slots,
+            config.action_slots,
+            config.correction_rank,
+            config.correction_rank,
+        )
+        self.transition_memory_cross_input = (
+            mx.random.normal(
+                transition_cross_shape,
+                key=key_transition_memory_cross_input,
+            ).astype(mx.float32)
+            * transition_cross_scale
+        )
+        self.transition_memory_cross_recurrent = (
+            mx.random.normal(
+                transition_cross_shape,
+                key=key_transition_memory_cross_recurrent,
+            ).astype(mx.float32)
+            * transition_cross_scale
+        )
+        self.transition_memory_candidate_bias = mx.zeros(
+            (config.action_slots, config.correction_rank),
+            dtype=mx.float32,
+        )
+        self.transition_memory_depth = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_memory_depth,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.transition_memory_output = mx.zeros(
+            (
+                config.state_slots,
+                config.action_slots,
+                config.correction_rank,
+                config.correction_rank,
+            ),
+            dtype=mx.float32,
         )
         # The legacy action head is a single cross-attention read. Broad
         # programs require several action fields to jointly retain evidence,
@@ -1661,6 +1806,96 @@ class UnifiedRecurrentController(nn.Module):
             logits=logits,
         ), logits
 
+    def _typed_transition_memory(
+        self,
+        action_probability_history: Sequence[Any],
+    ) -> Any:
+        """Compose the public action tape without collapsing typed fields.
+
+        Memory is recurrent across instructions and remains separate across
+        opcode, operands, and terminal state. The final projection is also
+        state-slot specific, so a retained operand can affect one register
+        without being forced through the same readout as every other field.
+        """
+
+        batch_size = int(action_probability_history[0].shape[0])
+        memory = mx.zeros(
+            (
+                batch_size,
+                self.config.action_slots,
+                self.config.correction_rank,
+            ),
+            dtype=mx.float32,
+        )
+        for history_step, probabilities in enumerate(action_probability_history):
+            committed = self.commit_action_probabilities(probabilities).astype(
+                mx.float32
+            )
+            incoming = mx.einsum(
+                "bah,ahr->bar",
+                committed,
+                self.transition_memory_input,
+            )
+            reset = mx.sigmoid(
+                mx.einsum(
+                    "bai,aio->bao",
+                    incoming,
+                    self.transition_memory_reset_input,
+                )
+                + mx.einsum(
+                    "bai,aio->bao",
+                    memory,
+                    self.transition_memory_reset_recurrent,
+                )
+                + self.transition_memory_reset_bias[None, :, :]
+            )
+            update = mx.sigmoid(
+                mx.einsum(
+                    "bai,aio->bao",
+                    incoming,
+                    self.transition_memory_update_input,
+                )
+                + mx.einsum(
+                    "bai,aio->bao",
+                    memory,
+                    self.transition_memory_update_recurrent,
+                )
+                + self.transition_memory_update_bias[None, :, :]
+            )
+            recurrent_candidate = mx.einsum(
+                "bai,aio->bao",
+                memory,
+                self.transition_memory_candidate_recurrent,
+            )
+            cross_input = mx.einsum(
+                "bsi,asio->bao",
+                incoming,
+                self.transition_memory_cross_input,
+            )
+            cross_recurrent = mx.einsum(
+                "bsi,asio->bao",
+                memory,
+                self.transition_memory_cross_recurrent,
+            )
+            depth = self.depth_features(history_step) @ self.transition_memory_depth
+            candidate = mx.tanh(
+                mx.einsum(
+                    "bai,aio->bao",
+                    incoming,
+                    self.transition_memory_candidate_input,
+                )
+                + cross_input
+                + reset * (recurrent_candidate + cross_recurrent)
+                + self.transition_memory_candidate_bias[None, :, :]
+                + depth[None, None, :]
+            )
+            memory = (1.0 - update) * memory + update * candidate
+        return mx.einsum(
+            "bar,saro->bso",
+            memory,
+            self.transition_memory_output,
+        )
+
     def state_transition_logits(
         self,
         problem_evidence: Any,
@@ -1746,7 +1981,12 @@ class UnifiedRecurrentController(nn.Module):
                 history = mx.tanh(
                     0.5 * history + historical_action + historical_depth[None, :]
                 )
-            features = mx.tanh(features + history[:, None, :])
+            typed_memory = self._typed_transition_memory(
+                action_probability_history
+            )
+            features = mx.tanh(
+                features + history[:, None, :] + typed_memory
+            )
         if action_state is not None:
             if action_state.shape != (
                 int(hidden.shape[0]),
@@ -2996,6 +3236,7 @@ class UnifiedRecurrentController(nn.Module):
             *FAMILY_ACTION_PARAMETER_NAMES,
             *ACTION_LITERAL_BINDING_PARAMETER_NAMES,
             "state_action_projection",
+            *TRANSITION_MEMORY_PARAMETER_NAMES,
             "literal_value_embeddings",
             "literal_grounding_logit",
             "state_literal_copy_logit",
@@ -3026,6 +3267,16 @@ class UnifiedRecurrentController(nn.Module):
                 "future_steps_visible": False,
                 "private_answer_exposed": False,
             },
+            "state_transition_memory": {
+                "architecture": "slot_preserving_gated_recurrent_tape",
+                "field_order": list(ACTION_SLOT_NAMES),
+                "state_register_order": list(STATE_SLOT_NAMES),
+                "current_and_prior_actions_visible": True,
+                "future_actions_visible": False,
+                "private_transition_trace_visible": False,
+                "bootstrap_contract": "zero_output_exact_parent_noop",
+                "output_active": bool(mx.any(self.transition_memory_output != 0)),
+            },
             "numeric_observation": {
                 "max_value": self.config.numeric_observation_max_value,
                 "encoding": "direct_category_then_ordered_radix_pair",
@@ -3034,11 +3285,13 @@ class UnifiedRecurrentController(nn.Module):
             },
             "predicted_action_is_state_transition_input": True,
             "state_transition_action_history": {
-                "source": "ordered_prior_typed_actions_only",
-                "current_action_path": "separate_slot_aware_projection",
+                "source": "ordered_current_inclusive_typed_action_tape",
+                "current_action_path": (
+                    "legacy_slot_projection_plus_slot_preserving_gated_tape"
+                ),
                 "future_steps_visible": False,
                 "private_transition_program_visible": False,
-                "parameter_topology_changed": False,
+                "parameter_topology_changed": True,
                 "lesionable": True,
             },
             "causal_action_decoder": {
@@ -3838,6 +4091,7 @@ __all__ = [
     "FRONTIER_ACTION_EXPERT_COUNT",
     "MAX_PROCESS_INTEGER",
     "PROCESS_RADIX",
+    "TRANSITION_MEMORY_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",
     "UnifiedRecurrenceConfig",
     "UnifiedRecurrenceTelemetry",

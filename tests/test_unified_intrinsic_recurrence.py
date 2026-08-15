@@ -1072,6 +1072,59 @@ def test_learned_transition_reads_prior_actions_in_causal_order() -> None:
     assert not bool(mx.allclose(forward, reversed_history))
 
 
+def test_typed_transition_memory_attaches_as_exact_noop() -> None:
+    controller = _controller()
+    action = controller.exact_probabilities(
+        (1, 7, 5, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    memory = controller._typed_transition_memory((action,))
+
+    mx.eval(memory)
+    assert tuple(memory.shape) == (
+        1,
+        controller.config.state_slots,
+        controller.config.correction_rank,
+    )
+    assert bool(mx.all(memory == 0))
+
+
+def test_typed_transition_memory_preserves_field_identity_and_order() -> None:
+    controller = _controller()
+    controller.state_action_projection = mx.zeros_like(
+        controller.state_action_projection
+    )
+    controller.transition_memory_output = mx.random.normal(
+        controller.transition_memory_output.shape,
+        key=mx.random.key(118),
+    )
+    first = controller.exact_probabilities(
+        (1, 7, 5, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    swapped_fields = controller.exact_probabilities(
+        (1, 5, 7, 32, 32, 32, 32, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    second = controller.exact_probabilities(
+        (3, 11, 13, 32, 32, 32, 32, 1),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    forward = controller._typed_transition_memory((first, second))
+    reversed_history = controller._typed_transition_memory((second, first))
+    field_swapped = controller._typed_transition_memory((swapped_fields, second))
+
+    mx.eval(forward, reversed_history, field_swapped)
+    assert not bool(mx.allclose(forward, reversed_history))
+    assert not bool(mx.allclose(forward, field_swapped))
+
+
 def test_neural_answer_bridge_reads_state_without_rewriting_public_prefix() -> None:
     controller = _controller()
     candidate = mx.zeros((1, 12, 64), dtype=mx.float32)

@@ -36,6 +36,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     FAMILY_ACTION_PARAMETER_NAMES,
     INITIAL_STATE_PARAMETER_NAMES,
     PROCESS_READER_PARAMETER_NAMES,
+    TRANSITION_MEMORY_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
@@ -80,6 +81,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_initial_state_extension,
     _merge_bootstrap_process_reader_extension,
     _merge_bootstrap_scoped_lora_target_extension,
+    _merge_bootstrap_transition_memory_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
@@ -297,6 +299,61 @@ def test_bootstrap_action_workspace_extension_is_exact_and_audited() -> None:
     assert migrated["controller.action_output"] is parent["controller.action_output"]
     assert set(migrated) == set(child)
     assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_transition_memory_extension_is_exact_and_audited() -> None:
+    parent = {"controller.state_transition_output": mx.ones((2, 3), dtype=mx.float32)}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in TRANSITION_MEMORY_PARAMETER_NAMES
+            if name != "transition_memory_output"
+        },
+        "controller.transition_memory_output": mx.zeros(
+            (2, 2), dtype=mx.float32
+        ),
+    }
+
+    migrated, receipt = _merge_bootstrap_transition_memory_extension(parent, child)
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["parent_tensor_inventory_preserved"] is True
+    assert receipt["future_action_visible"] is False
+    assert migrated["controller.state_transition_output"] is parent[
+        "controller.state_transition_output"
+    ]
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+
+def test_bootstrap_transition_memory_rejects_partial_or_active_extension() -> None:
+    child = {
+        "controller.state_transition_output": mx.ones((2, 3), dtype=mx.float32),
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in TRANSITION_MEMORY_PARAMETER_NAMES
+        },
+    }
+    partial_parent = {
+        "controller.state_transition_output": child[
+            "controller.state_transition_output"
+        ],
+        "controller.transition_memory_input": child[
+            "controller.transition_memory_input"
+        ],
+    }
+    with pytest.raises(RuntimeError, match="transition-memory inventory differs"):
+        _merge_bootstrap_transition_memory_extension(partial_parent, child)
+
+    parent = {
+        "controller.state_transition_output": child[
+            "controller.state_transition_output"
+        ]
+    }
+    with pytest.raises(RuntimeError, match="transition memory is not a no-op"):
+        _merge_bootstrap_transition_memory_extension(parent, child)
 
 
 def test_bootstrap_scoped_lora_query_extension_is_exact_and_audited() -> None:
@@ -1029,6 +1086,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "action_workspace_output": mx.ones((2, 2)),
             "action_causal_output": mx.ones((2, 2)),
             "state_transition_output": mx.ones((2, 2)),
+            "transition_memory_output": mx.ones((2, 2)),
             "answer_output": mx.ones((2, 2)),
         },
     }
@@ -1055,6 +1113,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "model.block.self_attn.q_proj.lora_b",
             "model.layer.lora_a",
             "controller.state_transition_output",
+            "controller.transition_memory_output",
         },
         "joint": {
             "model.block.self_attn.q_proj.lora_b",
@@ -1064,6 +1123,7 @@ def test_process_component_gradients_prevent_cross_role_rewrites() -> None:
             "controller.action_workspace_output",
             "controller.action_causal_output",
             "controller.state_transition_output",
+            "controller.transition_memory_output",
         },
     }
     for component, live_names in expected.items():
@@ -2387,6 +2447,7 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         },
         "controller": {
             "state_transition_output": mx.array([0.0, 12.0]),
+            "transition_memory_output": mx.array([0.0, 9.0]),
             "state_value_embeddings": mx.array([0.0, 8.0]),
             "action_output": mx.array([0.0, 6.0]),
             "opcode_copy_logit": mx.array(2.0),
@@ -2412,7 +2473,10 @@ def test_gradient_trust_bound_does_not_starve_independent_mechanisms() -> None:
         mx.linalg.norm(flat["model.block.self_attn.q_proj.lora_b"]).item()
     ) == pytest.approx(1.0)
     assert float(
-        mx.linalg.norm(flat["controller.state_transition_output"]).item()
+        mx.sqrt(
+            mx.sum(flat["controller.state_transition_output"] ** 2)
+            + mx.sum(flat["controller.transition_memory_output"] ** 2)
+        ).item()
     ) == pytest.approx(1.0)
     assert float(mx.linalg.norm(flat["controller.state_value_embeddings"]).item()) == pytest.approx(
         1.0
@@ -2646,13 +2710,15 @@ def test_bootstrap_imports_only_compatible_tissue_into_a_new_campaign(
         )
 
 
-def test_bootstrap_extends_legacy_parent_with_reader_and_action_workspace(
+def test_bootstrap_extends_legacy_parent_with_reader_action_workspace_and_transition_memory(
     tmp_path: Path,
 ) -> None:
     parent, _wiring = _bundle()
     for name in PROCESS_READER_PARAMETER_NAMES:
         delattr(parent.controller, name)
     for name in ACTION_WORKSPACE_PARAMETER_NAMES:
+        delattr(parent.controller, name)
+    for name in TRANSITION_MEMORY_PARAMETER_NAMES:
         delattr(parent.controller, name)
     parent_values = {name: value + 0 for name, value in _trainable(parent).items()}
     optimizer = optim.Adam(learning_rate=0.01)
@@ -2712,6 +2778,12 @@ def test_bootstrap_extends_legacy_parent_with_reader_and_action_workspace(
     assert action_extension["behavior_before_training_preserved"] is True
     assert set(action_extension["new_tensor_names"]) == {
         f"controller.{name}" for name in ACTION_WORKSPACE_PARAMETER_NAMES
+    }
+    transition_extension = receipt["transition_memory_extension"]
+    assert transition_extension["parent_tensor_inventory_preserved"] is True
+    assert transition_extension["behavior_before_training_preserved"] is True
+    assert set(transition_extension["new_tensor_names"]) == {
+        f"controller.{name}" for name in TRANSITION_MEMORY_PARAMETER_NAMES
     }
 
 

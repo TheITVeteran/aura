@@ -49368,3 +49368,32 @@ topology for more steps is not authorized by the evidence.
 CP483 is a negative bounded 1.5B mechanism result. It does not establish an
 answer-level gain, authorize resident-32B transfer or fusion, demonstrate
 frontier reasoning, or establish `WOW Signal`.
+
+## Checkpoint 2026-08-14-484: Give Typed Transitions A Real Recurrent Tape
+
+CP483 showed that making history observable was insufficient: one decaying
+summary learned coarse control patterns while exact values collapsed with
+depth. The transition controller now carries one gated recurrent cell per
+typed action field. Reset and update gates control retention across ordered
+instructions, bounded cross-field projections allow operands to interact, and
+each canonical state register receives its own projection from the complete
+typed memory. Future actions and private transition traces remain unavailable.
+
+The new topology attaches to parent tissue through an exact-zero output. The
+bootstrap importer requires the complete parameter family, refuses partial or
+already-active attachments, records every tensor digest and preserves all
+parent tensors. Transition optimization owns the new parameters under the same
+independently clipped gradient cohort as the existing state transition. The
+existing transition-history lesion removes both the old summary and the new
+gated tape, preserving a matched causal control for the next campaign.
+
+Contracts prove deterministic initialization, exact no-op attachment, typed
+field identity, order sensitivity, migration inventory, rejection of partial
+or active migration and gradient ownership. Recurrence and trainer contracts
+pass `143/143`; canonical smoke passes `104/104`; Ruff, compilation,
+governance lint, layering and diff integrity pass.
+
+This checkpoint establishes the mechanism and migration contract only. A
+source-bound 1.5B acquisition campaign must still demonstrate exact unseen
+processes and survive the matched history lesion before any answer-level,
+resident-32B, fusion, frontier or `WOW Signal` claim.
