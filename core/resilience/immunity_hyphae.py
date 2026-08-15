@@ -129,10 +129,15 @@ class SignatureRepairRegistry:
     # --- Deterministic Repair Realizations ---
 
     def _repair_pid_cleanup(self):
-        pid_file = "aura.pid"
-        if os.path.exists(pid_file):
+        # The same anchored path the immune audit reads. Two bare relative
+        # "aura.pid" strings meant the checker and the repairer could be
+        # looking at different files, or at another runtime's.
+        from core.config import get_config
+
+        pid_file = get_config().paths.pid_file
+        if pid_file.exists():
             logger.warning("💉 Removing stale PID file: %s", pid_file)
-            os.remove(pid_file)
+            pid_file.unlink(missing_ok=True)
 
     def _repair_data_dirs(self):
         """Ensures common data structure exists."""

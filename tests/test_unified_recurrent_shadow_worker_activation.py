@@ -363,23 +363,39 @@ def test_worker_fails_closed_on_invalid_restart_pointer(
         )
 
 
-def test_worker_fails_closed_on_a_configured_invalid_package(
+def test_worker_declines_a_configured_invalid_package_without_dying(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The SHADOW fails closed; the worker does not.
+
+    This test asserted that an incompatible package raises. Measured live on
+    2026-08-13, that is what happened: every boot logged
+    `configured_unified_recurrent_shadow_invalid` and the worker went into a
+    respawn loop. The integrity verdict was right — a package built against a
+    different resident binding must not be used — but the shadow runs in
+    shadow_only mode with serving_authority False, so it is by construction
+    not load-bearing. An optional component that cannot serve must not be able
+    to stop the thing it decorates.
+
+    Failing closed now means: refused, not loaded, and said so on the receipt.
+    """
     package = tmp_path / "bad-package"
     package.mkdir()
     monkeypatch.setenv("AURA_UNIFIED_RECURRENT_SHADOW_PACKAGE", str(package))
 
-    with pytest.raises(
-        RuntimeError,
-        match="configured_unified_recurrent_shadow_invalid",
-    ):
-        mlx_worker._load_unified_recurrent_shadow(
-            object(),
-            object(),
-            model_path="/model",
-        )
+    loaded, receipt = mlx_worker._load_unified_recurrent_shadow(
+        object(),
+        object(),
+        model_path="/model",
+    )
+
+    assert loaded is None, "an incompatible shadow was attached anyway"
+    assert receipt["configured"] is True
+    assert receipt["loaded"] is False
+    assert receipt["reason"].startswith("incompatible:")
+    assert receipt["serving_authority"] is False
+    assert receipt["model_identity_strength"] == "none"
 
 
 def test_worker_revalidates_loaded_runtime_receipt(

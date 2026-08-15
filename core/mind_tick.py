@@ -1500,6 +1500,7 @@ class MindTick:
                                 "Backing off EventBus publish retries for runtime stability.",
                                 self._bus_fail_count,
                             )
+                        self._record_bus_outage("timeout")
                         backoff = min(30, 10 * self._bus_fail_count)
                         self._bus_backoff_until_tick = self._tick_count + backoff
                     except _MIND_BOUNDARY_ERRORS as e:
@@ -1512,9 +1513,10 @@ class MindTick:
                         elif self._bus_fail_count == 3:
                             logger.warning(
                                 "⚠️ MindTick: EventBus publish failing repeatedly (%d). "
-                                "Suppressing further degradation reports. Will retry every 30 ticks.",
+                                "Backing off retries. Will retry every 30 ticks.",
                                 self._bus_fail_count,
                             )
+                        self._record_bus_outage(type(e).__name__)
                         # Exponential backoff: skip 10, 20, 30 ticks (capped at 30)
                         backoff = min(30, 10 * self._bus_fail_count)
                         self._bus_backoff_until_tick = self._tick_count + backoff
@@ -1777,8 +1779,24 @@ class MindTick:
             except asyncio.CancelledError:
                 if not self._running or is_shutdown_requested():
                     break
-                logger.warning("MindTick loop spuriously cancelled. Ignoring.")
-                continue
+                # Cancellation is a DIRECTIVE. Swallowing it and continuing let
+                # the loop outlive the thing that asked it to stop, and there
+                # was no owner to restart it deliberately. There is one now:
+                # the task's done-callback repair, chained so exactly one loop
+                # exists at any instant. Record who was cancelled and let it
+                # propagate.
+                record_degraded_event(
+                    "mind_tick",
+                    "loop_cancelled",
+                    detail=f"stage={self._active_tick_stage or '?'}",
+                    severity="warning",
+                    classification="background_degraded",
+                    context={
+                        "stage": str(self._active_tick_stage or ""),
+                        "tick_count": self._tick_count,
+                    },
+                )
+                raise
             except _MIND_BOUNDARY_ERRORS as e:
                 self._consecutive_loop_failures += 1
                 _record_mind_degradation(e)
@@ -1835,14 +1853,20 @@ class MindTick:
                 except _MIND_BOUNDARY_ERRORS as exc:
                     _record_mind_degradation(exc)
                 if elapsed > 5.0:
-                    # Tick was slow — add proportional backoff
-                    interval = max(interval, elapsed * 0.5)
+                    # Proportional backoff is a sleep DURATION, not a deadline.
+                    # Subtracting elapsed from it inverted the intent exactly
+                    # when it mattered: a 20s tick with a 10s backoff slept
+                    # max(1, 10-20) = 1s, so the slowest ticks got the
+                    # shortest rest and the loop never got the breathing room
+                    # the backoff exists to give it.
+                    sleep_time = max(1.0, elapsed * 0.5)
                     if self._tick_count % 10 == 0:
                         logger.debug(
                             "MindTick: adaptive backoff — last tick %.1fs, sleeping %.1fs.",
-                            elapsed, interval,
+                            elapsed, sleep_time,
                         )
-                sleep_time = max(1.0, interval - elapsed)
+                else:
+                    sleep_time = max(1.0, interval - elapsed)
                 if is_shutdown_requested():
                     self._running = False
                 if self._running:
@@ -1851,6 +1875,45 @@ class MindTick:
                     await asyncio.sleep(sleep_time)
                 else:
                     self._active_tick_stage = "stopped"
+
+    #: While the event bus is down the tick keeps a standing degraded record
+    #: rather than going quiet. Re-asserted on this cadence so the state stays
+    #: truthful and recovery pressure persists, without one line per tick.
+    _BUS_OUTAGE_REASSERT_TICKS = 30
+
+    def _record_bus_outage(self, kind: str) -> None:
+        """Keep a dark telemetry lane visible.
+
+        Log backoff is right — a line per tick is noise. Silence is not: the
+        degradation record was commented out entirely and then suppressed
+        after three failures, so a runtime publishing nothing looked healthy
+        and nothing applied pressure to fix it.
+        """
+
+        # `x or default` throws away a legitimate zero, and tick 0 is exactly
+        # when the first outage is reported — so the second report would come
+        # straight back through the quiet window.
+        raw_last = getattr(self, "_last_bus_outage_report_tick", None)
+        last = int(raw_last) if isinstance(raw_last, int) else -10_000
+        if self._bus_fail_count > 1 and (
+            self._tick_count - last
+        ) < self._BUS_OUTAGE_REASSERT_TICKS:
+            return
+        self._last_bus_outage_report_tick = self._tick_count
+        try:
+            record_degraded_event(
+                "mind_tick",
+                "event_bus_publish_failing",
+                detail=f"{kind} x{self._bus_fail_count}",
+                severity="warning",
+                classification="background_degraded",
+                context={
+                    "consecutive_failures": int(self._bus_fail_count),
+                    "tick_count": int(self._tick_count),
+                },
+            )
+        except _MIND_BOUNDARY_ERRORS as exc:
+            _record_mind_degradation(exc)
 
     def _get_actual_from_state(self, state: AuraState) -> str | None:
         """Extract the last actual cognitive output for prediction evaluation."""
@@ -2002,7 +2065,8 @@ class MindTick:
             immunity = get_immunity()
             
             # 1. PID File Integrity
-            pid_file = Path("aura.pid")
+            # Anchored, not cwd-relative: this reads a pid and signals it.
+            pid_file = get_config().paths.pid_file
             if await asyncio.to_thread(pid_file.exists):
                 try:
                     pid_text = await asyncio.to_thread(pid_file.read_text)

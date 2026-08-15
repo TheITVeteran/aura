@@ -133,6 +133,18 @@ class Paths(BaseModel):
         """Alias for home_dir used by Volition and audit logs."""
         return self._effective_home_dir() / "brain"
 
+    @property
+    def pid_file(self) -> Path:
+        """The runtime's PID file, anchored to the home directory.
+
+        It was a bare relative "aura.pid" in both the immune audit that reads
+        it and the repair that deletes it, so which file either touched
+        depended on the cwd the process happened to launch in. A health check
+        that signals whatever pid it finds in the current directory can signal
+        the wrong runtime entirely.
+        """
+        return self._effective_home_dir() / "aura.pid"
+
     def create_directories(self) -> None:
         root = self._effective_home_dir()
         for d in [root, self.data_dir, self.log_dir, self.uploads_dir, self.images_dir, self.memory_dir, self.brain_dir]:

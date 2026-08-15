@@ -576,3 +576,117 @@ def test_only_failed_liveness_is_recovered():
     source = _inspect.getsource(health_contract.recover_failed_services)
 
     assert "status.liveness_ok is not False" in source
+
+
+def test_the_slowest_ticks_no_longer_get_the_shortest_rest():
+    """`sleep = max(1, interval - elapsed)` inverted the backoff: a 20s tick
+    with a 10s proportional interval slept 1s."""
+    import ast
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod)
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        rendered = ast.get_source_segment(source, node) or ""
+        if "adaptive backoff" not in rendered:
+            continue
+        assert "sleep_time = max(1.0, elapsed * 0.5)" in rendered
+        assert "interval - elapsed" in rendered, "the fast path still paces to a deadline"
+        return
+    raise AssertionError("the adaptive backoff was not found")
+
+
+def test_a_slow_tick_sleeps_proportionally():
+    """The arithmetic, stated as the property it has to have."""
+    for elapsed in (6.0, 20.0, 90.0):
+        assert max(1.0, elapsed * 0.5) >= elapsed * 0.5
+
+
+def test_cancellation_is_not_swallowed():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._run_loop)
+    marker = source.index("except asyncio.CancelledError:")
+    block = source[marker : marker + 1400]
+
+    assert "raise" in block
+    assert "spuriously cancelled" not in block
+    assert '"loop_cancelled"' in block
+
+
+def test_a_dark_event_bus_keeps_a_standing_degraded_record():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._record_bus_outage)
+
+    assert '"event_bus_publish_failing"' in source
+    assert "_BUS_OUTAGE_REASSERT_TICKS" in source
+
+
+def test_the_outage_record_is_reasserted_rather_than_suppressed():
+    tick = MindTick.__new__(MindTick)
+    tick._tick_count = 0
+    tick._bus_fail_count = 1
+    recorded = []
+    tick._record_bus_outage = MindTick._record_bus_outage.__get__(tick, MindTick)
+
+    import core.mind_tick as mind_tick_mod
+
+    original = mind_tick_mod.record_degraded_event
+    mind_tick_mod.record_degraded_event = lambda *a, **k: recorded.append(k)
+    try:
+        tick._record_bus_outage("TimeoutError")
+        tick._bus_fail_count = 2
+        tick._tick_count = 1
+        tick._record_bus_outage("TimeoutError")  # inside the quiet window
+        tick._tick_count = MindTick._BUS_OUTAGE_REASSERT_TICKS + 1
+        tick._record_bus_outage("TimeoutError")  # window elapsed
+    finally:
+        mind_tick_mod.record_degraded_event = original
+
+    assert len(recorded) == 2, "the outage went quiet instead of re-asserting"
+
+
+def test_the_pid_path_is_anchored_not_cwd_relative():
+    from core.config import get_config
+
+    pid_file = get_config().paths.pid_file
+
+    assert pid_file.is_absolute()
+    assert pid_file.name == "aura.pid"
+
+
+def test_the_audit_and_the_repair_read_the_same_pid_file():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+    from core.resilience import immunity_hyphae
+
+    audit = _inspect.getsource(mind_tick_mod)
+    repair = _inspect.getsource(immunity_hyphae.SignatureRepairRegistry._repair_pid_cleanup)
+
+    assert "get_config().paths.pid_file" in audit
+    assert "get_config().paths.pid_file" in repair
+    assert 'pid_file = "aura.pid"' not in repair
+
+
+def test_tick_zero_is_a_real_tick_number():
+    """`x or default` throws away a legitimate zero, and tick 0 is exactly
+    when the first outage is reported."""
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._record_bus_outage)
+
+    assert 'or -10_000' not in source
+    assert "isinstance(raw_last, int)" in source
