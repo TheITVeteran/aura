@@ -1,0 +1,54 @@
+{
+  "claim_boundary": "exact fresh semantic register-machine execution using structurally routed, independently learned arithmetic tissue; this does not yet establish free-decoded answers, resident-32B transfer, broad reasoning gain, fusion, frontier performance, or a WOW Signal",
+  "coefficient_lesion_disruptions": 192,
+  "coefficient_quantization_max_delta": 7.196488877525553e-05,
+  "derived_tissue_sha256": "4af0368a9a2b2350ed9b952a70c1261b77fcdea8ff64076266a434c2fb3ee340",
+  "difficulties": [
+    1,
+    2,
+    3
+  ],
+  "domains": [
+    "coding",
+    "calibration",
+    "misleading_premise"
+  ],
+  "exact_tasks_by_family": {
+    "frontier_calibration": 96,
+    "frontier_coding": 96,
+    "frontier_misleading_premise": 96
+  },
+  "fresh_task_count": 288,
+  "fresh_task_exact_accuracy": 1.0,
+  "fresh_transition_count": 6624,
+  "fresh_transition_exact_accuracy": 1.0,
+  "learned_operation_count": 40816,
+  "lookup_table_available_to_treatment": false,
+  "parent_tissue_sha256": "059e811c0d9e1fbfd76f1a513636c713962a500f5692d4e914bd96d1372405b7",
+  "per_cell": 8,
+  "private_trace_available_to_treatment": false,
+  "report_sha256": "8a4ea9b91c1ddb124e8f49c2d5f555936ce55356bf74aba6dbdf9fff05a85ce0",
+  "reset_history_disruptions": 288,
+  "reversed_action_disruptions": 288,
+  "schema": "aura.semantic_neural_machine_verification.v1",
+  "seeds": [
+    1547,
+    2547,
+    3547,
+    4547
+  ],
+  "source_sha256s": {
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py": "141a3d16aa891be182b30c38707a3f15c208734574e5af32459a8f25ac105a72",
+    "core/learning/frontier_process_supervision.py": "e0195104c0a0d20d7efd4977fd23e6b3a1e7d63a39267d3ef2907d4157fb3452",
+    "core/learning/public_frontier_action_compiler.py": "50fcae010b1a346b31258c3a298b07afc41bfd17f0a3169b6ee73524e2d5a448",
+    "core/learning/recurrent_action_schema.py": "a14dac78fff36c5e328f5a1fdb96d5ad1fd1c8a901fa225c3b1d3afa3c6e0809",
+    "core/learning/recurrent_state_schema.py": "56101d04275a76bc4106b7c7d2365e60d777abc759e8734218885830b7a2b79d",
+    "core/learning/semantic_neural_machine.py": "b276577e50a759f72bc2b63781c29651cbe62e764ddb6115344c962c71ec767e",
+    "tools/verify_semantic_neural_machine.py": "9bc01ee7a2bf362a2b5e1754a10e1ea49161c4c867ae9fa46e985bfc97cc41b9"
+  },
+  "task_chain_commitment": "2d318757ee771727a5b35ad09277ac925168843c3f0ce3d52f366f3bd68a6475",
+  "task_set_sha256": "bc204f333b3f72f1d7480cc03c6dbc285128f41c3d5bf9baddb2d51cef876505",
+  "teacher_available_to_treatment": false,
+  "verified": true,
+  "verifier_answer_available_to_treatment": false
+}

@@ -27,6 +27,7 @@ from core.learning.recurrent_state_schema import (
     state_slot_names,
     state_targets_from_trace,
 )
+from core.learning.semantic_micro_curriculum import SemanticMicroExample
 from core.learning.unified_intrinsic_recurrence import (
     TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     TRANSITION_PROCESSOR_MODES,
@@ -1523,6 +1524,107 @@ def unified_typed_transition_processor_loss(
     }
 
 
+def unified_semantic_micro_primitive_loss(
+    controller: UnifiedRecurrentController,
+    examples: Sequence[SemanticMicroExample],
+    *,
+    transition_processor_mode: str = "masked_copy_write",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
+    opcode_expert_routing: str = "opcode",
+) -> tuple[Any, dict[str, Any]]:
+    """Acquire local instruction semantics without a model or answer graph."""
+
+    if (
+        not examples
+        or any(not isinstance(example, SemanticMicroExample) for example in examples)
+        or controller.config.state_slots != len(examples[0].state_values)
+        or transition_processor_mode not in TRANSITION_PROCESSOR_MODES
+        or transition_processor_mode == "residual"
+    ):
+        raise ValueError("semantic primitive objective differs from its contract")
+    state_values = mx.array(
+        [example.state_values for example in examples],
+        dtype=mx.int32,
+    )
+    action_values = mx.array(
+        [example.action_values for example in examples],
+        dtype=mx.int32,
+    )
+    state_categories = mx.arange(controller.config.state_cardinality)[None, None, :]
+    action_categories = mx.arange(controller.config.action_cardinality)[None, None, :]
+    state_probabilities = (
+        state_categories == state_values[..., None]
+    ).astype(mx.float32)
+    action_probabilities = (
+        action_categories == action_values[..., None]
+    ).astype(mx.float32)
+    authority_logits, recognized = controller.microcode_transition_logits(
+        state_probabilities,
+        action_probabilities,
+    )
+    labels = mx.stop_gradient(mx.argmax(authority_logits, axis=-1))
+    history = mx.zeros(
+        (
+            len(examples),
+            controller.config.state_slots,
+            controller.config.correction_rank,
+        ),
+        dtype=mx.float32,
+    )
+    logits = controller.resolve_transition_processor_logits(
+        None,
+        state_probabilities,
+        action_probabilities,
+        history,
+        transition_processor_mode=transition_processor_mode,
+        opcode_expert_routing=opcode_expert_routing,
+        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
+    )
+    write_mask = controller.transition_write_authority_mask(
+        state_probabilities,
+        action_probabilities,
+    ).astype(mx.float32)
+    token_losses = nn.losses.cross_entropy(
+        logits.astype(mx.float32),
+        labels,
+        reduction="none",
+    )
+    required = mx.sum(write_mask)
+    loss = mx.sum(token_losses * write_mask) / mx.maximum(required, 1.0)
+    predicted = mx.argmax(logits, axis=-1)
+    exact_registers = (predicted == labels).astype(mx.float32) * write_mask
+    correct = mx.sum(exact_registers)
+    example_required = mx.sum(write_mask, axis=-1)
+    example_correct = mx.sum(exact_registers, axis=-1)
+    exact_examples = mx.sum(
+        ((example_required > 0) & (example_correct == example_required)).astype(mx.float32)
+    )
+    mx.eval(recognized, labels, required, correct, exact_examples, loss)
+    if (
+        not bool(mx.all(recognized).item())
+        or bool(mx.any(labels == controller.config.state_cardinality - 1).item())
+        or float(required.item()) <= 0.0
+    ):
+        raise ValueError("semantic primitive authority rejected a generated example")
+    return loss, {
+        "schema": UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA,
+        "objective": "semantic_micro_primitive_acquisition",
+        "examples": len(examples),
+        "opcodes": sorted({example.opcode for example in examples}),
+        "writable_registers": int(required.item()),
+        "register_accuracy": float((correct / required).item()),
+        "exact_examples": int(exact_examples.item()),
+        "exact_example_accuracy": float(exact_examples.item()) / len(examples),
+        "transition_processor_mode": transition_processor_mode,
+        "opcode_expert_routing": opcode_expert_routing,
+        "microcode_used_as_training_authority": True,
+        "microcode_available_to_treatment": False,
+        "answers_exposed": False,
+        "transformer_graph_constructed": False,
+        "total": float(loss.item()),
+    }
+
+
 __all__ = [
     "UNIFIED_INTRINSIC_OBJECTIVE_SCHEMA",
     "UnifiedIntrinsicTrainingSpec",
@@ -1539,4 +1641,5 @@ __all__ = [
     "unified_intrinsic_training_loss",
     "unified_process_training_loss",
     "unified_typed_transition_processor_loss",
+    "unified_semantic_micro_primitive_loss",
 ]

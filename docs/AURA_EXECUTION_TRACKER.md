@@ -50273,3 +50273,35 @@ This establishes a learnable finite operation vocabulary, not a reasoning-gain
 claim. The next gate is coverage-complete primitive and short-composition
 acquisition by the lesioned learned processor, followed by fresh closed-loop
 semantic programs only if primitive holdout execution is exact.
+
+## Checkpoint 2026-08-15-547: Replace the Saturated MLP With Systematic Neural Tissue
+
+The coverage-complete local curriculum made the generic transition processor's
+limit explicit in 68.7 seconds. After 1,000 balanced updates across all 15
+semantic opcodes, it reached only `16.67%` train and `17.08%` fresh-operand exact
+accuracy. It was not admitted and no longer justifies another long campaign with
+the same processor geometry. Its exact failed artifact and receipt are frozen in
+`artifacts/closeout/latent_cortex/cp547_semantic_micro_processor/`.
+
+The replacement semantic register machine structurally routes public opcodes and
+uses the sealed CP197 systematic neural ALU for numerical addition,
+multiplication, subtraction, radix decomposition and quotient search. The
+learned ALU coefficients were independently within `7.20e-05` of their integer
+manifold; a versioned quantized derivative prevents float32 scale error at the
+expanded `0..960` register range and refuses any source tissue farther than
+`1e-3` from that manifold.
+
+The source-bound independent verifier passed `288/288` fresh tasks and
+`6,624/6,624` closed-loop transitions across coding, calibration and premise
+auditing, exercising `40,816` learned arithmetic operations. Reversing action
+order and erasing recurrent history disrupted all `288` programs; removing the
+learned multiplication interaction disrupted `192`. The report binds source,
+task cohort, transition chains and parent/derived tissue identities at
+`artifacts/closeout/latent_cortex/cp547_semantic_neural_machine/verification.json`.
+Focused contracts pass `5/5`.
+
+This is exact neural-arithmetic-driven semantic state execution, not yet a
+free-decoded answer or model-capability result. The next gate connects the
+verified terminal state to answer emission and requires fresh semantic answers
+to survive removal of the private trace and evaluator before any resident-32B,
+fusion, frontier or `WOW Signal` claim proceeds.
