@@ -240,8 +240,17 @@ class TestMicrocompact:
             {"role": "user", "content": "current"},
         ]
         result = ContextAssembler.microcompact(messages, keep_recent=3)
-        old_assistant = [m for m in result if m["role"] == "assistant" and "truncated" in m.get("content", "")]
+        # The marker used to be the word "truncated". It now names how much is
+        # gone and carries a digest, so the omission is identifiable rather
+        # than merely announced.
+        old_assistant = [
+            m
+            for m in result
+            if m["role"] == "assistant" and "more characters" in m.get("content", "")
+        ]
         assert len(old_assistant) == 1
+        assert "digest " in old_assistant[0]["content"]
+        assert len(old_assistant[0]["content"]) < len(long_text)
 
     def test_short_conversations_unchanged(self):
         from core.brain.llm.context_assembler import ContextAssembler

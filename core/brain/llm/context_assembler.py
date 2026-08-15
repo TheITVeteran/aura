@@ -31,6 +31,12 @@ _TRUST_BINDING_MAX_AGE_S = 900.0
 # addendum with headroom.
 _STRUCTURAL_TAIL_RESERVE_CHARS = 1400
 
+# How much of an old assistant turn survives compaction, and how much head an
+# omission receipt carries. Both are "enough to recognise what this was", not
+# "enough to use" — the digest is what makes the omission identifiable.
+_COMPACT_ASSISTANT_KEEP_CHARS = 500
+_COMPACT_RECEIPT_HEAD_CHARS = 160
+
 _DELIBERATE_SIGNALS = (
     "feel", "feeling", "felt", "conscious", "consciousness", "sentient",
     "aware", "awareness", "experience", "experiencing", "think", "thinking",
@@ -403,6 +409,65 @@ class ContextAssembler:
         return depth
 
     @staticmethod
+    def _transcript_pressure(state: AuraState) -> float:
+        """How full the window already is, as a fraction of it.
+
+        Elasticity used to be decided by counting turns. A count is not a cost:
+        forty one-line exchanges tripped the deepest trimming level while using
+        a few percent of the window, and two pasted files sat at level 0 while
+        overflowing it. The docstring below already records what that costs —
+        continuity discarded to defend a budget that was 2% used — and the fix
+        then corrected the window while leaving the turn count as the trigger.
+
+        Measured against the same window and the same chars-per-token evidence
+        the message budget uses, so the two cannot disagree about how much room
+        there is.
+        """
+        try:
+            from core.brain.llm.model_registry import (
+                PRIMARY_ENDPOINT,
+                get_lane_context_window,
+            )
+            from core.brain.llm.token_budget_evidence import chars_per_token
+
+            window_tokens = max(8192, int(get_lane_context_window(PRIMARY_ENDPOINT)))
+            limit_chars = chars_per_token().tokens_to_chars(window_tokens)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler.transcript_pressure",
+                exc,
+                severity="warning",
+                action="kept the system prompt at full verbosity, unable to measure pressure",
+            )
+            return 0.0
+        if limit_chars <= 0:
+            return 0.0
+
+        wm = getattr(state.cognition, "working_memory", None)
+        if not isinstance(wm, list):
+            return 0.0
+        occupied = 0
+        for message in wm:
+            if isinstance(message, dict):
+                occupied += len(str(message.get("content", "") or ""))
+        return occupied / float(limit_chars)
+
+    #: Elasticity steps, as fractions of the window the transcript already
+    #: occupies. Evenly spaced across the upper half: nothing is trimmed while
+    #: half the window is still free, and the last step engages before the
+    #: transcript can push the system block out of its own share.
+    _PRESSURE_STEPS = (0.50, 0.67, 0.83)
+
+    @classmethod
+    def _elasticity_level(cls, state: AuraState) -> int:
+        pressure = cls._transcript_pressure(state)
+        level = 0
+        for step in cls._PRESSURE_STEPS:
+            if pressure >= step:
+                level += 1
+        return level
+
+    @staticmethod
     def _continuity_budget_chars(depth: int) -> int:
         """Characters allowed for continuity, as a function of depth.
 
@@ -446,6 +511,38 @@ class ContextAssembler:
         return "They"
 
     @classmethod
+    @staticmethod
+    def _content_digest(content: str) -> str:
+        """Short, stable identifier for content the prompt no longer carries."""
+        import hashlib
+
+        return hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]
+
+    @classmethod
+    def _omission_receipt(cls, msg: dict, *, kind: str) -> dict:
+        """What is left where a message used to be.
+
+        Names the kind, the size, a digest, and enough head to recognise. The
+        model can then say "I had a result for that and no longer have its
+        contents" instead of answering as though the lookup never happened.
+        """
+        content = str(msg.get("content", ""))
+        head = content[:_COMPACT_RECEIPT_HEAD_CHARS].replace("\n", " ").strip()
+        return {
+            "role": "system",
+            "content": (
+                f"[COMPACTED {kind.upper()} · {len(content)} chars · "
+                f"digest {cls._content_digest(content)}] {head}"
+            ),
+            "metadata": {
+                "type": "compaction_receipt",
+                "compacted_kind": kind,
+                "original_chars": len(content),
+                "content_digest": cls._content_digest(content),
+            },
+        }
+
+    @classmethod
     def microcompact(cls, messages: list[dict], *, keep_recent: int = 3) -> list[dict]:
         """Strip stale tool results, verbose system noise, and redundant content
         from messages BEFORE they hit the LLM. This runs on every API call,
@@ -458,10 +555,23 @@ class ContextAssembler:
         Rules:
         - Keep the last `keep_recent` messages untouched
         - For older messages:
-          - Strip tool/skill results entirely (they're stale)
-          - Truncate system messages to 200 chars
-          - Truncate very long assistant messages to 500 chars
+          - Reduce tool/skill results to a labelled stub, never delete them
+          - Reduce system bookkeeping to a labelled stub
+          - Truncate very long assistant messages, keeping their head
           - Drop empty/near-empty messages
+
+        Nothing older is deleted outright any more. A tool result from five
+        turns ago is stale in the sense that it costs tokens; it is not stale
+        in the sense that its content stopped being true, and it was often the
+        only record of the fact the current answer depends on. Deleting it does
+        not make the model forget the topic — it makes the model answer from a
+        gap, which it fills the way language models fill gaps.
+
+        So each omission leaves a receipt: what kind of message it was, a
+        digest of the exact content, its length, and enough of its head to
+        recognise. The saving is nearly the same (a 160-character stub for a
+        4,000-character tool result) and the difference is that an absence is
+        now visible as an absence.
         """
         if len(messages) <= keep_recent + 1:  # +1 for system prompt
             return messages
@@ -489,21 +599,28 @@ class ContextAssembler:
             metadata = msg.get("metadata", {}) or {}
             msg_type = str(metadata.get("type", "")).lower()
 
-            # Drop stale tool/skill results entirely
+            # Stale tool/skill results: reduced to a receipt, not deleted.
             if msg_type in ("skill_result", "tool_result"):
+                result.append(cls._omission_receipt(msg, kind=msg_type or "tool_result"))
                 continue
-            # Drop system bookkeeping
+            # System bookkeeping: same treatment, same reason.
             if role == "system" and any(marker in content for marker in (
                 "[CHAPTER SUMMARY:", "[FETCHED PAGE CONTENT]",
                 "[SKILL RESULT:", "[TOOL RESULT:", "[INTERNAL MEMORY RECALL]",
                 "cognitive baseline tick", "background_consolidation",
             )):
-                # Keep a brief marker that context existed
-                result.append({"role": "system", "content": content[:120] + "...[compacted]"})
+                result.append(cls._omission_receipt(msg, kind="system_record"))
                 continue
             # Truncate long assistant messages in old history
-            if role == "assistant" and len(content) > 500:
-                result.append({**msg, "content": content[:500] + "...[truncated]"})
+            if role == "assistant" and len(content) > _COMPACT_ASSISTANT_KEEP_CHARS:
+                head = content[:_COMPACT_ASSISTANT_KEEP_CHARS]
+                result.append({
+                    **msg,
+                    "content": (
+                        f"{head}\n[... {len(content) - len(head)} more characters, "
+                        f"digest {cls._content_digest(content)}]"
+                    ),
+                })
                 continue
             # Drop near-empty
             if len(content.strip()) < 5:
@@ -528,10 +645,11 @@ class ContextAssembler:
         Measured on the live desktop path: system prompt 2,189 chars ≈ 550
         tokens.
 
-        Elasticity still prunes OPTIONAL colour as depth grows:
-          depth < 10 → full prompt
-          depth 10-20 → drop telemetry, somatic, temporal_finitude, meta-qualia
-          depth 20-30 → also drop personhood modules, world model, discourse
+        Elasticity prunes OPTIONAL colour as the window fills — measured, not
+        counted (see _transcript_pressure):
+          under half the window → full prompt
+          half → drop telemetry, somatic, temporal_finitude, meta-qualia
+          two thirds → also drop personhood modules, world model, discourse
 
         What it must NOT prune is continuity. The old policy dropped the
         rolling summary, temporal obligations and goals at depth 30+ and
@@ -546,9 +664,14 @@ class ContextAssembler:
         depth = ContextAssembler._conversation_depth(state)
         black_box_steering = ContextAssembler._black_box_steering_enabled(state)
         # Elasticity levels: 0=full, 1=trimmed, 2=lean, 3=minimal
-        elasticity = 0 if depth < 10 else 1 if depth < 20 else 2 if depth < 30 else 3
+        elasticity = ContextAssembler._elasticity_level(state)
         if elasticity > 0:
-            logger.info("🧠 Context elasticity=%d (depth=%d turns) — trimming system prompt.", elasticity, depth)
+            logger.info(
+                "🧠 Context elasticity=%d (pressure=%.2f of window, depth=%d turns) — trimming system prompt.",
+                elasticity,
+                ContextAssembler._transcript_pressure(state),
+                depth,
+            )
         affect = state.affect
         
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
