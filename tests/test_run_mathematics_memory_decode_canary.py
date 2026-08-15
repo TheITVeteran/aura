@@ -14,6 +14,13 @@ def test_canary_separates_ordinary_and_matched_wire_baselines() -> None:
     assert len(canary.ARMS) == len(set(canary.ARMS)) == 8
 
 
+def test_claim_boundary_is_bound_by_identity_not_a_stale_model_name() -> None:
+    assert "model_identity" in canary.CLAIM_BOUNDARY
+    assert "1.5B" not in canary.CLAIM_BOUNDARY
+    assert "32B" not in canary.CLAIM_BOUNDARY
+    assert "WOW" in canary.CLAIM_BOUNDARY
+
+
 def test_summary_does_not_charge_structural_prefill_as_generation() -> None:
     rows = [
         {

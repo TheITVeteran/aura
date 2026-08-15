@@ -49993,3 +49993,19 @@ identifiability artifacts; it distinguishes implemented, open, refuted and
 unsupported recommendations. Targeted trainer, controller, evaluator, campaign
 and schema contracts are `313 passed`; repository smoke is `104 passed`. This
 is a schema and launchability result, not a measured reasoning gain.
+
+## Checkpoint 2026-08-15-533: Bind The Claim To The Model That Actually Ran
+
+The first powered resident-32B decode run completed all 240 measurements with
+treatment exact on 30/30 tasks and both baselines plus all six causal controls
+at 0/30. Independent pre-commit replay then found that the canary's claim text
+still said the measured model was the local 1.5B and explicitly excluded a
+resident-32B result. The artifact's config and weight-index hashes correctly
+identified the 32B, but contradictory metadata is not admissible evidence.
+
+The canary now describes only the model cryptographically bound in
+`model_identity` and retains explicit exclusions for open-domain, multi-domain,
+frontier, global-fusion and `WOW Signal` claims. A regression test prevents
+either `1.5B` or `32B` from being hardcoded into this model-agnostic protocol.
+The uncommitted positive artifact is superseded rather than re-signed. An exact
+clean-source rerun is required before resident promotion.

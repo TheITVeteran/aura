@@ -279,3 +279,18 @@ The independently accepted claim is exact but narrow: bounded teacher-removed
 recurrent-state transfer through the frozen local 1.5B language head. Resident
 32B transfer, multiple reasoning domains, broad generalization, and the WOW
 Signal remain open.
+
+## CP533 addendum
+
+The first powered resident-32B decode run completed 240 measurements with a
+30/30 treatment and zero successes in both baselines and all six causal
+controls. Independent pre-commit replay nevertheless rejected promotion
+because the canary carried a stale hardcoded claim string saying that the
+measured model was the local 1.5B and not the resident 32B. The bound model
+hashes were correct, but an artifact must not contradict its own identity.
+
+CP533 replaces the architecture-specific prose with a model-neutral claim
+boundary that refers to the cryptographically bound `model_identity`. A
+regression contract forbids `1.5B` and `32B` in that boundary. The raw positive
+run remains diagnostic only and is intentionally not checked in. The same
+eight-arm protocol must be rerun from clean CP533 before any resident claim.

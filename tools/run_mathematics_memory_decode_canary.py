@@ -37,6 +37,11 @@ from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.rlc.mathematics_memory_decode_canary.v1"
+CLAIM_BOUNDARY: Final = (
+    "bounded teacher-free recurrent-state-to-free-decode transfer on the model "
+    "cryptographically bound in model_identity; not open-domain, multi-domain, "
+    "frontier-level, globally fusion-authorized, or WOW"
+)
 ARMS: Final = (
     "ordinary_base",
     "matched_wire_base",
@@ -373,10 +378,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "rows": rows,
         "raw_outputs": raw_outputs,
         "admitted": admitted,
-        "claim_boundary": (
-            "bounded teacher-free recurrent-state-to-free-decode transfer on the "
-            "local 1.5B; not open-domain, resident-32B, broad reasoning, or WOW"
-        ),
+        "claim_boundary": CLAIM_BOUNDARY,
         "elapsed_s": round(time.time() - started, 3),
     }
     payload["receipt_sha256"] = _sha(payload)
