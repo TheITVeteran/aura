@@ -49485,3 +49485,32 @@ This checkpoint establishes a higher-capacity trainable transition mechanism,
 not a capability result. A source-bound 1.5B acquisition campaign must exceed
 CP486 on exact unseen processes and then survive matched processor and history
 lesions before answer-level or resident-32B work resumes.
+
+## Checkpoint 2026-08-14-491: The Processor Learns, Then Outruns Its Curriculum
+
+CP490 completed the CP489 processor's source-bound 128-step 1.5B acquisition
+schedule in one detached attempt. Its immutable source/model/dataset/bootstrap
+identities, launchd lineage, trainer-bound sentinel, checkpoints and signed
+completion receipt passed. The result is frozen in
+`artifacts/closeout/latent_cortex/cp490_typed_transition_processor_verdict.json`.
+
+The processor produced a real bounded improvement over CP486. Terminal T16
+state accuracy rose from `0.6438` to `0.6875` and exact-value accuracy from
+`0.1667` to `0.2135`; peak T16 values were `0.7188` and `0.2240` at step 96.
+All four families produced at least one exact transition, and unseen
+mathematics state accuracy reached `0.92`. No complete unseen process was
+exact, T1 remained best and the process admission correctly rejected the
+checkpoint.
+
+The learning curve localizes a curriculum defect rather than an inert
+architecture. One-step exactness reached `0.75`, then fell as teacher forcing
+linearly approached zero; deep exactness peaked at step 96 and regressed at
+step 112. The processor was asked to learn its transition algebra while the
+input distribution simultaneously shifted toward its own still-imperfect
+states. This is the scheduled-sampling/DAgger failure predicted by several
+outside reviews and measured here on the actual tissue.
+
+The next bounded campaign keeps this processor, extends the inexpensive 1.5B
+acquisition window, holds exact-state supervision long enough to clear the
+`0.95` one-step readiness bar, then anneals toward autonomous states with
+explicit interim futility gates. Bridge, 32B and fusion work remain blocked.

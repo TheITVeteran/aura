@@ -1,0 +1,53 @@
+{
+  "schema": "aura.latent_cortex.typed_transition_processor_verdict.v1",
+  "campaign_id": "cp490-typed-transition-processor-1p5b-20260814",
+  "campaign_source_commit": "96fc506ffa567887c98c7278fc46e8a91f953696",
+  "campaign_config_sha256": "2c01183d1e42dbc245fe83efa323c65ce45bf49d17b212be254cf879fd9c7064",
+  "model_manifest_sha256": "71c040465070cf9b0068ca6f7bc26581443ae5fb46937e85e109212b3fb80092",
+  "training_receipt_sha256": "f88b08a083e7af14b4b7276641152272adb0b8bfd2b8e3b22b05d64eebd34fc4",
+  "process_admission_sha256": "bca097073cf3d8e13628dfda38e4dd578e67e9c84fc6a053fbf104a5b255dac1",
+  "completion_sha256": "3d04bb75d0eced2bf2a14d7de90e748fa86f69c681a00cf0f971bad0975073ea",
+  "checkpoint": {
+    "step": 128,
+    "checkpoint_sha256": "b4eab1094ca2273135e7760f37529dc50c3bf7b686ee3f7b00df8523d8b06b93",
+    "receipt_sha256": "1c08f51ebcd6f173075a6f761bb78b97342140f325c3fa6a4c4aa10be11da7e1"
+  },
+  "elapsed_minutes": 19.101,
+  "verdict": "autonomous_process_not_admitted",
+  "process_admission": {
+    "tasks": 12,
+    "initial_states_exact": 12,
+    "public_action_programs_exact": 12,
+    "complete_processes_exact": 0,
+    "exact_accuracy": 0.0,
+    "exact_microcode_available": false,
+    "teacher_available": false
+  },
+  "depth_ladder": {
+    "best_depth": "T1",
+    "best_deep_relative_gain": -0.09749882457892935,
+    "trained_depth_helps": false,
+    "heldout_depth_helps": false,
+    "terminal_t1_state_accuracy": 0.9333333373069763,
+    "terminal_t1_state_value_exact_accuracy": 0.6666666666666666,
+    "terminal_t16_state_accuracy": 0.6875000116415322,
+    "terminal_t16_state_value_exact_accuracy": 0.21354166666666666,
+    "peak_t16_state_accuracy": 0.7187500122624139,
+    "peak_t16_state_value_exact_accuracy": 0.22395833333333334,
+    "peak_step": 96
+  },
+  "terminal_family_state_accuracy_ranges": {
+    "frontier_calibration": [0.62, 0.94],
+    "frontier_coding": [0.72, 0.8],
+    "frontier_mathematics": [0.92, 0.92],
+    "frontier_misleading_premise": [0.44, 0.68]
+  },
+  "comparison_to_cp486": {
+    "terminal_t16_state_accuracy_delta": 0.0437499990997216,
+    "terminal_t16_state_value_exact_accuracy_delta": 0.046875,
+    "peak_t16_state_value_exact_accuracy_delta": 0.057291666666666685
+  },
+  "conclusion": "The identity-preserving higher-order processor was active and improved both coarse and exact deep transitions. Its best deep exact score occurred at step 96 and regressed as the linear teacher-forcing schedule approached zero. One-step exactness never exceeded 0.75, below the preregistered 0.95 transition-readiness bar. This result supports a longer, slower sequential-distribution curriculum with bounded interim futility gates, not bridge or resident-32B work.",
+  "next_mechanism": "Train the same processor under a longer source-bound acquisition schedule that retains teacher-forced exact states until one-step transitions stabilize, then anneals toward autonomous roll-in while evaluating fixed fresh holdout cells.",
+  "claim_boundary": "Negative bounded 1.5B acquisition result only; no answer-level, resident-32B, fusion, frontier, or WOW Signal authority."
+}
