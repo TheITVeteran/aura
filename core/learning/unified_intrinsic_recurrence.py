@@ -167,6 +167,11 @@ TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES: Final = (
     "transition_processor_opcode_hidden",
     "transition_processor_opcode_output",
 )
+TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES: Final = (
+    # The public action tape is embedded before it enters transition memory.
+    # A frozen transition machine is not reproducible without this codebook.
+    "action_value_embeddings",
+)
 TRANSITION_PROCESSOR_MODES: Final = (
     "residual",
     "authoritative",
@@ -4723,6 +4728,7 @@ __all__ = [
     "FRONTIER_ACTION_EXPERT_COUNT",
     "MAX_PROCESS_INTEGER",
     "PROCESS_RADIX",
+    "TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES",
     "TRANSITION_MEMORY_PARAMETER_NAMES",
     "TRANSITION_TAPE_READER_PARAMETER_NAMES",
     "TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES",

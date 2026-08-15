@@ -1,0 +1,71 @@
+{
+  "schema": "aura.unified_intrinsic.compositional_canary_verdict.v1",
+  "campaign_id": "cp505-compositional-transition-canary-1p5b-20260814",
+  "source_commit": "7e162aa525d835788f12bf43c33dc4ba13320982",
+  "campaign_config_sha256": "7766eced9a123ae5450c9c4e1ba4a717a66bfe8f3398d3db80b07d2f5de2fa53",
+  "dataset_identity_sha256": "2b650e9caecbc8f84b932ce690662316b342039da40f8a25047194022848f7db",
+  "checkpoint": {
+    "step": 192,
+    "checkpoint_sha256": "cbb13e63ecce7d931171560bfb0e051cf26e9ff110226785c7056cf168ec97f0",
+    "receipt_sha256": "d929ec51fea38d2f6d69c0f09eaf0f3e9d057ad656a1600c3289ecedf4ecc5bf",
+    "training_receipt_sha256": "d5e6e38e1f71dae31884a79d1f8e6c44447398eed3e4acdbe5caa82ba5669425"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "steps": 192,
+    "elapsed_minutes": 18.703,
+    "halt_reason": "max_steps"
+  },
+  "authoritative_evaluation": {
+    "report": "artifacts/closeout/latent_cortex/cp505_compositional_transition_canary_authoritative_evaluation.json",
+    "report_sha256": "a0ca97af850653790536d3efd428a9a215833a5723e1c16f568368a365b0e2f1",
+    "opcode": {
+      "t1_active_state_exact": 0.65625,
+      "t16_active_state_exact": 0.35694444444444445,
+      "t16_active_trajectory_exact": 0.03125,
+      "t16_recovery_after_wrong": 0.11702127659574468
+    },
+    "uniform_router": {
+      "t1_active_state_exact": 0.625,
+      "t16_active_state_exact": 0.3125,
+      "t16_active_trajectory_exact": 0.0,
+      "t16_recovery_after_wrong": 0.12871287128712872
+    },
+    "expert_lesion": {
+      "t1_active_state_exact": 0.625,
+      "t16_active_state_exact": 0.3159722222222222,
+      "t16_active_trajectory_exact": 0.0,
+      "t16_recovery_after_wrong": 0.14
+    },
+    "opcode_minus_lesion_t16_active_state_exact": 0.04097222222222224,
+    "opcode_minus_uniform_t16_active_state_exact": 0.04444444444444445,
+    "opcode_family_t16_active_state_exact": {
+      "frontier_calibration": 0.29166666666666663,
+      "frontier_coding": 0.5,
+      "frontier_mathematics": 0.611111111111111,
+      "frontier_misleading_premise": 0.025
+    }
+  },
+  "verdict": "not_admitted",
+  "supported_claims": [
+    "The complete saved transition machine reproduces the trainer final metrics after loading its trained action codebook dependency.",
+    "Opcode-conditioned experts cause a bounded positive state-execution effect on this frozen holdout and are required for its sole complete depth-16 trajectory."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous process execution",
+    "positive recurrence-depth effect",
+    "general decoded reasoning gain",
+    "resident-32B transfer",
+    "fusion eligibility",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "blocking_observations": [
+    "Only one of 32 opcode-routed depth-16 trajectories is completely correct.",
+    "Accuracy falls by 0.29930555555555555 from T1 to T16.",
+    "Recovery after an incorrect predecessor is 0.11702127659574468.",
+    "Premise-audit state execution remains at 0.025."
+  ],
+  "next_bounded_mechanism": "Measure CP507 PCGrad under an otherwise matched canary, then add semantics-qualified transition/recovery capacity if premise and calibration remain below admission."
+}

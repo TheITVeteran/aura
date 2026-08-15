@@ -49868,3 +49868,36 @@ behavior. The focused trainer and campaign set is `135 passed`; repository
 smoke is `104 passed`. CP505 remains source-frozen on the prior mean combiner,
 so this checkpoint is a measured next mechanism rather than an explanation
 retroactively applied to its result.
+
+## Checkpoint 2026-08-14-508: Reproduce The Saved Transition Machine Exactly
+
+CP505 completed all 192 source-frozen steps in one detached attempt with no
+restart, but the first post-run evaluator report disagreed materially with the
+trainer: the frozen opcode arm measured T1 `0.46875` and T16 `0.10556`, while
+the terminal training receipt reported `0.65625` and `0.35694`. The evaluator
+had loaded every `transition_*` tensor but omitted the trained
+`action_value_embeddings` codebook consumed by the public tape-memory GRU. It
+was therefore evaluating an initialization-seed reconstruction, not the saved
+machine.
+
+Transition execution dependencies are now an explicit required inventory.
+The evaluator loads and shape-checks the action codebook, refuses a checkpoint
+that omits it and lists it in the evidence receipt. The repaired evaluation
+reproduces the trainer exactly at every depth. Focused evaluator/controller
+contracts are `75 passed`.
+
+The authoritative three-arm result is bounded and negative for admission. The
+opcode arm records T1 `0.65625`, T16 `0.35694`, recovery-after-error `0.11702`
+and one complete T16 trajectory out of 32. Uniform routing records T16
+`0.31250` with zero complete trajectories; the full expert lesion records
+`0.31597` with zero complete trajectories. Opcode specialization therefore has
+a causal `+0.04097` T16 state-execution effect against its lesion in this
+frozen checkpoint, but recurrence still loses `0.29931` from T1 to T16 and
+premise auditing remains at `0.025`.
+
+The signed campaign receipt and complete three-arm measurements are frozen in
+`cp505_compositional_transition_canary_verdict.json` and its referenced
+authoritative evaluation. CP505 does not admit autonomous process execution,
+decoded gain, resident transfer, fusion, frontier reasoning or `WOW Signal`.
+CP507's PCGrad mechanism remains unmeasured and is the next bounded matched
+experiment; no Kimi forecast or plotted hypothetical is treated as evidence.

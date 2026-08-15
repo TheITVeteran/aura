@@ -22,6 +22,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_state_trajectory_diagnostics,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
@@ -71,7 +72,8 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
         )
     )
     required_names = (
-        set(TRANSITION_MEMORY_PARAMETER_NAMES)
+        set(TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES)
+        | set(TRANSITION_MEMORY_PARAMETER_NAMES)
         | set(TRANSITION_PROCESSOR_PARAMETER_NAMES)
         | {"transition_processor_opcode_output"}
     )
@@ -87,6 +89,8 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
         name.removeprefix("bundle.controller."): value
         for name, value in tensors.items()
         if name.startswith("bundle.controller.transition_")
+        or name.removeprefix("bundle.controller.")
+        in TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES
     }
     missing = required_names - set(available)
     if missing:

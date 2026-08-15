@@ -7,6 +7,7 @@ import pytest
 
 import tools.evaluate_transition_checkpoint as evaluator
 from core.learning.unified_intrinsic_recurrence import (
+    TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
@@ -34,8 +35,13 @@ def _checkpoint(
     source.transition_processor_opcode_interaction_down = mx.ones_like(
         source.transition_processor_opcode_interaction_down
     )
+    source.action_value_embeddings = mx.full_like(
+        source.action_value_embeddings,
+        0.375,
+    )
     names = (
-        set(TRANSITION_MEMORY_PARAMETER_NAMES)
+        set(TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES)
+        | set(TRANSITION_MEMORY_PARAMETER_NAMES)
         | set(TRANSITION_PROCESSOR_PARAMETER_NAMES)
         | set(TRANSITION_TAPE_READER_PARAMETER_NAMES)
         | set(TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES)
@@ -76,6 +82,7 @@ def test_checkpoint_evaluator_loads_complete_deployed_transition_tissue(
     mx.eval(
         loaded.transition_tape_output,
         loaded.transition_processor_opcode_interaction_down,
+        loaded.action_value_embeddings,
     )
     assert bool(mx.allclose(loaded.transition_tape_output, source.transition_tape_output))
     assert bool(
@@ -84,12 +91,33 @@ def test_checkpoint_evaluator_loads_complete_deployed_transition_tissue(
             source.transition_processor_opcode_interaction_down,
         )
     )
+    assert bool(
+        mx.allclose(
+            loaded.action_value_embeddings,
+            source.action_value_embeddings,
+        )
+    )
     assert receipt["zero_attached_extensions"] == []
     assert "transition_tape_output" in receipt["loaded_transition_tensor_names"]
     assert (
         "transition_processor_opcode_interaction_down"
         in receipt["loaded_transition_tensor_names"]
     )
+    assert "action_value_embeddings" in receipt["loaded_transition_tensor_names"]
+
+
+def test_checkpoint_evaluator_rejects_missing_action_codebook_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _source, _path = _checkpoint(
+        tmp_path,
+        monkeypatch,
+        omit={"action_value_embeddings"},
+    )
+
+    with pytest.raises(RuntimeError, match="action_value_embeddings"):
+        evaluator._load_controller(tmp_path)
 
 
 def test_checkpoint_evaluator_zero_attaches_complete_older_extensions(
