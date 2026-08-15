@@ -705,6 +705,30 @@ def _model_lane_purpose(window_tissue_mode: str) -> str:
     raise ValueError("unified recurrence window tissue mode is invalid")
 
 
+def _fresh_public_transition_acquisition(
+    *,
+    window_tissue_mode: str,
+    public_action_program: bool,
+    direct_transition_processor: bool,
+) -> bool:
+    """Return whether transition tissue is complete without a parent checkpoint.
+
+    Legacy transition-only campaigns refine a previously acquired process
+    controller, so their parent checkpoint is part of the scientific object.
+    A controller-only direct transition campaign is different: independently
+    compiled public actions are its input and the fresh controller is the only
+    trainable mechanism. Requiring unrelated parent tissue there would make
+    the new state geometry unloadable and confound acquisition with the
+    parent's learned behavior.
+    """
+
+    return (
+        window_tissue_mode == "controller_only"
+        and public_action_program
+        and direct_transition_processor
+    )
+
+
 def _trainable(bundle: UnifiedTrainingBundle) -> dict[str, Any]:
     return dict(tree_flatten(bundle.trainable_parameters()))
 
@@ -5257,10 +5281,15 @@ def main() -> int:
         raise ValueError(
             "action-workspace curriculum requires bootstrapped frontier process acquisition"
         )
+    fresh_public_transition = _fresh_public_transition_acquisition(
+        window_tissue_mode=args.window_tissue_mode,
+        public_action_program=args.public_action_program,
+        direct_transition_processor=args.direct_transition_processor,
+    )
     if args.process_curriculum == "transition_only" and (
         args.task_source != "frontier_process"
         or args.state_warmup_steps != args.max_steps
-        or args.bootstrap_output_dir is None
+        or (args.bootstrap_output_dir is None and not fresh_public_transition)
     ):
         raise ValueError(
             "transition-only curriculum requires bootstrapped frontier process acquisition"

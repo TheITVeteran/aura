@@ -71,6 +71,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _evaluate_answer_bridge_diagnostic,
     _evaluate_process_admission,
     _freeze_dataset,
+    _fresh_public_transition_acquisition,
     _generate_student_rollin,
     _gradient_conflict_diagnostics,
     _ground_state_value_embeddings,
@@ -895,6 +896,29 @@ def test_model_lane_envelope_tracks_the_trainable_tissue_class() -> None:
     assert _model_lane_purpose("scoped_lora") == "train"
     with pytest.raises(ValueError, match="window tissue mode"):
         _model_lane_purpose("unknown")
+
+
+def test_only_fresh_controller_with_public_direct_actions_skips_process_bootstrap() -> None:
+    assert _fresh_public_transition_acquisition(
+        window_tissue_mode="controller_only",
+        public_action_program=True,
+        direct_transition_processor=True,
+    )
+    assert not _fresh_public_transition_acquisition(
+        window_tissue_mode="scoped_lora",
+        public_action_program=True,
+        direct_transition_processor=True,
+    )
+    assert not _fresh_public_transition_acquisition(
+        window_tissue_mode="controller_only",
+        public_action_program=False,
+        direct_transition_processor=True,
+    )
+    assert not _fresh_public_transition_acquisition(
+        window_tissue_mode="controller_only",
+        public_action_program=True,
+        direct_transition_processor=False,
+    )
 
 
 def test_streamed_recurrent_gradients_equal_monolithic_objective() -> None:
