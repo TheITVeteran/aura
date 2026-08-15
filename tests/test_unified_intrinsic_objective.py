@@ -805,6 +805,70 @@ def test_direct_transition_forward_path_is_invariant_to_future_gold_states() -> 
     assert captures[0] == captures[1]
 
 
+def test_direct_transition_tape_never_reads_future_public_actions() -> None:
+    controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
+
+    def evidence(
+        final_value: int,
+        future_operand: int,
+    ) -> tuple[StructuredTransitionTrace, StructuredTransitionProgram]:
+        trace = StructuredTransitionTrace(
+            family="boolean",
+            depth=2,
+            field_names=("pc", "value", "done"),
+            states=((0, 0, 0), (1, 1, 0), (2, final_value, 1)),
+        )
+        return trace, StructuredTransitionProgram(
+            state_trace=trace,
+            action_field_names=("opcode", "operand", "has_operand"),
+            actions=((0, 1, 1), (1, future_operand, 1)),
+        )
+
+    first_trace, first_program = evidence(0, 0)
+    second_trace, second_program = evidence(1, 1)
+    first_reads: list[tuple[float, ...]] = []
+    original = controller.typed_transition_processor_logits
+
+    for trace, program in (
+        (first_trace, first_program),
+        (second_trace, second_program),
+    ):
+        reads: list[tuple[float, ...]] = []
+
+        def capture(
+            state_probabilities,
+            action_probabilities,
+            history_memory,
+            *,
+            opcode_expert_routing="opcode",
+            _reads=reads,
+        ):
+            mx.eval(history_memory)
+            _reads.append(tuple(float(value) for value in history_memory.flatten().tolist()))
+            return original(
+                state_probabilities,
+                action_probabilities,
+                history_memory,
+                opcode_expert_routing=opcode_expert_routing,
+            )
+
+        controller.typed_transition_processor_logits = capture
+        try:
+            public_actions = action_targets_from_program(program, 2).values
+            unified_typed_transition_processor_loss(
+                controller,
+                _spec().plan_at(2),
+                transition_trace=trace,
+                transition_program=program,
+                public_action_values=public_actions,
+            )
+        finally:
+            controller.typed_transition_processor_logits = original
+        first_reads.append(reads[0])
+
+    assert first_reads[0] == first_reads[1]
+
+
 def test_direct_transition_objective_learns_exact_trace() -> None:
     controller = _controller(literal_digit_token_ids=tuple(range(10, 20)))
     trace = StructuredTransitionTrace(

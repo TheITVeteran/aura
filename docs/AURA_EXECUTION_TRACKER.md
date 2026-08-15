@@ -49723,3 +49723,29 @@ signed training identity. The next mechanism step is a non-destructive public
 tape reader plus primitive and compositional coverage, followed by a bounded
 1.5B canary. No decoded gain, resident transfer, fusion or `WOW Signal` is
 claimed.
+
+## Checkpoint 2026-08-14-502: Let The Processor Read The Public Tape It Must Use
+
+CP501 proved that the complete public action prefix makes every observed
+transition identifiable, while the local five-register state and current
+action do not. The prior gated transition memory nevertheless compressed that
+prefix into one learned summary before the processor could ask what it needed.
+For mathematics, coding and calibration, success therefore depended on an
+unproven lossy bottleneck preserving information the supervised state omits.
+
+The processor now retains the complete current causal prefix as typed
+categorical entries until read time. Each state register forms a query from its
+current typed state and current public action, addresses content and position
+keys across the prefix, and reads public values without receiving a future
+action, private transition state, answer token or verifier result. The existing
+gated memory remains as a complementary summary; it is no longer the only
+history path. A zero final projection makes the new reader bitwise inert when
+attached to an existing controller, and bootstrap receipts bind every tensor,
+shape and digest while refusing partial or behavior-changing extensions.
+
+Contracts prove zero-attachment, order sensitivity, query conditioning,
+future-prefix boundaries, checkpoint migration and end-to-end train/deploy
+compatibility. The focused RLC transition set is `223 passed`. This checkpoint
+establishes information availability, not acquisition. Primitive-local then
+closed-loop compositional curriculum, gradient observability and verified
+error-recovery training remain required before the next bounded canary.

@@ -142,6 +142,15 @@ TRANSITION_MEMORY_PARAMETER_NAMES: Final = (
     "transition_memory_depth",
     "transition_memory_output",
 )
+TRANSITION_TAPE_READER_PARAMETER_NAMES: Final = (
+    "transition_tape_key",
+    "transition_tape_value",
+    "transition_tape_position_key",
+    "transition_tape_position_value",
+    "transition_tape_state_query",
+    "transition_tape_action_query",
+    "transition_tape_output",
+)
 TRANSITION_PROCESSOR_PARAMETER_NAMES: Final = (
     "transition_processor_state_projection",
     "transition_processor_action_left",
@@ -422,6 +431,17 @@ class UnifiedRecurrentController(nn.Module):
             key_transition_processor_down,
         ) = mx.random.split(
             mx.random.key(config.initialization_seed ^ 0x54505243),
+            num=6,
+        )
+        (
+            key_transition_tape_key,
+            key_transition_tape_value,
+            key_transition_tape_position_key,
+            key_transition_tape_position_value,
+            key_transition_tape_state_query,
+            key_transition_tape_action_query,
+        ) = mx.random.split(
+            mx.random.key(config.initialization_seed ^ 0x54504552),
             num=6,
         )
         scale = 1.0 / math.sqrt(config.hidden_size)
@@ -744,6 +764,82 @@ class UnifiedRecurrentController(nn.Module):
             (
                 config.state_slots,
                 config.action_slots,
+                config.correction_rank,
+                config.correction_rank,
+            ),
+            dtype=mx.float32,
+        )
+        # The gated memory above is a useful learned summary, but it is not an
+        # information-preserving view of the public program.  Three frontier
+        # families have legal transitions that are ambiguous from local state
+        # and current action yet identifiable from the complete public prefix.
+        # Keep that prefix intact and let every state register query it at the
+        # moment of transition.  Only the final projection is zero-attached,
+        # preserving exact parent behavior while avoiding an irreversible GRU
+        # bottleneck once this reader is trained.
+        tape_scale = 1.0 / math.sqrt(config.correction_rank)
+        self.transition_tape_key = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_tape_key,
+            ).astype(mx.float32)
+            * tape_scale
+        )
+        self.transition_tape_value = (
+            mx.random.normal(
+                (
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_tape_value,
+            ).astype(mx.float32)
+            * tape_scale
+        )
+        self.transition_tape_position_key = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_tape_position_key,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.transition_tape_position_value = (
+            mx.random.normal(
+                (config.depth_basis_size, config.correction_rank),
+                key=key_transition_tape_position_value,
+            ).astype(mx.float32)
+            * 0.01
+        )
+        self.transition_tape_state_query = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.state_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_tape_state_query,
+            ).astype(mx.float32)
+            * tape_scale
+        )
+        self.transition_tape_action_query = (
+            mx.random.normal(
+                (
+                    config.state_slots,
+                    config.action_slots,
+                    config.action_cardinality,
+                    config.correction_rank,
+                ),
+                key=key_transition_tape_action_query,
+            ).astype(mx.float32)
+            / math.sqrt(config.action_slots * config.correction_rank)
+        )
+        self.transition_tape_output = mx.zeros(
+            (
+                config.state_slots,
                 config.correction_rank,
                 config.correction_rank,
             ),
@@ -1953,6 +2049,9 @@ class UnifiedRecurrentController(nn.Module):
     def _typed_transition_memory(
         self,
         action_probability_history: Sequence[Any],
+        *,
+        state_probabilities: Any | None = None,
+        action_probabilities: Any | None = None,
     ) -> Any:
         """Compose the public action tape without collapsing typed fields.
 
@@ -2034,10 +2133,100 @@ class UnifiedRecurrentController(nn.Module):
                 + depth[None, None, :]
             )
             memory = (1.0 - update) * memory + update * candidate
-        return mx.einsum(
+        summary = mx.einsum(
             "bar,saro->bso",
             memory,
             self.transition_memory_output,
+        )
+        if state_probabilities is None and action_probabilities is None:
+            return summary
+        if state_probabilities is None or action_probabilities is None:
+            raise ValueError("typed transition tape query is incomplete")
+        return summary + self._typed_transition_tape_read(
+            action_probability_history,
+            state_probabilities=state_probabilities,
+            action_probabilities=action_probabilities,
+        )
+
+    def _typed_transition_tape_read(
+        self,
+        action_probability_history: Sequence[Any],
+        *,
+        state_probabilities: Any,
+        action_probabilities: Any,
+    ) -> Any:
+        """Query the intact causal public-action prefix without future access."""
+
+        batch_size = int(state_probabilities.shape[0])
+        if state_probabilities.shape != (
+            batch_size,
+            self.config.state_slots,
+            self.config.state_cardinality,
+        ) or action_probabilities.shape != (
+            batch_size,
+            self.config.action_slots,
+            self.config.action_cardinality,
+        ):
+            raise ValueError("typed transition tape query shape differs")
+        if not action_probability_history or any(
+            probabilities.shape
+            != (
+                batch_size,
+                self.config.action_slots,
+                self.config.action_cardinality,
+            )
+            for probabilities in action_probability_history
+        ):
+            raise ValueError("typed transition tape prefix differs")
+
+        committed_tape = mx.stack(
+            tuple(
+                probabilities.astype(mx.float32)
+                for probabilities in action_probability_history
+            ),
+            axis=1,
+        )
+        keys = mx.einsum(
+            "btac,acr->btar",
+            committed_tape,
+            self.transition_tape_key,
+        )
+        values = mx.einsum(
+            "btac,acr->btar",
+            committed_tape,
+            self.transition_tape_value,
+        )
+        positions = mx.stack(
+            tuple(self.depth_features(step) for step in range(len(action_probability_history))),
+            axis=0,
+        )
+        keys = keys + (positions @ self.transition_tape_position_key)[None, :, None, :]
+        values = values + (
+            positions @ self.transition_tape_position_value
+        )[None, :, None, :]
+        query = mx.einsum(
+            "bsc,scr->bsr",
+            state_probabilities.astype(mx.float32),
+            self.transition_tape_state_query,
+        ) + mx.einsum(
+            "bac,sacr->bsr",
+            action_probabilities.astype(mx.float32),
+            self.transition_tape_action_query,
+        )
+        attention_logits = mx.einsum("bsr,btar->bsta", query, keys) / math.sqrt(
+            self.config.correction_rank
+        )
+        flattened = attention_logits.reshape(
+            batch_size,
+            self.config.state_slots,
+            -1,
+        )
+        attention = mx.softmax(flattened, axis=-1).reshape(attention_logits.shape)
+        read = mx.einsum("bsta,btar->bsr", attention, values)
+        return mx.einsum(
+            "bsi,sio->bso",
+            read,
+            self.transition_tape_output,
         )
 
     def _categorical_identity_features(self, probabilities: Any) -> Any:
@@ -2323,7 +2512,9 @@ class UnifiedRecurrentController(nn.Module):
                     0.5 * history + historical_action + historical_depth[None, :]
                 )
             typed_memory = self._typed_transition_memory(
-                action_probability_history
+                action_probability_history,
+                state_probabilities=state_probabilities,
+                action_probabilities=action_probabilities,
             )
             features = mx.tanh(
                 features + history[:, None, :] + typed_memory
@@ -3591,6 +3782,7 @@ class UnifiedRecurrentController(nn.Module):
             *ACTION_LITERAL_BINDING_PARAMETER_NAMES,
             "state_action_projection",
             *TRANSITION_MEMORY_PARAMETER_NAMES,
+            *TRANSITION_TAPE_READER_PARAMETER_NAMES,
             *TRANSITION_PROCESSOR_PARAMETER_NAMES,
             *TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
             "literal_value_embeddings",
@@ -3624,7 +3816,9 @@ class UnifiedRecurrentController(nn.Module):
                 "private_answer_exposed": False,
             },
             "state_transition_memory": {
-                "architecture": "slot_preserving_gated_recurrent_tape",
+                "architecture": (
+                    "slot_preserving_gated_summary_plus_causal_public_tape_reader"
+                ),
                 "field_order": list(ACTION_SLOT_NAMES),
                 "state_register_order": list(STATE_SLOT_NAMES),
                 "current_and_prior_actions_visible": True,
@@ -3632,6 +3826,15 @@ class UnifiedRecurrentController(nn.Module):
                 "private_transition_trace_visible": False,
                 "bootstrap_contract": "zero_output_exact_parent_noop",
                 "output_active": bool(mx.any(self.transition_memory_output != 0)),
+                "public_tape_reader": {
+                    "prefix_retained_before_query": True,
+                    "query_conditioning": "current_typed_state_and_action",
+                    "position_encoding": "bounded_rational_polynomial",
+                    "future_action_visible": False,
+                    "private_transition_trace_visible": False,
+                    "bootstrap_contract": "zero_output_exact_parent_noop",
+                    "output_active": bool(mx.any(self.transition_tape_output != 0)),
+                },
             },
             "state_transition_processor": {
                 "architecture": "typed_categorical_higher_order_register_processor",
@@ -4477,6 +4680,7 @@ __all__ = [
     "MAX_PROCESS_INTEGER",
     "PROCESS_RADIX",
     "TRANSITION_MEMORY_PARAMETER_NAMES",
+    "TRANSITION_TAPE_READER_PARAMETER_NAMES",
     "TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES",
     "TRANSITION_PROCESSOR_PARAMETER_NAMES",
     "UNIFIED_INTRINSIC_RECURRENCE_SCHEMA",

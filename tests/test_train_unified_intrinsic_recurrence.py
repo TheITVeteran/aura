@@ -39,6 +39,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
@@ -86,6 +87,7 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
     _merge_bootstrap_transition_memory_extension,
     _merge_bootstrap_transition_opcode_expert_extension,
     _merge_bootstrap_transition_processor_extension,
+    _merge_bootstrap_transition_tape_reader_extension,
     _model_identity,
     _model_lane_purpose,
     _optimization_phase,
@@ -358,6 +360,42 @@ def test_bootstrap_transition_memory_rejects_partial_or_active_extension() -> No
     }
     with pytest.raises(RuntimeError, match="transition memory is not a no-op"):
         _merge_bootstrap_transition_memory_extension(parent, child)
+
+
+def test_bootstrap_transition_tape_reader_is_exact_and_audited() -> None:
+    parent = {"controller.transition_memory_output": mx.ones((2, 3))}
+    child = {
+        **parent,
+        **{
+            f"controller.{name}": mx.ones((2, 2), dtype=mx.float32)
+            for name in TRANSITION_TAPE_READER_PARAMETER_NAMES
+            if name != "transition_tape_output"
+        },
+        "controller.transition_tape_output": mx.zeros((2, 2)),
+    }
+
+    migrated, receipt = _merge_bootstrap_transition_tape_reader_extension(
+        parent, child
+    )
+
+    assert receipt is not None
+    assert receipt["behavior_before_training_preserved"] is True
+    assert receipt["current_prefix_retained_before_query"] is True
+    assert receipt["future_action_visible"] is False
+    assert set(migrated) == set(child)
+    assert set(receipt["new_tensor_names"]) == set(child) - set(parent)
+
+    partial_parent = {
+        **parent,
+        "controller.transition_tape_key": child["controller.transition_tape_key"],
+    }
+    with pytest.raises(RuntimeError, match="transition-tape inventory differs"):
+        _merge_bootstrap_transition_tape_reader_extension(partial_parent, child)
+
+    active = dict(child)
+    active["controller.transition_tape_output"] = mx.ones((2, 2))
+    with pytest.raises(RuntimeError, match="tape reader is not a no-op"):
+        _merge_bootstrap_transition_tape_reader_extension(parent, active)
 
 
 def test_bootstrap_transition_processor_extension_is_exact_and_audited() -> None:
@@ -2854,6 +2892,8 @@ def test_bootstrap_extends_legacy_parent_with_reader_action_workspace_and_transi
         delattr(parent.controller, name)
     for name in TRANSITION_MEMORY_PARAMETER_NAMES:
         delattr(parent.controller, name)
+    for name in TRANSITION_TAPE_READER_PARAMETER_NAMES:
+        delattr(parent.controller, name)
     for name in TRANSITION_PROCESSOR_PARAMETER_NAMES:
         delattr(parent.controller, name)
     parent_values = {name: value + 0 for name, value in _trainable(parent).items()}
@@ -2920,6 +2960,12 @@ def test_bootstrap_extends_legacy_parent_with_reader_action_workspace_and_transi
     assert transition_extension["behavior_before_training_preserved"] is True
     assert set(transition_extension["new_tensor_names"]) == {
         f"controller.{name}" for name in TRANSITION_MEMORY_PARAMETER_NAMES
+    }
+    tape_extension = receipt["transition_tape_reader_extension"]
+    assert tape_extension["parent_tensor_inventory_preserved"] is True
+    assert tape_extension["behavior_before_training_preserved"] is True
+    assert set(tape_extension["new_tensor_names"]) == {
+        f"controller.{name}" for name in TRANSITION_TAPE_READER_PARAMETER_NAMES
     }
     processor_extension = receipt["transition_processor_extension"]
     assert processor_extension["parent_tensor_inventory_preserved"] is True

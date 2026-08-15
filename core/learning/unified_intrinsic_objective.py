@@ -1151,7 +1151,11 @@ def unified_typed_transition_processor_loss(
             cardinality=controller.config.action_cardinality,
         )
         action_history.append(action_probabilities)
-        history_memory = controller._typed_transition_memory(action_history)
+        history_memory = controller._typed_transition_memory(
+            action_history,
+            state_probabilities=state_probabilities,
+            action_probabilities=action_probabilities,
+        )
         logits = controller.resolve_transition_processor_logits(
             None,
             state_probabilities,

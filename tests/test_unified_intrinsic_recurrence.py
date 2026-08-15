@@ -1125,6 +1125,90 @@ def test_typed_transition_memory_preserves_field_identity_and_order() -> None:
     assert not bool(mx.allclose(forward, field_swapped))
 
 
+def test_public_transition_tape_reader_is_zero_attached() -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (0, 3, 5, 7, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 2, 3, 4, 5, 6, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    read = controller._typed_transition_tape_read(
+        (action,),
+        state_probabilities=state,
+        action_probabilities=action,
+    )
+
+    mx.eval(read)
+    assert read.shape == (
+        1,
+        controller.config.state_slots,
+        controller.config.correction_rank,
+    )
+    assert bool(mx.all(read == 0))
+
+
+def test_public_transition_tape_reader_retains_order_and_query_context() -> None:
+    controller = _controller()
+    controller.transition_memory_output = mx.zeros_like(
+        controller.transition_memory_output
+    )
+    controller.transition_tape_output = mx.random.normal(
+        controller.transition_tape_output.shape,
+        key=mx.random.key(131),
+    )
+    state = controller.exact_probabilities(
+        (0, 3, 5, 7, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    changed_state = controller.exact_probabilities(
+        (0, 3, 9, 7, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    first = controller.exact_probabilities(
+        (8, 1, 2, 3, 4, 5, 6, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    second = controller.exact_probabilities(
+        (9, 6, 5, 4, 3, 2, 1, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+    current = controller.exact_probabilities(
+        (10, 11, 12, 13, 14, 15, 16, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    forward = controller._typed_transition_memory(
+        (first, second, current),
+        state_probabilities=state,
+        action_probabilities=current,
+    )
+    reversed_prefix = controller._typed_transition_memory(
+        (second, first, current),
+        state_probabilities=state,
+        action_probabilities=current,
+    )
+    changed_query = controller._typed_transition_memory(
+        (first, second, current),
+        state_probabilities=changed_state,
+        action_probabilities=current,
+    )
+
+    mx.eval(forward, reversed_prefix, changed_query)
+    assert not bool(mx.allclose(forward, reversed_prefix))
+    assert not bool(mx.allclose(forward, changed_query))
+
+
 def test_typed_transition_processor_attaches_as_exact_noop() -> None:
     controller = _controller()
     state = controller.exact_probabilities(
