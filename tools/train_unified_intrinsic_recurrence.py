@@ -241,12 +241,21 @@ class _DisjointPathMultiOptimizer(optim.MultiOptimizer):
     def apply_gradients(self, gradients: dict, parameters: dict) -> dict:
         updated: list[tuple[str, Any]] = []
         seen: set[str] = set()
-        for optimizer, group in zip(
+        gradient_groups = self._split_dictionary(  # noqa: SLF001
+            gradients
+        )
+        parameter_groups = self._split_dictionary(  # noqa: SLF001
+            parameters
+        )
+        for optimizer, gradient_group, parameter_group in zip(
             self.optimizers,
-            self._split_dictionary(gradients),  # noqa: SLF001 - repair MLX merge defect
+            gradient_groups,
+            parameter_groups,
             strict=True,
         ):
-            for name, value in tree_flatten(optimizer.apply_gradients(group, parameters)):
+            for name, value in tree_flatten(
+                optimizer.apply_gradients(gradient_group, parameter_group)
+            ):
                 if name in seen:
                     raise ValueError("optimizer ownership paths overlap")
                 seen.add(name)

@@ -15,7 +15,7 @@ nn = pytest.importorskip("mlx.nn")
 optim = pytest.importorskip("mlx.optimizers")
 pytest.importorskip("mlx_lm")
 
-from mlx.utils import tree_flatten  # noqa: E402
+from mlx.utils import tree_flatten, tree_unflatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
@@ -2920,6 +2920,39 @@ def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> 
 
     with pytest.raises(ValueError, match=r"inside \[0, 1\]"):
         _ownership_optimizer(0.01, transformer_rate_scale=1.1)
+
+
+def test_ownership_optimizer_updates_after_eager_disjoint_state_initialization() -> None:
+    parameters = {
+        "model": {
+            "layers": [
+                {
+                    "self_attn": {
+                        "o_proj": {"lora_a": mx.array([1.0])},
+                    }
+                }
+            ],
+        },
+        "controller": {
+            "transition_processor_opcode_hidden": [
+                mx.array([1.0]),
+                mx.array([2.0]),
+            ],
+            "transition_processor_output": mx.array([3.0]),
+        },
+    }
+    gradients = tree_unflatten(
+        [(name, mx.ones_like(value)) for name, value in tree_flatten(parameters)]
+    )
+    optimizer = _ownership_optimizer(0.01, transformer_rate_scale=0.1)
+    optimizer.init(parameters)
+
+    updated = optimizer.apply_gradients(gradients, parameters)
+    mx.eval(updated, optimizer.state)
+
+    assert {name for name, _value in tree_flatten(updated)} == {
+        name for name, _value in tree_flatten(parameters)
+    }
 
 
 def test_checkpoint_roundtrip_restores_exact_trainable_state(tmp_path: Path) -> None:
