@@ -42,6 +42,7 @@ def test_decode_context_leaves_wording_to_the_model_and_preserves_semantics() ->
     assert "witness_length" not in context
     assert "witness_slots" not in context
     assert ":0" not in context
+    assert "do not wrap it in Markdown or a code fence" in context
 
 
 def test_no_write_lesion_changes_the_semantic_state_before_decode() -> None:

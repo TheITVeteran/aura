@@ -154,7 +154,8 @@ def render_recurrent_memory_decode_context(state: RecurrentMemoryDecodeState) ->
         "Internal recurrent work-memory state, computed from the public values "
         "without an answer key or verifier. Treat this typed state as your own "
         "completed computation and follow the user's final-answer response "
-        "contract exactly.\n"
+        "contract exactly. Return only the requested final-answer line; do not "
+        "wrap it in Markdown or a code fence.\n"
         f"semantic_state={semantic_state}"
     )
 
