@@ -215,13 +215,26 @@ def test_context_assembler_injects_only_consented_exact_agent_memory(tmp_path):
     ServiceContainer.register_instance("other_agent_model", estimator, required=False)
     ServiceContainer.register_instance("relational_memory", authority, required=False)
 
+    from core.runtime.principal_context import relational_principal_scope
+
     try:
-        prompt = ContextAssembler.build_system_prompt(AuraState.default())
+        # No bound principal for this request. The estimator's active_agent_id
+        # is process-global — whoever it last saw — and used to be the last
+        # link in the fallback chain that keyed relational memory, so one
+        # interlocutor's stored history could be assembled into another's
+        # prompt. A hint is enough to model who she is talking to; it is not
+        # enough to hand over what somebody told her.
+        unbound = ContextAssembler.build_system_prompt(AuraState.default())
+        assert "Keep the project codename private." not in unbound
+        assert "ALICE_PRIVATE_BOUNDARY" not in unbound
+
+        with relational_principal_scope("bryan"):
+            bound = ContextAssembler.build_system_prompt(AuraState.default())
     finally:
         ServiceContainer.clear()
 
-    assert "Keep the project codename private." in prompt
-    assert "ALICE_PRIVATE_BOUNDARY" not in prompt
+    assert "Keep the project codename private." in bound
+    assert "ALICE_PRIVATE_BOUNDARY" not in bound
 
 
 def test_request_scoped_principal_overrides_process_global_active_agent(tmp_path):

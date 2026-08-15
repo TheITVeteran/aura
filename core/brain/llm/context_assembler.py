@@ -1474,41 +1474,78 @@ class ContextAssembler:
         # Prefer the causal request principal, then the exact situation frame.
         # The process-global active agent is compatibility-only for legacy paths.
         social_block = ""
-        agent_id = ""
+        # Two different things were being called agent_id. Only one of them is
+        # allowed to key stored personal memory.
+        #
+        #   bound_agent   the principal THIS request is running under, from the
+        #                 request-scoped context variable. Nothing outside the
+        #                 request can set it.
+        #   hinted_agent  a name from the caller's situation frame, or
+        #                 other_agent_model.active_agent_id — process-global
+        #                 mutable state holding whoever the estimator last saw.
+        #
+        # The fallback chain ended at that global, and the result keyed
+        # relational memory. One interlocutor's stored history could therefore
+        # be assembled into a different interlocutor's prompt, under a comment
+        # promising exact-grant eligibility that nothing checked here.
+        bound_agent = ""
+        hinted_agent = ""
         try:
-            from core.runtime.principal_context import current_relational_principal
+            from core.runtime.principal_context import (
+                current_relational_principal,
+                relational_principal_scope_is_bound,
+            )
 
             estimator = ServiceContainer.get("other_agent_model", default=None)
-            agent_id = current_relational_principal()
-            if not agent_id:
-                situation_frame = response_mods.get(
-                    "cognitive_situation_frame"
-                ) or mods.get("cognitive_situation_frame")
-                if isinstance(situation_frame, dict):
-                    agent_id = " ".join(
-                        str(situation_frame.get("agent_id") or "").strip().split()
-                    )[:160]
-            if not agent_id:
-                agent_id = " ".join(
+            if relational_principal_scope_is_bound():
+                bound_agent = current_relational_principal()
+            situation_frame = response_mods.get(
+                "cognitive_situation_frame"
+            ) or mods.get("cognitive_situation_frame")
+            if isinstance(situation_frame, dict):
+                hinted_agent = " ".join(
+                    str(situation_frame.get("agent_id") or "").strip().split()
+                )[:160]
+            if not hinted_agent:
+                hinted_agent = " ".join(
                     str(getattr(estimator, "active_agent_id", "") or "")
                     .strip()
                     .split()
                 )[:160]
+            # Theory-of-mind colour may run on a hint: it is a model of who she
+            # is talking to, not a disclosure of what someone told her.
+            tom_agent = bound_agent or hinted_agent
             if (
                 not cognitive_situation_context
                 and estimator
-                and agent_id
+                and tom_agent
                 and hasattr(estimator, "context_injection")
             ):
-                social_block = str(estimator.context_injection(agent_id) or "").strip()
+                social_block = str(estimator.context_injection(tom_agent) or "").strip()
                 if social_block:
-                    base += f"\n{social_block}\n"
+                    base += "\n" + envelope.wrap(
+                        "SOCIAL_MODEL", social_block, trust=Trust.UNTRUSTED
+                    )
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("ToM injection failed (non-critical): %s", _e)
+        agent_id = bound_agent
 
-        # Identity-scoped relational memory is prompt-eligible only under an exact grant.
+        # Identity-scoped relational memory is prompt-eligible only under an
+        # exact grant, and `agent_id` is now the bound principal alone. A hint
+        # is enough to model who she is talking to; it is not enough to hand
+        # over what somebody else told her.
         relational_block = ""
+        if hinted_agent and not bound_agent:
+            record_degradation(
+                "context_assembler.relational_scope",
+                RuntimeError(
+                    "relational memory withheld: no bound principal for this request "
+                    f"(hint was {hinted_agent[:60]!r})"
+                ),
+                severity="warning",
+                action="assembled the prompt without identity-scoped relational memory",
+            )
         try:
             relational_memory = ServiceContainer.get("relational_memory", default=None)
             if (

@@ -157,3 +157,27 @@ def test_the_binding_carries_the_principal_the_gate_recognised():
 
     assert '"principal": current_relational_principal()' in block
     assert '"principal_scope_bound": relational_principal_scope_is_bound()' in block
+
+
+def test_a_process_global_agent_id_cannot_key_stored_memory():
+    """other_agent_model.active_agent_id holds whoever the estimator last saw.
+    It was the last link in the fallback chain that keyed relational memory, so
+    one interlocutor's stored history could be assembled into another's
+    prompt."""
+    source = (ROOT / "core" / "brain" / "llm" / "context_assembler.py").read_text("utf-8")
+    # Anchor on the read of the global, not on the comment that names it.
+    marker = source.index('getattr(estimator, "active_agent_id"')
+    block = source[marker : source.index("relational_memory.prompt_block")]
+
+    assert "hinted_agent" in block
+    assert "agent_id = bound_agent" in block, (
+        "the identity that keys relational memory is not the bound one"
+    )
+    assert "agent_id = hinted_agent" not in source
+
+
+def test_withholding_relational_memory_is_recorded():
+    source = (ROOT / "core" / "brain" / "llm" / "context_assembler.py").read_text("utf-8")
+
+    assert '"context_assembler.relational_scope"' in source
+    assert "relational memory withheld" in source
