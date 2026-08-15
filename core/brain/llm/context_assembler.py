@@ -49,6 +49,14 @@ _WORLD_MAX_PREFERENCES = 32
 _WORLD_NAME_MAX_CHARS = 80
 _WORLD_VALUE_MAX_CHARS = 200
 
+#: Sources a dialogue message may carry and still count as something that was
+#: actually said between two parties. Anything else labelled is somebody's
+#: bookkeeping.
+_FOREGROUND_DIALOGUE_SOURCES = frozenset({
+    "api", "chat", "desktop", "direct", "external", "gui", "user", "voice",
+    "web", "websocket", "ws",
+})
+
 #: Origins that mean a person is on the other end. Background ticks, dreams
 #: and consolidation runs assemble prompts too, and none of them has anybody
 #: waiting.
@@ -62,6 +70,11 @@ _USER_FACING_ORIGINS = frozenset({
 #: enough to cover thinking time, short enough that an abandoned session stops
 #: claiming an audience.
 _USER_PRESENCE_WINDOW_S = 300.0
+
+#: How many topic-matched memories reach the prompt. Unchanged from the value
+#: this filter has always used; what changed is that five is now a ceiling on
+#: matches rather than a quota filled with non-matches.
+_TOPIC_MEMORY_LIMIT = 5
 
 _BLACK_BOX_RECEIPT_SCHEMA = "aura.context_assembler.black_box_receipt.v1"
 
@@ -476,7 +489,20 @@ class ContextAssembler:
         }
         try:
             from core.conversation.response_reliability import is_non_answer_repair_floor_reply
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError) as _rr_exc:
+            # The stub returned False, so every repair-floor reply — "Give me a
+            # moment", "I'm having trouble with that" — was admitted into the
+            # conversation history as an ordinary prior turn, and the model
+            # learned the shape of a non-answer from her own transcript. A
+            # screen that disappears has to say so; it is not a screen that
+            # passed.
+            record_degradation(
+                "context_assembler.repair_floor_screen",
+                _rr_exc,
+                severity="warning",
+                action="admitted assistant replies without the repair-floor screen",
+            )
+
             def is_non_answer_repair_floor_reply(_text: str) -> bool:
                 return False
         for message in working_memory:
@@ -517,8 +543,16 @@ class ContextAssembler:
                 continue
             if source in background_sources or any(source.startswith(prefix) for prefix in background_prefixes):
                 continue
-            if role == "user" and source and not cls._objective_targets_skill(state, objective, source):
-                if source not in {"user", "api", "chat", "desktop", "direct", "external", "gui", "voice", "web", "websocket", "ws"}:
+            # The lists above are a denylist, and a denylist admits whatever
+            # nobody has added to it yet: every new background writer defaulted
+            # to "conversation" until someone noticed, which is how spontaneous
+            # thoughts and somatic noise reached the prompt as her own prior
+            # turns. A labelled message now has to name a FOREGROUND source to
+            # count as dialogue. An unlabelled one still passes — plain
+            # conversation carries no source, and requiring one would delete
+            # the ordinary case.
+            if source and source not in _FOREGROUND_DIALOGUE_SOURCES:
+                if not cls._objective_targets_skill(state, objective, source):
                     continue
             if role == "assistant" and is_non_answer_repair_floor_reply(message.get("content", "")):
                 continue
@@ -2568,24 +2602,47 @@ class ContextAssembler:
 
     @staticmethod
     def _filter_memories_by_topic(memories: list[str], topic: str | None) -> list[str]:
-        """Prioritize memories that contain keywords from the current focus topic."""
+        """Memories that share a word with the current focus, and only those.
+
+        This scored every memory and returned the top five whatever the scores
+        were, so when nothing matched it handed back five unrelated memories
+        that the prompt then presented as recall about the topic. "Top five" is
+        a ranking, and a ranking of nothing is still five things. Zero-score
+        entries are dropped, which is the difference between "here is what I
+        remember about this" and "here are five memories".
+
+        Matching is still raw substring, which over-matches — "form" inside
+        "performance" — so word boundaries are required. It remains lexical:
+        embedding recall lives in the memory system, and this is the
+        last-resort narrowing applied to whatever that already returned.
+        """
         if not topic:
             return memories
-            
-        topic_keywords = set(topic.lower().split())
+
+        topic_keywords = {
+            kw for kw in re.findall(r"[\w']+", topic.lower()) if len(kw) > 3
+        }
+        if not topic_keywords:
+            return memories[:_TOPIC_MEMORY_LIMIT]
+
         scored_memories = []
-        
         for mem in memories:
-            score = 0
-            mem_lower = mem.lower()
-            for kw in topic_keywords:
-                if len(kw) > 3 and kw in mem_lower:
-                    score += 1
-            scored_memories.append((score, mem))
-            
-        # OPT-01: Use heapq.nlargest for O(n) top-k instead of O(n log n) sort
+            mem_words = set(re.findall(r"[\w']+", str(mem).lower()))
+            score = len(topic_keywords & mem_words)
+            if score:
+                scored_memories.append((score, mem))
+
+        if not scored_memories:
+            # Nothing in this set is about the topic. Saying so by returning
+            # nothing is more useful than returning the five highest-ranked
+            # non-matches.
+            return []
+
         import heapq
-        top = heapq.nlargest(5, scored_memories, key=lambda x: x[0])
+
+        top = heapq.nlargest(
+            _TOPIC_MEMORY_LIMIT, scored_memories, key=lambda x: x[0]
+        )
         return [m[1] for m in top]
 
     @staticmethod
