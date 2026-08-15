@@ -514,6 +514,12 @@ class CortexConfig:
     # vanilla incumbent. Coupling the two either moved the floor or left every
     # candidate ungradeable.
     verifier_probe_contract: str = "none"
+    # What a caller-supplied branch verifier IS. "advisory" means it guides
+    # selection when the budget allows and the internal score stands in when
+    # it does not. "required" means the caller supplied it as a correctness
+    # gate, so an episode that cannot pay for branch verification fails
+    # instead of quietly selecting on the ensemble's own score.
+    branch_verifier_mode: str = "advisory"
     # Fresh-context generative challenge lane. It shares the resident
     # checkpoint but imports no solver KV state; generated prose has no
     # authority unless a deterministic witness relation reconstructs.
@@ -785,6 +791,8 @@ class CortexConfig:
             )
         if not integer_in(self.verifier_probe_max_tokens, 16, 512):
             problems.append("verifier_probe_max_tokens outside [16, 512]")
+        if self.branch_verifier_mode not in {"advisory", "required"}:
+            problems.append("branch_verifier_mode must be 'advisory' or 'required'")
         if self.verifier_probe_contract not in {"none", "final_answer_v1"}:
             problems.append(
                 "verifier_probe_contract must be 'none' or 'final_answer_v1'"
@@ -1566,6 +1574,24 @@ class EpisodeReceipt:
     # the adaptation on regression — the verifier, not the proxy, has the
     # last word over fast weights too. Empty when arbitration did not run.
     fast_weight_verifier: dict[str, Any] = field(default_factory=dict)
+    # `ok` on the result says the machinery ran and produced text. It has
+    # never said the answer was checked, or that the recurrence helped — the
+    # task verifier is optional, branch selection can fall back to the
+    # ensemble's internal score, and latent optimization can descend on a
+    # proxy. Downstream code that wanted "this episode improved reasoning"
+    # had only `ok` to read, so these two say what `ok` does not.
+    # What backs the recurrence on THIS checkpoint: a registered architecture
+    # with paired evidence, a declared positional contract and nothing more,
+    # or neither. Structural access proves the call succeeds; it has never
+    # proved the repetition means anything.
+    recurrence_support: dict[str, Any] = field(default_factory=dict)
+    # Whether the prompt cache the adapted probes and the final decode read was
+    # filled under the same weights they run under. Empty when no fast weights
+    # attached.
+    fast_weight_cache_attestation: dict[str, Any] = field(default_factory=dict)
+    quality_verified: bool = False
+    gain_established: bool = False
+    verifier_identity: str = ""
     # Same learned U,V evaluated under none/recurrent/decode/both scopes.
     fast_weight_locality: dict[str, Any] = field(default_factory=dict)
     # Complete SPARK-055 contract: exact evidence admission, exclusive model
@@ -1744,6 +1770,15 @@ class EpisodeReceipt:
     def flag(self, name: str) -> None:
         if name not in self.honest_flags:
             self.honest_flags.append(name)
+
+    def has_flag(self, name: str) -> bool:
+        """True when this exact flag was raised. Prefixed flags carry a
+        detail suffix, so a caller wanting the family passes the prefix and
+        gets a prefix match."""
+
+        return any(
+            flag == name or flag.startswith(f"{name}:") for flag in self.honest_flags
+        )
 
     def integrity_verdicts(self) -> dict[str, Any]:
         """What the EVIDENCE supports about weight integrity, not what was asserted.
@@ -1963,6 +1998,13 @@ class EpisodeReceipt:
             "fast_weight_line_search_backtracks": (self.fast_weight_line_search_backtracks),
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
+            "recurrence_support": dict(self.recurrence_support),
+            "fast_weight_cache_attestation": dict(
+                self.fast_weight_cache_attestation
+            ),
+            "quality_verified": self.quality_verified,
+            "gain_established": self.gain_established,
+            "verifier_identity": self.verifier_identity,
             "fast_weight_locality": dict(self.fast_weight_locality),
             "fast_weight_learning": dict(self.fast_weight_learning),
             "verified_workspace_evidence": dict(

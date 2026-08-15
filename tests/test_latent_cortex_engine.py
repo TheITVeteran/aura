@@ -117,6 +117,12 @@ def _config(**overrides) -> CortexConfig:
         prelude_frac=0.25,
         coda_frac=0.25,
         decode_max_tokens=8,
+        # A random-weight tiny model samples EOS as its first token for some
+        # initializations, and an episode that generated nothing is now a
+        # failure rather than an empty success. These tests are about erase
+        # proofs and receipts, not about answer length, so they hold the
+        # ordinary serving floor that guarantees at least one token.
+        decode_min_tokens=1,
     )
     base.update(overrides)
     return CortexConfig(**base)

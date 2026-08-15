@@ -58,6 +58,40 @@ _TARGET_ATTRS = {
     "down_proj": ("mlp", "down_proj"),
 }
 
+# Targets whose adaptation provably cannot change any cached K/V value.
+#
+# It is empty, and that is the finding rather than an omission. The prompt
+# cache is filled under base weights and then reused by adapted probes and the
+# final decode. Both supported targets write into the residual stream, which
+# every LATER layer's k_proj and v_proj consume, so cached entries for those
+# layers describe a function that is no longer the one running. A target could
+# only join this set with a proof, and neither has one.
+CACHE_INDEPENDENT_TARGETS: frozenset[str] = frozenset()
+
+
+def target_cache_attestation(target: str) -> dict[str, Any]:
+    """What is true about reusing a base-weight cache under this target.
+
+    The alternative remedy is a full re-prefill after every attach, rescale
+    and erase. That is a different cost profile and needs its own paired
+    evidence; until it exists, the mixture is stated rather than implied.
+    """
+
+    independent = target in CACHE_INDEPENDENT_TARGETS
+    return {
+        "schema": "aura.fast_weights.cache_attestation.v1",
+        "target": str(target),
+        "cache_independent": independent,
+        "prefix_kv_under_base_weights": not independent,
+        "reason": (
+            "target proven not to affect any cached key/value"
+            if independent
+            else "target writes into the residual stream consumed by later "
+            "layers' k/v projections, so cached prefix entries were computed "
+            "under different weights"
+        ),
+    }
+
 
 def _linear_dimension_source(module):
     """Find the projection that owns shape metadata without bypassing wrappers.
@@ -408,10 +442,15 @@ class FastWeightsLifecycle:
     lease_conflicts: int = 0
     erase_probe_before_sha256: str = ""
     erase_probe_after_sha256: str = ""
+    # Module identities, live wrappers and parameter digests over every layer
+    # this episode touched. The probe can only say one input did not notice a
+    # residual; this says whether one is there.
+    structural_erase: dict[str, Any] = field(default_factory=dict)
 
     def to_receipt(self) -> dict[str, Any]:
         return {
             "attached_at": self.attached_at,
+            "structural_erase": dict(self.structural_erase),
             "layers": list(self.layers),
             "target": self.target,
             "rank": self.rank,
@@ -607,6 +646,10 @@ class EpisodicFastWeights:
         if not self.handles:
             self.detach()
             raise RuntimeError("fast-weight attachment selected no model layers")
+        self._attached_sites = [
+            (h.parent, h.attr, h.original, h.layer_index) for h in self.handles
+        ]
+        self._attached_parameter_sha256 = self._touched_parameter_sha256()
         self.lifecycle.attached_at = time.time()
         self.lifecycle.layers = [h.layer_index for h in self.handles]
         self.lifecycle.target = self.config.target
@@ -1589,17 +1632,91 @@ class EpisodicFastWeights:
         )
         lifecycle.budget_exhausted = bool(trace["budget_exhausted"])
 
+    def _touched_parameter_sha256(self) -> str:
+        """One digest over the parameters of every module this episode wrapped.
+
+        Taken at attach over the ORIGINAL modules and again after detach. A
+        residual mutation that an eight-token probe happens not to excite is
+        invisible behaviourally and obvious here.
+        """
+        import hashlib
+
+        import numpy as np
+
+        digest = hashlib.sha256(b"aura.fast_weights.touched_parameters.v1")
+        for parent, attr, original, layer_index in getattr(self, "_attached_sites", []):
+            digest.update(str(layer_index).encode())
+            digest.update(str(attr).encode())
+            del parent
+            for name in ("weight", "bias", "scales", "biases"):
+                value = getattr(original, name, None)
+                if value is None:
+                    continue
+                digest.update(name.encode())
+                digest.update(np.ascontiguousarray(np.array(value)).tobytes())
+        return digest.hexdigest()
+
+    def structural_erase_report(self) -> dict[str, Any]:
+        """What is measurably true about the model's structure after detach.
+
+        Byte equality on one fixed probe cannot say that every wrapper, handle
+        and parameter reference went away — only that this input did not
+        notice. These are the facts that can be checked directly.
+        """
+
+        sites = getattr(self, "_attached_sites", [])
+        restored = [
+            int(layer_index)
+            for parent, attr, original, layer_index in sites
+            if getattr(parent, attr, None) is original
+        ]
+        wrappers_live = [
+            int(layer_index)
+            for parent, attr, original, layer_index in sites
+            if isinstance(getattr(parent, attr, None), EpisodicDeltaLinear)
+        ]
+        parameters_after = self._touched_parameter_sha256() if sites else ""
+        return {
+            "schema": "aura.fast_weights.structural_erase.v1",
+            "touched_layers": [int(row[3]) for row in sites],
+            "restored_layers": restored,
+            "wrapped_layers_remaining": wrappers_live,
+            "handles_remaining": len(self.handles),
+            "parameters_before_sha256": getattr(
+                self, "_attached_parameter_sha256", ""
+            ),
+            "parameters_after_sha256": parameters_after,
+            "structurally_restored": bool(
+                sites
+                and not self.handles
+                and not wrappers_live
+                and len(restored) == len(sites)
+                and parameters_after == getattr(self, "_attached_parameter_sha256", "")
+            ),
+        }
+
     def prove_erase(self, probe_fn: Callable[[], Any], baseline) -> bool:
-        """Assert byte-identical restoration of the pre-attach probe tensor."""
+        """Prove restoration structurally AND behaviourally.
+
+        The behavioural half — byte equality on a fixed eight-token probe —
+        stayed the whole proof for a long time. It cannot see a residual delta
+        that this particular input does not excite, a wrapper still installed
+        on a layer the probe does not reach, or a handle nobody released. The
+        structural half checks those directly and the probe remains as
+        corroboration.
+        """
         from core.brain.llm.latent_cortex.verified_best import tensor_sha256
 
         if self.handles or not self.lifecycle.erased:
             raise RuntimeError("prove_erase called while fast weights still attached")
         after = probe_fn()
+        structural = self.structural_erase_report()
+        self.lifecycle.structural_erase = structural
         self.lifecycle.erase_probe_before_sha256 = tensor_sha256(baseline)
         self.lifecycle.erase_probe_after_sha256 = tensor_sha256(after)
         proven = (
             self.lifecycle.detach_conflicts == 0
+            and structural["structurally_restored"] is True
             and self.lifecycle.erase_probe_before_sha256
             == self.lifecycle.erase_probe_after_sha256
         )

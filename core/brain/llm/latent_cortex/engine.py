@@ -386,6 +386,8 @@ class LatentCortexEngine:
         # can tell an argument-shape refusal from a runtime failure.
         self._episode_receipt: EpisodeReceipt | None = None
         self._episode_invariant_armed = False
+        # A consolidation candidate waiting on the episode's real outcome.
+        self._staged_consolidation_export: tuple[Any, dict[str, Any]] | None = None
         # High-water wall clock for one fast-weight cleanup on THIS host.
         # The reserve was a hard-coded six seconds; a measurement is the
         # only thing that can make the reserve true on a slower device.
@@ -441,6 +443,18 @@ class LatentCortexEngine:
         adapted_layers = self.plasticity_site.layer_indices(
             *self.plasticity_layer_range,
             max(1, self.config.fast_weights.max_wrapped_layers),
+        )
+        from core.brain.llm.latent_cortex.recurrence_support import (
+            classify_recurrence_support,
+        )
+
+        # Computed once per engine: it describes the loaded checkpoint, not
+        # the turn. Every episode publishes it so a consumer never has to
+        # infer support from the absence of a complaint.
+        self.recurrence_support = classify_recurrence_support(
+            model,
+            layer_count=self.n_layers,
+            window=(self.prelude_end, self.coda_start),
         )
         self.invariant = CheckpointInvariant(
             model,
@@ -2811,8 +2825,10 @@ class LatentCortexEngine:
         # honest place to put them.
         self._episode_cancel_check = cancel_check
         self._episode_wall_reserve_forwards = 0
+        self._staged_consolidation_export = None
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
+        receipt.recurrence_support = dict(self.recurrence_support)
         receipt.prelude_end = self.prelude_end
         receipt.coda_start = self.coda_start
         budget = budget or ComputeBudget()
@@ -3190,6 +3206,22 @@ class LatentCortexEngine:
                     action="refused output because the post-episode invariant probe failed",
                     severity="critical",
                 )
+        # `ok` says the machinery ran. These two say what it established.
+        receipt.verifier_identity = (
+            f"{type(verifier).__module__}.{type(verifier).__qualname__}"
+            if verifier is not None
+            else ""
+        )
+        receipt.quality_verified = bool(
+            verifier is not None
+            and receipt.branch_selection_admitted
+            and not receipt.has_flag("branch_verifier_skipped_budget")
+        )
+        receipt.gain_established = bool(
+            receipt.quality_verified
+            and receipt.fast_weight_verifier.get("decision")
+            == "accepted_causal_improvement"
+        )
         for channel, kind in sorted(self._callback_faults.items()):
             # Monitoring health is reported separately from model success: a
             # consumer that lost stage updates must not read the gap as an
@@ -3211,6 +3243,7 @@ class LatentCortexEngine:
             },
         )
         receipt.budget = budget.to_receipt()
+        self._flush_consolidation_export(receipt, failure_reason=failure_reason or "")
         from core.brain.llm.latent_cortex.causal_receipt import (
             build_causal_receipt,
         )
@@ -3694,8 +3727,25 @@ class LatentCortexEngine:
             + fast_weight_verifier_probe_cost
             + fast_weight_matched_trial_cost
         )
+        required_branch_verification_cost = (
+            self._verifier_probe_layer_apps(
+                bridge_tokens,
+                count=self.config.branches.n_branches,
+            )
+            if self.config.branch_verifier_mode == "required"
+            and verifier is not None
+            and self.tokenizer is not None
+            else 0
+        )
         minimum_admission = (
-            prefill_cost + branch_seed_cost + safety_reserve + fast_weight_baseline_cost
+            prefill_cost
+            + branch_seed_cost
+            + safety_reserve
+            + fast_weight_baseline_cost
+            # A gate that admission never priced could only ever be skipped
+            # for budget, which in required mode is a failure rather than a
+            # substitution.
+            + required_branch_verification_cost
         )
         if minimum_admission > budget.remaining_layer_apps or budget.exhausted:
             raise RuntimeError(
@@ -5853,6 +5903,15 @@ class LatentCortexEngine:
                         winner = select_without_task_verifier()
         else:
             if pending_verifier is not None and self.tokenizer is not None:
+                if self.config.branch_verifier_mode == "required":
+                    # The caller supplied this verifier as a correctness gate.
+                    # Substituting the ensemble's own score for it and still
+                    # returning ok weakens the caller's policy without saying
+                    # so, which is the one thing a required gate forbids.
+                    raise RuntimeError(
+                        "branch verification is required and the budget cannot "
+                        "afford it"
+                    )
                 receipt.flag("branch_verifier_skipped_budget")
             verifier = None
             winner = select_without_task_verifier()
@@ -7045,6 +7104,19 @@ class LatentCortexEngine:
                 # the attach inside the block whose handler finalizes.
                 receipt.fast_weights_attach_attempted = True
                 self._episode_wall_reserve_forwards = _FW_ERASE_PROBE_TOKENS + 1
+                from core.brain.llm.latent_cortex.fast_weights import (
+                    target_cache_attestation,
+                )
+
+                # The prompt cache below this point was filled under base
+                # weights. Whether that matters is a property of the target,
+                # and it is stated on the receipt rather than left for a
+                # reader to work out.
+                receipt.fast_weight_cache_attestation = target_cache_attestation(
+                    self.config.fast_weights.target
+                )
+                if not receipt.fast_weight_cache_attestation["cache_independent"]:
+                    receipt.flag("fast_weight_prefix_kv_under_base_weights")
                 try:
                     wrapped = fast_weights.attach(
                         self.model.model,
@@ -8705,10 +8777,16 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_no_accepted_step")
 
         # Consolidation handoff: a mechanically clean episode (accepted
-        # descent, proven erase) exports its temporary synapses + evidence
-        # to the governed queue. Export is EVIDENCE COLLECTION only — the
+        # descent, proven erase) offers its temporary synapses + evidence to
+        # the governed queue. Export is EVIDENCE COLLECTION only — the
         # consolidation consumer and the compounding loop's regression gates
         # decide what (if anything) becomes durable learning.
+        #
+        # This runs while an exception may still be propagating and before the
+        # post-episode checkpoint invariant, so it can only STAGE. Writing
+        # here put failed, cancelled and fallback-answered episodes into the
+        # learning queue without the flags that say so. The write happens in
+        # the episode's terminal path, where the outcome is known.
         if (
             self.config.fast_weights.export_candidates
             # No checkpoint fingerprint ⇒ no provenance ⇒ never evidence.
@@ -8728,38 +8806,91 @@ class LatentCortexEngine:
             # personal context seeds the episode and stops there.
             and self._export_provenance_permits(receipt)
         ):
-            try:
-                from core.config import DATA_DIR
+            self._staged_consolidation_export = (
+                fast_weights,
+                {
+                    "schema": "aura.latent_consolidation_candidate.v2",
+                    "domain": receipt.domain,
+                    "schedule_hash": receipt.schedule_hash,
+                    "loss_trail": list(lifecycle.loss_trail),
+                    "accepted_step_sizes": list(lifecycle.accepted_step_sizes),
+                    "steps_taken": receipt.steps_taken,
+                    "checkpoint_fingerprint": receipt.checkpoint_fingerprint,
+                },
+            )
 
-                queue_dir = Path(DATA_DIR) / "latent_cortex" / "consolidation_queue"
-                exported = fast_weights.export_candidate(
-                    queue_dir,
-                    episode_id=receipt.episode_id,
-                    evidence={
-                        "schema": "aura.latent_consolidation_candidate.v1",
-                        "domain": receipt.domain,
-                        "schedule_hash": receipt.schedule_hash,
-                        "loss_trail": list(lifecycle.loss_trail),
-                        "accepted_step_sizes": list(lifecycle.accepted_step_sizes),
-                        "steps_taken": receipt.steps_taken,
-                        "checkpoint_fingerprint": receipt.checkpoint_fingerprint,
-                        "honest_flags": list(receipt.honest_flags),
-                    },
+    def _flush_consolidation_export(
+        self,
+        receipt: EpisodeReceipt,
+        *,
+        failure_reason: str,
+    ) -> None:
+        """Write a staged candidate only for an episode that actually landed.
+
+        The predicate in finalization can see the optimizer and the erase
+        proof and nothing else. Successful decode, cancellation, whether the
+        answer came from the fallback lane, and the post-episode checkpoint
+        invariant are all settled afterwards, and a candidate carrying none of
+        that reached the learning queue looking clean.
+        """
+
+        staged = self._staged_consolidation_export
+        self._staged_consolidation_export = None
+        if staged is None:
+            return
+        fast_weights, evidence = staged
+        if failure_reason or receipt.params_unchanged is not True:
+            receipt.flag(
+                (
+                    "fast_weight_candidate_withheld:"
+                    f"{failure_reason or 'checkpoint_invariant_unproven'}"
+                )[:120]
+            )
+            return
+        try:
+            from core.config import DATA_DIR
+
+            queue_dir = Path(DATA_DIR) / "latent_cortex" / "consolidation_queue"
+            exported = fast_weights.export_candidate(
+                queue_dir,
+                episode_id=receipt.episode_id,
+                evidence={
+                    **evidence,
+                    # The terminal outcome, committed WITH the candidate
+                    # rather than inferred from its absence.
+                    "episode_ok": True,
+                    "decode_termination": receipt.decode_termination,
+                    "params_unchanged": receipt.params_unchanged,
+                    "honest_flags": list(receipt.honest_flags),
+                    # What the loss trail is and is not. Descent on the
+                    # optimizer's own proxy is not evidence the task got
+                    # better, and a consumer reading a falling curve alone
+                    # will believe it did.
+                    "gain_status": (
+                        "verifier_confirmed"
+                        if receipt.gain_established
+                        else "unvalidated_optimization_candidate"
+                    ),
+                    "verifier": dict(receipt.fast_weight_verifier),
+                    "verifier_identity": receipt.verifier_identity,
+                    "quality_verified": receipt.quality_verified,
+                    "gain_established": receipt.gain_established,
+                },
+            )
+            if exported is not None:
+                receipt.flag("fast_weight_candidate_exported")
+            elif fast_weights.last_export_error:
+                receipt.flag(
+                    "fast_weight_candidate_export_failed:"
+                    f"{fast_weights.last_export_error}"
                 )
-                if exported is not None:
-                    receipt.flag("fast_weight_candidate_exported")
-                elif fast_weights.last_export_error:
-                    receipt.flag(
-                        "fast_weight_candidate_export_failed:"
-                        f"{fast_weights.last_export_error}"
-                    )
-            except _LATENT_PHASE_ERRORS as exc:
-                record_degradation(
-                    "latent_cortex",
-                    exc,
-                    action="dropped consolidation candidate after export failed",
-                    severity="warning",
-                )
+        except _LATENT_PHASE_ERRORS as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action="dropped consolidation candidate after export failed",
+                severity="warning",
+            )
 
     def _export_provenance_permits(self, receipt: EpisodeReceipt) -> bool:
         """False when any slot compiled into ΔW carried personal context.
@@ -9900,10 +10031,20 @@ class LatentCortexEngine:
         )
 
         def forward():
+            from mlx_lm.models.base import create_attention_mask
+
             inner = self.model.model
             h = inner.embed_tokens(mx.array([context_tokens]))
+            # The answer is produced causally: WindowRunner persists slots
+            # through a cache and every decode forward attends left. Passing
+            # mask=None over a multi-token sequence is FULL attention, so the
+            # delta was being optimized against a function that could see its
+            # own future — a different function from the one that answers.
+            # The budget above already prices triangular attention pairs,
+            # which is the causal shape; only the forward disagreed.
+            mask = create_attention_mask(h, None)
             for layer in inner.layers:
-                h = layer(h, None, None)
+                h = layer(h, mask, None)
             mx.eval(h)
             return h
 
@@ -10202,6 +10343,10 @@ class LatentCortexEngine:
                 output_head_tokens=8,
             )
         h = inner.embed_tokens(probe_tokens)
+        # Deliberately mask-free and cache-free: this probe is only ever
+        # compared against ITSELF before and after attach, so what matters is
+        # that both runs are the same computation, not that it matches the
+        # answer path.
         for layer in inner.layers:
             h = layer(h, None, None)
         out = self._logits(h)

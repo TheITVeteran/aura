@@ -1184,6 +1184,11 @@ def _fw_engine_config(opt_steps: int = 1):
             enabled=True, rank=2, target="o_proj", opt_steps=opt_steps
         ),
         decode_max_tokens=4,
+        # A random-weight tiny model samples EOS first for some
+        # initializations. An episode that generated nothing is a failure
+        # now, and these tests are about verifier arbitration rather than
+        # answer length, so they hold the ordinary serving floor.
+        decode_min_tokens=1,
     )
 
 
