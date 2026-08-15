@@ -246,6 +246,16 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
     max_order_effect = prereg.get("max_order_effect")
     if not _finite_number(max_order_effect) or not 0.0 < float(max_order_effect) <= 0.5:
         reasons.append("invalid_max_order_effect")
+    # CP126 e7b9dc9c: pass/fail booleans threw away the margin. A treatment
+    # that scored 0.61 against a control's 0.59 and one that scored 0.99
+    # against 0.05 produced identical evidence, and where the line sat was
+    # never written down — so it could be placed wherever the win was.
+    success_threshold = prereg.get("success_threshold")
+    if not _finite_number(success_threshold) or not 0.0 < float(success_threshold) <= 1.0:
+        reasons.append("invalid_success_threshold")
+    sensitivity_band = prereg.get("threshold_sensitivity_band")
+    if not _finite_number(sensitivity_band) or not 0.0 < float(sensitivity_band) <= 0.25:
+        reasons.append("invalid_threshold_sensitivity_band")
     minimum_effect = prereg.get("minimum_effect")
     if not _finite_number(minimum_effect) or not 0.0 < float(minimum_effect) <= 0.5:
         reasons.append("invalid_minimum_effect")
@@ -912,6 +922,7 @@ def _validate_task_commitment(
     latest_task_generated_at: float,
     earliest_evaluation_started_at: float,
     task_diversity_sha256: str,
+    blinding_map_sha256: str,
     trusted_task_issuers: Mapping[str, Mapping[str, str]] | None,
     reasons: list[str],
 ) -> tuple[str, str]:
@@ -964,6 +975,8 @@ def _validate_task_commitment(
                 # Clustering afterwards is choosing how many independent
                 # trials there were once the results are in.
                 "task_diversity_sha256": task_diversity_sha256,
+                # Which arm carried which label, fixed before anything ran.
+                "blinding_map_sha256": blinding_map_sha256,
             }
         )
     except (TypeError, ValueError, OverflowError, RecursionError):
@@ -975,6 +988,7 @@ def _validate_task_commitment(
         "task_commitment_sha256",
         "task_manifest_sha256",
         "task_diversity_sha256",
+        "blinding_map_sha256",
         "task_count",
         "issuer_implementation_sha256",
         "issuer_release_sha256",
@@ -991,6 +1005,8 @@ def _validate_task_commitment(
         or payload.get("task_manifest_sha256") != manifest_sha256
         or not task_diversity_sha256
         or payload.get("task_diversity_sha256") != task_diversity_sha256
+        or not blinding_map_sha256
+        or payload.get("blinding_map_sha256") != blinding_map_sha256
         or payload.get("task_commitment_sha256") != expected_commitment
         or bundle.get("task_commitment_sha256") != expected_commitment
         or payload.get("task_count") != len(trials)
@@ -1009,6 +1025,82 @@ def _validate_task_commitment(
     except (TypeError, ValueError, OverflowError, RecursionError):
         reasons.append("task_commitment_not_canonical_json")
         return verified_signer_id, ""
+
+
+def _blinding_map_sha256(bundle: dict[str, Any]) -> str:
+    """The committed arm-label map digest, read without judging it.
+
+    The commitment binds this before ``_validate_blinding`` runs, because
+    validating the reveal event needs the issuer identity that only the
+    commitment can establish.
+    """
+    blinding = bundle.get("blinding")
+    if not isinstance(blinding, dict):
+        return ""
+    digest = str(blinding.get("arm_label_map_sha256") or "")
+    return digest if _is_sha256(digest) else ""
+
+
+def _validate_blinding(
+    bundle: dict[str, Any],
+    *,
+    latest_scoring_completed_at: float,
+    task_issuer_id: str,
+    reasons: list[str],
+) -> None:
+    """``verifier_blinded: True`` is the producer grading its own blinding.
+
+    The certificate checked a literal boolean per trial. It never asked which
+    arm carried which label, when the labels were revealed, or whether the
+    text handed to the scorer said "treatment" on it. A producer that scored
+    everything with the labels visible emits the same ``True``.
+
+    A blinding claim needs three things the boolean cannot carry: an arm-label
+    map committed before evaluation so it cannot be written to fit the result,
+    a reveal event that happened after the last score and was performed by
+    somebody other than the producer, and a scan showing the scorer's inputs
+    carried no arm markers.
+    """
+    blinding = bundle.get("blinding")
+    if not isinstance(blinding, dict):
+        reasons.append("blinding_evidence_missing")
+        return
+    if not _is_sha256(blinding.get("arm_label_map_sha256")):
+        reasons.append("blinding_map_uncommitted")
+    if not str(blinding.get("method") or "").strip():
+        reasons.append("blinding_method_missing")
+    revealed_at = blinding.get("revealed_at")
+    if not _finite_number(revealed_at, positive=True):
+        reasons.append("blinding_reveal_time_missing")
+    elif latest_scoring_completed_at and float(revealed_at) < latest_scoring_completed_at:
+        # Unblinding mid-run means the last trials were not blind at all.
+        reasons.append("blinding_revealed_before_scoring_completed")
+    revealed_by = str(blinding.get("revealed_by") or "")
+    producer_id = str(bundle.get("producer_id") or "")
+    if not revealed_by:
+        reasons.append("blinding_reveal_unattributed")
+    elif revealed_by == producer_id:
+        reasons.append("blinding_revealed_by_producer")
+    elif task_issuer_id and revealed_by != task_issuer_id:
+        # The role that held the assignment is the role that can reveal it.
+        reasons.append("blinding_revealed_by_unknown_role")
+    scan = blinding.get("marker_scan")
+    if not isinstance(scan, dict):
+        reasons.append("blinding_marker_scan_missing")
+        return
+    if not _is_sha256(scan.get("scanner_implementation_sha256")):
+        reasons.append("blinding_marker_scanner_unproven")
+    if not str(scan.get("method") or "").strip():
+        reasons.append("blinding_marker_scan_method_missing")
+    checked = scan.get("markers_checked")
+    found = scan.get("markers_found")
+    if type(checked) is not int or checked <= 0:
+        reasons.append("blinding_marker_scan_checked_nothing")
+    if type(found) is not int or found < 0:
+        reasons.append("blinding_marker_count_unmeasured")
+    elif found > 0:
+        # The scorer could see which arm it was grading.
+        reasons.append("blinding_markers_present_in_scorer_inputs")
 
 
 def _validate_independent_attestation(
@@ -1223,6 +1315,18 @@ def verify_frontier_gain_bundle(
     latest_task_generated_at = 0.0
     earliest_evaluation_started_at = float("inf")
     latest_evaluation_started_at = 0.0
+    #: The moment the last piece of evidence actually existed. Everything the
+    #: independent verifier attests to has to postdate it.
+    latest_scoring_completed_at = 0.0
+    #: (treatment, control) scores for admitted trials, for the threshold
+    #: sensitivity audit.
+    scored_pairs: list[tuple[float, float]] = []
+    success_threshold = (
+        float(prereg["success_threshold"])
+        if _finite_number(prereg.get("success_threshold"))
+        and 0.0 < float(prereg["success_threshold"]) <= 1.0
+        else 0.0
+    )
     tolerance = (
         float(prereg["compute_tolerance"])
         if _finite_number(prereg.get("compute_tolerance"))
@@ -1299,6 +1403,29 @@ def verify_frontier_gain_bundle(
                 latest_evaluation_started_at,
                 evaluation_time,
             )
+        # CP126 6f55ecd3: the attestation was timestamped against when
+        # evaluation STARTED. A verifier could therefore sign after the first
+        # trial began and before any output or score existed, and the
+        # certificate would read as though the evidence had been reviewed.
+        # No completion time was recorded anywhere, so the gap was invisible.
+        evaluation_completed_at = trial.get("evaluation_completed_at")
+        scoring_completed_at = trial.get("scoring_completed_at")
+        if not _finite_number(evaluation_completed_at, positive=True):
+            trial_reasons.append(f"{trial_id}:evaluation_completion_missing")
+        elif _finite_number(evaluation_started_at, positive=True) and float(
+            evaluation_completed_at
+        ) <= float(evaluation_started_at):
+            trial_reasons.append(f"{trial_id}:evaluation_completed_before_start")
+        if not _finite_number(scoring_completed_at, positive=True):
+            trial_reasons.append(f"{trial_id}:scoring_completion_missing")
+        elif _finite_number(evaluation_completed_at, positive=True) and float(
+            scoring_completed_at
+        ) < float(evaluation_completed_at):
+            trial_reasons.append(f"{trial_id}:scored_before_evaluation_completed")
+        else:
+            latest_scoring_completed_at = max(
+                latest_scoring_completed_at, float(scoring_completed_at)
+            )
         _validate_trial_lineage(trial, trial_reasons)
         # Each trial must have been scored by the PREREGISTERED scoring
         # program (its per-trial config may differ; the program may not).
@@ -1357,6 +1484,21 @@ def verify_frontier_gain_bundle(
             reasons.extend(trial_reasons)
             rejected_trial_count += 1
             continue
+        # The boolean has to BE the preregistered threshold applied to a
+        # recorded score. Without the score there is no way to tell a hair's
+        # -breadth win from a rout, and no way to check that the line was not
+        # moved to produce the win.
+        trial_scores: dict[str, float] = {}
+        for arm in ("treatment", "control"):
+            raw_score = trial.get(f"{arm}_score")
+            if not _finite_number(raw_score) or not 0.0 <= float(raw_score) <= 1.0:
+                trial_reasons.append(f"{trial_id}:{arm}_score_missing")
+                continue
+            trial_scores[arm] = float(raw_score)
+            if success_threshold > 0.0 and bool(trial[f"{arm}_success"]) != (
+                float(raw_score) >= success_threshold
+            ):
+                trial_reasons.append(f"{trial_id}:{arm}_outcome_contradicts_score")
         treatment_flops, treatment_layers, treatment_resource = _trial_compute(
             trial, "treatment", expected_estimator, trial_reasons
         )
@@ -1448,6 +1590,7 @@ def verify_frontier_gain_bundle(
         # receipt already surfaced its own reason and must not manufacture a
         # second one about run-wide uniformity.
         contamination_scanners.add(scanner_digest)
+        scored_pairs.append((trial_scores["treatment"], trial_scores["control"]))
         if order in order_by_domain.get(domain, {}):
             order_by_domain[domain][order] += 1
             order_effect_samples[order].append(
@@ -1541,6 +1684,37 @@ def verify_frontier_gain_bundle(
         admitted_treatment_first - admitted_control_first
     ) > max(1, math.ceil(admitted_order_total * 0.10)):
         reasons.append("run_order_imbalanced")
+    # THRESHOLD SENSITIVITY. The gain is a step function of where the pass
+    # line sits, and the line was preregistered — but preregistering a number
+    # does not make the result robust to it. If moving the line a little in
+    # either direction erases or reverses the gain, the claim is about the
+    # line rather than about the treatment.
+    fragile_thresholds: list[float] = []
+    band = prereg.get("threshold_sensitivity_band")
+    if (
+        scored_pairs
+        and success_threshold > 0.0
+        and _finite_number(band)
+        and 0.0 < float(band) <= 0.25
+    ):
+        low = max(0.0, success_threshold - float(band))
+        high = min(1.0, success_threshold + float(band))
+        # The gain only changes at an observed score, so evaluating at the
+        # band edges plus every score inside it is EXACT, not a sample.
+        candidates = {low, high, success_threshold}
+        for treatment_score, control_score in scored_pairs:
+            for score in (treatment_score, control_score):
+                if low <= score <= high:
+                    candidates.add(score)
+        for candidate in sorted(candidates):
+            gain = math.fsum(
+                int(treatment_score >= candidate) - int(control_score >= candidate)
+                for treatment_score, control_score in scored_pairs
+            ) / len(scored_pairs)
+            if gain <= 0.0:
+                fragile_thresholds.append(round(candidate, 6))
+        if fragile_thresholds:
+            reasons.append("outcome_threshold_fragile")
     # Balance answers "did both orders run?", never "did order matter?".
     # If the paired gain lives in one order and vanishes in the other, order
     # is a rival explanation for the whole result.
@@ -1572,7 +1746,14 @@ def verify_frontier_gain_bundle(
         latest_task_generated_at=latest_task_generated_at,
         earliest_evaluation_started_at=earliest_evaluation_started_at,
         task_diversity_sha256=task_diversity_sha256,
+        blinding_map_sha256=_blinding_map_sha256(bundle),
         trusted_task_issuers=trusted_task_issuers,
+        reasons=reasons,
+    )
+    _validate_blinding(
+        bundle,
+        latest_scoring_completed_at=latest_scoring_completed_at,
+        task_issuer_id=task_issuer_id,
         reasons=reasons,
     )
 
@@ -1589,6 +1770,9 @@ def verify_frontier_gain_bundle(
             latest_task_generated_at=max(
                 latest_task_generated_at,
                 latest_evaluation_started_at,
+                # Signing after the run began is not review. Attestation has
+                # to postdate the LAST score.
+                latest_scoring_completed_at,
             ),
             trusted_verifiers=trusted_verifiers,
             reasons=reasons,
@@ -1739,6 +1923,11 @@ def verify_frontier_gain_bundle(
             domain: dict(counts) for domain, counts in order_by_domain.items()
         },
         "measured_order_effect": round(order_effect, 6),
+        # CP126 e7b9dc9c: where the pass line sat, and whether the gain
+        # survives moving it inside the preregistered band.
+        "success_threshold": success_threshold,
+        "fragile_thresholds": fragile_thresholds,
+        "threshold_robust": not fragile_thresholds,
         "comparison_accounting": comparison_accounting,
         "required_positive_domains": required_positive,
         # CP126 8a56c486: generation-manifest fields that NEITHER arm declared.

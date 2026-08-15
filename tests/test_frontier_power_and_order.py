@@ -17,7 +17,12 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     _binomial_sf,
     _exact_mcnemar_power,
 )
-from tests.fixtures.latent_frontier import _bundle, _certify, _refresh_task_commitment
+from tests.fixtures.latent_frontier import (
+    _bundle,
+    _certify,
+    _refresh_task_commitment,
+    _set_outcome,
+)
 
 
 class TestExactPower:
@@ -113,7 +118,7 @@ class TestAchievedPower:
         bundle = _bundle()
         for trial in bundle["trials"]:
             if trial["domain"] == "science":
-                trial["control_success"] = True
+                _set_outcome(trial, treatment=True, control=True)
         _refresh_task_commitment(bundle)
         certificate = _certify(bundle)
         assert certificate["achieved_power_by_domain"]["science"] == 0.0
@@ -164,8 +169,11 @@ class TestRunOrder:
         """
         bundle = _bundle()
         for trial in bundle["trials"]:
-            trial["control_success"] = trial["run_order"] == "control_first"
-            trial["treatment_success"] = True
+            _set_outcome(
+                trial,
+                treatment=True,
+                control=trial["run_order"] == "control_first",
+            )
         _refresh_task_commitment(bundle)
         certificate = _certify(bundle)
         assert certificate["accepted"] is False

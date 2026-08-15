@@ -115,6 +115,19 @@ def _trust_config() -> dict:
     }
 
 
+def _set_outcome(trial: dict, *, treatment: bool, control: bool) -> None:
+    """Set an arm outcome AND the score behind it.
+
+    The certificate checks that each boolean is the preregistered threshold
+    applied to the recorded score, so a test that flips only the boolean is
+    building a bundle no honest producer could emit.
+    """
+    trial["treatment_success"] = treatment
+    trial["control_success"] = control
+    trial["treatment_score"] = 0.9 if treatment else 0.2
+    trial["control_score"] = 0.8 if control else 0.2
+
+
 def _refresh_task_commitment(bundle: dict) -> None:
     # The manifest digest comes from the PRODUCTION builder. A fixture that
     # rebuilt the row shape by hand would keep signing whatever the fixture
@@ -129,6 +142,7 @@ def _refresh_task_commitment(bundle: dict) -> None:
             "task_count": len(bundle["trials"]),
             "task_manifest_sha256": manifest_sha256,
             "task_diversity_sha256": diversity_sha256,
+            "blinding_map_sha256": bundle["blinding"]["arm_label_map_sha256"],
         }
     )
     payload = {
@@ -137,6 +151,7 @@ def _refresh_task_commitment(bundle: dict) -> None:
         "task_commitment_sha256": task_commitment_sha256,
         "task_manifest_sha256": manifest_sha256,
         "task_diversity_sha256": diversity_sha256,
+        "blinding_map_sha256": bundle["blinding"]["arm_label_map_sha256"],
         "task_count": len(bundle["trials"]),
         "issuer_implementation_sha256": _TASK_ISSUER_IMPLEMENTATION,
         "issuer_release_sha256": _TASK_ISSUER_RELEASE,
@@ -275,6 +290,10 @@ def _bundle(
         "scorer_implementation_sha256": "a" * 64,
         "decode_policy_sha256": "d" * 64,
         "min_treatment_success_rate": 0.6,
+        # Where the pass line sits, and how far it may be moved before the
+        # gain has to survive on its own.
+        "success_threshold": 0.6,
+        "threshold_sensitivity_band": 0.1,
         # Sized against a McNemar alternative, not a trial count. With 40
         # trials per domain the study can detect a treatment that wins 75%
         # of disagreements at alpha 0.05 with power above 0.8; it could not
@@ -323,6 +342,11 @@ def _bundle(
                     },
                     "task_generated_at": 1001.0 + index,
                     "evaluation_started_at": 1201.0 + index,
+                    # When the evidence actually existed. The attestation is
+                    # timestamped against the last of these, not against when
+                    # the run began.
+                    "evaluation_completed_at": 1401.0 + index,
+                    "scoring_completed_at": 1601.0 + index,
                     "verifier_blinded": True,
                     "verifier_receipt_sha256": canonical_sha256(["verifier", trial_id]),
                     "task_payload_sha256": task_payload_sha256,
@@ -350,6 +374,11 @@ def _bundle(
                     "run_order": (
                         "treatment_first" if (cell % 8) < 4 else "control_first"
                     ),
+                    # The booleans are the preregistered threshold applied
+                    # to these scores, and the margin survives moving the
+                    # line anywhere inside the preregistered band.
+                    "treatment_score": 0.9,
+                    "control_score": 0.8 if cell % 4 == 0 else 0.2,
                     "treatment_success": True,
                     "control_success": cell % 4 == 0,
                     "treatment_compute": {
@@ -525,6 +554,24 @@ def _bundle(
             },
         },
     }
+    # Blinding as evidence rather than a per-trial boolean: the arm-label
+    # assignment is committed before evaluation, revealed after the last
+    # score by the role that held it, and the scorer's inputs were scanned
+    # for arm markers.
+    bundle["blinding"] = {
+        "arm_label_map_sha256": canonical_sha256(
+            {trial["trial_id"]: trial["run_order"] for trial in trials}
+        ),
+        "method": "arm_labels_replaced_with_opaque_ids",
+        "revealed_at": 1800.0,
+        "revealed_by": _TASK_ISSUER_ID,
+        "marker_scan": {
+            "scanner_implementation_sha256": "7" * 64,
+            "method": "arm_marker_regex_sweep",
+            "markers_checked": 24,
+            "markers_found": 0,
+        },
+    }
     _refresh_task_commitment(bundle)
     if include_attestation:
         _refresh_attestation(bundle)
@@ -533,6 +580,7 @@ def _bundle(
 
 __all__ = [
     "_TASK_ISSUER_ID",
+    "_set_outcome",
     "_TASK_ISSUER_PUBLIC_KEY",
     "_TRUSTED_TASK_ISSUERS",
     "_TRUSTED_VERIFIERS",
