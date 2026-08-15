@@ -282,7 +282,11 @@ def _bundle(
     if external:
         prereg["control_model_id"] = "frontier-model-x"
         prereg["control_model_build_fingerprint"] = "build-2026-06"
-        prereg["control_provider"] = "frontier-provider"
+        # A RECOGNISED frontier lab. The placeholder "frontier-provider"
+        # is now refused: a frontier claim must name a lab that ships
+        # frontier models, or "beat an external frontier" could be
+        # earned against anything the producer chose to call one.
+        prereg["control_provider"] = "openai"
     else:
         prereg["control_checkpoint_fingerprint"] = checkpoint
     trials = []
@@ -394,7 +398,7 @@ def _bundle(
                             "request_id": f"control-{trial_id}",
                             "model_id": "frontier-model-x",
                             "model_build_fingerprint": "build-2026-06",
-                            "provider": "frontier-provider",
+                            "provider": "openai",
                             "provider_receipt_sha256": canonical_sha256(
                                 ["provider", trial_id]
                             ),

@@ -94,6 +94,56 @@ def _is_git_sha(value: Any) -> bool:
     )
 
 
+#: Providers whose hosted models may stand as an EXTERNAL FRONTIER control.
+#:
+#: The check used to be "is the string non-empty". That let any named model be
+#: declared a frontier baseline, so a certificate reading "resident 32B beat an
+#: external frontier" could have been earned against something weaker than the
+#: treatment — the claim would be internally consistent and externally
+#: meaningless.
+#:
+#: A provider allowlist is a PROXY for frontier capability, not a proof of it,
+#: and it is deliberately narrow and boring to extend: adding an entry is a
+#: reviewable edit here rather than a string a producer supplies at run time.
+#: What it buys is that the comparison names a lab that ships frontier models,
+#: which is the part a self-declared string could not establish at all.
+_RECOGNISED_FRONTIER_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "google-deepmind",
+        "deepmind",
+        "meta",
+        "mistral",
+        "xai",
+        "deepseek",
+        "alibaba",
+        "qwen",
+        "cohere",
+    }
+)
+
+#: What an external control's identity is actually backed by. Named so nothing
+#: downstream can read a provider's own word as an independent attestation.
+EXTERNAL_CONTROL_ATTESTATION = "provider_asserted_unsigned"
+
+
+def _normalised_provider(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
+
+
+def _recognised_frontier_provider(value: Any) -> bool:
+    provider = _normalised_provider(value)
+    if not provider:
+        return False
+    if provider in _RECOGNISED_FRONTIER_PROVIDERS:
+        return True
+    # "google-deepmind/gemini" and "openai:gpt" name a recognised lab too.
+    head = provider.split("/")[0].split(":")[0]
+    return head in _RECOGNISED_FRONTIER_PROVIDERS
+
+
 def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]:
     if not isinstance(prereg, dict):
         reasons.append("missing_preregistration")
@@ -155,12 +205,18 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
         ) != prereg.get("treatment_checkpoint_fingerprint"):
             reasons.append("same_checkpoint_control_not_bound")
     elif comparison_kind == "resident_32b_vs_external_frontier":
-        if not str(prereg.get("control_model_id") or ""):
+        if not str(prereg.get("control_model_id") or "").strip():
             reasons.append("external_frontier_control_model_missing")
-        if not str(prereg.get("control_model_build_fingerprint") or ""):
+        if not str(prereg.get("control_model_build_fingerprint") or "").strip():
             reasons.append("external_frontier_control_build_missing")
-        if not str(prereg.get("control_provider") or ""):
+        provider = prereg.get("control_provider")
+        if not str(provider or "").strip():
             reasons.append("external_frontier_control_provider_missing")
+        elif not _recognised_frontier_provider(provider):
+            # A frontier claim has to name a lab that ships frontier models.
+            # Without this, "beat an external frontier" could be earned against
+            # anything the producer chose to call one.
+            reasons.append("external_frontier_control_provider_unrecognised")
     return prereg
 
 
@@ -1249,9 +1305,20 @@ def verify_frontier_gain_bundle(
     external_comparison = comparison_kind == "resident_32b_vs_external_frontier"
     if external_comparison:
         claim_scope = "frontier_competitiveness_vs_external_control"
+        # The control's IDENTITY is the provider's own word. Its provider must
+        # now be a recognised frontier lab, and every per-trial receipt must
+        # match the preregistered strings — but no provider signature or
+        # transparency-log inclusion is verified, so this establishes WHICH
+        # model was named, not that the named model actually served the
+        # requests. The claim says so in its own text, because a reader who
+        # only sees "outperforms an external frontier control" would take it
+        # for an independently attested comparison.
         claim_statement = (
             "the full resident-32B Recursive Latent Cortex outperforms the "
-            "preregistered external frontier control on the preregistered domains"
+            "preregistered external frontier control on the preregistered "
+            f"domains (control identity is {EXTERNAL_CONTROL_ATTESTATION}: the "
+            "provider is a recognised frontier lab and receipts match "
+            "preregistration, but no provider signature is verified)"
         )
     else:
         claim_scope = "treatment_contribution_vs_same_checkpoint_ablation"

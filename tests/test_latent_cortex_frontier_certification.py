@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import inspect
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -323,3 +324,39 @@ def test_frontier_certificate_fails_closed_for_malformed_trial_receipts(mutation
 
     assert certificate["accepted"] is False
     assert any(expected_reason in reason for reason in certificate["reasons"])
+
+
+def test_a_frontier_claim_must_name_a_recognised_frontier_lab():
+    """"Beat an external frontier" cannot be earned against a self-named model.
+
+    The preregistration check was "is this string non-empty", so any hosted
+    model could be declared the external frontier control. The certificate
+    would then read "the resident 32B outperforms the preregistered external
+    frontier control" — internally consistent and externally meaningless,
+    because the baseline was whatever the producer chose to call a frontier.
+    """
+    from core.brain.llm.latent_cortex.frontier_certification import (
+        _recognised_frontier_provider,
+    )
+
+    for provider in ("openai", "Anthropic", "google-deepmind", "OpenAI/gpt-5", "  xai  "):
+        assert _recognised_frontier_provider(provider), provider
+
+    for provider in ("frontier-provider", "me", "my-lab", "local", "acme-ai", ""):
+        assert not _recognised_frontier_provider(provider), provider
+
+
+def test_the_external_claim_states_what_backs_the_control_identity():
+    """The claim must not read as an independently attested comparison.
+
+    No provider signature or transparency-log inclusion is verified, so the
+    certificate establishes WHICH model was named — not that the named model
+    actually served the requests. A reader seeing only "outperforms an external
+    frontier control" would assume the stronger thing.
+    """
+    from core.brain.llm.latent_cortex import frontier_certification as fc
+
+    assert fc.EXTERNAL_CONTROL_ATTESTATION == "provider_asserted_unsigned"
+    source = inspect.getsource(fc)
+    assert "EXTERNAL_CONTROL_ATTESTATION" in source
+    assert "no provider signature is verified" in source
