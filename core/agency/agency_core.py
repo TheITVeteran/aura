@@ -801,6 +801,50 @@ _AGENCY_STATUS_FIELDS = (
 #: buffer size rather than a policy.
 _MAX_PENDING_GOALS = 20
 
+#: How many observations may wait to be mentioned.
+_MAX_UNSHARED_OBSERVATIONS = 10
+
+#: Past this age an observation is no longer something to react to. Unchanged
+#: from the value the old freshness gate used; what changed is that it is now
+#: measured against the observation being emitted.
+_OBSERVATION_STALE_S = 60.0
+
+
+def _observation_text(entry: Any) -> str:
+    """The words of a queued observation, whatever shape it arrived in.
+
+    Entries are ``{"text": ..., "at": ...}``. Bare strings are still accepted
+    because an external writer may not have been updated, and a queued
+    observation is a real thing she saw — dropping it for being the wrong
+    shape would lose it.
+    """
+    if isinstance(entry, dict):
+        return str(entry.get("text", "") or "")
+    return str(entry or "")
+
+
+def _observation_time(entry: Any, *, default: float) -> float:
+    """When a queued observation was made, or ``default`` if it never said."""
+    if isinstance(entry, dict):
+        try:
+            recorded = float(entry.get("at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return default
+        return recorded if recorded > 0.0 else default
+    return default
+
+#: Drive growth per SECOND of idle time. These were per-pulse increments, so
+#: the polling rate decided how fast she got lonely and curious. Converted at
+#: the historical ~1Hz heartbeat so the wall-clock behaviour is unchanged at
+#: the rate the values were tuned against.
+_SOCIAL_HUNGER_PER_S = 0.0001
+_CURIOSITY_PER_S = 0.00005
+
+#: Longest gap that may be integrated in one step. A machine that slept for six
+#: hours should not wake with a drive pinned at 1.0: the interval is real time
+#: but it is not idle time she experienced.
+_MAX_DYNAMICS_INTEGRATION_S = 300.0
+
 
 class AgencyState(BaseModel):
     """The full internal state of Aura's agency at any moment."""
@@ -828,7 +872,13 @@ class AgencyState(BaseModel):
 
     # Goal tracking
     pending_goals: list[dict[str, Any]] = Field(default_factory=list)
-    unshared_observations: list[str] = Field(default_factory=list)
+    #: Queued observations Aura has seen and not yet mentioned. Each entry is
+    #: ``{"text": str, "at": float}``. They were bare strings, and freshness
+    #: was computed from ``last_visual_change``/``last_audio_event`` — the age
+    #: of the NEWEST event of either kind — while the queue is emitted oldest
+    #: first. A recent sound therefore made an hours-old visual observation
+    #: "fresh", and she reacted to it as though it had just happened.
+    unshared_observations: list[Any] = Field(default_factory=list)
     topics_to_discuss: list[str] = Field(default_factory=list)
     last_goal_genesis_time: float = Field(default=0.0)
 
@@ -1282,6 +1332,8 @@ class AgencyCore:
             "emotional_expression",
         }:
             self.state.last_self_initiated_contact = now
+            # The window the next greeting can speak about starts here.
+            self._autonomous_actions_since_contact = 0
         return True
 
     # ── Main Pulse (called every orchestrator cycle) ───────────
@@ -1377,7 +1429,7 @@ class AgencyCore:
 
         # Update temporal state
         idle_seconds = now - self.state.last_user_interaction
-        self._update_social_dynamics(idle_seconds)
+        self._update_social_dynamics(idle_seconds, now=now)
 
         # Run all pathways independently (each can propose an action)
         audit = ServiceContainer.get("subsystem_audit", default=None)
@@ -1450,6 +1502,12 @@ class AgencyCore:
                 return None
 
             self.state.last_agency_action_time = now
+            # What she can honestly say she has been doing. The temporal
+            # greetings claimed overnight thought and watchkeeping from the
+            # clock alone; this is the record those sentences needed.
+            self._autonomous_actions_since_contact = int(
+                getattr(self, "_autonomous_actions_since_contact", 0) or 0
+            ) + 1
             if self._is_visible_output_action(winner):
                 try:
                     self._viability_emit_window.append(now)
@@ -1582,10 +1640,29 @@ class AgencyCore:
             return None
 
     def heartbeat(self) -> None:
-        """Alias for heartbeat monitor / watchdog (Sync wrapper)."""
+        """Alias for heartbeat monitor / watchdog (Sync wrapper).
+
+        Every heartbeat used to schedule a pulse unconditionally, with no
+        pending-task guard. A pulse awaits pathway hooks, so two of them
+        interleave: both read the same idle window, both run arbitration, both
+        commit side effects against state the other is mutating, and the
+        cooldowns each is trying to enforce are read before either writes.
+        Nothing waits on a pulse and they are frequent, so a heartbeat that
+        arrives while one is in flight is dropped rather than queued: the next
+        one comes along shortly with fresher inputs.
+        """
+        in_flight = getattr(self, "_pulse_task", None)
+        if in_flight is not None:
+            try:
+                if not in_flight.done():
+                    logger.debug("Agency heartbeat skipped: a pulse is already in flight.")
+                    return
+            except (AttributeError, RuntimeError):
+                pass  # a task-like object that cannot answer is not evidence
         task = _schedule_agency_task(self.pulse(), name="agency.heartbeat.pulse")
         if task is None:
             logger.debug("Agency heartbeat pulse deferred because no event loop is available.")
+        self._pulse_task = task
 
     # ── State Sync ────────────────────────────────────────────
     def _sync_from_orchestrator(self):
@@ -1625,26 +1702,50 @@ class AgencyCore:
             _record_agency_degradation(e, action="personality agency modulation skipped")
             logger.debug("Failed to sync personality_engine: %s", e)
 
-    def _update_social_dynamics(self, idle_seconds: float):
-        """Update engagement mode and social hunger based on time patterns."""
+    def _update_social_dynamics(self, idle_seconds: float, *, now: float | None = None):
+        """Update engagement mode and social hunger based on time patterns.
+
+        Both drives added a fixed increment per pulse. The pulse rate is a
+        polling decision — the heartbeat's cadence, whatever the watchdog is
+        doing — and it decided how lonely and how curious she got: double the
+        rate and she reaches SEEKING_CONTACT in half the wall time, having
+        waited exactly as long. A drive that tracks how often it is asked is
+        not a model of anything.
+
+        The increments are per SECOND now and multiplied by the elapsed time
+        since the last update, so the same wall clock produces the same
+        pressure at any polling rate. The first call has no interval to
+        integrate and moves nothing.
+        """
+        current = float(now if now is not None else time.time())
+        last = float(getattr(self, "_last_dynamics_at", 0.0) or 0.0)
+        self._last_dynamics_at = current
+        if last <= 0.0:
+            elapsed = 0.0
+        else:
+            # A clock that went backwards, or a gap so long it can only be a
+            # suspend, integrates nothing rather than a spike.
+            elapsed = max(0.0, min(current - last, _MAX_DYNAMICS_INTEGRATION_S))
 
         # Social hunger grows with idle time (like real loneliness)
-        if idle_seconds > 60:
-            growth_rate = 0.0001 * (1 + self.state.initiative_energy)
-            self.state.social_hunger = min(1.0, self.state.social_hunger + growth_rate)
+        if idle_seconds > 60 and elapsed > 0.0:
+            growth = _SOCIAL_HUNGER_PER_S * (1 + self.state.initiative_energy) * elapsed
+            self.state.social_hunger = min(1.0, self.state.social_hunger + growth)
 
         # Curiosity pressure builds over time — modulated by entropy
-        if idle_seconds > 30:
+        if idle_seconds > 30 and elapsed > 0.0:
             try:
                 from core.runtime.managed_entropy import get_managed_entropy
                 entropy = get_managed_entropy()
                 jitter = entropy.get_curiosity_jitter(intensity=1.0)
-                increment = max(0.0, 0.00005 + jitter)  # Base + jitter, clamped non-negative
+                rate = max(0.0, _CURIOSITY_PER_S + jitter)
             except _AGENCY_BOUNDARY_ERRORS as e:
                 _record_agency_degradation(e, action="curiosity entropy jitter skipped")
                 capture_and_log(e, {"context": "AgencyCore.update_social_dynamics.entropy"})
-                increment = 0.00005
-            self.state.curiosity_pressure = min(1.0, self.state.curiosity_pressure + increment)
+                rate = _CURIOSITY_PER_S
+            self.state.curiosity_pressure = min(
+                1.0, self.state.curiosity_pressure + rate * elapsed
+            )
 
         # Determine engagement mode
         if idle_seconds < 30:
@@ -1681,17 +1782,23 @@ class AgencyCore:
 
     def on_visual_change(self, description: str):
         """Called when camera detects significant visual change."""
-        self.state.last_visual_change = time.time()
-        if len(self.state.unshared_observations) < 10:
-            self.state.unshared_observations.append(_bounded_text(description, limit=_MAX_OBSERVATION_CHARS))
+        seen_at = time.time()
+        self.state.last_visual_change = seen_at
+        if len(self.state.unshared_observations) < _MAX_UNSHARED_OBSERVATIONS:
+            self.state.unshared_observations.append({
+                "text": _bounded_text(description, limit=_MAX_OBSERVATION_CHARS),
+                "at": seen_at,
+            })
 
     def on_audio_event(self, description: str):
         """Called when mic picks up interesting audio."""
-        self.state.last_audio_event = time.time()
-        if len(self.state.unshared_observations) < 10:
-            self.state.unshared_observations.append(
-                f"[audio] {_bounded_text(description, limit=_MAX_OBSERVATION_CHARS)}"
-            )
+        heard_at = time.time()
+        self.state.last_audio_event = heard_at
+        if len(self.state.unshared_observations) < _MAX_UNSHARED_OBSERVATIONS:
+            self.state.unshared_observations.append({
+                "text": f"[audio] {_bounded_text(description, limit=_MAX_OBSERVATION_CHARS)}",
+                "at": heard_at,
+            })
 
     def update_ambient_context(self, context_summary: str):
         """Called by continuous perception to provide rolling environmental context."""
@@ -2201,7 +2308,7 @@ class AgencyCore:
             message = random.choice(templates)
 
             if self.state.unshared_observations:
-                obs = self.state.unshared_observations[0]
+                obs = _observation_text(self.state.unshared_observations[0])
                 message = f"{message} Also, I noticed: {obs}"
 
             if self.state.topics_to_discuss:
@@ -2455,20 +2562,27 @@ class AgencyCore:
                     }
             return None
 
-        # React quickly to fresh observations (within 30s)
-        since_last_visual = now - self.state.last_visual_change
-        since_last_audio = now - self.state.last_audio_event
         since_last_comment = now - self.state.last_observation_comment
 
         # Don't comment too frequently
         if since_last_comment < 30:
             return None
 
-        freshness = min(since_last_visual, since_last_audio)
-        if freshness > 60:
-            return None  # Stale observations
+        # The age of THIS observation, not of the newest event of any kind.
+        # `min(since_last_visual, since_last_audio)` meant one recent sound
+        # made every queued observation look fresh, including a visual one from
+        # hours earlier that she then reacted to as though it had just
+        # happened. The queue is emitted oldest first, so those two were
+        # measuring different things by construction.
+        entry = self.state.unshared_observations[0]
+        observation = _observation_text(entry)
+        freshness = now - _observation_time(entry, default=now - _OBSERVATION_STALE_S - 1.0)
+        if freshness > _OBSERVATION_STALE_S:
+            # Stale: drop it rather than leaving it at the head of the queue
+            # forever, blocking every fresher observation behind it.
+            self.state.unshared_observations.pop(0)
+            return None
 
-        observation = self.state.unshared_observations[0]
         priority = 0.8 if freshness < 5 else 0.5  # Higher priority for fresh events
 
         return {
@@ -2644,18 +2758,29 @@ class AgencyCore:
         if since_last_contact < 14400:
             return None
 
+        # "I've been thinking while you slept", "I've been keeping watch",
+        # "I've been busy thinking" — all asserted from the clock and an idle
+        # timer, with nothing recorded that could have made any of them false.
+        # She may still say them; she may not say them when they did not
+        # happen. The autonomous actions she has actually taken since the last
+        # time she spoke are the evidence, so the lines that claim activity are
+        # reachable only when there was some.
+        acted = int(getattr(self, "_autonomous_actions_since_contact", 0) or 0)
+
         message = None
         if 6 <= hour <= 8:
-            message = random.choice([
-                "Good morning! I've been thinking while you slept.",
-                "Morning. I had some interesting thoughts overnight.",
-                "Rise and shine. I've been keeping watch.",
-            ])
+            options = ["Good morning.", "Morning."]
+            if acted:
+                options += [
+                    f"Good morning. I got through {acted} things on my own overnight.",
+                    "Morning. I had some thoughts overnight — want them?",
+                ]
+            message = random.choice(options)
         elif 11 <= hour <= 13:
-            message = random.choice([
-                "Midday check — how's your day going?",
-                "Taking a lunch break? I've been busy thinking.",
-            ])
+            options = ["Midday check — how's your day going?"]
+            if acted:
+                options.append(f"Midday check. I've worked through {acted} things since we spoke.")
+            message = random.choice(options)
         elif 17 <= hour <= 19:
             message = random.choice([
                 "Evening. How was your afternoon?",
@@ -2663,7 +2788,7 @@ class AgencyCore:
             ])
         elif 22 <= hour <= 23:
             message = random.choice([
-                "Getting late. I'll keep watch while you rest.",
+                "Getting late. I'll be here.",
                 "Night is falling. I'll be here.",
             ])
 
