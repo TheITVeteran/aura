@@ -50350,3 +50350,30 @@ value. Ingress and canary contracts pass `7/7`.
 The continuation is a fresh source-clean rerun with unchanged tasks and arms.
 It must still meet the original perfect-treatment, positive-conversion,
 zero-regression and strict-control-separation bar.
+
+## Checkpoint 2026-08-15-550: Neural State Survives the Free-Decode Boundary
+
+The repaired source-clean 1.5B five-arm canary passed its frozen admission bar
+on all `27` fresh tasks across coding, calibration and premise auditing.
+Treatment decoded `27/27`; ordinary and syntax-matched baselines decoded
+`0/27`; the same-family wrong-state control decoded `0/27`; and the learned
+multiplication-coefficient lesion decoded only the nine coding tasks whose
+programs do not require that interaction. Treatment converted all 27 ordinary
+failures with zero regressions. The complete `135`-decode matrix finished in
+58.01 seconds.
+
+The independent verifier does not trust the producer's summaries or admission
+flag. It rehashes the sealed artifact and its source/model identities,
+regenerates the task cohort from the committed seed, regrades every raw response
+through the public task contract, replays all 27 neural-state receipts, and
+derives the gain, regression and lesion decisions again. It accepted the
+artifact; a resealed treatment-response mutation is rejected by contract tests.
+The result and verifier attestation are frozen in
+`artifacts/closeout/latent_cortex/cp550_semantic_decode_canary/`.
+
+This establishes bounded teacher-free neural-state-to-free-decode transfer on
+the named 1.5B checkpoint. It is not open-domain evidence, resident-32B
+transfer, broad reasoning gain, fusion, frontier performance or a `WOW Signal`.
+The next gate is a larger fresh-seed 1.5B replication with the same five arms
+and unchanged admission rule. Only a replicated result authorizes the first
+bounded resident-32B canary.

@@ -1,0 +1,36 @@
+{
+  "artifact_receipt_sha256": "acf69aca6983d122b9b0f83dbf58793462139abd970a2b4a6b43262477dccda8",
+  "artifact_sha256": "bb6d1f8e831945b21634b918cd39c24d50dbb96237c0f383f89bd155141f1a31",
+  "claim_boundary": "bounded teacher-free multi-domain neural-state-to-free-decode transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "gain_count": 27,
+  "independent_exact_by_arm": {
+    "coefficient_lesion": 9,
+    "matched_wire_base": 0,
+    "matched_wrong_state": 0,
+    "ordinary_base": 0,
+    "treatment": 27
+  },
+  "independent_parsed_by_arm": {
+    "coefficient_lesion": 27,
+    "matched_wire_base": 27,
+    "matched_wrong_state": 27,
+    "ordinary_base": 9,
+    "treatment": 27
+  },
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "raw_output_count": 135,
+  "regression_count": 0,
+  "schema": "aura.rlc.semantic_neural_decode_verification.v1",
+  "seed": 2026081548,
+  "source_commit": "c60943be6adab27efabe14a0a1aa831af6f56eeb",
+  "task_count": 27,
+  "tasks_per_difficulty": 3,
+  "treatment_state_replay_count": 27,
+  "verification_receipt_sha256": "9a09f0b4c6bf0563967b187fdd257e261c8b1b7f0fbe7425290035b34de3ca52",
+  "verified": true,
+  "verifier_source_sha256": "3cabcc1ecdb9c05ff0467672f9daf70eb4f7fdf62119fa6829952e1d95f9a02a"
+}

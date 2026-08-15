@@ -5910,3 +5910,19 @@ requirements, at least 20% pooled gain and exact one-sided `p <= 0.01`. Its
 launchd controller is alive and waits on the authenticated CP275 terminal
 receipt. SPARK completion remains `913/920`; these repairs do not count the
 remaining scientific gates as passed.
+
+### 2026-08-15 - CP550 bounded semantic decode transfer is independently positive
+
+The source-clean 1.5B semantic-neural canary converted all `27/27` ordinary
+decode failures across coding, calibration and premise auditing without a
+regression. Syntax-matched and same-family wrong-state controls remained
+`0/27`; removing one learned multiplication interaction reduced treatment to
+`9/27`. An independent verifier regenerated the cohort, regraded all `135` raw
+outputs and replayed every treatment state rather than trusting producer
+summaries. The frozen evidence is under
+`artifacts/closeout/latent_cortex/cp550_semantic_decode_canary/`.
+
+This closes a bounded 1.5B state-to-language gate, not SPARK-069 through
+SPARK-072. A larger fresh-seed replication remains required before resident-32B
+transfer, and broad replicated gains remain required before fusion, frontier or
+`WOW Signal` claims.
