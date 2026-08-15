@@ -1,0 +1,127 @@
+{
+  "schema": "aura.unified_intrinsic.copy_write_margin_adjudication.v1",
+  "campaign_id": "cp538-semantic-copy-write-20260815",
+  "source_commit": "108f9d18775dd3595e94ea057d8732d4cb38fe16",
+  "source_tree": "e5e9343ae1bdde50741ffeeed622aa65a4f8969f",
+  "source_manifest_sha256": "4158a0e888539a096753f7d6e11b144dcf661a562b544b85a5c06c0b2f16f4f7",
+  "campaign_config_sha256": "12570aa3da58ae92c768b60a8e0e631594705ae028902a2a39a4d1e1ba065889",
+  "dataset_identity_sha256": "1a36374c9a56b85bf3bc835cb6abd185a04a923eadd60d15d9b1cc3295ede1db",
+  "profile": "process_semantic_copy_write_canary",
+  "checkpoint": {
+    "step": 112,
+    "checkpoint_sha256": "13ac3b9feb63d7cfbf03463009d87b3b78b55a1fe87b2f208cce72412b447fe5",
+    "checkpoint_identity_sha256": "eca9756cdf2436bd550e5047de0e89126752adee16c8086401a41fabc3e71057",
+    "checkpoint_receipt_sha256": "e20c118cce424fdecd19c12666037251d3fb970fa0fb24664baeb32153c46695"
+  },
+  "execution": {
+    "attempts": 1,
+    "restarts": 0,
+    "last_completed_training_step": 112,
+    "duration_seconds": 660.576635,
+    "detached_receipt_sha256": "4b40188864d57ec764c455c76dbaa35f2eae2eb7d0b9b00673f5f8c1c11e36c8",
+    "halt_reason": "bounded_policy_margin_adjudication",
+    "descendant_cleanup_verified": true
+  },
+  "training_observations": {
+    "step_32": {
+      "t1_categorical_state_accuracy": 0.7926,
+      "t16_categorical_state_accuracy": 0.3784,
+      "exact_trajectory_accuracy": 0.0
+    },
+    "step_64": {
+      "t16_categorical_state_accuracy": 0.4517,
+      "t1_active_state_exact_accuracy": 0.0,
+      "exact_trajectory_accuracy": 0.0
+    },
+    "step_96": {
+      "t16_categorical_state_accuracy": 0.5529,
+      "t1_active_state_exact_accuracy": 0.0,
+      "exact_trajectory_accuracy": 0.0
+    }
+  },
+  "matched_policy_lesion": {
+    "holdout_tasks": 36,
+    "depths": [1, 3, 16],
+    "copy_write_bias_2_0": {
+      "report_payload_sha256": "f75df941d7d9df5678d68f18d4d10ea4201fb8e025143c453f9ab56699728b56",
+      "report_file_sha256": "e703e65a8ee2c2d9628a6978dae5327f631a989e35c05ddc613a76b4a11e4792",
+      "t1_active_state_exact_accuracy": 0.0,
+      "t3_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0
+    },
+    "authoritative_bias_0_0": {
+      "report_payload_sha256": "595af30e9735f617aa44f2fea0071dcad1f470d6e3b0244e5e3939d50458ef49",
+      "report_file_sha256": "7283a68f28b35313f78c36e80a503a37081d367d83cd1bacd25877aa79e8c9fb",
+      "t1_active_state_exact_accuracy": 0.05555555555555555,
+      "t3_active_state_exact_accuracy": 0.018518518518518517,
+      "t16_active_state_exact_accuracy": 0.018518518518518517
+    }
+  },
+  "frozen_margin_sweep": [
+    {
+      "bias": 0.01,
+      "report_payload_sha256": "c97baa4350a10db3b465f1240dd3c55ee3249a1faf14708fc94f89e8b91fab55",
+      "report_file_sha256": "d71542d17f550c2fb1dd4e1f3d59eb82075dbad8b0026bc2e23c70f0bc8412f5",
+      "t1_active_state_exact_accuracy": 0.05555555555555555,
+      "t3_active_state_exact_accuracy": 0.018518518518518517,
+      "t16_active_state_exact_accuracy": 0.018518518518518517
+    },
+    {
+      "bias": 0.05,
+      "report_payload_sha256": "621e1d6c86e8a03717b24ed4024253b27450cd5cd555820a3e127a8cbf00372b",
+      "report_file_sha256": "4139779cbc9ea1ae27242ca5d22a2b255a39621f16b373eec1f3348d9cc7cd90",
+      "t1_active_state_exact_accuracy": 0.027777777777777776,
+      "t3_active_state_exact_accuracy": 0.009259259259259259,
+      "t16_active_state_exact_accuracy": 0.009259259259259259
+    },
+    {
+      "bias": 0.1,
+      "report_payload_sha256": "7f91bb67b06ea09a2c9b54a0e88b5b35192a94f3f2701f1ed70dcaca308f665a",
+      "report_file_sha256": "09043845ed31dfc5990509b0ad678021639d79f52c23e01159551aae0ca1be27",
+      "t1_active_state_exact_accuracy": 0.027777777777777776,
+      "t3_active_state_exact_accuracy": 0.009259259259259259,
+      "t16_active_state_exact_accuracy": 0.009259259259259259
+    },
+    {
+      "bias": 0.25,
+      "report_payload_sha256": "b5ee18047a3162a041b5253060ea877d33b1b4c13faf608d4c4fa95c4999223d",
+      "report_file_sha256": "f13005d2aacb9faec56fb2e21d179f18be04e74443f84cd37e3f775f17a70295",
+      "t1_active_state_exact_accuracy": 0.0,
+      "t3_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0
+    },
+    {
+      "bias": 0.5,
+      "report_payload_sha256": "691bf84f642d4cca850dde09f8dd9415a88f872a2bd755a5ac4f179e2072afaa",
+      "report_file_sha256": "fecad48e944454d407d663921ae27ab423cbd9d16af91059eaadea48854d4152",
+      "t1_active_state_exact_accuracy": 0.0,
+      "t3_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0
+    },
+    {
+      "bias": 1.0,
+      "report_payload_sha256": "d03eb84e5acad34c5f6c6ab9a2e0b7d292c216ed918303fb20cc720edeb85181",
+      "report_file_sha256": "11ac8b0298ae0eeec257d090c9fb549e1b9ca64f7d4bbc3e3e9ef1dcdb4bb0b9",
+      "t1_active_state_exact_accuracy": 0.0,
+      "t3_active_state_exact_accuracy": 0.0,
+      "t16_active_state_exact_accuracy": 0.0
+    }
+  ],
+  "verdict": "not_admitted_policy_margin_refuted",
+  "supported_claims": [
+    "The same frozen learned tissue produced two exact T1 transitions when the fixed copy prior was removed or reduced to 0.01.",
+    "The 2.0 copy prior suppressed all complete-state exact successes from that tissue.",
+    "The copy prior is a causal runtime policy parameter and must be bound into campaign identity and evidence receipts.",
+    "A 0.01 positive prior retains exact zero-attached identity while preserving all exact successes observed under the authoritative lesion."
+  ],
+  "unsupported_claims": [
+    "reliable autonomous semantic-state execution",
+    "positive recurrence-depth effect",
+    "multi-domain decoded reasoning gain",
+    "resident-32B semantic transfer",
+    "runtime promotion or weight fusion",
+    "frontier reasoning",
+    "WOW Signal"
+  ],
+  "next_bounded_mechanism": "Train a fresh source-bound semantic-v2 copy-write canary with the signed 0.01 retention margin, then require exact T1 acquisition, positive depth behavior, and matched router, expert, state, history, and authoritative-policy lesions before any answer-bridge campaign."
+}

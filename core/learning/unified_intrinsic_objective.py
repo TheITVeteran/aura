@@ -28,6 +28,7 @@ from core.learning.recurrent_state_schema import (
     state_targets_from_trace,
 )
 from core.learning.unified_intrinsic_recurrence import (
+    TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     TRANSITION_PROCESSOR_MODES,
     TRANSITION_REPLAY_MODES,
     UnifiedRecurrentController,
@@ -194,6 +195,7 @@ def unified_answer_and_recurrent_trajectory(
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
@@ -266,6 +268,7 @@ def unified_answer_and_recurrent_trajectory(
         microcode_lesion=microcode_lesion,
         transition_processor_lesion=transition_processor_lesion,
         transition_processor_mode=transition_processor_mode,
+        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_replay_mode=transition_replay_mode,
         transition_history_lesion=transition_history_lesion,
@@ -996,6 +999,7 @@ def unified_process_training_loss(
     public_action_values: Sequence[Sequence[int]] | None = None,
     microcode_lesion: bool = False,
     transition_processor_mode: str = "residual",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
 ) -> tuple[Any, dict[str, Any]]:
@@ -1055,6 +1059,7 @@ def unified_process_training_loss(
         state_teacher_forcing_probability=state_teacher_forcing_probability,
         microcode_lesion=microcode_lesion,
         transition_processor_mode=transition_processor_mode,
+        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_replay_mode=transition_replay_mode,
         process_only=True,
@@ -1140,6 +1145,7 @@ def unified_typed_transition_processor_loss(
     register_weights: Sequence[float] | None = None,
     weakest_register_weight: float = 0.0,
     transition_processor_mode: str = "authoritative",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_replay_mode: str = "disabled",
     replay_auxiliary_weight: float = 0.5,
 ) -> tuple[Any, dict[str, Any]]:
@@ -1193,6 +1199,10 @@ def unified_typed_transition_processor_loss(
         or not 0.0 <= float(weakest_register_weight) <= 2.0
         or transition_processor_mode not in TRANSITION_PROCESSOR_MODES
         or transition_processor_mode == "residual"
+        or isinstance(transition_copy_prior_logit_bias, bool)
+        or not isinstance(transition_copy_prior_logit_bias, (int, float))
+        or not math.isfinite(float(transition_copy_prior_logit_bias))
+        or not 0.0 <= float(transition_copy_prior_logit_bias) <= 8.0
         or transition_replay_mode not in TRANSITION_REPLAY_MODES
         or isinstance(replay_auxiliary_weight, bool)
         or not isinstance(replay_auxiliary_weight, (int, float))
@@ -1353,6 +1363,7 @@ def unified_typed_transition_processor_loss(
             history_memory,
             transition_processor_mode=transition_processor_mode,
             opcode_expert_routing=opcode_expert_routing,
+            transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
         )
         logits, replay_candidate, replay_gate = controller.typed_transition_replay_logits(
             local_logits,
@@ -1501,6 +1512,9 @@ def unified_typed_transition_processor_loss(
         ],
         "weakest_register_weight": float(weakest_register_weight),
         "transition_processor_mode": transition_processor_mode,
+        "transition_copy_prior_logit_bias": float(
+            transition_copy_prior_logit_bias
+        ),
         "post_terminal_transitions_trained": 0,
         "answer_tokens_exposed": False,
         "transformer_graph_constructed": False,

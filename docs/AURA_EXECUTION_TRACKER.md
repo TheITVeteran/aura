@@ -50110,3 +50110,41 @@ family gradients into campaign identity. Focused recurrence, objective,
 trainer, evaluator and campaign contracts pass `259/259`. This is a candidate
 mechanism, not a gain claim; the next gate is the bounded fresh canary with
 matched authoritative-policy, state, history, router and expert lesions.
+
+## Checkpoint 2026-08-15-538: Separate Learned Writes From The Retention Policy
+
+The source-bound copy-write canary reached a durable step-112 checkpoint in one
+healthy detached attempt. Average categorical state accuracy improved over
+CP536, reaching `0.5529` at T16 by step 96, but the configured `2.0` retention
+margin still produced no exact T1 state and no exact trajectory. The campaign
+was stopped at the bounded policy-adjudication point instead of spending the
+remaining budget on an unresolved decision boundary.
+
+A model-free matched-policy replay then evaluated the identical frozen tissue.
+The configured `copy_write` policy at margin `2.0` scored `0/36` exact T1;
+removing only that margin exposed `2/36` exact T1 transitions and one surviving
+exact state at both T3 and T16. A frozen sweep localized the boundary: `0.01`
+preserved both T1 successes, `0.05` and `0.10` preserved one, and `0.25` or
+greater suppressed all complete-state successes. The tissue had learned some
+correct writes; the fixed retention policy discarded them.
+
+The adjudication is frozen in
+`artifacts/closeout/latent_cortex/cp538_copy_write_margin_adjudication.json`.
+Its verdict remains `not_admitted`: two T1 successes are not reliable semantic
+execution and no complete deep trajectory exists.
+
+## Checkpoint 2026-08-15-539: Make Sparse-Write Authority Measured And Signed
+
+The copy retention margin is now a validated argument of the recurrent
+controller, closed-loop objective, trainer, evaluator and campaign package.
+Training identities and evaluation reports record the exact value. Frozen
+diagnostics may set it to zero as a policy lesion; a trainable `copy_write`
+campaign must bind a finite positive value, preserving the zero-attached exact
+identity invariant.
+
+The fresh semantic profile binds the measured `0.01` margin rather than the
+historical `2.0` default. This is a mechanism correction derived from frozen
+evidence, not a relaxed score or post-hoc task selection. The next gate is a
+fresh-source canary: exact T1 acquisition must become reliable, recurrence must
+stop compounding first-step errors, and matched causal lesions must remove any
+gain before work proceeds to decoded answers.

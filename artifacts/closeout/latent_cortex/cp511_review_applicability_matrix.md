@@ -372,3 +372,22 @@ keeps unowned parameters on the ordinary arithmetic mean. Historical
 authoritative and residual modes remain unchanged and older checkpoints attach
 only the missing zero tensor. These are implemented contracts, not evidence of
 a gain; the next gate is a fresh canary and matched policy/tissue lesions.
+
+## CP538-CP539 addendum
+
+CP538 tested the CP537 mechanism in one source-bound detached attempt. The
+configured `2.0` copy prior improved average categorical retention but produced
+no exact T1 state. Replaying the same step-112 tissue under an authoritative
+policy exposed `2/36` exact T1 transitions, proving the retention margin itself
+was suppressing learned writes. A frozen six-point sweep found the complete
+observed write set at `0.01`, one retained write at `0.05-0.10`, and no complete
+state at `0.25` or higher. The campaign remains negative for reliable semantic
+execution and is frozen in `cp538_copy_write_margin_adjudication.json`.
+
+This closes the review recommendation to distinguish learned transition
+capacity from deployment-policy error. CP539 makes the margin an explicit,
+validated and signed parameter across controller, objective, trainer,
+evaluator and campaign identity. Zero remains a diagnostic lesion only;
+trainable copy-write profiles require a positive margin. The next fresh canary
+uses the empirically localized `0.01` value. It does not change the exactness,
+lesion, replication, answer-decode, resident-transfer or WOW proof bars.

@@ -305,6 +305,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
         "public_action_program": False,
         "direct_transition_processor": False,
         "transition_processor_mode": "authoritative",
+        "transition_copy_prior_logit_bias": 2.0,
         "direct_transition_curriculum": "closed_loop",
         "direct_transition_weakest_register_weight": 0.0,
         "transition_opcode_expert_routing": "opcode",
@@ -753,6 +754,7 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "public_action_program": True,
             "direct_transition_processor": True,
             "transition_processor_mode": "copy_write",
+            "transition_copy_prior_logit_bias": 0.01,
             "direct_transition_curriculum": "progressive",
             "direct_transition_weakest_register_weight": 0.25,
             "transition_replay_mode": "disabled",
@@ -947,6 +949,9 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
             "--transition-opcode-expert-routing"
         ),
         "transition_processor_mode": "--transition-processor-mode",
+        "transition_copy_prior_logit_bias": (
+            "--transition-copy-prior-logit-bias"
+        ),
         "transition_replay_mode": "--transition-replay-mode",
         "direct_transition_curriculum": "--direct-transition-curriculum",
         "direct_transition_weakest_register_weight": (

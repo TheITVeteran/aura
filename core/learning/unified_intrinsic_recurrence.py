@@ -2720,6 +2720,7 @@ class UnifiedRecurrentController(nn.Module):
         *,
         transition_processor_mode: str,
         opcode_expert_routing: str = "opcode",
+        transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     ) -> Any:
         """Apply one declared processor policy to the deployed transition.
 
@@ -2733,6 +2734,13 @@ class UnifiedRecurrentController(nn.Module):
 
         if transition_processor_mode not in TRANSITION_PROCESSOR_MODES:
             raise ValueError("typed transition processor mode differs")
+        if (
+            isinstance(transition_copy_prior_logit_bias, bool)
+            or not isinstance(transition_copy_prior_logit_bias, (int, float))
+            or not math.isfinite(float(transition_copy_prior_logit_bias))
+            or not 0.0 <= float(transition_copy_prior_logit_bias) <= 8.0
+        ):
+            raise ValueError("transition copy prior logit bias differs")
         processor_logits = self.typed_transition_processor_logits(
             state_probabilities,
             action_probabilities,
@@ -2750,7 +2758,7 @@ class UnifiedRecurrentController(nn.Module):
             # learned candidate can still override any register. It carries no
             # target, private trace, opcode semantics, or future information.
             resolved = processor_logits + (
-                TRANSITION_COPY_PRIOR_LOGIT_BIAS
+                float(transition_copy_prior_logit_bias)
                 * state_probabilities.astype(mx.float32)
             )
         else:
@@ -2788,6 +2796,7 @@ class UnifiedRecurrentController(nn.Module):
         microcode_lesion: bool = False,
         transition_processor_lesion: bool = False,
         transition_processor_mode: str = "residual",
+        transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
         opcode_expert_routing: str = "opcode",
         transition_replay_mode: str = "disabled",
     ) -> Any:
@@ -2914,6 +2923,9 @@ class UnifiedRecurrentController(nn.Module):
                 typed_memory,
                 transition_processor_mode=transition_processor_mode,
                 opcode_expert_routing=opcode_expert_routing,
+                transition_copy_prior_logit_bias=(
+                    transition_copy_prior_logit_bias
+                ),
             )
             if transition_replay_mode not in ("disabled", "lesion"):
                 if action_probability_history is None:
@@ -4458,6 +4470,7 @@ def unified_recurrent_hidden_states(
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
@@ -4747,6 +4760,9 @@ def unified_recurrent_hidden_states(
                     microcode_lesion=microcode_lesion,
                     transition_processor_lesion=transition_processor_lesion,
                     transition_processor_mode=transition_processor_mode,
+                    transition_copy_prior_logit_bias=(
+                        transition_copy_prior_logit_bias
+                    ),
                     opcode_expert_routing=transition_opcode_expert_routing,
                     transition_replay_mode=transition_replay_mode,
                 )

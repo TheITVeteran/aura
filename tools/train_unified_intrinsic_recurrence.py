@@ -88,6 +88,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     MAX_PROCESS_INTEGER,
     PROCESS_READER_PARAMETER_NAMES,
     PROCESS_TAPE_SCHEMA,
+    TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_MODES,
@@ -2466,6 +2467,7 @@ def _capture_autonomous_process(
     microcode_lesion: bool = False,
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "residual",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
@@ -2488,6 +2490,7 @@ def _capture_autonomous_process(
         microcode_lesion=microcode_lesion,
         transition_processor_lesion=transition_processor_lesion,
         transition_processor_mode=transition_processor_mode,
+        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_replay_mode=transition_replay_mode,
         transition_history_lesion=transition_history_lesion,
@@ -3038,6 +3041,7 @@ def _evaluate_process_admission(
     public_action_program: bool = False,
     transition_processor_lesion: bool = False,
     transition_processor_mode: str = "authoritative",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
     transition_history_lesion: bool = False,
@@ -3070,6 +3074,9 @@ def _evaluate_process_admission(
                     microcode_lesion=True,
                     transition_processor_lesion=transition_processor_lesion,
                     transition_processor_mode=transition_processor_mode,
+                    transition_copy_prior_logit_bias=(
+                        transition_copy_prior_logit_bias
+                    ),
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
@@ -3103,6 +3110,11 @@ def _evaluate_process_admission(
         "transition_processor_lesioned": transition_processor_lesion,
         "transition_processor_mode": (
             transition_processor_mode if public_action_program else "residual"
+        ),
+        "transition_copy_prior_logit_bias": (
+            float(transition_copy_prior_logit_bias)
+            if public_action_program and transition_processor_mode == "copy_write"
+            else 0.0
         ),
         "transition_opcode_expert_routing": transition_opcode_expert_routing,
         "transition_replay_mode": transition_replay_mode,
@@ -4520,6 +4532,7 @@ def _evaluate_depth(
     *,
     public_action_program: bool = False,
     transition_processor_mode: str = "authoritative",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
 ) -> dict[str, float]:
@@ -4544,6 +4557,7 @@ def _evaluate_depth(
         transition_processor_mode=(
             transition_processor_mode if public_action_program else "residual"
         ),
+        transition_copy_prior_logit_bias=transition_copy_prior_logit_bias,
         transition_opcode_expert_routing=transition_opcode_expert_routing,
         transition_replay_mode=transition_replay_mode,
         answer_digit_pointer_enabled=(not str(getattr(task, "family", "")).startswith("frontier_")),
@@ -4633,6 +4647,7 @@ def _evaluate(
     envelope: Any,
     public_action_program: bool = False,
     transition_processor_mode: str = "authoritative",
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     transition_opcode_expert_routing: str = "opcode",
     transition_replay_mode: str = "disabled",
 ) -> dict[str, Any]:
@@ -4699,6 +4714,9 @@ def _evaluate(
                     depth,
                     public_action_program=public_action_program,
                     transition_processor_mode=transition_processor_mode,
+                    transition_copy_prior_logit_bias=(
+                        transition_copy_prior_logit_bias
+                    ),
                     transition_opcode_expert_routing=(
                         transition_opcode_expert_routing
                     ),
@@ -5151,6 +5169,15 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--transition-copy-prior-logit-bias",
+        type=float,
+        default=TRANSITION_COPY_PRIOR_LOGIT_BIAS,
+        help=(
+            "signed sparse-write retention margin; copy-write training requires "
+            "a positive value and frozen diagnostics may evaluate zero"
+        ),
+    )
+    parser.add_argument(
         "--direct-transition-curriculum",
         choices=("closed_loop", "progressive"),
         default="closed_loop",
@@ -5442,6 +5469,15 @@ def main() -> int:
     ):
         raise ValueError(
             "copy-write transition mode requires direct public transition training"
+        )
+    if (
+        not math.isfinite(args.transition_copy_prior_logit_bias)
+        or not 0.0 <= args.transition_copy_prior_logit_bias <= 8.0
+        or args.transition_processor_mode == "copy_write"
+        and args.transition_copy_prior_logit_bias <= 0.0
+    ):
+        raise ValueError(
+            "copy-write transition mode requires a finite positive prior in (0, 8]"
         )
     if (
         args.direct_transition_curriculum != "closed_loop"
@@ -6000,6 +6036,7 @@ def main() -> int:
             "direct_transition_processor": {
                 "enabled": args.direct_transition_processor,
                 "mode": args.transition_processor_mode,
+                "copy_prior_logit_bias": args.transition_copy_prior_logit_bias,
                 "objective": (
                     "actual_committed_state_public_action_history_to_exact_next_state"
                 ),
@@ -6765,6 +6802,9 @@ def main() -> int:
                                             transition_processor_mode=(
                                                 args.transition_processor_mode
                                             ),
+                                            transition_copy_prior_logit_bias=(
+                                                args.transition_copy_prior_logit_bias
+                                            ),
                                             transition_replay_mode=(
                                                 args.transition_replay_mode
                                             ),
@@ -6788,6 +6828,9 @@ def main() -> int:
                                             args.transition_processor_mode
                                             if args.public_action_program
                                             else "residual"
+                                        ),
+                                        transition_copy_prior_logit_bias=(
+                                            args.transition_copy_prior_logit_bias
                                         ),
                                         transition_opcode_expert_routing=(
                                             args.transition_opcode_expert_routing
@@ -6931,6 +6974,9 @@ def main() -> int:
                         envelope=envelope,
                         public_action_program=args.public_action_program,
                         transition_processor_mode=args.transition_processor_mode,
+                        transition_copy_prior_logit_bias=(
+                            args.transition_copy_prior_logit_bias
+                        ),
                         transition_opcode_expert_routing=(
                             args.transition_opcode_expert_routing
                         ),
@@ -7013,6 +7059,9 @@ def main() -> int:
                 envelope=envelope,
                 public_action_program=args.public_action_program,
                 transition_processor_mode=args.transition_processor_mode,
+                transition_copy_prior_logit_bias=(
+                    args.transition_copy_prior_logit_bias
+                ),
                 transition_opcode_expert_routing=(
                     args.transition_opcode_expert_routing
                 ),

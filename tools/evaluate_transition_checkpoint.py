@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from core.learning.unified_intrinsic_objective import (  # noqa: E402
     structured_state_trajectory_diagnostics,
 )
 from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
+    TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     TRANSITION_EXECUTION_DEPENDENCY_PARAMETER_NAMES,
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
@@ -151,6 +153,7 @@ def _evaluate_task(
     *,
     routing: str,
     transition_processor_mode: str,
+    transition_copy_prior_logit_bias: float = TRANSITION_COPY_PRIOR_LOGIT_BIAS,
     replay_mode: str = "disabled",
     state_history_arm: str = "intact",
 ) -> dict[str, Any]:
@@ -219,6 +222,9 @@ def _evaluate_task(
                 memory,
                 transition_processor_mode=transition_processor_mode,
                 opcode_expert_routing=routing,
+                transition_copy_prior_logit_bias=(
+                    transition_copy_prior_logit_bias
+                ),
             )
             decision, _replay_candidate, _replay_gate = (
                 controller.typed_transition_replay_logits(
@@ -328,10 +334,20 @@ def main() -> int:
         ),
         default="authoritative",
     )
+    parser.add_argument(
+        "--transition-copy-prior-logit-bias",
+        type=float,
+        default=TRANSITION_COPY_PRIOR_LOGIT_BIAS,
+    )
     parser.add_argument("--replay-modes", default="disabled")
     parser.add_argument("--state-history-arms", default="intact")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if (
+        not 0.0 <= args.transition_copy_prior_logit_bias <= 8.0
+        or not math.isfinite(args.transition_copy_prior_logit_bias)
+    ):
+        raise ValueError("transition copy prior logit bias differs")
 
     controller, checkpoint = _load_controller(args.checkpoint_dir.resolve(strict=True))
     _train, holdout = _load_frozen_dataset(args.dataset.resolve(strict=True))
@@ -365,6 +381,9 @@ def main() -> int:
                                 transition_processor_mode=(
                                     args.transition_processor_mode
                                 ),
+                                transition_copy_prior_logit_bias=(
+                                    args.transition_copy_prior_logit_bias
+                                ),
                                 replay_mode=replay_mode,
                                 state_history_arm=state_history_arm,
                             ),
@@ -392,6 +411,9 @@ def main() -> int:
         "state_history_arms": list(state_history_arms),
         "runtime_contract": {
             "transition_processor_mode": args.transition_processor_mode,
+            "transition_copy_prior_logit_bias": (
+                args.transition_copy_prior_logit_bias
+            ),
             "legacy_transition_logits_available": False,
             "exact_microcode_available": False,
             "initial_state_authority": "verified_public_initial_state",

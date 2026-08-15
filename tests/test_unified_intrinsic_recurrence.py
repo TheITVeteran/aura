@@ -1300,6 +1300,58 @@ def test_copy_write_processor_is_identity_at_zero_attachment() -> None:
     assert tuple(mx.argmax(regenerated[0], axis=-1).tolist()) != values
 
 
+def test_copy_write_processor_retains_identity_with_small_positive_prior() -> None:
+    controller = _controller()
+    values = (3, 7, 11, 13, 0)
+    state = controller.exact_probabilities(
+        values,
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    copied = controller.resolve_transition_processor_logits(
+        None,
+        state,
+        action,
+        None,
+        transition_processor_mode="copy_write",
+        transition_copy_prior_logit_bias=0.05,
+    )
+
+    mx.eval(copied)
+    assert tuple(mx.argmax(copied[0], axis=-1).tolist()) == values
+
+
+@pytest.mark.parametrize("bias", (-0.01, float("inf"), 8.01, True))
+def test_copy_write_processor_rejects_invalid_prior_bias(bias: object) -> None:
+    controller = _controller()
+    state = controller.exact_probabilities(
+        (3, 7, 11, 13, 0),
+        slots=controller.config.state_slots,
+        cardinality=controller.config.state_cardinality,
+    )
+    action = controller.exact_probabilities(
+        (8, 1, 0, 2, 3, 4, 31, 0),
+        slots=controller.config.action_slots,
+        cardinality=controller.config.action_cardinality,
+    )
+
+    with pytest.raises(ValueError, match="copy prior"):
+        controller.resolve_transition_processor_logits(
+            None,
+            state,
+            action,
+            None,
+            transition_processor_mode="copy_write",
+            transition_copy_prior_logit_bias=bias,
+        )
+
+
 def test_copy_write_processor_can_override_any_committed_register() -> None:
     controller = _controller()
     state = controller.exact_probabilities(

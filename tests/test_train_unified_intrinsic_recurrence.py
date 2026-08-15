@@ -2369,10 +2369,11 @@ def test_process_admission_propagates_processor_and_history_lesions(
             "public_action_values": ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
             "microcode_lesion": True,
             "transition_processor_lesion": True,
-                "transition_processor_mode": "authoritative",
-                "transition_opcode_expert_routing": "opcode",
-                "transition_replay_mode": "disabled",
-                "transition_history_lesion": True,
+            "transition_processor_mode": "authoritative",
+            "transition_copy_prior_logit_bias": 2.0,
+            "transition_opcode_expert_routing": "opcode",
+            "transition_replay_mode": "disabled",
+            "transition_history_lesion": True,
         }
     ]
     assert report["transition_processor_available"] is False
@@ -3518,10 +3519,12 @@ def test_evaluation_propagates_public_action_program_to_every_depth(
         *,
         public_action_program=False,
         transition_processor_mode="authoritative",
+        transition_copy_prior_logit_bias=2.0,
         transition_opcode_expert_routing="opcode",
         transition_replay_mode="disabled",
     ):
         assert transition_processor_mode == "authoritative"
+        assert transition_copy_prior_logit_bias == 2.0
         assert transition_opcode_expert_routing == "opcode"
         assert transition_replay_mode == "disabled"
         observed.append((depth, public_action_program))
