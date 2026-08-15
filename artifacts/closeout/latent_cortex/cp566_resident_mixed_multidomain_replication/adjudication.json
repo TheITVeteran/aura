@@ -1,0 +1,67 @@
+{
+  "adjudication_receipt_sha256": "d1487b144d197291ebdb1d79ac803fc887b4ebd4dae0ec1bf977c9859fb27d1f",
+  "adjudicator_source_sha256": "7dffcf517a89c902533668c470ee4b2195c70b1c9faec35970a01de21531e7f7",
+  "checks": {
+    "all_family_lesions_separate": true,
+    "four_domain_identity": true,
+    "frozen_profile": true,
+    "gain_in_three_domains": true,
+    "independent_verifier_passed": true,
+    "journal_independently_verified": true,
+    "paired_exact_significant": true,
+    "powered_complete_matrix": true,
+    "producer_admitted": true,
+    "resident_manifest_bound": true,
+    "supervisor_passed": true,
+    "treatment_perfect": true,
+    "wrong_state_never_succeeds": true,
+    "zero_regressions": true
+  },
+  "claim": "replicated lesion-dependent resident-32B effective reasoning gain over ordinary decode on the frozen four-domain semantic cohort",
+  "coefficient_lesion_separation_by_family": {
+    "frontier_calibration": 13,
+    "frontier_coding": 15,
+    "frontier_misleading_premise": 13,
+    "frontier_scientific_inference": 14
+  },
+  "decode_count": 300,
+  "gain_count": 44,
+  "gains_by_family": {
+    "frontier_calibration": 15,
+    "frontier_coding": 15,
+    "frontier_misleading_premise": 0,
+    "frontier_scientific_inference": 14
+  },
+  "independent_exact_by_arm": {
+    "coefficient_lesion": 5,
+    "matched_wire_base": 7,
+    "matched_wrong_state": 0,
+    "ordinary_base": 16,
+    "treatment": 60
+  },
+  "input_receipts": {
+    "result": "ddf6bf56c9b3422b7f9e10a4faf5d4173ba410ace7226250588fbf18ab0e5242",
+    "supervisor": "cead782fe90309e4cdf46f12a163354ab354cf48951aaa302ad712ec2d69073e",
+    "verification": "3d929400db5aeb7c83b66103c14f71a23a68b0d3722629b03b5c38ad37ab2e26"
+  },
+  "input_sha256s": {
+    "journal": "90eac5acb039988550efece748e674b4f6bed4294cdd60f1a1537e96c402dd6b",
+    "result": "75ed72493ba5313e961b63efa8839587826385aba1977f9aff52f855b1921b30",
+    "supervisor_receipt": "ecea8f6b795ea866c70f9684932e1389fbc1fbeded167b7583a9adee8762185a",
+    "verification": "2fbe760ba0fdb8402ed4097eebcb4cc5ecedc7ac26416dbbe8edd0c3ae1ac2f4"
+  },
+  "limitations": "bounded executable families; not open-domain general reasoning, static fusion, frontier performance, consciousness evidence, or unrestricted runtime promotion",
+  "paired_one_sided_exact_p": 5.684341886080802e-14,
+  "passed": true,
+  "regression_count": 0,
+  "regressions_by_family": {
+    "frontier_calibration": 0,
+    "frontier_coding": 0,
+    "frontier_misleading_premise": 0,
+    "frontier_scientific_inference": 0
+  },
+  "schema": "aura.rlc.semantic_neural_bounded_wow_adjudication.v1",
+  "task_count": 60,
+  "tasks_per_family": 15,
+  "verdict": "BOUNDED_WOW_SIGNAL"
+}

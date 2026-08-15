@@ -50706,3 +50706,29 @@ All local construction and preflight gates are now green. The next and only
 authorized 32B use is a fresh 60-task resident replication under this exact
 profile. Its result proceeds directly to fixed adjudication; it must not spawn
 another mechanism-design loop or an undefined additional campaign.
+
+## Checkpoint 2026-08-15-566: WOW Signal - Bounded Resident Gain Replicates
+
+The frozen `mixed_multidomain_v1` resident campaign completed 300 decodes over
+60 fresh tasks in 4,814.53 seconds. Treatment decoded `60/60`; ordinary
+resident-32B decode scored `16/60`; syntax-matched wire scored `7/60`; the
+family-targeted coefficient lesion scored `5/60`; and same-family wrong-state
+control scored `0/60`. Treatment converted 44 ordinary failures and preserved
+all 16 ordinary successes.
+
+Independent verification regenerated the cohort, regraded every raw response,
+replayed all 60 recurrent states and alternate scientific surface receipts,
+and accepted the complete 302-event journal. The paired one-sided exact
+probability is `5.684341886080802e-14`. Gains occurred in coding, calibration
+and scientific inference. Misleading-premise ordinary decode was already at
+ceiling (`15/15`), and treatment preserved all 15 rather than manufacturing a
+gain by regressing the baseline.
+
+The detached supervisor completed without restart or timeout and proved empty
+process-group and lineage teardown. The fixed adjudicator therefore records a
+`BOUNDED_WOW_SIGNAL`: replicated lesion-dependent resident-32B effective
+reasoning gain over ordinary decode on the declared four-domain cohort. This
+does not establish open-domain general reasoning, frontier performance,
+consciousness, static weight fusion or unrestricted global runtime promotion.
+The next step is a content-addressed qualified runtime package, shadow
+activation, rollback and latency/no-regression proof for this exact surface.
