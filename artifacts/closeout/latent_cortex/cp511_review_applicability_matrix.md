@@ -146,3 +146,30 @@ mathematics task. It does **not** prove that learned recurrent tissue can write,
 read, or execute that memory autonomously. Mathematics remains excluded from a
 capability claim until learned read/write heads, occupied-cell masks, matched
 lesions, and teacher-free decoded evaluation are implemented and pass.
+
+## CP516-CP518 addendum
+
+CP516 implements a teacher-removed bounded mathematics memory machine. A
+generic sparse address bus retains and merges cells, while neural tissue learns
+the write predicate and final result-admission predicate. Runtime starts from an
+empty memory and rolls in only its own hard decisions. It has no compiler,
+verifier, expected answer, or private trace. Incorrect writes remain observable
+rather than being blocked by the training-time semantic validator. No-write,
+always-write, no-read, rotated-routing, and reset-each-step lesions are explicit
+execution modes; a fresh seed-identical tissue is the matched-capacity control.
+
+CP517 made the frozen canary directly executable. CP518 records its create-once
+certificate at `cp517_mathematics_memory_canary.json`. The measured source was
+clean commit `3ef63788a271efae45e35d8b2d1f3a2c74c02d4e`. Training used 120 tasks;
+evaluation used 300 fresh tasks across all three registered difficulties.
+Teacher-removed treatment was 300/300 exact. The initialization-matched control,
+no-write, no-read, and reset-memory arms were each 0/300; rotated routing was
+2/300 and always-write was 17/300. The outer receipt hash and all arm receipts
+validate.
+
+This is positive causal evidence for bounded neural predicate acquisition plus
+student-rolled addressable memory. It closes the fixed-register mathematics
+representation blocker. It is still not a free-decoded language result, a
+resident-32B result, a multi-domain general reasoning result, or WOW. The next
+gates are durable tissue packaging, independent reload/replay, process-to-answer
+emission, matched ordinary-decode comparison, and fresh replication.
