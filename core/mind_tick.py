@@ -936,8 +936,26 @@ class MindTick:
                 try:
                     from core.world_state import get_world_state
                     self._active_tick_stage = "world_state"
-                    get_world_state().update()
+                    # psutil's CPU, memory, battery and thermal probes are
+                    # blocking syscalls behind a lock. On the event loop they
+                    # stall every other coroutine in the process, and a slow
+                    # sensor read — a thermal probe on a throttling machine —
+                    # stalls the whole rhythm. Off-thread and bounded: this is
+                    # telemetry, and stale telemetry beats a stopped heartbeat.
+                    await asyncio.wait_for(
+                        asyncio.to_thread(get_world_state().update), timeout=5.0
+                    )
                     self._mark_loop_progress("world_state")
+                except TimeoutError:
+                    record_degraded_event(
+                        "mind_tick",
+                        "tick_stage_timeout",
+                        detail="world_state.update>5s",
+                        severity="warning",
+                        classification="background_degraded",
+                        context={"stage": "world_state", "tick_count": self._tick_count},
+                    )
+                    self._mark_loop_progress("world_state_timeout_yield")
                 except _MIND_BOUNDARY_ERRORS as exc:
                     _record_mind_degradation(exc)
                     logger.debug("MindTick: World state update failed: %s", exc)
@@ -1834,9 +1852,32 @@ class MindTick:
                                     memory_coord.consolidate_working_memory(current_state, is_background=True),
                                     name="mind_tick.consolidate_working_memory",
                                 )
-                                # These run during dream consolidation, not on every tick.
+                                # These run during dream consolidation, not on
+                                # every tick — but they ran ON THE LOOP:
+                                # metacognitive assessment, value-graph
+                                # evolution, a hidden eval suite and STDP
+                                # diagnostics, each of which can take seconds.
+                                # A dream is background work by definition, so
+                                # it goes off-thread and bounded rather than
+                                # parking the rhythm for the duration.
                                 try:
-                                    self._dream_research_modules()
+                                    await asyncio.wait_for(
+                                        asyncio.to_thread(self._dream_research_modules),
+                                        timeout=120.0,
+                                    )
+                                except TimeoutError:
+                                    record_degraded_event(
+                                        "mind_tick",
+                                        "tick_stage_timeout",
+                                        detail="dream_research_modules>120s",
+                                        severity="warning",
+                                        classification="background_degraded",
+                                        context={
+                                            "stage": "dream_research",
+                                            "tick_count": self._tick_count,
+                                        },
+                                    )
+                                    self._mark_loop_progress("dream_research_timeout_yield")
                                 except (TypeError, ValueError, RuntimeError, ImportError) as _drm:
                                     logger.debug("MindTick: Dream research modules skipped: %s", _drm)
                                 self.set_mode(CognitiveMode.SLEEP)
@@ -2157,22 +2198,40 @@ class MindTick:
             # 2. Resource Leak Probe (Memory)
             from core.runtime.resource_observation import get_resource_observer
 
-            process = get_resource_observer().process(os.getpid())
+            process = await asyncio.to_thread(
+                get_resource_observer().process, os.getpid()
+            )
             mem_pct = process.memory_percent if process is not None else 100.0
             if mem_pct > 25.0: # Trigger cleanup if one process exceeds 25% RAM
                 logger.warning("💉 [IMMUNE] Pulse Audit: High memory usage detected (%.1f%%). Triggering conservative sweep.", mem_pct)
-                # Proactive cleanup trigger
+                # A full gc pass on a 20GB resident process is a stop-the-world
+                # pause measured in seconds. On the event loop that is the
+                # rhythm stopping, every organ with it, to tidy up.
                 import gc
-                gc.collect()
-            
+
+                await asyncio.to_thread(gc.collect)
+
             # 3. Log Sieve (Look for systemic issues)
             from core.config import config
             log_dir = config.paths.data_dir / "error_logs"
-            if log_dir.exists():
-                logs = list(log_dir.glob("*.log"))
-                hidden = immunity.registry.log_sieve(logs)
-                if hidden:
-                    logger.warning("💉 [IMMUNE] Log Sieve detected %d hidden issues.", len(hidden))
+
+            def _sieve_logs() -> list:
+                # Directory listing and the sieve's own file reads are
+                # filesystem work. Bounded to the newest logs: an unbounded
+                # glob over a directory that grows with every incident makes
+                # the audit slower exactly when there is most to read.
+                if not log_dir.exists():
+                    return []
+                logs = sorted(
+                    log_dir.glob("*.log"),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )[:64]
+                return immunity.registry.log_sieve(logs)
+
+            hidden = await asyncio.to_thread(_sieve_logs)
+            if hidden:
+                logger.warning("💉 [IMMUNE] Log Sieve detected %d hidden issues.", len(hidden))
 
             breaker.record_success()
         except _MIND_BOUNDARY_ERRORS as e:

@@ -826,3 +826,64 @@ def test_a_named_reporter_reaches_the_confidence_model():
     source = _inspect.getsource(causal_world_model.CausalWorldModel.add_observation)
 
     assert "reported_by" in source
+
+
+def _loop_source() -> str:
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    return _inspect.getsource(mind_tick_mod.MindTick._run_loop)
+
+
+def test_the_world_state_probe_is_off_the_loop_and_bounded():
+    """psutil's CPU, memory, battery and thermal reads are blocking syscalls;
+    on the event loop they stall every coroutine in the process."""
+    source = _loop_source()
+
+    assert "asyncio.to_thread(get_world_state().update)" in source
+    assert "world_state.update>5s" in source
+    assert "world_state_timeout_yield" in source
+
+
+def test_a_stalled_telemetry_read_does_not_stop_the_heartbeat():
+    """Stale telemetry beats a stopped rhythm."""
+    source = _loop_source()
+    marker = source.index("world_state.update>5s")
+    block = source[marker - 600 : marker + 600]
+
+    assert "except TimeoutError:" in block
+    assert "_mark_loop_progress" in block
+
+
+def test_dream_research_runs_off_thread_under_a_bound():
+    source = _loop_source()
+
+    assert "asyncio.to_thread(self._dream_research_modules)" in source
+    assert "dream_research_modules>120s" in source
+
+
+def test_the_immune_pulse_does_not_stop_the_world_inline():
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._immune_pulse_audit)
+
+    assert "await asyncio.to_thread(gc.collect)" in source
+    assert "await asyncio.to_thread(_sieve_logs)" in source
+    assert "asyncio.to_thread(\n                get_resource_observer().process, os.getpid()\n            )" in source
+
+
+def test_the_log_sieve_is_bounded_to_the_newest_logs():
+    """An unbounded glob over a directory that grows with every incident makes
+    the audit slower exactly when there is most to read."""
+    import inspect as _inspect
+
+    from core import mind_tick as mind_tick_mod
+
+    source = _inspect.getsource(mind_tick_mod.MindTick._immune_pulse_audit)
+
+    assert "reverse=True," in source
+    assert "[:64]" in source
+    assert "st_mtime" in source
