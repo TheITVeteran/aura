@@ -796,6 +796,12 @@ _AGENCY_STATUS_FIELDS = (
 )
 
 
+#: Working-set ceiling for pending goals. Named because it decides whether a
+#: goal is formed at all, and a bare 20 in the middle of add_goal reads as a
+#: buffer size rather than a policy.
+_MAX_PENDING_GOALS = 20
+
+
 class AgencyState(BaseModel):
     """The full internal state of Aura's agency at any moment."""
 
@@ -1808,24 +1814,77 @@ class AgencyCore:
         return max(0.0, min(1.0, number))
 
     def add_goal(self, goal: dict[str, Any]) -> bool:
-        """Add a persistent goal that survives across conversations."""
+        """Record a goal, in the working set and in the durable one.
+
+        The docstring said "a persistent goal that survives across
+        conversations" and the implementation appended to a Pydantic list on
+        AgencyState — no write, no reload, no crash-recovery contract. Nothing
+        about that list survives a restart, so every caller but goal genesis
+        got a goal that lasted until the process did.
+
+        Durability lives in identity's ``long_term_goals``, which genesis
+        happened to write separately. The write-through is here now, so one
+        call means one goal in both places, and a working set that could not be
+        made durable says so rather than quietly being a memo.
+
+        The caller's dict is normalized IN PLACE. It used to be cloned, the
+        clone's status overwritten to "pending", and the caller left holding
+        the original — genesis then sent that original, still marked
+        "incubating", to identity, so one goal existed as two objects
+        disagreeing about its lifecycle state.
+        """
         if not isinstance(goal, dict):
             return False
-        if len(self.state.pending_goals) < 20:
-            normalized_goal = dict(goal)
-            if not self._approve_agency_state_mutation(
-                kind="pending_goal",
-                content=normalized_goal,
-                priority=self._coerce_priority(normalized_goal.get("priority", 0.6), default=0.6),
-            ):
-                return False
-            normalized_goal["created_at"] = time.time()
-            normalized_goal["status"] = "pending"
-            self.state.pending_goals.append(normalized_goal)
-            goal_label = str(normalized_goal.get("text") or normalized_goal.get("description") or "")
-            logger.info("🎯 New persistent goal: %s", goal_label[:60])
-            return True
-        return False
+        if len(self.state.pending_goals) >= _MAX_PENDING_GOALS:
+            return False
+        if not self._approve_agency_state_mutation(
+            kind="pending_goal",
+            content=goal,
+            priority=self._coerce_priority(goal.get("priority", 0.6), default=0.6),
+        ):
+            return False
+
+        goal["created_at"] = time.time()
+        goal["status"] = "pending"
+        self.state.pending_goals.append(goal)
+        goal_label = str(goal.get("text") or goal.get("description") or "")
+
+        identity = (
+            ServiceContainer.get("identity_service", default=None)
+            or ServiceContainer.get("identity", default=None)
+        )
+        durable = False
+        if identity is not None and hasattr(identity, "add_long_term_goal"):
+            try:
+                disposition = str(
+                    identity.add_long_term_goal(goal, source="agency_goal_formation") or ""
+                )
+                durable = disposition in {"saved", "duplicate"}
+                if not durable:
+                    _record_agency_degradation(
+                        RuntimeError(f"long-term goal not durable: {disposition or 'unknown'}"),
+                        action="kept the goal in the process-local working set only",
+                        severity="warning",
+                    )
+            except _AGENCY_BOUNDARY_ERRORS as exc:
+                _record_agency_degradation(
+                    exc,
+                    action="kept the goal in the process-local working set only",
+                    severity="warning",
+                )
+        else:
+            _record_agency_degradation(
+                RuntimeError("no identity service to hold a long-term goal"),
+                action="kept the goal in the process-local working set only",
+                severity="warning",
+            )
+        goal["durable"] = durable
+        logger.info(
+            "🎯 New goal (%s): %s",
+            "durable" if durable else "session-only",
+            goal_label[:60],
+        )
+        return True
 
     def complete_goal_by_match(
         self,
@@ -2300,8 +2359,28 @@ class AgencyCore:
                     "priority": 0.1
                 }
         except _AGENCY_BOUNDARY_ERRORS as e:
-            _record_agency_degradation(e, action="goal genesis moral audit unavailable")
-            logger.debug("Goal audit failed (continuing with caution): %s", e)
+            # "Continuing with caution" meant creating the durable goal anyway,
+            # so a moral review that could not run was indistinguishable from
+            # one that approved. The whole point of the review is that some
+            # goals must not be formed; a review that vanishes cannot say which,
+            # and the caution was in the log message only.
+            #
+            # Deferring costs one cycle: goal genesis runs on a 600s cooldown
+            # that this path does not advance, so the next pulse reconsiders
+            # the same topic with a working audit.
+            _record_agency_degradation(
+                e,
+                action="deferred autonomous goal formation because the moral audit could not run",
+                severity="warning",
+            )
+            logger.warning("Goal genesis deferred — moral audit unavailable: %s", e)
+            return {
+                "type": "deferred_goal",
+                "topic": topic,
+                "reasoning": ["Moral review unavailable; no durable goal was formed."],
+                "source": "goal_genesis_audit_unavailable",
+                "priority": 0.1,
+            }
 
         identity = (
             ServiceContainer.get("identity_service", default=None)
@@ -2327,13 +2406,21 @@ class AgencyCore:
                 "priority": 0.1,
             }
 
-        if identity and hasattr(identity, "add_long_term_goal"):
-            identity.add_long_term_goal(new_goal, source="agency_goal_formation")
+        # add_goal writes the durable copy; this used to write a SECOND one
+        # from the pre-normalization object, so identity held a goal marked
+        # "incubating" while the working set held the same goal marked
+        # "pending".
         if self.swarm:
-            await self.swarm.spawn_shard(
+            accepted = await self.swarm.spawn_shard(
                 goal=f"Initial research and mapping for: {topic}",
                 context="Objective: Establish a foundational understanding and identify key information gaps."
             )
+            if not accepted:
+                _record_agency_degradation(
+                    RuntimeError(f"goal-genesis research shard for {topic!r} was not admitted"),
+                    action="formed the goal without opening research on it",
+                    severity="warning",
+                )
 
         self.state.curiosity_pressure = 0.3
         self.state.last_goal_genesis_time = now
