@@ -492,7 +492,10 @@ def adopt_source_migration_identity(
         or len(current_controller) != 64
         or not isinstance(original_controller, str)
         or len(original_controller) != 64
-        or not isinstance(original_bootstrap, dict)
+        or (
+            original_bootstrap is not None
+            and not isinstance(original_bootstrap, dict)
+        )
     ):
         raise UnifiedCheckpointError("unified checkpoint source migration origin differs")
     expected["initial_controller_sha256"] = original_controller

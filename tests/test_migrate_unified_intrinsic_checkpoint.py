@@ -300,9 +300,11 @@ def test_target_identity_rejects_a_different_recovery_schedule(
         )
 
 
+@pytest.mark.parametrize("original_bootstrap", ({"schema": "original"}, None))
 def test_resume_adopts_only_a_fully_bound_source_migration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    original_bootstrap: dict[str, str] | None,
 ) -> None:
     from tools import unified_intrinsic_checkpoint as checkpoint
 
@@ -323,7 +325,7 @@ def test_resume_adopts_only_a_fully_bound_source_migration(
     stored = {
         **computed,
         "initial_controller_sha256": "3" * 64,
-        "bootstrap": {"schema": "original"},
+        "bootstrap": original_bootstrap,
         "spec": {"train_depths": [1, 3, 5]},
         "source_migration_controller_sha256": "1" * 64,
     }
