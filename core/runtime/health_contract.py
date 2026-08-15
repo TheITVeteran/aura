@@ -87,6 +87,15 @@ class ServiceRequirement:
     # fine and merely reporting unrecovered event-loop lag. That message sends
     # every investigation at thread liveness instead of at the real cause.
     liveness_reason_check: str | None = None
+    # Optional method that REPAIRS a failed liveness check, called only after
+    # the status has been recorded and only by callers that asked for repair.
+    #
+    # It exists because the repair used to live inside the liveness probe
+    # itself: every reader of the health report — a dashboard, a status
+    # endpoint, a contract sweep — silently restarted the service it was
+    # inspecting, and none of them knew they had. Observation is not
+    # actuation. The probe reports; this repairs, separately and on purpose.
+    recovery_check: str | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -328,6 +337,7 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.IMPORTANT,
         "Canonical cognitive and organism rhythm. Without forward progress, autonomous state integration stalls.",
         liveness_check="is_alive",
+        recovery_check="ensure_alive",
     ),
     ServiceRequirement(
         "Resource Governor",
@@ -1077,10 +1087,42 @@ def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str,
     }
 
 
+def recover_failed_services(verdict: "HealthVerdict") -> dict[str, str]:
+    """Repair services whose liveness failed, for callers that asked to.
+
+    Deliberately NOT part of evaluate_health. The repair used to live inside
+    the liveness probe, so every reader of the health report restarted the
+    service it was inspecting without knowing it. A caller that wants
+    self-healing calls this and gets a record of what it did.
+    """
+
+    outcomes: dict[str, str] = {}
+    for status in verdict.services:
+        requirement = status.requirement
+        if status.liveness_ok is not False or not requirement.recovery_check:
+            continue
+        service = get_runtime_service(requirement.container_key, default=None)
+        recover = getattr(service, requirement.recovery_check, None)
+        if not callable(recover):
+            outcomes[requirement.name] = "no_recovery_hook"
+            continue
+        try:
+            outcomes[requirement.name] = "recovered" if recover() else "unrecovered"
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            outcomes[requirement.name] = f"failed:{type(exc).__name__}"
+            logger.warning(
+                "Could not recover %s after a failed liveness check: %s",
+                requirement.name,
+                exc,
+            )
+    return outcomes
+
+
 def evaluate_health() -> HealthVerdict:
     """Evaluate the runtime health contract against the live runtime service registry.
 
-    This is safe to call from any context — it never throws.
+    A pure observation: it never throws, and it never repairs. Repair is
+    ``recover_failed_services``, called by whoever wants it.
     """
     evaluation_started = time.perf_counter()
     statuses: list[ServiceStatus] = []

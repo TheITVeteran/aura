@@ -508,10 +508,28 @@ class MindTick:
         logger.info("💓 MindTick: Cognitive rhythm started.")
 
     def is_alive(self) -> bool:
-        """Return true only while the supervised loop is running and progressing."""
+        """Report whether the supervised loop is running and progressing.
+
+        A QUERY. It records what it observes and changes nothing: a health
+        probe that restarts the service it is inspecting turns every reader —
+        a dashboard, a contract sweep, a status endpoint — into an actuator,
+        and the reader has no idea it did anything. ``ensure_alive`` is the
+        one that repairs, and callers that want self-healing ask for it.
+        """
+        return self._liveness(repair=False)
+
+    def ensure_alive(self) -> bool:
+        """Report liveness AND repair a lost loop, returning the result.
+
+        This is what the old ``is_alive`` did to every caller. It is a
+        deliberate action now, taken by whoever wants it.
+        """
+        return self._liveness(repair=True)
+
+    def _liveness(self, *, repair: bool) -> bool:
         task_alive = bool(self._task and not self._task.done())
         if not self._running or not task_alive:
-            if not self._attempt_liveness_repair():
+            if not repair or not self._attempt_liveness_repair():
                 return False
             task_alive = bool(self._task and not self._task.done())
         if (
@@ -519,7 +537,9 @@ class MindTick:
             and float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0) <= 0.0
         ):
             if int(getattr(self, "_consecutive_loop_failures", 0) or 0) >= 3:
-                if not self._attempt_liveness_repair(reason="repeated loop failures before first progress"):
+                if not repair or not self._attempt_liveness_repair(
+                    reason="repeated loop failures before first progress"
+                ):
                     return False
                 return bool(self._task and not self._task.done())
             return bool(self._started_at and (time.time() - self._started_at) <= 180.0)
@@ -541,7 +561,9 @@ class MindTick:
         ):
             return True
         if int(getattr(self, "_consecutive_loop_failures", 0) or 0) >= 3:
-            if not self._attempt_liveness_repair(reason="repeated loop failures without fresh progress"):
+            if not repair or not self._attempt_liveness_repair(
+                reason="repeated loop failures without fresh progress"
+            ):
                 return False
             return bool(self._task and not self._task.done())
         if task_alive:
@@ -563,10 +585,11 @@ class MindTick:
                     "progress_age_s": round(age, 1),
                 },
             )
-            self._attempt_liveness_repair(
-                reason=f"stale progress for {age:.1f}s",
-                cancel_existing=True,
-            )
+            if repair:
+                self._attempt_liveness_repair(
+                    reason=f"stale progress for {age:.1f}s",
+                    cancel_existing=True,
+                )
         return False
 
 

@@ -60,16 +60,16 @@ def test_mind_tick_liveness_requires_supervised_progress():
     tick._consecutive_loop_failures = 0
     tick._tick_count = 4
 
-    assert tick.is_alive() is True
+    assert tick.ensure_alive() is True
     assert tick.get_health_status()["healthy"] is True
 
     tick._consecutive_loop_failures = 3
-    assert tick.is_alive() is True
+    assert tick.ensure_alive() is True
 
     tick._last_successful_tick_at = time.time() - 601
     tick._last_loop_progress_at = time.time() - 601
     tick._last_liveness_repair_at = time.monotonic()
-    assert tick.is_alive() is False
+    assert tick.ensure_alive() is False
 
 
 def test_mind_tick_liveness_allows_active_bounded_tick_progress():
@@ -91,7 +91,7 @@ def test_mind_tick_liveness_allows_active_bounded_tick_progress():
     tick._tick_count = 5
     tick._last_liveness_repair_at = 0.0
 
-    assert tick.is_alive() is True
+    assert tick.ensure_alive() is True
     status = tick.get_health_status()
     assert status["healthy"] is True
     assert status["active_tick_stage"] == "kernel_tick"
@@ -99,7 +99,7 @@ def test_mind_tick_liveness_allows_active_bounded_tick_progress():
 
 
 @pytest.mark.asyncio
-async def test_mind_tick_liveness_probe_repairs_dead_supervised_loop():
+async def test_mind_tick_recovery_hook_repairs_a_dead_supervised_loop():
     tick = MindTick.__new__(MindTick)
     tick._running = True
     tick._started_at = time.time()
@@ -122,7 +122,7 @@ async def test_mind_tick_liveness_probe_repairs_dead_supervised_loop():
 
     tick._run_loop = recovered_loop
 
-    assert tick.is_alive() is True
+    assert tick.ensure_alive() is True
     assert tick._task is not None
     assert not tick._task.done()
     assert tick.get_health_status()["liveness_repair_count"] == 1
@@ -171,7 +171,7 @@ async def test_mind_tick_done_callback_repairs_failed_loop_without_health_poll()
 
 
 @pytest.mark.asyncio
-async def test_mind_tick_liveness_repairs_stale_alive_task():
+async def test_mind_tick_recovery_hook_repairs_a_stale_alive_task():
     tick = MindTick.__new__(MindTick)
     tick._running = True
     tick._started_at = time.time() - 600
@@ -196,7 +196,7 @@ async def test_mind_tick_liveness_repairs_stale_alive_task():
     tick._task = stale_task
     tick._run_loop = recovered_loop
 
-    assert tick.is_alive() is False
+    assert tick.ensure_alive() is False
     assert stale_task.cancelled() or stale_task.done() or stale_task.cancelling()
 
     # CP126 e98446be. The replacement is CHAINED to the stale loop actually
@@ -435,7 +435,7 @@ def test_stale_rhythm_verdict_names_the_wedged_stage():
     with isolated_degraded_event_scope("stale-stage-test"):
         from core.health.degraded_events import get_recent_degraded_events
 
-        assert tick.is_alive() is False
+        assert tick.ensure_alive() is False
         events = get_recent_degraded_events(limit=10)
     stale = [e for e in events if e.get("reason") == "rhythm_stale"]
     assert stale, events
@@ -493,3 +493,86 @@ def test_tick_llm_health_await_is_bounded():
     src = inspect.getsource(MindTick._run_loop)
     assert "wait_for(\n                        self.orchestrator.state_repo.get_current()" in src.replace("  ", "  ") or "state_repo.get_current(), timeout=" in src
     assert "ensure_all_tiers_healthy(), timeout=" in src
+
+
+@pytest.mark.asyncio
+async def test_the_liveness_probe_does_not_restart_what_it_inspects():
+    """Observation is not actuation.
+
+    The repair lived inside `is_alive`, so every reader of the health report —
+    a dashboard, a status endpoint, the contract sweep — silently restarted the
+    service it was inspecting, and none of them knew they had.
+    """
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._started_at = time.time()
+    tick._last_successful_tick_at = 0.0
+    tick._consecutive_loop_failures = 3
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+
+    async def failed_loop():
+        await asyncio.sleep(0)
+        raise RuntimeError("background loop died")
+
+    tick._task = asyncio.create_task(failed_loop())
+    await asyncio.sleep(0)
+
+    started = []
+
+    async def recovered_loop():
+        started.append(1)
+        await asyncio.sleep(0)
+
+    tick._run_loop = recovered_loop
+    dead_task = tick._task
+
+    assert tick.is_alive() is False
+    assert tick._task is dead_task, "the probe replaced the task it was reading"
+    assert started == []
+    assert tick.get_health_status()["liveness_repair_count"] == 0
+
+
+def test_the_contract_declares_a_separate_recovery_hook():
+    from core.runtime.health_contract import RUNTIME_CONTRACT
+
+    entry = next(req for req in RUNTIME_CONTRACT if req.container_key == "mind_tick")
+
+    assert entry.liveness_check == "is_alive"
+    assert entry.recovery_check == "ensure_alive"
+
+
+def test_recovery_is_a_separate_call_from_evaluation():
+    import inspect as _inspect
+
+    from core.runtime import health_contract
+
+    assert callable(health_contract.recover_failed_services)
+    evaluate = _inspect.getsource(health_contract.evaluate_health)
+    # The docstring may point at the recovery function; the BODY must not call
+    # it, or the split is cosmetic.
+    body = evaluate.split('"""', 2)[-1]
+    assert "recover_failed_services(" not in body
+    assert "recovery_check" not in body
+    assert "never repairs" in evaluate
+
+
+def test_a_service_with_no_recovery_hook_is_reported_not_skipped():
+    import inspect as _inspect
+
+    from core.runtime import health_contract
+
+    source = _inspect.getsource(health_contract.recover_failed_services)
+
+    assert '"no_recovery_hook"' in source
+    assert '"recovered" if recover() else "unrecovered"' in source
+
+
+def test_only_failed_liveness_is_recovered():
+    import inspect as _inspect
+
+    from core.runtime import health_contract
+
+    source = _inspect.getsource(health_contract.recover_failed_services)
+
+    assert "status.liveness_ok is not False" in source
