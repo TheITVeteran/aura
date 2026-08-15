@@ -28,23 +28,30 @@ def _bare_hook(alpha: float) -> AffectiveSteeringHook:
 
 
 class TestEffectiveAlphaGuards:
-    def test_install_time_default_exceeds_governor_ceiling(self):
-        # The premise of the ceiling: DEFAULT_ALPHA really is hotter than the
-        # governor's own clip. If this stops being true, revisit the guard.
-        assert DEFAULT_ALPHA > 3.0
+    def test_the_shipped_default_sits_inside_the_ceiling(self):
+        # This asserted DEFAULT_ALPHA > 3.0, the premise being that the shipped
+        # default was hotter than the guard's own clip. c7dcc548a re-expressed
+        # alpha as a fraction of the residual stream, and the default measured
+        # on both models is 0.2 — inside the ceiling, not above it. The guard
+        # did not become pointless; it stopped being aimed at the default and
+        # is now aimed at anything configured hotter, which is the case below.
+        assert 0.0 < DEFAULT_ALPHA <= _bare_hook(DEFAULT_ALPHA)._INJECTION_ALPHA_CEILING
 
     def test_never_synced_hook_derates_to_safe_alpha(self):
         hook = _bare_hook(DEFAULT_ALPHA)
         # No substrate sync has EVER run — injection must not run hot.
         assert hook._effective_alpha() <= hook._STALE_SAFE_ALPHA
 
-    def test_fresh_sync_allows_governor_range_but_caps_at_ceiling(self):
+    def test_fresh_sync_allows_the_configured_alpha_but_caps_at_the_ceiling(self):
         hook = _bare_hook(DEFAULT_ALPHA)
         hook._last_substrate_sync_monotonic = time.monotonic()
-        effective = hook._effective_alpha()
-        assert effective == hook._INJECTION_ALPHA_CEILING
-        hook._alpha = 1.7
-        assert hook._effective_alpha() == 1.7
+
+        # Inside the ceiling: passed through untouched.
+        assert hook._effective_alpha() == DEFAULT_ALPHA
+
+        # Above it: capped, whatever the configuration says.
+        hook._alpha = hook._INJECTION_ALPHA_CEILING * 5.0
+        assert hook._effective_alpha() == hook._INJECTION_ALPHA_CEILING
 
     def test_stale_sync_derates(self):
         hook = _bare_hook(2.5)
@@ -54,8 +61,14 @@ class TestEffectiveAlphaGuards:
         assert hook._effective_alpha() <= hook._STALE_SAFE_ALPHA
 
     def test_low_alpha_untouched_by_staleness(self):
-        hook = _bare_hook(0.12)
-        assert hook._effective_alpha() == 0.12
+        # Below _STALE_SAFE_ALPHA, so the staleness derate has nothing to take.
+        # The literal was 0.12, chosen when _STALE_SAFE_ALPHA was higher; it now
+        # tracks the constant so the case stays the case it is named for.
+        hook = _bare_hook(0.0)
+        low = hook._STALE_SAFE_ALPHA / 2.0
+        hook._alpha = low
+
+        assert hook._effective_alpha() == low
 
     def test_invalid_alpha_disables_injection(self):
         assert _bare_hook(float("nan"))._effective_alpha() == 0.0

@@ -8,6 +8,7 @@ from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
 from core.brain.llm.continuity_ledger import env_int
+from core.brain.llm.prompt_envelope import Trust, new_envelope
 from core.brain.llm.token_budget_evidence import chars_per_token
 from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
@@ -190,17 +191,36 @@ class ContextAssembler:
             )
             return ""
 
-    @staticmethod
-    def _build_self_correction_block() -> str:
+    #: What a correction block must show before the assembler will hand it
+    #: system-prompt authority. The docstring below described a contract —
+    #: external verifier, affected claim, lease id, untrusted-data fencing —
+    #: and the assembler inserted whatever string came back without checking
+    #: any of it. Trusting a producer to have honoured its own contract is the
+    #: same mistake as trusting a caller's trust label.
+    _CORRECTION_REQUIRED_MARKERS = (
+        "## SELF-CORRECTION (externally verified; id=",
+        "<UNTRUSTED_DATA>",
+        "</UNTRUSTED_DATA>",
+    )
+    _CORRECTION_MAX_CHARS = 4000
+
+    @classmethod
+    def _build_self_correction_block(cls) -> str:
         """An externally-verified correction queued by epistemic reach, if any.
 
         Assembly leases rather than consumes the correction. The final primary
         output receipt acknowledges delivery, so retries cannot silently lose it.
+
+        The block is checked against the contract before it is used, and a
+        block that fails the check is dropped rather than inserted: a
+        correction is the one item in this prompt whose whole purpose is to
+        override what the model would otherwise say, so an unverified one is
+        worth less than none.
         """
         try:
             from core.epistemics.epistemic_reach import get_epistemic_reach
 
-            return get_epistemic_reach().correction_prompt_block()
+            block = str(get_epistemic_reach().correction_prompt_block() or "")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler",
@@ -209,6 +229,23 @@ class ContextAssembler:
                 action="continued prompt assembly without self-correction block",
             )
             return ""
+
+        if not block.strip():
+            return ""
+
+        missing = [m for m in cls._CORRECTION_REQUIRED_MARKERS if m not in block]
+        if missing or len(block) > cls._CORRECTION_MAX_CHARS:
+            record_degradation(
+                "context_assembler.self_correction_contract",
+                RuntimeError(
+                    "dropped a correction block that does not meet the prompt "
+                    f"contract (missing={missing}, chars={len(block)})"
+                ),
+                severity="warning",
+                action="assembled the prompt without an unverifiable correction",
+            )
+            return ""
+        return block
 
     @staticmethod
     def _resolve_skill_name(skill_name: Any) -> str:
@@ -676,6 +713,15 @@ class ContextAssembler:
         
         # 1. Identity Core — always inject full AURA_IDENTITY so voice doesn't regress in casual chat
         identity_block = f"{get_identity_lock()}\n\n[GROUNDED CORE PROTOCOL]\n{AURA_IDENTITY}\n"
+
+        # Everything below this line that came from outside this repository —
+        # a person's text, a fetched page, another agent, stored memory of any
+        # of those — is fenced with a nonce drawn for this assembly, and the
+        # rule for reading a fence is stated once, here, where it is authored.
+        # A block boundary the content can predict is a boundary the content
+        # can close.
+        envelope = new_envelope()
+        identity_block += f"\n{envelope.preamble()}\n"
 
         # Existential stakes are deliberately absent from this prompt: they
         # affect runtime policy and inference parameters, not conversational
@@ -1359,7 +1405,9 @@ class ContextAssembler:
                     relational_memory.prompt_block(agent_id) or ""
                 ).strip()
                 if relational_block:
-                    base += f"\n{relational_block}\n"
+                    base += "\n" + envelope.wrap(
+                        "RELATIONAL_MEMORY", relational_block, trust=Trust.UNTRUSTED
+                    )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("Relational memory injection failed (non-critical): %s", _e)
@@ -1405,15 +1453,23 @@ class ContextAssembler:
             logger.debug("DiscourseState injection failed (non-critical): %s", _e)
 
         live_user_text = objective or ContextAssembler._latest_user_message(state)
-        for block in build_conversational_context_blocks(state, objective=live_user_text):
-            base += f"\n{block}\n"
+        for index, block in enumerate(
+            build_conversational_context_blocks(state, objective=live_user_text)
+        ):
+            base += "\n" + envelope.wrap(
+                f"CONVERSATION_SUPPORT_{index}", str(block or ""), trust=Trust.UNTRUSTED
+            )
 
         # ── World Model & Narrative ────────────────────────────────────────
         # Final World Model Beliefs
         try:
             final_world = ServiceContainer.get("world_model", default=None)
             if final_world and not is_casual:
-                base += f"\n{final_world.get_context_injection()}\n"
+                base += "\n" + envelope.wrap(
+                    "WORLD_MODEL",
+                    str(final_world.get_context_injection() or ""),
+                    trust=Trust.UNTRUSTED,
+                )
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler.world_model",
@@ -1426,7 +1482,11 @@ class ContextAssembler:
         try:
             narrative_id = ServiceContainer.get("narrative_identity", default=None)
             if narrative_id and not is_casual:
-                base += f"\n{narrative_id.get_system_prompt_injection()}\n"
+                base += "\n" + envelope.wrap(
+                    "NARRATIVE_IDENTITY",
+                    str(narrative_id.get_system_prompt_injection() or ""),
+                    trust=Trust.UNTRUSTED,
+                )
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler.narrative_identity",
