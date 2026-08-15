@@ -158,10 +158,12 @@ class PublicFrontierActionProgram:
         return {**body, "receipt_sha256": _canonical_sha256(body)}
 
     def values_for_iterations(self, iterations: int) -> tuple[tuple[int, ...], ...]:
-        """Pad a finite public program with inert post-terminal instructions."""
+        """Return the causal prefix, padding only after program completion."""
 
-        if type(iterations) is not int or iterations < len(self.values):
-            raise ValueError("public action iteration budget is shorter than the program")
+        if type(iterations) is not int or iterations < 1:
+            raise ValueError("public action iteration budget is invalid")
+        if iterations <= len(self.values):
+            return self.values[:iterations]
         null = (ACTION_NULL,) * len(ACTION_SLOT_NAMES)
         return self.values + (null,) * (iterations - len(self.values))
 

@@ -49261,3 +49261,36 @@ compilation and diff integrity pass. This proves that action order can now
 causally affect learned transition state. It does not prove that CP474 or a
 future campaign generalizes, establish an answer-level gain, authorize fusion,
 or establish `WOW Signal`.
+
+## Checkpoint 2026-08-14-479: Make Public Programs Valid At Every Measured Depth
+
+CP478 was the first source-bound campaign to combine CP476's causal history
+with CP475's corrected public-program depth ladder. Training reached a durable
+step-8 checkpoint, then the first periodic evaluation failed before producing
+a measurement: a task's full public program can be longer than the T1 ladder
+arm, while `values_for_iterations` accepted only complete programs followed by
+padding. The launchd controller correctly retried, but the source failure was
+deterministic. The exact campaign label and process groups were stopped before
+a third identical failure. The immutable checkpoint and failure identity are
+frozen in
+`artifacts/closeout/latent_cortex/cp479_cp478_prefix_failure.json`.
+
+Public programs now expose their first `T` actions when measured at depth `T`
+and add inert instructions only after the complete program terminates. This is
+causal prefix execution, not truncation of derived answers: each exposed action
+was already compiled from public objective literals and order. Tests cover a
+short prefix, the exact program boundary, post-terminal padding and invalid
+zero depth.
+
+The shared answer-trajectory and autonomous-process APIs also expose the
+transition-history lesion added in CP476. Process-admission receipts bind
+whether ordered prior actions were available, and a matched lesion can remove
+them while preserving public actions, initial state, model, checkpoint and
+microcode condition. This makes a future positive transition result directly
+falsifiable rather than merely correlated with the new source.
+
+Compiler, recurrence, objective and trainer contracts pass `178/178`; Ruff and
+diff integrity pass before the aggregate smoke gate. CP478 produced no valid
+model verdict and authorizes no fusion, resident transfer, frontier claim or
+`WOW Signal`. Its exact step-8 tissue is eligible only for source-bound recovery
+after independent migration verification.

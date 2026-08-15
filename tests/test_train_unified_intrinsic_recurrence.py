@@ -1935,11 +1935,72 @@ def test_process_admission_requires_every_unseen_task_without_teacher(
 
     assert calls == 2
     assert report["teacher_available"] is False
+    assert report["transition_action_history_available"] is True
+    assert report["transition_action_history_lesioned"] is False
     assert report["tasks"] == 2
     assert report["process_exact"] == 1
     assert report["exact_accuracy"] == 0.5
     assert report["admitted"] is False
     assert len(report["admission_sha256"]) == 64
+
+
+def test_process_admission_propagates_transition_history_lesion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _wiring = _bundle()
+    spec = UnifiedIntrinsicTrainingSpec(2, 4, (1, 2), (4, 8))
+    task = type(
+        "Task",
+        (),
+        {
+            "family": "frontier_mathematics",
+            "task_id": "history-lesion",
+            "depth": 2,
+            "prompt": "Compute the public program.",
+        },
+    )()
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence.encode_example",
+        lambda *_args: (mx.array([[1]], dtype=mx.int32), mx.array([[2]], dtype=mx.int32)),
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._public_actions_for_task",
+        lambda *_args: ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
+    )
+    observed: list[dict[str, object]] = []
+
+    def capture(*_args, **kwargs):
+        observed.append(kwargs)
+        return {}
+
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._capture_autonomous_process",
+        capture,
+    )
+    monkeypatch.setattr(
+        "tools.train_unified_intrinsic_recurrence._process_evidence_from_capture",
+        lambda *_args: {"process_exact": False, "evidence_sha256": "a" * 64},
+    )
+
+    report = _evaluate_process_admission(
+        bundle,
+        object(),
+        [task],
+        spec,
+        "",
+        public_action_program=True,
+        transition_history_lesion=True,
+    )
+
+    assert observed == [
+        {
+            "public_action_values": ((0, 1, 32, 32, 32, 32, 32, 1),) * 2,
+            "microcode_lesion": True,
+            "transition_history_lesion": True,
+        }
+    ]
+    assert report["transition_action_history_available"] is False
+    assert report["transition_action_history_lesioned"] is True
 
 
 def test_process_evidence_ignores_unrequired_post_completion_action_rows() -> None:

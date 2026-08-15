@@ -207,6 +207,47 @@ def test_answer_trajectory_can_execute_public_actions_without_microcode() -> Non
     assert float(losses[0].item()) > 0.0
 
 
+def test_answer_trajectory_exposes_transition_history_lesion() -> None:
+    model = _model()
+    controller = _controller(literal_digit_token_ids=tuple(range(10)))
+    actions = (
+        (10, 1, 2, 3, 4, 5, 6, 0),
+        (10, 2, 3, 4, 5, 6, 7, 0),
+        (10, 3, 4, 5, 6, 7, 8, 1),
+    )
+    _normal_recurrent, _normal_hidden, _normal_losses, normal_states = (
+        unified_answer_and_recurrent_trajectory(
+            model,
+            TOKENS,
+            ANSWERS,
+            _spec().plan_at(3),
+            controller,
+            use_state_slots=True,
+            public_action_values=actions,
+            microcode_lesion=True,
+            answer_digit_pointer_enabled=False,
+        )
+    )
+    _lesioned_recurrent, _lesioned_hidden, _lesioned_losses, lesioned_states = (
+        unified_answer_and_recurrent_trajectory(
+            model,
+            TOKENS,
+            ANSWERS,
+            _spec().plan_at(3),
+            controller,
+            use_state_slots=True,
+            public_action_values=actions,
+            microcode_lesion=True,
+            transition_history_lesion=True,
+            answer_digit_pointer_enabled=False,
+        )
+    )
+    mx.eval(*normal_states, *lesioned_states)
+
+    assert len(normal_states) == len(lesioned_states) == 3
+    assert not bool(mx.allclose(normal_states[-1], lesioned_states[-1]))
+
+
 def test_student_rollin_changes_history_without_changing_labels() -> None:
     model = _model()
     controller = _controller()

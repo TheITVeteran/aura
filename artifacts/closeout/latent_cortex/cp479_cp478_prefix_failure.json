@@ -1,0 +1,28 @@
+{
+  "schema": "aura.latent_cortex.public_transition_campaign_failure.v1",
+  "campaign_id": "cp478-causal-history-transition-1p5b-20260814",
+  "source_commit": "23aa39d21999d1cbf5aa277baf1ec7fca4f706e6",
+  "campaign_config_sha256": "5c3f7dcf779d67c062f7587691fad3ef7c9772c680345a3c1837581348532043",
+  "failure": {
+    "phase": "periodic_public_program_evaluation",
+    "step": 16,
+    "exception": "ValueError",
+    "message": "public action iteration budget is shorter than the program",
+    "root_cause": "The public compiler exposed only whole-program execution and post-terminal padding. A valid depth ladder also requires causal prefixes when recurrence depth is shorter than the public program."
+  },
+  "retries": {
+    "automatic_failed_attempts": 2,
+    "third_attempt_stopped_before_repeat_failure": true,
+    "source_failure_deterministic": true
+  },
+  "durable_checkpoint": {
+    "step": 8,
+    "checkpoint_sha256": "9b060044e21d1504234f3d642581b340f34a670e9b9c2dae55cb5233d71f7b3a",
+    "complete_sha256": "44f261e3201b10781b6bc35d49881755cbb5840ecc96619b2cfb8591a59cca8d",
+    "identity_sha256": "f07041a42116c464ea8c1870756418b4a40e05aba3d87a34b291a0f39fe8ed77",
+    "receipt_sha256": "d5e287a28f9b0ba37e32a1f519a9339ac1c98b9feb16a1553bcefaee97acc544",
+    "state_teacher_forcing_probability": 0.9448818897637795
+  },
+  "scientific_status": "invalid_before_first_corrected_periodic_measurement",
+  "claim_boundary": "No model, mechanism, answer-level, resident-32B, fusion, frontier, or WOW Signal conclusion is authorized."
+}

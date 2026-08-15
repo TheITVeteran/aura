@@ -63,6 +63,23 @@ def test_public_action_receipt_is_deterministic_and_answer_free(domain: str) -> 
     assert "answer" not in first.receipt()
 
 
+def test_public_action_program_exposes_prefixes_and_post_terminal_padding() -> None:
+    source = generate_task("coding", seed=81_703, difficulty=2)
+    program = compile_public_frontier_actions(
+        source.public.prompt,
+        "frontier_coding",
+    )
+    assert len(program.values) > 1
+
+    assert program.values_for_iterations(1) == program.values[:1]
+    assert program.values_for_iterations(len(program.values)) == program.values
+    padded = program.values_for_iterations(len(program.values) + 2)
+    assert padded[: len(program.values)] == program.values
+    assert padded[-2:] == ((32,) * 8,) * 2
+    with pytest.raises(ValueError, match="iteration budget"):
+        program.values_for_iterations(0)
+
+
 @pytest.mark.parametrize(
     "family",
     (
