@@ -49419,3 +49419,33 @@ CP486 was prepared from the same published CP484 source with the exact 1.5B
 model manifest and CP478 step-8 bootstrap. This repair establishes launch
 identity only and carries no model-gain, fusion, frontier or `WOW Signal`
 authority.
+
+## Checkpoint 2026-08-14-486: Gated History Retains State But Does Not Execute It
+
+CP486 completed its source-bound 128-step 1.5B schedule in one detached
+attempt. The immutable source capsule, explicit model identity, independent
+controller/supervisor/sentinel lineage, terminal checkpoint and signed
+completion receipt all passed. The result is frozen in
+`artifacts/closeout/latent_cortex/cp486_gated_transition_memory_verdict.json`.
+
+The slot-preserving gated action tape was causally useful. Relative to CP483,
+terminal T16 state accuracy improved from `0.5344` to `0.6438` and exact-value
+accuracy improved from `0.1146` to `0.1667`. One-step exactness reached
+`0.6667`, confirming that the new parameters received useful transition
+gradients. This is not admission: no unseen process completed exactly, T1
+remained the best depth, the best deep relative gain was `-0.0976`, and the
+premise-audit family remained at zero exact values.
+
+The result localizes the remaining transition defect. The controller now
+retains ordered typed instructions, but current state, instruction and history
+meet primarily through additive projections before a single bounded
+nonlinearity. That topology transports coarse state while failing to implement
+the multiplicative, register-selective transition algebra needed for exact
+repeated execution. More steps on this topology are not authorized. The next
+bounded mechanism is a trainable typed state-register processor with explicit
+state-action-history interaction, exact categorical identity, zero-output
+attachment and matched processor/history lesions.
+
+CP486 is a negative bounded 1.5B mechanism result. It does not authorize an
+answer-level gain claim, resident-32B transfer, fusion, frontier reasoning or
+`WOW Signal`.

@@ -1,0 +1,51 @@
+{
+  "schema": "aura.latent_cortex.gated_transition_memory_verdict.v1",
+  "campaign_id": "cp486-gated-transition-memory-1p5b-20260814",
+  "campaign_source_commit": "c8e1f9730d43a50dd75e6228a39b8d0f58e035b5",
+  "campaign_config_sha256": "c0e633f0053b159caddf898b2b20296d4fb9a05fcb17877f5e09e4e8ff6307c1",
+  "model_manifest_sha256": "71c040465070cf9b0068ca6f7bc26581443ae5fb46937e85e109212b3fb80092",
+  "training_receipt_sha256": "98a659abf346b89e3a7bbe44880a99b7cb3747b4bdbe74fccabbe1364e294e53",
+  "process_admission_sha256": "1f82c71e075464903d9a97bf6bb5c30615011da338e7e733bfaae360aa2c065a",
+  "completion_sha256": "e1c692377a4993fd36456a32536ee5c01af8bfc950f3c398c4ca816f97af87f7",
+  "checkpoint": {
+    "step": 128,
+    "checkpoint_sha256": "b06d6f43e8b8398ad4077eabe8cb716320618b95e559df9362adb22f957e6f51",
+    "receipt_sha256": "0933fc86066a426ce1f2c6c4a8333ddfd87a7feba59eab98073255df9cd7c9d5"
+  },
+  "elapsed_minutes": 18.84,
+  "verdict": "autonomous_process_not_admitted",
+  "process_admission": {
+    "tasks": 12,
+    "initial_states_exact": 12,
+    "public_action_programs_exact": 12,
+    "complete_processes_exact": 0,
+    "exact_accuracy": 0.0,
+    "exact_microcode_available": false,
+    "teacher_available": false,
+    "transition_action_history_available": true
+  },
+  "depth_ladder": {
+    "best_depth": "T1",
+    "best_deep_relative_gain": -0.09759400314151863,
+    "trained_depth_helps": false,
+    "heldout_depth_helps": false,
+    "t1_state_accuracy": 0.9166666716337204,
+    "t1_state_value_exact_accuracy": 0.6666666666666666,
+    "t16_state_accuracy": 0.6437500125418106,
+    "t16_state_value_exact_accuracy": 0.16666666666666666,
+    "t16_family_exact_accuracy": {
+      "frontier_calibration": 0.041666666666666664,
+      "frontier_coding": 0.25,
+      "frontier_mathematics": 0.375,
+      "frontier_misleading_premise": 0.0
+    }
+  },
+  "comparison_to_cp483": {
+    "t16_state_accuracy_delta": 0.1093749986030161,
+    "t16_state_value_exact_accuracy_delta": 0.05208333333333333,
+    "best_deep_relative_gain_delta": -0.03216261051872826
+  },
+  "conclusion": "Slot-preserving gated action memory materially improved coarse deep-state transport and trained one-step exactness, proving that the review-derived causal composition mechanism was active. Exact transitions still plateaued, recurrence remained worse than T1, and no unseen process completed exactly. The current transition head combines state and action/history additively before one tanh projection; it lacks a direct typed multiplicative state-action computation path, so extending this topology is not supported by the evidence.",
+  "next_mechanism": "Add a trainable typed state-register processor with explicit state-action-history interactions, preserve exact categorical identity, attach through an exact-zero output, and retain matched processor/history lesions.",
+  "claim_boundary": "Negative bounded 1.5B mechanism result only; no answer-level, resident-32B, fusion, frontier, or WOW Signal authority."
+}
