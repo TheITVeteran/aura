@@ -278,6 +278,13 @@ def _bundle(
         "scorer_implementation_sha256": "a" * 64,
         "decode_policy_sha256": "d" * 64,
         "min_treatment_success_rate": 0.6,
+        # Sized against a McNemar alternative, not a trial count. With 40
+        # trials per domain the study can detect a treatment that wins 75%
+        # of disagreements at alpha 0.05 with power above 0.8; it could not
+        # detect a much smaller edge, and the certificate now says so.
+        "target_power": 0.8,
+        "preregistered_discordant_win_share": 0.75,
+        "max_order_effect": 0.1,
     }
     if external:
         prereg["control_model_id"] = "frontier-model-x"
@@ -338,7 +345,14 @@ def _bundle(
                     "control_tool_policy_sha256": "c" * 64,
                     "treatment_decode_policy_sha256": "d" * 64,
                     "control_decode_policy_sha256": "d" * 64,
-                    "run_order": "treatment_first" if index % 2 == 0 else "control_first",
+                    # Order alternates in BLOCKS of four so it is orthogonal
+                    # to the every-fourth-cell control success below. Simple
+                    # parity put every control win in a treatment-first run,
+                    # which is a confounded design the order-effect check
+                    # would (correctly) refuse.
+                    "run_order": (
+                        "treatment_first" if (cell % 8) < 4 else "control_first"
+                    ),
                     "treatment_success": True,
                     "control_success": cell % 4 == 0,
                     "treatment_compute": {

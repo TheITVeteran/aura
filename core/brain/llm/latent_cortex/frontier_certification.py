@@ -159,6 +159,41 @@ def _recognised_frontier_provider(value: Any) -> bool:
     return head in _RECOGNISED_FRONTIER_PROVIDERS
 
 
+#: The two orders a paired trial can run in.
+_RUN_ORDERS = ("treatment_first", "control_first")
+
+
+def _binomial_sf(k: int, n: int, p: float) -> float:
+    """``P(X >= k)`` for ``X ~ Binomial(n, p)``, computed exactly."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    return math.fsum(
+        math.comb(n, i) * (p**i) * ((1.0 - p) ** (n - i)) for i in range(k, n + 1)
+    )
+
+
+def _exact_mcnemar_power(discordant: int, alpha: float, win_share: float) -> float:
+    """Power of the exact one-sided McNemar test at the preregistered alternative.
+
+    This is NOT post-hoc power. Post-hoc power substitutes the effect the
+    study happened to observe and is therefore just the p-value wearing a
+    different hat. Here the alternative is the one preregistered before any
+    trial ran; only the sample size is realized, which is exactly what
+    changes when trials are excluded.
+    """
+    if discordant <= 0:
+        return 0.0
+    critical = next(
+        (k for k in range(discordant + 1) if _binomial_sf(k, discordant, 0.5) <= alpha),
+        None,
+    )
+    if critical is None:
+        return 0.0
+    return _binomial_sf(critical, discordant, win_share)
+
+
 def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]:
     if not isinstance(prereg, dict):
         reasons.append("missing_preregistration")
@@ -189,6 +224,28 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
     alpha = prereg.get("alpha")
     if not _finite_number(alpha) or not 0.0 < float(alpha) <= 0.05:
         reasons.append("invalid_alpha")
+    # A trial COUNT is not a power analysis. "At least 30 per domain" says
+    # nothing about what effect the study could detect, and it is decided
+    # before any trial is excluded — so a bundle that threw away half its
+    # trials for contamination kept the same claim to adequacy. The study
+    # must declare the power it was sized for and the alternative it was
+    # sized against, and achieved power is recomputed from what survived.
+    target_power = prereg.get("target_power")
+    if not _finite_number(target_power) or not 0.5 < float(target_power) <= 0.999:
+        reasons.append("invalid_target_power")
+    # McNemar conditions on discordant pairs, so the alternative belongs on
+    # the discordant split: the share of disagreements the treatment is
+    # expected to win. Sizing against a proportion DIFFERENCE and converting
+    # would hide the assumed disagreement rate inside the arithmetic.
+    win_share = prereg.get("preregistered_discordant_win_share")
+    if not _finite_number(win_share) or not 0.5 < float(win_share) <= 1.0:
+        reasons.append("invalid_discordant_win_share")
+    # Running the treatment first every time makes order a rival explanation
+    # for the gain. Balance alone does not settle it; the size of the order
+    # effect has to be declared and then measured.
+    max_order_effect = prereg.get("max_order_effect")
+    if not _finite_number(max_order_effect) or not 0.0 < float(max_order_effect) <= 0.5:
+        reasons.append("invalid_max_order_effect")
     minimum_effect = prereg.get("minimum_effect")
     if not _finite_number(minimum_effect) or not 0.0 < float(minimum_effect) <= 0.5:
         reasons.append("invalid_minimum_effect")
@@ -1075,7 +1132,6 @@ def verify_frontier_gain_bundle(
     # ABSENT one is carried here so the certificate says what it could not
     # verify instead of treating the assertion as proof.
     unproven_integrity_claims: set[str] = set()
-    order_counts = {"treatment_first": 0, "control_first": 0}
     frozen_at = (
         float(prereg["frozen_at"])
         if _finite_number(prereg.get("frozen_at"), positive=True)
@@ -1096,6 +1152,18 @@ def verify_frontier_gain_bundle(
     #: lets a producer keep rescanning until a trial passes, which is choosing
     #: the instrument after seeing the reading.
     contamination_scanners: set[str] = set()
+    #: Order accounting over ADMITTED trials, per domain. The global count
+    #: previously included rejected trials, so a producer could balance the
+    #: run with trials that never reached the grader.
+    order_by_domain: dict[str, dict[str, int]] = {
+        domain: {"treatment_first": 0, "control_first": 0} for domain in paired
+    }
+    #: Paired differences split by which arm ran first, so the order effect
+    #: is measured on the quantity the claim rests on.
+    order_effect_samples: dict[str, list[int]] = {
+        "treatment_first": [],
+        "control_first": [],
+    }
     for trial in trials:
         # ADMISSION ISOLATION: a trial's own integrity defects are collected
         # here and, if any exist, the trial is EXCLUDED from the paired
@@ -1196,10 +1264,8 @@ def verify_frontier_gain_bundle(
         ):
             trial_reasons.append(f"{trial_id}:decode_policy_mismatch")
         order = str(trial.get("run_order") or "")
-        if order not in order_counts:
+        if order not in _RUN_ORDERS:
             trial_reasons.append(f"{trial_id}:invalid_run_order")
-        else:
-            order_counts[order] += 1
         if type(trial.get("treatment_success")) is not bool or type(
             trial.get("control_success")
         ) is not bool:
@@ -1298,6 +1364,11 @@ def verify_frontier_gain_bundle(
         # receipt already surfaced its own reason and must not manufacture a
         # second one about run-wide uniformity.
         contamination_scanners.add(scanner_digest)
+        if order in order_by_domain.get(domain, {}):
+            order_by_domain[domain][order] += 1
+            order_effect_samples[order].append(
+                int(bool(trial["treatment_success"])) - int(bool(trial["control_success"]))
+            )
         paired[domain].append(
             PairedObservation(
                 task_id=task_id,
@@ -1312,13 +1383,88 @@ def verify_frontier_gain_bundle(
     if len(contamination_scanners) > 1:
         reasons.append("contamination_scanner_not_uniform")
 
+    prereg_alpha = (
+        float(prereg["alpha"])
+        if _finite_number(prereg.get("alpha")) and 0.0 < float(prereg["alpha"]) <= 0.05
+        else 0.05
+    )
+    prereg_win_share = (
+        float(prereg["preregistered_discordant_win_share"])
+        if _finite_number(prereg.get("preregistered_discordant_win_share"))
+        and 0.5 < float(prereg["preregistered_discordant_win_share"]) <= 1.0
+        else 0.0
+    )
+    prereg_target_power = (
+        float(prereg["target_power"])
+        if _finite_number(prereg.get("target_power"))
+        and 0.5 < float(prereg["target_power"]) <= 0.999
+        else 0.0
+    )
+    achieved_power: dict[str, float] = {}
     for domain, observations in paired.items():
         if len(observations) < min_trials:
             reasons.append(f"{domain}:underpowered")
-    if trials and abs(order_counts["treatment_first"] - order_counts["control_first"]) > max(
-        1, math.ceil(len(trials) * 0.10)
-    ):
+        # ACHIEVED power, recomputed from the trials that survived admission.
+        # A domain can hold its preregistered trial count and still have lost
+        # every disagreement that carried information, and the count alone
+        # cannot see that.
+        discordant = sum(
+            1
+            for observation in observations
+            if bool(observation.treatment_success) != bool(observation.control_success)
+        )
+        power = (
+            _exact_mcnemar_power(discordant, prereg_alpha, prereg_win_share)
+            if prereg_win_share > 0.5
+            else 0.0
+        )
+        achieved_power[domain] = round(power, 6)
+        if prereg_target_power and power < prereg_target_power:
+            reasons.append(f"{domain}:achieved_power_below_target")
+        balance = order_by_domain.get(domain, {})
+        admitted_here = balance.get("treatment_first", 0) + balance.get("control_first", 0)
+        # PER-DOMAIN balance. A run balanced overall can still have given one
+        # domain the treatment first every time, and a domain is the unit the
+        # claim is made about.
+        if admitted_here and abs(
+            balance["treatment_first"] - balance["control_first"]
+        ) > max(1, math.ceil(admitted_here * 0.10)):
+            reasons.append(f"{domain}:run_order_imbalanced")
+    admitted_order_total = sum(
+        counts["treatment_first"] + counts["control_first"]
+        for counts in order_by_domain.values()
+    )
+    admitted_treatment_first = sum(
+        counts["treatment_first"] for counts in order_by_domain.values()
+    )
+    admitted_control_first = admitted_order_total - admitted_treatment_first
+    if admitted_order_total and abs(
+        admitted_treatment_first - admitted_control_first
+    ) > max(1, math.ceil(admitted_order_total * 0.10)):
         reasons.append("run_order_imbalanced")
+    # Balance answers "did both orders run?", never "did order matter?".
+    # If the paired gain lives in one order and vanishes in the other, order
+    # is a rival explanation for the whole result.
+    order_effect = 0.0
+    if order_effect_samples["treatment_first"] and order_effect_samples["control_first"]:
+        order_effect = abs(
+            (
+                math.fsum(order_effect_samples["treatment_first"])
+                / len(order_effect_samples["treatment_first"])
+            )
+            - (
+                math.fsum(order_effect_samples["control_first"])
+                / len(order_effect_samples["control_first"])
+            )
+        )
+        max_order_effect = prereg.get("max_order_effect")
+        if _finite_number(max_order_effect) and 0.0 < float(max_order_effect) <= 0.5:
+            if order_effect > float(max_order_effect):
+                reasons.append("order_effect_exceeds_preregistered_maximum")
+    elif admitted_order_total:
+        # One order never ran on an admitted trial, so no order effect can be
+        # estimated at all. Silence here would read as "no effect found".
+        reasons.append("order_effect_unmeasurable")
 
     task_issuer_id, task_commitment_attestation_sha256 = _validate_task_commitment(
         bundle,
@@ -1481,6 +1627,14 @@ def verify_frontier_gain_bundle(
         "preregistration_sha256": expected_prereg_hash,
         "trial_count": len(trials),
         "domain_counts": {domain: len(items) for domain, items in paired.items()},
+        # CP126 596c9811 + 9e810491: what the surviving sample could actually
+        # detect, and whether order is a rival explanation for the gain.
+        "achieved_power_by_domain": achieved_power,
+        "target_power": prereg_target_power,
+        "order_balance_by_domain": {
+            domain: dict(counts) for domain, counts in order_by_domain.items()
+        },
+        "measured_order_effect": round(order_effect, 6),
         "comparison_accounting": comparison_accounting,
         "required_positive_domains": required_positive,
         # CP126 8a56c486: generation-manifest fields that NEITHER arm declared.
