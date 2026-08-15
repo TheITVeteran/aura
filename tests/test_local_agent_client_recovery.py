@@ -76,7 +76,14 @@ async def test_tool_execution_failure_becomes_react_observation():
 
     assert result["content"] == "Final answer after observing the failed tool."
     assert adapter.execute_calls == [("web_search", {"query": "Aura"})]
-    assert "Tool web_search failed" in client.prompts[1][0]
+    # The failure reaches the model as a class of failure, fenced as data. It
+    # used to carry the exception's own text, which the final turn could then
+    # return to the person verbatim — paths, credentials, provider details and
+    # all.
+    observation = client.prompts[1][0]
+    assert "web_search failed: RuntimeError" in observation
+    assert "tool bridge offline" not in observation
+    assert "TOOL_RESULT web_search BEGIN-" in observation
     actions = [
         record.action for record in get_degradation_tracker().recent(subsystem="local_agent_client")
     ]
@@ -110,6 +117,18 @@ async def test_max_tool_turn_returns_last_observation_instead_of_generic_timeout
 
     result = await client.think_and_act("time", "system", max_turns=1, context={})
 
-    assert result["confidence"] == 0.4
+    # The answer says what happened. It used to return up to 1200 characters of
+    # the raw tool observation as user-facing content, with the tool's own
+    # disclosure policy having no say in it — so the observation lives in the
+    # ledger, where a caller can see that it ran and check its commitment.
+    assert result["ok"] is False
+    assert result["error"] == "turn_budget_exhausted"
     assert "tool-turn limit" in result["content"]
-    assert "clock ok" in result["content"]
+    assert "clock ok" not in result["content"]
+
+    ledger = result["tool_calls"]
+    assert len(ledger) == 1
+    assert ledger[0]["tool"] == "clock"
+    assert ledger[0]["ok"] is True
+    assert len(ledger[0]["result_sha256"]) == 16
+    assert ledger[0]["result_chars"] > 0
