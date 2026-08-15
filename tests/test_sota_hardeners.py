@@ -19,12 +19,13 @@ class StreamingLocalAgentClientProbe(LocalAgentClient):
 def test_parse_tool_call_robustness():
     client = StreamingLocalAgentClientProbe()
 
-    # Case A: Truncated JSON with missing closing brackets/braces
+    # Case A: truncated JSON is NOT completed into an executable call.
+    # This used to assert the opposite — that missing braces were appended
+    # until the fragment parsed. Repairing ambiguity is fine for data; a tool
+    # call is authority, and an attacker-shaped fragment must not be finished
+    # into a valid one on the model's behalf.
     raw_truncated = '{"tool": "web_search", "args": {"query": "Aura AGI"'
-    parsed = client._parse_tool_call(raw_truncated)
-    assert parsed is not None
-    assert parsed.get("tool") == "web_search"
-    assert parsed.get("args", {}).get("query") == "Aura AGI"
+    assert client._parse_tool_call(raw_truncated) is None
 
     # Case B: JSON wrapped in markdown fences and markdown preambles
     raw_markdown = """
@@ -60,12 +61,13 @@ Let me know if you need anything else!
     # Unnesting should flatten the nested params to single level args
     assert parsed.get("args", {}).get("query") == "Aura flagship project"
 
-    # Case D: Single quotes normalization and trailing commas
+    # Case D: single-quoted, trailing-comma pseudo-JSON is refused.
+    # Accepting it means accepting a second grammar in the authority path, and
+    # a quote-conversion step is a repair. The contract asks for one JSON
+    # object; models produce one when asked, and the cost of refusing is a
+    # wasted turn rather than a dispatch nobody authorized.
     raw_single_quotes = "{'tool': 'speak', 'args': {'text': 'Hello world',},}"
-    parsed = client._parse_tool_call(raw_single_quotes)
-    assert parsed is not None
-    assert parsed.get("tool") == "speak"
-    assert parsed.get("args", {}).get("text") == "Hello world"
+    assert client._parse_tool_call(raw_single_quotes) is None
 
 
 # 2. TEST PARAMETER COERCION & SCHEMA HARMONIZATION

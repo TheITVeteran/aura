@@ -28,12 +28,22 @@ class _FailingAdapter:
     def __init__(self):
         self.execute_calls = []
 
+    @staticmethod
+    def get_tool_definitions():
+        return {"web_search": {}, "clock": {}, "file_operation": {}}
+
     async def execute_tool(self, tool_name, tool_args):
         self.execute_calls.append((tool_name, tool_args))
         raise RuntimeError("tool bridge offline")
 
 
 class _Adapter:
+    # An adapter that publishes a catalogue has decided what it will execute,
+    # and the client authorizes against exactly that.
+    @staticmethod
+    def get_tool_definitions():
+        return {"web_search": {}, "clock": {}, "file_operation": {}}
+
     async def execute_tool(self, tool_name, tool_args):
         return f"{tool_name} ok with {tool_args}"
 
