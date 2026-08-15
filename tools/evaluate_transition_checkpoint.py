@@ -25,6 +25,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     TRANSITION_MEMORY_PARAMETER_NAMES,
     TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES,
     TRANSITION_PROCESSOR_PARAMETER_NAMES,
+    TRANSITION_TAPE_READER_PARAMETER_NAMES,
     UnifiedRecurrenceConfig,
     UnifiedRecurrentController,
 )
@@ -69,9 +70,19 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
             initialization_seed=int(identity["init_seed"]),
         )
     )
-    required_names = set(TRANSITION_MEMORY_PARAMETER_NAMES) | set(
-        TRANSITION_PROCESSOR_PARAMETER_NAMES
-    ) | {"transition_processor_opcode_output"}
+    required_names = (
+        set(TRANSITION_MEMORY_PARAMETER_NAMES)
+        | set(TRANSITION_PROCESSOR_PARAMETER_NAMES)
+        | {"transition_processor_opcode_output"}
+    )
+    extension_groups = (
+        set(TRANSITION_TAPE_READER_PARAMETER_NAMES),
+        {
+            "transition_processor_opcode_interaction_up",
+            "transition_processor_opcode_interaction_down",
+        },
+        {"transition_processor_opcode_hidden"},
+    )
     available = {
         name.removeprefix("bundle.controller."): value
         for name, value in tensors.items()
@@ -83,22 +94,35 @@ def _load_controller(checkpoint_dir: Path) -> tuple[UnifiedRecurrentController, 
             "transition checkpoint tensor inventory is incomplete: "
             + ",".join(sorted(missing))
         )
-    for name in required_names:
+    for group in extension_groups:
+        present = group & set(available)
+        if present and present != group:
+            raise RuntimeError(
+                "transition checkpoint extension inventory is partial: "
+                + ",".join(sorted(group - present))
+            )
+    loaded_names = required_names | {
+        name for group in extension_groups for name in group if name in available
+    }
+    for name in loaded_names:
         expected = getattr(controller, name)
         observed = available[name]
         if tuple(expected.shape) != tuple(observed.shape):
             raise RuntimeError(f"transition checkpoint tensor shape differs: {name}")
         setattr(controller, name, observed)
-    mx.eval(*(getattr(controller, name) for name in required_names))
-    extension = sorted(set(TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES) - set(available))
-    if extension != ["transition_processor_opcode_hidden"]:
-        raise RuntimeError("transition checkpoint extension inventory differs")
+    mx.eval(*(getattr(controller, name) for name in loaded_names))
+    extension_names = set(TRANSITION_TAPE_READER_PARAMETER_NAMES) | (
+        set(TRANSITION_OPCODE_EXPERT_PARAMETER_NAMES)
+        - {"transition_processor_opcode_output"}
+    )
+    extension = sorted(extension_names - set(available))
     return controller, {
         "checkpoint_file": str(weights_path.resolve()),
         "checkpoint_sha256": receipt["checkpoint_sha256"],
         "checkpoint_receipt_sha256": receipt["receipt_sha256"],
         "checkpoint_step": int(receipt["step"]),
         "checkpoint_identity_sha256": identity["identity_sha256"],
+        "loaded_transition_tensor_names": sorted(loaded_names),
         "zero_attached_extensions": extension,
     }
 
@@ -135,7 +159,11 @@ def _evaluate_task(
         if terminal:
             decision = mx.log(mx.maximum(state, 1e-6))
         else:
-            memory = controller._typed_transition_memory(action_history)
+            memory = controller._typed_transition_memory(
+                action_history,
+                state_probabilities=state,
+                action_probabilities=action,
+            )
             decision = controller.resolve_transition_processor_logits(
                 None,
                 state,
@@ -236,6 +264,10 @@ def main() -> int:
             "legacy_transition_logits_available": False,
             "exact_microcode_available": False,
             "initial_state_authority": "verified_public_initial_state",
+            "complete_public_action_prefix_visible": True,
+            "public_tape_query_uses_current_state_and_action": True,
+            "future_public_action_visible": False,
+            "private_transition_trace_visible": False,
             "public_actions_are_correctness_authority": False,
             "terminal_state_structurally_preserved": True,
         },

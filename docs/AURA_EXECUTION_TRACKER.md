@@ -49817,3 +49817,28 @@ Both compositional profiles now pass the signed bootstrap loader and command
 materializer with an identity-pinned parent checkpoint. The focused campaign
 and trainer set is `133 passed`. This closes launch plumbing only; canary
 accuracy and depth behavior remain unmeasured.
+
+## Checkpoint 2026-08-14-506: Evaluate The Machine That Actually Ran
+
+The model-free authoritative checkpoint evaluator predated CP502 and CP503. It
+loaded the old gated memory, shared processor and opcode output head, but
+ignored the public tape reader, pre-compression opcode experts and hidden
+experts. It also called transition memory without the current state/action
+query that activates the tape reader. A post-CP503 three-arm report would
+therefore have measured an older lesioned machine while presenting itself as
+the deployed transition path.
+
+The evaluator now loads every authenticated transition memory, tape, processor
+and opcode-expert tensor present in the checkpoint. Chronologically older
+checkpoints may omit only complete exact-no-op extension groups; partial groups
+are refused, and the report lists every loaded tensor and every zero-attached
+extension. Each transition retains the complete causal public action prefix and
+queries it with the current student state and public action. The report binds
+that information boundary and continues to exclude future actions, private
+trace state, exact microcode and legacy transition logits.
+
+Contracts prove complete CP503 loading, exact zero-attachment for a CP500-era
+parent and refusal of a partial tape extension. The focused evaluator and
+controller set is `74 passed`; repository smoke is `104 passed`. This repairs
+adjudication fidelity. It does not change the in-flight CP505 canary or promote
+its interim measurements to a final claim.
