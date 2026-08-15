@@ -50669,3 +50669,20 @@ The local language-transfer gate is now closed. The terminal resident profile
 must combine fresh coding, calibration and premise tasks with the alternate
 scientific surfaces in one matched five-arm matrix. A bounded local preflight
 must pass first; only that final replication may occupy Aura's 32B lane.
+
+## Checkpoint 2026-08-15-564: Freeze One Combined Terminal Cohort
+
+The canary and independent verifier now define `mixed_multidomain_v1`: fresh
+coding, calibration and premise rows retain their established canonical public
+objectives, while fresh scientific rows are balanced across the three alternate
+surface styles. The sealed seed determines every task, wording profile and
+presentation permutation. Canonical rows carry no adapter receipt; scientific
+rows must carry a replayable surface receipt before their recurrent-state
+receipt can count.
+
+The profile is accepted only with exactly all four semantic domains, and old
+canonical/mixed-science artifacts remain independently verifiable. Focused
+producer/verifier/surface contracts pass `24/24`; canonical smoke passes
+`110/110`. The next run is a small combined 1.5B preflight. A clean result freezes
+the exact resident launch; a failure returns to local engineering without ever
+loading Aura's 32B.

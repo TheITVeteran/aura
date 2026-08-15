@@ -189,3 +189,22 @@ def test_mixed_surface_cohort_refuses_non_scientific_domain():
             seed=2026081566,
             surface_profile="mixed_scientific_v1",
         )
+
+
+def test_mixed_multidomain_cohort_adapts_only_scientific_rows():
+    tasks = _task_cohort(
+        ("coding", "calibration", "misleading_premise", "scientific_inference"),
+        2,
+        seed=2026081569,
+        surface_profile="mixed_multidomain_v1",
+    )
+    assert len(tasks) == 24
+    science = [task for task in tasks if task.family == "frontier_scientific_inference"]
+    canonical = [task for task in tasks if task.family != "frontier_scientific_inference"]
+    assert {task.prompt.splitlines()[0] for task in science} == {
+        "Causal study report.",
+        "Controlled causal field note.",
+        "CAUSAL_FACTS_V1",
+    }
+    assert all(task.transition_trace is None for task in science)
+    assert all(task.transition_trace is not None for task in canonical)

@@ -90,7 +90,11 @@ SURFACE_SOURCE_PATHS: Final = (
     *SOURCE_PATHS,
     "core/brain/llm/latent_cortex/semantic_surface_adapter.py",
 )
-SURFACE_PROFILES: Final = ("canonical", "mixed_scientific_v1")
+SURFACE_PROFILES: Final = (
+    "canonical",
+    "mixed_scientific_v1",
+    "mixed_multidomain_v1",
+)
 
 
 def _claim_boundary(
@@ -99,7 +103,7 @@ def _claim_boundary(
 ) -> str:
     qualifier = (
         "less-constrained scientific surface transfer and "
-        if surface_profile == "mixed_scientific_v1"
+        if surface_profile != "canonical"
         else ""
     )
     if resident_manifest_identity is not None:
@@ -133,24 +137,34 @@ def _task_cohort(
     )
     if surface_profile == "canonical":
         return tasks
-    if surface_profile != "mixed_scientific_v1" or domains != ("scientific_inference",):
-        raise ValueError("mixed semantic surface canary requires only scientific_inference")
+    if surface_profile == "mixed_scientific_v1":
+        if domains != ("scientific_inference",):
+            raise ValueError("mixed scientific surface canary requires only scientific_inference")
+    elif surface_profile == "mixed_multidomain_v1":
+        if domains != SUPPORTED_DOMAINS:
+            raise ValueError("mixed multidomain surface canary requires all semantic domains")
+    else:
+        raise ValueError("mixed semantic surface profile is unsupported")
     adapted = []
+    surface_index = 0
     for index, task in enumerate(tasks):
-        profile = SEMANTIC_SURFACE_PROFILES[index % len(SEMANTIC_SURFACE_PROFILES)]
-        prompt = render_scientific_surface(
-            task.prompt,
-            profile=profile,
-            permutation_seed=seed + index,
-        )
-        adapted.append(
-            replace(
+        if task.family == "frontier_scientific_inference":
+            profile = SEMANTIC_SURFACE_PROFILES[
+                surface_index % len(SEMANTIC_SURFACE_PROFILES)
+            ]
+            surface_index += 1
+            prompt = render_scientific_surface(
+                task.prompt,
+                profile=profile,
+                permutation_seed=seed + index,
+            )
+            task = replace(
                 task,
                 prompt=prompt,
                 transition_trace=None,
                 transition_program=None,
             )
-        )
+        adapted.append(task)
     return adapted
 
 
@@ -160,7 +174,7 @@ def _execute_task_state(
     surface_profile: str,
     machine: SemanticNeuralMachine | None = None,
 ) -> tuple[SemanticNeuralDecodeState, str]:
-    if surface_profile == "canonical":
+    if surface_profile == "canonical" or task.family != "frontier_scientific_inference":
         state = execute_semantic_neural_decode_state(task.prompt, task.family, machine=machine)
         return state, ""
     decoded = execute_scientific_surface(task.prompt, machine=machine)
@@ -610,7 +624,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             path: _file_sha(REPO_ROOT / path)
             for path in (
                 SURFACE_SOURCE_PATHS
-                if args.surface_profile == "mixed_scientific_v1"
+                if args.surface_profile != "canonical"
                 else SOURCE_PATHS
             )
         },

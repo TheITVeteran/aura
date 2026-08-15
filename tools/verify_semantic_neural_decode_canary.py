@@ -99,7 +99,11 @@ SURFACE_SOURCE_PATHS: Final = (
     *SOURCE_PATHS,
     "core/brain/llm/latent_cortex/semantic_surface_adapter.py",
 )
-SURFACE_PROFILES: Final = ("canonical", "mixed_scientific_v1")
+SURFACE_PROFILES: Final = (
+    "canonical",
+    "mixed_scientific_v1",
+    "mixed_multidomain_v1",
+)
 
 
 def _claim_boundary(
@@ -108,7 +112,7 @@ def _claim_boundary(
 ) -> str:
     qualifier = (
         "less-constrained scientific surface transfer and "
-        if surface_profile == "mixed_scientific_v1"
+        if surface_profile != "canonical"
         else ""
     )
     if resident_manifest_identity is not None:
@@ -218,13 +222,23 @@ def _expected_tasks(
     )
     if surface_profile == "canonical":
         return tasks
-    if surface_profile != "mixed_scientific_v1" or domains != ("scientific_inference",):
-        raise RuntimeError("semantic decode mixed surface cohort is invalid")
+    if surface_profile == "mixed_scientific_v1":
+        if domains != ("scientific_inference",):
+            raise RuntimeError("semantic decode mixed scientific cohort is invalid")
+    elif surface_profile == "mixed_multidomain_v1":
+        if domains != SUPPORTED_DOMAINS:
+            raise RuntimeError("semantic decode mixed multidomain cohort is invalid")
+    else:
+        raise RuntimeError("semantic decode mixed surface profile is invalid")
     adapted = []
+    surface_index = 0
     for index, task in enumerate(tasks):
-        profile = SEMANTIC_SURFACE_PROFILES[index % len(SEMANTIC_SURFACE_PROFILES)]
-        adapted.append(
-            replace(
+        if task.family == "frontier_scientific_inference":
+            profile = SEMANTIC_SURFACE_PROFILES[
+                surface_index % len(SEMANTIC_SURFACE_PROFILES)
+            ]
+            surface_index += 1
+            task = replace(
                 task,
                 prompt=render_scientific_surface(
                     task.prompt,
@@ -234,12 +248,12 @@ def _expected_tasks(
                 transition_trace=None,
                 transition_program=None,
             )
-        )
+        adapted.append(task)
     return adapted
 
 
 def _replay_state(task: Any, surface_profile: str):
-    if surface_profile == "canonical":
+    if surface_profile == "canonical" or task.family != "frontier_scientific_inference":
         return execute_semantic_neural_decode_state(task.prompt, task.family), ""
     decoded = execute_scientific_surface(task.prompt)
     return decoded.state, decoded.receipt()["receipt_sha256"]
