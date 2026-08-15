@@ -151,4 +151,12 @@ def test_agency_core_self_development_prefers_native_audit_targeting(monkeypatch
     assert action["skill"] == "attention_deepening"
     assert action["audit_driven"] is True
     assert action["theory_target"] == "GWT"
+
+    # Proposing is not acting. Every pathway runs on every pulse, so spending
+    # the shared cooldown here meant a proposal that lost arbitration — or that
+    # the action gate blocked — suppressed the winner for the next half hour.
+    assert agency.state.last_skill_use == 0.0
+    effects = dict(action["_deferred_effects"])
+    assert "self_development.cooldown" in effects
+    effects["self_development.cooldown"]()
     assert agency.state.last_skill_use == 8000.0

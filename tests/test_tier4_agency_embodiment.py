@@ -820,9 +820,13 @@ class TestGenuineThinking:
             "Workspace should prioritize high-priority reasoning content."
         )
 
-        # Losers should be inhibited (workspace enforces sequential processing)
-        assert len(gw._inhibited) > 0, (
-            "No losers were inhibited. Workspace should enforce competition."
+        # Competition has to cost the winner something, or one source holds the
+        # broadcast forever. This asserted losers landed in `_inhibited`, which
+        # 259cb2aec stopped populating when winner-fatigue replaced
+        # loser-inhibition — so it was reading an always-empty dict and would
+        # have passed on a workspace that ran no competition at all.
+        assert gw._fatigue.get(winner.source, 0.0) > 0.0, (
+            "Winning cost the winner nothing. The workspace ran no competition."
         )
 
         # Ablation: without workspace, we just have unsorted candidates

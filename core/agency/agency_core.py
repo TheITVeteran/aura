@@ -182,6 +182,32 @@ class SovereignSwarm:
             "last_deliberation": dict(self._last_deliberation),
         }
 
+    def _publish_shard_count(self) -> None:
+        """Advertise the number of shards that actually exist right now."""
+        try:
+            if self._registry_shards_update_pending:
+                return
+            self._registry_shards_update_pending = True
+            observed = len(self.active_shards)
+
+            async def _run_shards_update():
+                try:
+                    await get_registry().update(active_shards=observed)
+                finally:
+                    self._registry_shards_update_pending = False
+
+            registry_task = _schedule_agency_task(
+                _run_shards_update(),
+                name="agency.registry.active_shards",
+                on_unscheduled=lambda: setattr(self, "_registry_shards_update_pending", False),
+            )
+            if registry_task is None:
+                self._registry_shards_update_pending = False
+        except _AGENCY_BOUNDARY_ERRORS as e:
+            self._registry_shards_update_pending = False
+            _record_agency_degradation(e, action="active shard count registry update skipped")
+            capture_and_log(e, {"context": "AgencyCore._publish_shard_count"})
+
     async def spawn_shard(self, goal: str, context: str = "", **kwargs) -> bool:
         """Spawn a new cognitive shard to pursue a goal asynchronously.
 
@@ -189,29 +215,12 @@ class SovereignSwarm:
         identifiers without coupling every pathway to the swarm signature.
         """
         self.active_shards = {k: v for k, v in self.active_shards.items() if not v.done()}
-
-        try:
-            # Guard shard count registry update to prevent accumulation
-            if not self._registry_shards_update_pending:
-                self._registry_shards_update_pending = True
-                
-                async def _run_shards_update():
-                    try:
-                        await get_registry().update(active_shards=len(self.active_shards))
-                    finally:
-                        self._registry_shards_update_pending = False
-                
-                registry_task = _schedule_agency_task(
-                    _run_shards_update(),
-                    name="agency.registry.active_shards",
-                    on_unscheduled=lambda: setattr(self, "_registry_shards_update_pending", False),
-                )
-                if registry_task is None:
-                    self._registry_shards_update_pending = False
-        except _AGENCY_BOUNDARY_ERRORS as e:
-            self._registry_shards_update_pending = False
-            _record_agency_degradation(e, action="active shard count registry update skipped")
-            capture_and_log(e, {"context": "AgencyCore.spawn_shard"})
+        # The count used to be published HERE, before capacity admission and
+        # before the task was inserted — so it advertised a shard that the very
+        # next line might refuse, and it never published anything when a shard
+        # finished, because cleanup removed the task without telling the
+        # registry. The number moved only in the direction of "more".
+        # _publish_shard_count is called after the map actually changes.
 
         if len(self.active_shards) >= _SHARD_CAPACITY:
             return False
@@ -263,9 +272,11 @@ class SovereignSwarm:
         if task is None:
             return False
         self.active_shards[shard_id] = task
+        self._publish_shard_count()
 
         def _cleanup(t: asyncio.Task) -> None:
             self.active_shards.pop(shard_id, None)
+            self._publish_shard_count()
             if t.cancelled():
                 return
             try:
@@ -794,6 +805,25 @@ _HIGH_RISK_SHARD_TOOLS = frozenset({
 })
 
 
+def _skill_cooldown_effect(state: Any, now: float):
+    """Spend the shared skill cooldown — only if this proposal wins.
+
+    Every pathway is called on every pulse, so a pathway that set this while
+    merely being asked what it wanted spent the cooldown that stops real work
+    from spamming. A proposal that lost arbitration, or that the action gate
+    blocked, suppressed the winner for the next half hour.
+
+    Module-level rather than a method because the pathways are exercised
+    against stand-in objects; a helper reachable only through ``self`` would
+    make them untestable in isolation.
+    """
+
+    def _effect() -> None:
+        state.last_skill_use = now
+
+    return _effect
+
+
 class AgencyCore:
     """Multi-pathway agency engine for autonomous behavior.
 
@@ -1125,8 +1155,32 @@ class AgencyCore:
             logger.debug("virtual_body rehearsal failed: %s", exc)
 
     async def _commit_action_side_effects(self, action: dict[str, Any], now: float) -> bool:
-        """Apply state mutations that are valid only after an action is approved."""
+        """Apply state mutations that are valid only after an action is approved.
+
+        Pathways are evaluated by calling them, and every pathway runs on every
+        pulse. Several of them were changing the world while being asked what
+        they would like to do: setting `last_skill_use`, writing insights into
+        identity, scheduling a canvas rewrite. A proposal that lost arbitration
+        — or was blocked by the action gate — had already spent the cooldown
+        that stops the real work from spamming, so a losing pathway suppressed
+        a winning one for the next half hour.
+
+        Proposals declare those effects instead. ``_deferred_effects`` is a
+        list of ``(name, callable)`` pairs run here, for the winner, once.
+        """
         action_type = action.get("type")
+        for effect_name, effect in list(action.get("_deferred_effects") or ()):
+            try:
+                result = effect()
+                if inspect.isawaitable(result):
+                    await result
+            except _AGENCY_BOUNDARY_ERRORS as exc:
+                _record_agency_degradation(
+                    exc,
+                    action=f"deferred effect {effect_name} failed after the action was approved",
+                    severity="warning",
+                )
+                logger.warning("Agency deferred effect %s failed: %s", effect_name, exc)
         if action.get("_consume_observation"):
             if self.state.unshared_observations:
                 self.state.unshared_observations.pop(0)
@@ -2587,7 +2641,6 @@ class AgencyCore:
         ]
 
         selected_prompt = random.choice(prompts) + interest_prompt
-        self.state.last_skill_use = now
         priority = (self.state.initiative_energy + self.state.curiosity_pressure) / 2
 
         return {
@@ -2597,6 +2650,9 @@ class AgencyCore:
             "message": "I felt inspired to create some art based on my internal state.",
             "source": "aesthetic_creation",
             "priority": priority,
+            "_deferred_effects": [
+                ("aesthetic_creation.cooldown", _skill_cooldown_effect(self.state, now))
+            ],
         }
 
     def _pathway_philosophical_wonder(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -2659,34 +2715,66 @@ class AgencyCore:
 
         choice = random.random()
 
+        def _audit_cooldown() -> None:
+            # This assignment used to sit after every branch that returns, so
+            # it ran only when the pathway proposed NOTHING. A successful
+            # proposal left the pathway eligible on the very next pulse, which
+            # is the opposite of a cooldown.
+            self._last_meta_audit = now
+
         if choice < 0.4:
             if getattr(self, "swarm", None):
-                target_file = "core/agency_core.py"
-                await self.swarm.spawn_shard(
-                    goal=f"Analyze the structural integrity and identify technical debt or code smells in {target_file}",
-                    context="Focus area: Performance, readability, and modularity. Do not execute code.",
-                    tools=["view_file", "search_web"]
-                )
+                # Was "core/agency_core.py" — a 48-line re-export facade. The
+                # shard analysed a shim for technical debt while the
+                # implementation it forwards to went unread.
+                target_file = "core/agency/agency_core.py"
+
+                async def _dispatch_refinement() -> None:
+                    accepted = await self.swarm.spawn_shard(
+                        goal=(
+                            "Analyze the structural integrity and identify technical debt "
+                            f"or code smells in {target_file}"
+                        ),
+                        context="Focus area: Performance, readability, and modularity. Do not execute code.",
+                        tools=["view_file", "search_web"],
+                    )
+                    if not accepted:
+                        _record_agency_degradation(
+                            RuntimeError(f"refinement shard for {target_file} was not admitted"),
+                            action="recorded no refinement dispatch for this pulse",
+                            severity="warning",
+                        )
+                    _audit_cooldown()
+
                 return {
                     "type": "self_refinement",
                     "proposal": "Pending Swarm Analysis",
                     "target": target_file,
-                    "message": f"I've dispatched a cognitive shard to analyze {target_file} for potential code optimizations.",
+                    # The result of spawn_shard was discarded and this sentence
+                    # claimed dispatch regardless, so a refused shard still
+                    # became a memory of work in flight.
+                    "message": f"I'm sending a cognitive shard to analyze {target_file} for potential code optimizations.",
                     "source": "self_architect",
-                    "priority": 0.7
+                    "priority": 0.7,
+                    "_deferred_effects": [("self_architect.refinement", _dispatch_refinement)],
                 }
             return None
         elif choice < 0.7:
             targets = await evolver.identify_evolution_targets()
             if targets:
                 target_skill = random.choice(targets)
-                await evolver.spawn_evolution_shard(target_skill)
+
+                async def _dispatch_evolution() -> None:
+                    await evolver.spawn_evolution_shard(target_skill)
+                    _audit_cooldown()
+
                 return {
                     "type": "skill_evolution",
                     "skill": target_skill,
                     "message": f"I'm spawning a research shard to evolve my '{target_skill}' capability.",
                     "source": "self_architect",
-                    "priority": 0.6
+                    "priority": 0.6,
+                    "_deferred_effects": [("self_architect.evolution", _dispatch_evolution)],
                 }
         else:
             health = await monitor.audit_stability()
@@ -2696,10 +2784,11 @@ class AgencyCore:
                     "stability": health.cognitive_stability,
                     "message": f"My internal stability audit shows minor inconsistencies (Stability: {health.cognitive_stability:.2f}). I'm initiating a critical shard to stabilize.",
                     "source": "self_architect",
-                    "priority": 0.8
+                    "priority": 0.8,
+                    "_deferred_effects": [("self_architect.audit_cooldown", _audit_cooldown)],
                 }
 
-        self._last_meta_audit = now
+        _audit_cooldown()
         return None
 
     def _pathway_environmental_explorer(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -2719,7 +2808,6 @@ class AgencyCore:
         if random.random() > 0.4:
             return None
 
-        self.state.last_skill_use = now
         priority = self.state.curiosity_pressure
 
         commands = [
@@ -2847,7 +2935,6 @@ class AgencyCore:
 
         if targeted_initiatives:
             chosen = random.choice(targeted_initiatives[:2])
-            self.state.last_skill_use = now
             return {
                 "type": "autonomous_action",
                 "skill": chosen["skill"],
@@ -2857,6 +2944,9 @@ class AgencyCore:
                 "narrative_mode": True,
                 "audit_driven": True,
                 "theory_target": chosen.get("theory", ""),
+                "_deferred_effects": [
+                    ("self_development.cooldown", _skill_cooldown_effect(self.state, now))
+                ],
             }
 
         if not is_falling and random.random() > 0.1:
@@ -2876,7 +2966,6 @@ class AgencyCore:
             priority = 0.3
 
         hobby = hobbies[0] if (latest_index < 0.6 or is_falling) else random.choice(hobbies)
-        self.state.last_skill_use = now
 
         return {
             "type": "autonomous_action",
@@ -2886,6 +2975,9 @@ class AgencyCore:
             "priority": priority,
             "narrative_mode": True,
             "audit_driven": False,
+            "_deferred_effects": [
+                ("self_development.cooldown", _skill_cooldown_effect(self.state, now))
+            ],
         }
 
     async def _pathway_social_reflection(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
@@ -2987,25 +3079,45 @@ class AgencyCore:
         if random.random() > 0.3:
             return None
 
-        core_files = ["agency_core.py", "brain/identity.py", "brain/llm/compiler.py", "orchestrator/main.py"]
+        # "agency_core.py" resolved to core/agency_core.py, a 48-line
+        # re-export facade — the shard spent its analysis on a shim while the
+        # 3,000-line implementation next door went unread.
+        core_files = [
+            "agency/agency_core.py",
+            "brain/identity.py",
+            "brain/llm/compiler.py",
+            "orchestrator/main.py",
+        ]
         target = random.choice(core_files)
 
-        self.state.last_skill_use = now
+        if not self.swarm:
+            return None
 
-        if self.swarm:
-            await self.swarm.spawn_shard(
+        async def _dispatch() -> None:
+            # The result was discarded and the reflection claimed dispatch
+            # either way, so a shard the capacity gate or the background policy
+            # refused still produced "I've dispatched a cognitive shard" in her
+            # own inner narrative — a memory of work that never started.
+            accepted = await self.swarm.spawn_shard(
                 goal=f"Analyze the structural integrity and design patterns of {target}",
-                context=f"Focus area: Performance and cognitive modularity in `core/{target}`."
+                context=f"Focus area: Performance and cognitive modularity in `core/{target}`.",
             )
+            if not accepted:
+                _record_agency_degradation(
+                    RuntimeError(f"research shard for core/{target} was not admitted"),
+                    action="recorded no research dispatch for this pulse",
+                    severity="warning",
+                )
+            self.state.last_skill_use = now
 
-            return {
-                "type": "internal_reflection",
-                "thought": f"I've dispatched a cognitive shard to research `core/{target}`.",
-                "source": "autonomous_research",
-                "priority": 0.45,
-                "internal_only": True
-            }
-        return None
+        return {
+            "type": "internal_reflection",
+            "thought": f"I'm sending a cognitive shard to research `core/{target}`.",
+            "source": "autonomous_research",
+            "priority": 0.45,
+            "internal_only": True,
+            "_deferred_effects": [("autonomous_research.dispatch", _dispatch)],
+        }
 
     async def _pathway_creative_synthesis(self, now: float, idle_seconds: float) -> dict[str, Any] | None:
         """Pathway 17: Combining disparate concepts into new 'Inner Insights',

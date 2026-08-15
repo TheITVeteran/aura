@@ -354,11 +354,19 @@ ProcessorFn = Callable[
 class GlobalWorkspace:
     """The competitive bottleneck. One winner per cognitive tick.
 
-    Inhibition model:
-      - Losing subsystems are placed in a cooldown dict.
-      - They cannot re-submit for _INHIBIT_TICKS ticks.
-      - This prevents the same subsystem from dominating every cycle
-        and forces genuine competition.
+    Rotation model:
+      - Winning costs the winner: `_fatigue` reduces its next effective
+        priority by `_WINNER_FATIGUE`, recovering over subsequent ticks.
+      - Losing costs the loser nothing. It may bid again on the next tick.
+      - So the same subsystem cannot hold the broadcast indefinitely, and a
+        genuine priority gap still wins outright.
+
+    This docstring described the previous model — losers placed in a cooldown
+    dict, barred from re-submitting for `_INHIBIT_TICKS` — which 259cb2aec
+    replaced. Banning the loser is a ban on whoever happened to come second,
+    which is arrival order wearing a policy's clothes; three tests were still
+    asserting against `_inhibited` and reading an always-empty dict.
+    `_inhibited` remains, used only by the safety-inhibition path.
     """
 
     _INHIBIT_TICKS: int = 1       # Retained for the safety-inhibition path; see _fatigue for the refractory

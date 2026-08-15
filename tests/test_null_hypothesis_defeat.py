@@ -759,78 +759,78 @@ class TestToleranceAdaptation:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestInhibitionStarvation:
-    """Force one subsystem to win GWT broadcast N consecutive times.
-    The inhibition counter should prevent it from winning again."""
+    """No source may dominate the broadcast, and none may be starved out of it.
+
+    These asserted the mechanism rather than the property: losers were placed
+    in a `_inhibited` cooldown dict and barred from submitting. 259cb2aec
+    replaced that with `_fatigue` — a win reduces the winner's next effective
+    priority instead of banning the loser — because a hard ban on losers is a
+    ban on whoever happened to lose, which is arrival order wearing a policy's
+    clothes. `_INHIBIT_TICKS` survives for the safety-inhibition path only.
+
+    The property is what these check now, and it outlives the next mechanism
+    change too: over many ticks nobody takes the whole broadcast and nobody
+    takes none of it.
+    """
 
     @pytest.mark.asyncio
-    async def test_winner_gets_inhibited_after_winning(self):
-        """After a source wins, it must be inhibited for _INHIBIT_TICKS."""
+    async def test_winning_costs_the_winner_its_next_bid(self):
         gw = GlobalWorkspace()
 
-        # Submit and let src_a win
-        await gw.submit(CognitiveCandidate(
-            content="a wins", source="src_a", priority=0.9,
-        ))
-        await gw.submit(CognitiveCandidate(
-            content="b loses", source="src_b", priority=0.3,
-        ))
+        await gw.submit(CognitiveCandidate(content="a wins", source="src_a", priority=0.9))
+        await gw.submit(CognitiveCandidate(content="b loses", source="src_b", priority=0.3))
 
         winner = await gw.run_competition()
+
         assert winner.source == "src_a"
-
-        # src_b should be inhibited (it lost)
-        assert "src_b" in gw._inhibited, \
-            "Losers must be inhibited after competition"
-        assert gw._inhibited["src_b"] == gw._INHIBIT_TICKS, \
-            f"Loser should be inhibited for {gw._INHIBIT_TICKS} ticks"
+        assert gw._fatigue.get("src_a", 0.0) > 0.0, "winning cost the winner nothing"
+        assert gw._fatigue.get("src_b", 0.0) == 0.0, "losing must not be punished"
 
     @pytest.mark.asyncio
-    async def test_inhibited_source_cannot_submit(self):
-        """An inhibited source's submissions must be rejected."""
+    async def test_a_loser_may_bid_again_immediately(self):
+        """Barring the loser is a ban on whoever happened to lose."""
         gw = GlobalWorkspace()
 
-        # First competition: src_b loses
-        await gw.submit(CognitiveCandidate(
-            content="a", source="src_a", priority=0.8,
-        ))
-        await gw.submit(CognitiveCandidate(
-            content="b", source="src_b", priority=0.3,
-        ))
-        await gw.run_competition()
-
-        # src_b tries to submit again — should be rejected
-        accepted = await gw.submit(CognitiveCandidate(
-            content="b again", source="src_b", priority=0.99,  # Even high priority
-        ))
-        assert not accepted, \
-            "Inhibited source must NOT be able to submit, even with high priority"
-
-    @pytest.mark.asyncio
-    async def test_inhibition_decays_over_ticks(self):
-        """Inhibition counters must decrease each tick until source can compete again."""
-        gw = GlobalWorkspace()
-
-        # Setup: src_b loses
         await gw.submit(CognitiveCandidate(content="a", source="src_a", priority=0.8))
         await gw.submit(CognitiveCandidate(content="b", source="src_b", priority=0.3))
         await gw.run_competition()
 
-        initial_inhibition = gw._inhibited.get("src_b", 0)
-        assert initial_inhibition > 0, "src_b should be inhibited"
+        accepted = await gw.submit(
+            CognitiveCandidate(content="b again", source="src_b", priority=0.99)
+        )
 
-        # Run empty competitions to decay inhibition
-        for i in range(gw._INHIBIT_TICKS):
-            await gw.submit(CognitiveCandidate(
-                content="filler", source=f"filler_{i}", priority=0.5,
-            ))
-            await gw.run_competition()
+        assert accepted, "a source that lost once was locked out of the next tick"
 
-        # src_b should be able to submit now
-        accepted = await gw.submit(CognitiveCandidate(
-            content="b returns", source="src_b", priority=0.5,
-        ))
-        assert accepted, \
-            f"After {gw._INHIBIT_TICKS} ticks, inhibition should have decayed"
+    @pytest.mark.asyncio
+    async def test_nobody_takes_the_whole_broadcast(self):
+        """Two sources bidding the same priority forever must share it."""
+        gw = GlobalWorkspace()
+        wins: dict[str, int] = {}
+
+        for _ in range(40):
+            await gw.submit(CognitiveCandidate(content="a", source="src_a", priority=0.7))
+            await gw.submit(CognitiveCandidate(content="b", source="src_b", priority=0.7))
+            winner = await gw.run_competition()
+            if winner is not None:
+                wins[winner.source] = wins.get(winner.source, 0) + 1
+
+        assert set(wins) == {"src_a", "src_b"}, f"a source was starved: {wins}"
+        assert min(wins.values()) >= 10, f"share is too lopsided: {wins}"
+
+    @pytest.mark.asyncio
+    async def test_a_clear_priority_gap_still_wins(self):
+        """Rotation must not override a real difference in urgency."""
+        gw = GlobalWorkspace()
+        wins: dict[str, int] = {}
+
+        for _ in range(20):
+            await gw.submit(CognitiveCandidate(content="urgent", source="urgent", priority=0.95))
+            await gw.submit(CognitiveCandidate(content="idle", source="idle", priority=0.16))
+            winner = await gw.run_competition()
+            if winner is not None:
+                wins[winner.source] = wins.get(winner.source, 0) + 1
+
+        assert wins.get("urgent", 0) > wins.get("idle", 0), wins
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2569,8 +2569,16 @@ class TestEmergentAgency:
 
     @pytest.mark.asyncio
     async def test_internal_conflict_resolution_via_gwt(self):
-        """When two equally strong candidates compete, GWT must pick one
-        and the loser must be inhibited — not both broadcast."""
+        """Two near-equal drives compete: exactly one broadcasts, and the
+        conflict does not repeat identically on the next tick.
+
+        This asserted the loser landed in `_inhibited`. 259cb2aec replaced
+        loser-inhibition with winner-fatigue, so the check was reading an
+        always-empty dict — and a resolution mechanism that bans the loser is
+        not resolution, it is punishing whoever came second. What must hold is
+        that one drive gets the broadcast and the other is not permanently
+        behind it.
+        """
         gw = GlobalWorkspace()
 
         await gw.submit(CognitiveCandidate(
@@ -2584,11 +2592,13 @@ class TestEmergentAgency:
 
         winner = await gw.run_competition()
         assert winner is not None, "GWT must resolve the conflict"
+        assert winner.source in {"drive_curiosity", "drive_rest"}
 
-        # One source wins, other is inhibited
         loser = "drive_rest" if winner.source == "drive_curiosity" else "drive_curiosity"
-        assert loser in gw._inhibited, \
-            f"Losing source '{loser}' must be inhibited after conflict"
+        assert gw._fatigue.get(winner.source, 0.0) > gw._fatigue.get(loser, 0.0), (
+            "winning must cost the winner something, or the same drive holds the "
+            "broadcast forever"
+        )
 
     def test_behavioral_divergence_from_noise(self):
         """Two identically-initialized substrates with noise enabled

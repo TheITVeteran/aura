@@ -547,7 +547,14 @@ class TestUnifiedGlobalState:
         # Exactly one source wins -- the conflict is resolved
         assert winner.source in ("reward", "threat", "curiosity")
         # The losers are inhibited
-        assert len(gw._inhibited) >= 1, "Losers were not inhibited after competition"
+        # 259cb2aec replaced loser-inhibition with winner-fatigue: banning the
+        # loser bans whoever happened to come second, which is arrival order
+        # wearing a policy's clothes. `_inhibited` has been empty since, so
+        # this assertion was reading a dict nothing populates and would have
+        # passed on a workspace that ran no competition at all.
+        assert gw._fatigue.get(winner.source, 0.0) > 0.0, (
+            "Winning cost the winner nothing; no competition was run"
+        )
 
     def test_global_broadcast_reaches_subscribers(self):
         """Winning content is broadcast to all registered processors.
