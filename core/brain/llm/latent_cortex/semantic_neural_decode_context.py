@@ -217,8 +217,10 @@ def render_semantic_neural_decode_context(
     return (
         "Internal recurrent semantic state, computed from the public objective "
         "without an answer key, private trace, or verifier. Treat this typed "
-        "state as your own completed computation and follow the user's exact "
-        "FINAL_ANSWER response contract.\n"
+        "state as your own completed computation. The semantic_result object is "
+        "the canonical result of that computation: emit that object exactly, "
+        "byte for byte, after the supplied FINAL_ANSWER syntax prefix. Do not "
+        "describe it, rename fields, emit a scalar shortcut, or add prose.\n"
         "semantic_result="
         + json.dumps(
             state.semantic_result,

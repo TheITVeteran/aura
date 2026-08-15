@@ -50327,3 +50327,26 @@ This checkpoint freezes launch infrastructure, not a measured decode result.
 The next action is the bounded 1.5B five-arm canary. A failure returns to the
 state/readout implementation; a pass authorizes a larger fresh replication but
 still does not establish resident-32B, broad, frontier, fusion or `WOW Signal`.
+
+## Checkpoint 2026-08-15-549: The State Works; Generalize Its Language Bridge
+
+The first source-clean five-arm 1.5B canary completed in 33.27 seconds. It was
+not admitted: treatment scored `9/27`, ordinary and matched-wire baselines
+scored `0/27`, and there were zero regressions. All nine premise-audit results
+were exactly decoded. Coding outputs were sometimes semantically correct but
+hit the 192-token ceiling; calibration and other coding rows often emitted a
+scalar or the word `semantic` at the first unconstrained token. The frozen
+negative receipt is
+`artifacts/closeout/latent_cortex/cp549_semantic_decode_first_canary/result.json`.
+
+This localizes the failure to language serialization rather than recurrent
+execution: CP547 independently proved every state in the same families exact.
+The repaired bridge tells the model to emit its authenticated canonical result
+without paraphrase, raises the bounded output budget to 384 tokens and supplies
+a family-qualified JSON prefix containing field names only. The identical
+syntax prefix is given to every non-ordinary control; it contains no answer
+value. Ingress and canary contracts pass `7/7`.
+
+The continuation is a fresh source-clean rerun with unchanged tasks and arms.
+It must still meet the original perfect-treatment, positive-conversion,
+zero-regression and strict-control-separation bar.

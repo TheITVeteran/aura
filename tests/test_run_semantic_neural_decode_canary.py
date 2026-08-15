@@ -5,6 +5,7 @@ from tools.run_semantic_neural_decode_canary import (
     _grade,
     _lane_kwargs,
     _summary,
+    _wire_prefill,
 )
 
 
@@ -63,3 +64,21 @@ def test_semantic_neural_decode_uses_training_task_grade_contract():
 
     assert _grade(Task(), "right") == (True, True)
     assert _grade(Task(), "wrong") == (False, True)
+
+
+def test_semantic_neural_decode_prefill_contains_only_public_syntax():
+    class Tokenizer:
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            assert add_special_tokens is False
+            return list(text.encode("ascii"))
+
+    tokenizer = Tokenizer()
+    for family, expected in {
+        "frontier_coding": 'FINAL_ANSWER: {"returns":',
+        "frontier_calibration": 'FINAL_ANSWER: {"choice":',
+        "frontier_misleading_premise": 'FINAL_ANSWER: {"actual_score":',
+    }.items():
+        rendered = bytes(_wire_prefill(tokenizer, family)).decode("ascii")
+        assert rendered == expected
+        assert not any(character.isdigit() for character in rendered)

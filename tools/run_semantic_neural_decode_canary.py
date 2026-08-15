@@ -108,6 +108,24 @@ def _complete(tokenizer: Any, token_ids: tuple[int, ...]) -> bool:
     }
 
 
+def _wire_prefill(tokenizer: Any, family: str) -> tuple[int, ...]:
+    prefixes = {
+        "frontier_coding": 'FINAL_ANSWER: {"returns":',
+        "frontier_calibration": 'FINAL_ANSWER: {"choice":',
+        "frontier_misleading_premise": 'FINAL_ANSWER: {"actual_score":',
+    }
+    text = prefixes.get(family)
+    if text is None:
+        raise ValueError("semantic decode family has no syntax-only prefill")
+    values = tuple(
+        int(token)
+        for token in tokenizer.encode(text, add_special_tokens=False)
+    )
+    if not values:
+        raise RuntimeError("semantic decode syntax prefill tokenization is empty")
+    return values
+
+
 def _arm_order(task_id: str) -> tuple[str, ...]:
     offset = int(hashlib.sha256(task_id.encode()).hexdigest()[:8], 16) % len(ARMS)
     return ARMS[offset:] + ARMS[:offset]
@@ -168,7 +186,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20_260_815_48)
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
-    parser.add_argument("--max-tokens", type=int, default=192)
+    parser.add_argument("--max-tokens", type=int, default=384)
     return parser
 
 
@@ -217,13 +235,6 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             lesion_states.append(None)
 
     model, tokenizer = load(str(model_path))
-    wire_prefill = tuple(
-        int(token)
-        for token in tokenizer.encode("FINAL_ANSWER: ", add_special_tokens=False)
-    )
-    if not wire_prefill:
-        raise RuntimeError("semantic decode wire prefill tokenization is empty")
-
     rows: list[dict[str, Any]] = []
     raw_outputs: list[dict[str, Any]] = []
     for index, task in enumerate(tasks):
@@ -243,7 +254,9 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                     "Internal recurrent semantic computation did not produce an "
                     "admissible terminal state after the declared tissue lesion."
                 )
-            active_prefill = () if arm == "ordinary_base" else wire_prefill
+            active_prefill = (
+                () if arm == "ordinary_base" else _wire_prefill(tokenizer, task.family)
+            )
             prompt = _prompt_tokens(tokenizer, task.prompt, context)
             generated, stopped, latency_ms = decode_base_greedy_tokens(
                 model,
@@ -258,7 +271,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             row = {
                 "task_id": task.task_id,
                 "family": task.family,
-                "difficulty": task.depth,
+                "program_depth": task.depth,
                 "arm": arm,
                 "correct": correct,
                 "parsed": parsed,

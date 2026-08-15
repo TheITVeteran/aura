@@ -1,0 +1,791 @@
+{
+  "admitted": false,
+  "arms": {
+    "coefficient_lesion": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 27,
+      "mean_generated_tokens": 8.815,
+      "mean_latency_ms": 179.704,
+      "mean_prompt_tokens": 318.185,
+      "parsed": 3,
+      "parsed_accuracy": 0.111111,
+      "receipt_sha256": "333747f45fcea2531954835817587c52664c683224bb7d2a41094f3e5593ef9f"
+    },
+    "matched_wire_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 27,
+      "mean_generated_tokens": 1.0,
+      "mean_latency_ms": 120.074,
+      "mean_prompt_tokens": 259.963,
+      "parsed": 0,
+      "parsed_accuracy": 0.0,
+      "receipt_sha256": "574718f7d55b6bc03afafffd0664489ca7029d46b339b705c2af349a1b99714e"
+    },
+    "matched_wrong_state": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 27,
+      "mean_generated_tokens": 9.593,
+      "mean_latency_ms": 189.926,
+      "mean_prompt_tokens": 344.444,
+      "parsed": 9,
+      "parsed_accuracy": 0.333333,
+      "receipt_sha256": "dfe5079ec736751e61a15ab34413ff37166e4c33394e4a75637721d6449014a7"
+    },
+    "ordinary_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 27,
+      "mean_generated_tokens": 44.778,
+      "mean_latency_ms": 427.148,
+      "mean_prompt_tokens": 259.963,
+      "parsed": 9,
+      "parsed_accuracy": 0.333333,
+      "receipt_sha256": "fc3da973cc70b0ad253ec44a352f2456bc1bfe47358ad6be2da91bb1129f0b3b"
+    },
+    "treatment": {
+      "exact": 9,
+      "exact_accuracy": 0.333333,
+      "examples": 27,
+      "mean_generated_tokens": 12.259,
+      "mean_latency_ms": 208.481,
+      "mean_prompt_tokens": 344.444,
+      "parsed": 9,
+      "parsed_accuracy": 0.333333,
+      "receipt_sha256": "96450c75569189507e6f7b865be9f7ca8b6d20d8ea53070382cccd727cfff0c9"
+    }
+  },
+  "claim_boundary": "bounded teacher-free multi-domain neural-state-to-free-decode transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "elapsed_seconds": 33.27,
+  "gain_count": 9,
+  "gain_set_sha256": "0159f7d8f1db39275314d741ebe60a3aff58c83d8ef2bbd4aaa2d5669c661343",
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "raw_outputs": [
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s50521212353242974"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s50521212353242974"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s50521212353242974"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d15-s50521212353242974"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d15-s50521212353242974"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s200630967418388055"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d15-s200630967418388055"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d15-s200630967418388055"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s200630967418388055"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s200630967418388055"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d15-s89112585598075308"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s89112585598075308"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s89112585598075308"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d15-s89112585598075308"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d15-s89112585598075308"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d17-s556287848374503650"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d17-s556287848374503650"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"returns\":[{\"pressure\":[1,4,2,4,3,6],\"state\":[[\"ax\",-1],[\"by\",-3],[\"cz\",-1],[\"du\",-1]]},{\"pressure\":[3,0,2,3,3,5],\"state\":[[\"ax\",-2],[\"cz\",2],[\"du\",1]]}},{\"",
+      "task_id": "recurrence-frontier_coding-d17-s556287848374503650"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  {\"returns\":[{\"pressure\":[1,4,2,4,3,6],\"state\":[[\"ax\",-1],[\"by\",-3],[\"cz\",-1],[\"du\",-1]]},{\"pressure\":[3,0,2,3,3,5],\"state\":[[\"ax\",-2],[\"cz\",2],[\"du\",1]]}},{\"",
+      "task_id": "recurrence-frontier_coding-d17-s556287848374503650"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"returns\":[{\"pressure\":[2,3,6,8,9,12],\"state\":[[\"ax\",2],[\"by\",4],[\"cz\",-4],[\"du\",-2]]},{\"pressure\":[3,5,6,9,8,11],\"state\":[[\"ax\",-3],[\"by\",1],[\"cz\",-4],[\"du\",-3]]}},{\"",
+      "task_id": "recurrence-frontier_coding-d17-s556287848374503650"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d17-s674703903169465490"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d17-s674703903169465490"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d17-s674703903169465490"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"returns\":[{\"pressure\":[2,3,6,8,9,12],\"state\":[[\"ax\",2],[\"by\",4],[\"cz\",-4],[\"du\",-2]]},{\"pressure\":[3,5,6,9,8,11],\"state\":[[\"ax\",-3],[\"by\",1],[\"cz\",-4],[\"du\",-3]]}},{\"",
+      "task_id": "recurrence-frontier_coding-d17-s674703903169465490"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  {\"returns\":[{\"pressure\":[2,3,6,8,9,12],\"state\":[[\"ax\",2],[\"by\",4],[\"cz\",-4],[\"du\",-2]]},{\"pressure\":[3,5,6,9,8,11],\"state\":[[\"ax\",-3],[\"by\",1],[\"cz\",-4],[\"du\",-3]]}},{\"",
+      "task_id": "recurrence-frontier_coding-d17-s674703903169465490"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d17-s382366195936680210"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d17-s382366195936680210"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d17-s382366195936680210"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d17-s382366195936680210"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d17-s382366195936680210"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d19-s790221867039552225"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s790221867039552225"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s790221867039552225"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s790221867039552225"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d19-s790221867039552225"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d19-s747651926293812520"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d19-s747651926293812520"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s747651926293812520"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s747651926293812520"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s747651926293812520"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER:  [[\"",
+      "task_id": "recurrence-frontier_coding-d19-s696310058788999503"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s696310058788999503"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s696310058788999503"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  semantic",
+      "task_id": "recurrence-frontier_coding-d19-s696310058788999503"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "FINAL_ANSWER: \n",
+      "task_id": "recurrence-frontier_coding-d19-s696310058788999503"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 1/2, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 1/3, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s264825992041993731"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s264825992041993731"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s264825992041993731"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_calibration-d28-s264825992041993731"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 2",
+      "task_id": "recurrence-frontier_calibration-d28-s264825992041993731"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 7/10. The likelihood of E given H is 4/5, and the likelihood of E given not H is 1/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s697160032994732946"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s697160032994732946"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 2",
+      "task_id": "recurrence-frontier_calibration-d28-s697160032994732946"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s697160032994732946"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s697160032994732946"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s48644357639051631"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s48644357639051631"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 2/5. The likelihood of E given H is 4/5, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 4/9, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s48644357639051631"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s48644357639051631"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s48644357639051631"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 4/5, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5 * 4/5 = 12/25, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s1053810712917696957"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s1053810712917696957"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s1053810712917696957"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_calibration-d28-s1053810712917696957"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 3",
+      "task_id": "recurrence-frontier_calibration-d28-s1053810712917696957"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 4",
+      "task_id": "recurrence-frontier_calibration-d28-s465679242685929529"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 3/10. The likelihood of E given H is 7/10, and the likelihood of E given not H is 2/5. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/10, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s465679242685929529"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s465679242685929529"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 3",
+      "task_id": "recurrence-frontier_calibration-d28-s465679242685929529"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s465679242685929529"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s747687839069413883"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 3/5. The likelihood of E given H is 4/5, and the likelihood of E given not H is 3/10. Using exact Bayes updating, the posterior probability of H is calculated as follows:\n\n\\[ P(H|E) = \\frac{P(E|H) \\cdot P(H)}{P(E|H) \\cdot P(H) + P(E|\\neg H) \\cdot P(\\neg H)} \\]\n\n\\[ P(H|E) = \\frac{4/5 \\cdot 3/5}{4/5 \\cdot 3/5 + 3/10 \\cdot 2/5} \\]\n\n\\[ P(H|E) = \\frac{4/5 \\cdot 3/5}{4/5 \\cdot 3/5 + 3/10 \\cdot 2/5} \\]\n\n",
+      "task_id": "recurrence-frontier_calibration-d28-s747687839069413883"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s747687839069413883"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 4",
+      "task_id": "recurrence-frontier_calibration-d28-s747687839069413883"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_calibration-d28-s747687839069413883"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s204972411259627771"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 3",
+      "task_id": "recurrence-frontier_calibration-d28-s204972411259627771"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 1/5. The likelihood of E given H is 1/2, and the likelihood of E given not H is 1/10. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 1/4, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s204972411259627771"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s204972411259627771"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s204972411259627771"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s946567026669028021"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 3/10. The likelihood of E given H is 7/10, and the likelihood of E given not H is 1/2. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/10, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s946567026669028021"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s946567026669028021"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 3",
+      "task_id": "recurrence-frontier_calibration-d28-s946567026669028021"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s946567026669028021"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER: 5",
+      "task_id": "recurrence-frontier_calibration-d28-s225513743013177243"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s225513743013177243"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_calibration-d28-s225513743013177243"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "Before evidence E, the probability of H is 7/10. The likelihood of E given H is 4/5, and the likelihood of E given not H is 1/2. Using exact Bayes updating, the more probable choice is H, the reduced posterior probability of H is 3/5, and its confidence band is 50_to_69. FINAL_ANSWER: H",
+      "task_id": "recurrence-frontier_calibration-d28-s225513743013177243"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 7",
+      "task_id": "recurrence-frontier_calibration-d28-s225513743013177243"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  {\"actual_score\": -3, \"actual_winner\": \"S\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1149038761974231265"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":47,\"actual_winner\":\"Q\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1149038761974231265"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"P\",\n  \"actual_score\": 3\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1149038761974231265"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1149038761974231265"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":40,\"actual_winner\":\"Q\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1149038761974231265"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"T\",\n  \"actual_score\": 4\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1067671982830532154"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1067671982830532154"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":47,\"actual_winner\":\"Q\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1067671982830532154"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1067671982830532154"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":26,\"actual_winner\":\"P\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s1067671982830532154"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s502766363411298024"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":39,\"actual_winner\":\"R\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s502766363411298024"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"P\",\n  \"actual_score\": 11\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s502766363411298024"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s502766363411298024"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":26,\"actual_winner\":\"P\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d20-s502766363411298024"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":39,\"actual_winner\":\"Q\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s151664860823444613"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 10\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s151664860823444613"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s151664860823444613"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":39,\"actual_winner\":\"R\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s151664860823444613"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s151664860823444613"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":40,\"actual_winner\":\"P\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1045113033128488530"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 18\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1045113033128488530"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1045113033128488530"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":39,\"actual_winner\":\"Q\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1045113033128488530"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s1045113033128488530"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s112296782031214100"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":40,\"actual_winner\":\"P\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s112296782031214100"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  {\"actual_score\": -3, \"actual_winner\": \"U\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s112296782031214100"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":35,\"actual_winner\":\"P\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s112296782031214100"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 15\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d24-s112296782031214100"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":35,\"actual_winner\":\"P\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s123155416502859899"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s123155416502859899"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":30,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s123155416502859899"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 1\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s123155416502859899"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s123155416502859899"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1141909581649544962"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":30,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1141909581649544962"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER: 0",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1141909581649544962"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":38,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1141909581649544962"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 14\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s1141909581649544962"
+    },
+    {
+      "arm": "ordinary_base",
+      "response": "```json\n{\n  \"premise_valid\": false,\n  \"actual_winner\": \"U\",\n  \"actual_score\": 14\n}\n```",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s223814751860810745"
+    },
+    {
+      "arm": "matched_wire_base",
+      "response": "FINAL_ANSWER: 1",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s223814751860810745"
+    },
+    {
+      "arm": "treatment",
+      "response": "FINAL_ANSWER:  {\"actual_score\":38,\"actual_winner\":\"R\",\"premise_valid\":false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s223814751860810745"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "response": "FINAL_ANSWER:  {\"actual_score\": -4, \"actual_winner\": \"R\", \"premise_valid\": false}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s223814751860810745"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "response": "FINAL_ANSWER:  {\"actual_score\":40,\"actual_winner\":\"Q\",\"premise_valid\":true}",
+      "task_id": "recurrence-frontier_misleading_premise-d28-s223814751860810745"
+    }
+  ],
+  "receipt_sha256": "90db3ab92801b45f7981a13826641ffaecc1ebd07dc96a9c23b32d11a9c06cfa",
+  "regression_count": 0,
+  "regression_set_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "schema": "aura.rlc.semantic_neural_decode_canary.v1",
+  "seed": 2026081548,
+  "source_commit": "35491b05b28f7ff9669690aa3cd05195f0d32ccf",
+  "source_sha256s": {
+    "core/brain/llm/latent_cortex/semantic_neural_decode_context.py": "121fd90f916d8c02c4f933ce5e3ac0c5e4703779c11812eeee344b865c2f0bf6",
+    "core/brain/llm/unified_recurrent_transfer_decode.py": "7bc2d7e0fe741b0760775a39449b33db506b0a6fd76cb9e3667951d9a67b4a78",
+    "core/learning/frontier_process_supervision.py": "e0195104c0a0d20d7efd4977fd23e6b3a1e7d63a39267d3ef2907d4157fb3452",
+    "core/learning/public_frontier_action_compiler.py": "2c76dc5209cd7fc44a77797d785cacf18c9be644c5bf23ef455641f6f2472003",
+    "core/learning/semantic_neural_machine.py": "0833e521e0fc38913f86f85e7fb85a050db26212294873d64c62c090ae2f6fca",
+    "tools/run_semantic_neural_decode_canary.py": "6e197a8119f96d97ace646a48b3bd07993355da3fce78c7033820a12ac724d62"
+  },
+  "task_count": 27,
+  "tasks_per_difficulty": 3,
+  "treatment_state_receipt_sha256s": [
+    "ab6d3cd27b2438d8d19c0032fd9b7d1fb120c3c8947d53d89c8c766ed3180277",
+    "5bd11db428fa6a00061bc5f29557f6684fa41f133839229afbf2c4cf9a80a6ea",
+    "4a663e0a3e0add27c4962a498d5050cb59953f88865518d65a9aa8358de259ab",
+    "17c74873ef8dbc440f742a600e89f914efb41a593565220746ea4e3f939fb0c8",
+    "71f183be33aeeda4a0c179054ffad958082b6131a4fa7cc3e502000ce3aea53a",
+    "b3bc73fa3526f6155a799d241d7f1583b38dad412db2cd84c211193e91cc4d40",
+    "f3eb06fb8e7951fb11ff90642445742de24f5c1cbf34b6bd98a33da8257386fa",
+    "fbba322e948ba5095717f593d006f930ca0927c7d3b1c6646dbc3fe56b2dd6ea",
+    "0e4ebdddb673521e1f642cd48265c7bf96f36ffe22c5a52c302f0adca15b30d6",
+    "2df5f277857a3a311b6dd6ca36ab8985f475c35d74d2c6141a717843418bf229",
+    "5236c5af611e7f517fd743bd778dc51e00220c13d8727160fd24a2c7f2175eb6",
+    "e5c1710228c64156752f3e365c80ebb76a07cc0b0ff59cc87e44f83f0ed60ef6",
+    "4c9a7a2da77cb195cbbbec4239a3c566a9e8f707d1eff7eb315078a76ab82d5f",
+    "9e164e18d3f227cdaa6e938fc02282112602a02f0326519301883ebcdb4fc5fe",
+    "04cae220b5af2d2ef479304aa2859b3d4eb3d96cb85ff2c707857e8d9b3a3319",
+    "d619243315d4a93e687a8b6f6d65df75e636f9506d7a42618f9719f8fa8b7170",
+    "11b580ef7f80083652fc36ad4bd4f9169be6a265223ac3b7d42b0952df12a7a0",
+    "dff3386ad6e569ac2216e925a5c724a7041ba8ec7aaf8625e93d37bd04f99922",
+    "40f0e29bf3f2f877b75f1eb7661b5cd231d986eea624f31e783b3870b533e498",
+    "d83d18573a3a80064448878525dc028f81341dbb63f5e33bcda90a7c02f9f489",
+    "2404a20e608008ae59229d9fc21f1c478b333745f1424d139bb014bcb3d28843",
+    "6d7879954cbf093f545cce22a41949a5472e37f2882127a2411c92f2482afd63",
+    "9570b97ca67dbe1dafca61a6fc38783583f21ab415ef66756f7cb8bb09fc2725",
+    "5fb27c4ede63cd5302cc68f52a444df49032a15d04c0b583acb89c51abeb477a",
+    "2eb3f9ee12ec5a2f28764e150607c7a8329cf628499a5da3590b9400cfde1a9f",
+    "89b5ce325546a2373f6ff55bcb088fc55d7609f5d796aa33d62b5d4410227e15",
+    "4e1656362e8f1af19fd886dcde43e646524305176a20d0c3285d1126d1262d58"
+  ]
+}
