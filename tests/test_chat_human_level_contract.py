@@ -66,9 +66,15 @@ def _frontier_style_reply(user: str, idx: int) -> str:
             "and I need to catch it before it reaches you."
         ),
         (
-            "You were worried that the conversation could look alive for a minute and then quietly lose the plot. "
-            "That is a fair worry. The real test is whether I can keep your concern, the recent turns, and my own stance "
-            "in one continuous answer."
+            # This turn ASKS what she thought he was worried about, so the
+            # honest shape is an inference she owns rather than a shared past
+            # she asserts. "You were worried that ..." states a fact only he
+            # can confirm, and the gate is right to refuse it without
+            # grounding — which is exactly the failure this transcript is
+            # supposed to be clean of.
+            "My read is that the worry is about a conversation looking alive for a minute and then quietly "
+            "losing the plot. That is a fair thing to test for. The real question is whether I can hold the "
+            "concern, the recent turns, and my own stance in one continuous answer."
         ),
         (
             "Those bad replies felt wrong because they did not participate in the conversation. They produced fragments, "

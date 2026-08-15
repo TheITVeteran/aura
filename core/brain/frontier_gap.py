@@ -550,6 +550,30 @@ def build_battery(
     return items
 
 
+def _regrade_against_deterministic_grader(
+    *,
+    item: "BatteryItem",
+    answer: str,
+    signed_correct: bool,
+    subject: str,
+) -> None:
+    """Run the battery's OWN grader and require it to agree with the signature.
+
+    Scores were reconstructed from signed correctness booleans. The graders are
+    deterministic, executable and already in this module, and the answers are
+    right here — so a pinned verifier that signed a wrong verdict produced a
+    score that reproduced perfectly. Signature agreement proves who said it,
+    never that it is true.
+    """
+
+    regraded = bool(item.grade(answer))
+    if regraded is not bool(signed_correct):
+        raise ValueError(
+            f"{subject} correctness receipt contradicts the deterministic grader "
+            f"for {item.item_id}: signed={bool(signed_correct)} regraded={regraded}"
+        )
+
+
 def _require_sha256(value: Any, *, field_name: str) -> str:
     digest = str(value or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -858,7 +882,15 @@ def validate_reference_artifact(
     )
     correct_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     count_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
-    for item, receipt in zip(items, correctness_receipts, strict=True):
+    for item, receipt, output in zip(
+        items, correctness_receipts, normalized_outputs, strict=True
+    ):
+        _regrade_against_deterministic_grader(
+            item=item,
+            answer=str(output["answer"]),
+            signed_correct=receipt["payload"]["correct"],
+            subject="frontier reference",
+        )
         count_by_class[item.task_class] += 1
         correct_by_class[item.task_class] += int(receipt["payload"]["correct"])
     scores = signed.get("scores")
@@ -1298,6 +1330,92 @@ def _validate_source_stability(
     }
 
 
+MODEL_MANIFEST_RESOLUTION_SCHEMA = "aura.frontier_gap.model_manifest_resolution.v1"
+
+# Reading a whole checkpoint to verify one report would take minutes and tens
+# of gigabytes of I/O. The resolver hashes every declared file whose size is at
+# or below this, and reports the rest as size-checked only — stated in the
+# receipt rather than silently skipped. Configuration, tokenizer and adapter
+# material sits far below it; sharded weights sit far above.
+_MANIFEST_FULL_DIGEST_MAX_BYTES = 64 * 1024 * 1024
+
+
+def resolve_model_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    root: Any = None,
+) -> dict[str, Any]:
+    """Open the declared files and compare them with what the manifest claims.
+
+    A manifest that hashes itself proves internal consistency and nothing about
+    the weights that were loaded: every field can be fabricated together and
+    the self-digest will agree. This is the independent half — file existence,
+    size, and content digest where the file is small enough to read.
+
+    A manifest whose ``model_path`` does not exist on this host is reported as
+    UNRESOLVED. That is a real answer for a report validated on another
+    machine, and it is different from "checked and correct".
+    """
+
+    from pathlib import Path as _Path
+
+    base = _Path(str(root if root is not None else manifest.get("model_path") or ""))
+    files = list(manifest.get("files") or [])
+    if not base.is_dir():
+        return {
+            "schema": MODEL_MANIFEST_RESOLUTION_SCHEMA,
+            "resolved": False,
+            "reason": "model_path_absent_on_this_host",
+            "model_path": str(base),
+            "files_declared": len(files),
+            "files_present": 0,
+            "files_digested": 0,
+            "mismatches": [],
+        }
+
+    mismatches: list[str] = []
+    present = 0
+    digested = 0
+    for entry in files:
+        relative = str(entry.get("path") or "")
+        target = base / relative
+        if not target.is_file():
+            mismatches.append(f"missing:{relative}")
+            continue
+        present += 1
+        try:
+            actual_size = target.stat().st_size
+        except OSError as exc:
+            mismatches.append(f"unreadable:{relative}:{type(exc).__name__}")
+            continue
+        if actual_size != int(entry.get("size") or -1):
+            mismatches.append(f"size:{relative}")
+            continue
+        if actual_size > _MANIFEST_FULL_DIGEST_MAX_BYTES:
+            continue
+        digest = hashlib.sha256()
+        try:
+            with target.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            mismatches.append(f"unreadable:{relative}:{type(exc).__name__}")
+            continue
+        digested += 1
+        if digest.hexdigest() != str(entry.get("sha256") or ""):
+            mismatches.append(f"sha256:{relative}")
+    return {
+        "schema": MODEL_MANIFEST_RESOLUTION_SCHEMA,
+        "resolved": not mismatches,
+        "reason": "" if not mismatches else "manifest_does_not_match_disk",
+        "model_path": str(base),
+        "files_declared": len(files),
+        "files_present": present,
+        "files_digested": digested,
+        "mismatches": sorted(mismatches)[:16],
+    }
+
+
 def _validate_model_manifest(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict) or raw.get("schema") != MODEL_MANIFEST_SCHEMA:
         raise ValueError("candidate model manifest schema is invalid")
@@ -1334,11 +1452,28 @@ def _validate_model_manifest(raw: Any) -> dict[str, Any]:
     expected_roles = {"weights", "configuration", "tokenizer", "adapters"}
     if not isinstance(roles, dict) or set(roles) != expected_roles:
         raise ValueError("candidate model role map is invalid")
+    classified: set[str] = set()
     for role, paths in roles.items():
         if not isinstance(paths, list) or len(paths) != len(set(paths)):
             raise ValueError(f"candidate model {role} role is malformed")
         if any(path not in seen_paths for path in paths):
             raise ValueError(f"candidate model {role} role references an unknown file")
+        # A file in two roles makes the role map unusable as a partition: the
+        # adapter identity check reads roles["adapters"], and a weights file
+        # also listed there would be attested as an adapter.
+        overlap = classified.intersection(paths)
+        if overlap:
+            raise ValueError(
+                f"candidate model file is claimed by two roles: {sorted(overlap)[0]}"
+            )
+        classified.update(paths)
+    # Every declared file has to be classified. An unclassified file is
+    # material that was shipped with the checkpoint and attested by nothing.
+    unclassified = seen_paths - classified
+    if unclassified:
+        raise ValueError(
+            f"candidate model file has no role: {sorted(unclassified)[0]}"
+        )
     if not roles["weights"] or not roles["configuration"] or not roles["tokenizer"]:
         raise ValueError("candidate model manifest lacks required material")
     expected_digest = _require_sha256(
@@ -1381,8 +1516,19 @@ def validate_capability_report(
     trusted_release_keys: Mapping[str, str] | None = None,
     source_tree_resolver: Callable[[str], str] | None,
     source_component_resolver: Callable[[str, str], str] | None,
+    model_manifest_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+    | None = resolve_model_manifest,
+    require_resolved_model: bool = False,
 ) -> dict[str, Any]:
-    """Recompute a v5 claim from signed execution and correctness evidence."""
+    """Recompute a v5 claim from signed execution and correctness evidence.
+
+    ``model_manifest_resolver`` opens the declared checkpoint and compares it
+    with the manifest. Pass None to skip it — a report validated away from the
+    machine that produced it cannot resolve anything — and the result says
+    UNRESOLVED rather than pretending. ``require_resolved_model=True`` makes
+    resolution a precondition of the claim, which is what a release gate wants
+    and what an offline audit cannot have.
+    """
 
     if not isinstance(report, dict):
         raise ValueError("capability report must be an object")
@@ -1471,6 +1617,26 @@ def validate_capability_report(
     expected_subject = f"aura_model:{runtime_manifest['manifest_sha256']}"
     if normalized.get("measurement_subject") != expected_subject:
         raise ValueError("measurement subject omits effective runtime identity")
+    # The subject is derived from the manifest, so on its own it can only ever
+    # agree with it. Resolving the manifest against the checkpoint on disk is
+    # what turns that agreement into a statement about the model that ran.
+    model_resolution: dict[str, Any] = {
+        "schema": MODEL_MANIFEST_RESOLUTION_SCHEMA,
+        "resolved": False,
+        "reason": "resolution_not_attempted",
+        "model_path": str(model_stability["before"].get("model_path") or ""),
+        "files_declared": len(model_stability["before"].get("files") or []),
+        "files_present": 0,
+        "files_digested": 0,
+        "mismatches": [],
+    }
+    if model_manifest_resolver is not None:
+        model_resolution = dict(model_manifest_resolver(model_stability["before"]))
+    if require_resolved_model and model_resolution.get("resolved") is not True:
+        raise ValueError(
+            "candidate model manifest was not resolved against the checkpoint: "
+            f"{model_resolution.get('reason') or 'unknown'}"
+        )
 
     reference_raw = normalized.get("reference")
     if not isinstance(reference_raw, dict):
@@ -1696,7 +1862,15 @@ def validate_capability_report(
 
     correct_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     count_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
-    for item, receipt in zip(items, correctness_receipts, strict=True):
+    for item, receipt, output in zip(
+        items, correctness_receipts, outputs, strict=True
+    ):
+        _regrade_against_deterministic_grader(
+            item=item,
+            answer=str(output["answer"]),
+            signed_correct=receipt["payload"]["correct"],
+            subject="capability candidate",
+        )
         count_by_class[item.task_class] += 1
         correct_by_class[item.task_class] += int(receipt["payload"]["correct"])
     expected_classes = {

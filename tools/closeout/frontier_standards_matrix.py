@@ -215,8 +215,12 @@ STANDARDS: tuple[FrontierStandard, ...] = (
         ),
         source_paths=(
             "core/environments/terminal_grid/nethack_adapter.py",
+            # NetHackStateCompiler lives in nethack_parser.py above. The old
+            # core/embodiment/games/nethack/state_compiler.py was a
+            # compatibility shim that re-exported it and was retired in
+            # 053b0a8ab; naming a retired shim here made the matrix report a
+            # gap in coverage that the canonical module already fills.
             "core/environments/terminal_grid/nethack_parser.py",
-            "core/embodiment/games/nethack/state_compiler.py",
             "challenges/nethack_challenge.py",
         ),
         validator_paths=(
