@@ -865,6 +865,12 @@ def _loop_source() -> str:
     return _inspect.getsource(mind_tick_mod.MindTick._run_loop)
 
 
+def _module_source() -> str:
+    from pathlib import Path as _Path
+
+    return (_Path(__file__).resolve().parents[1] / "core" / "mind_tick.py").read_text("utf-8")
+
+
 def test_the_world_state_probe_is_off_the_loop_and_bounded():
     """psutil's CPU, memory, battery and thermal reads are blocking syscalls;
     on the event loop they stall every coroutine in the process."""
@@ -943,3 +949,97 @@ def test_the_cheap_sidecar_probe_is_still_a_probe():
 
     assert "get_sensory_client()" in source
     assert "sensory_client.is_alive()" in source
+
+
+def test_the_health_sweep_yields_to_a_turn_in_flight():
+    """ensure_all_tiers_healthy probes every tier and its recovery paths load
+    workers. Bounding it at 45s stops a wedge; it does nothing about a probe
+    that takes the model lane from the person waiting for an answer."""
+    source = _loop_source()
+    sweep = source.index("ensure_all_tiers_healthy")
+    window = source[max(0, sweep - 1600) : sweep]
+
+    assert "health_pause" in window
+    assert "_background_reasoning_pause_reason()" in window
+    assert "llm_health_deferred:" in window
+
+
+def test_the_phase_pipeline_is_not_wrapped_in_a_taskgroup():
+    """A TaskGroup that never creates a task is not decoration: an exception
+    escaping its body comes out as an ExceptionGroup, which no `except
+    _MIND_BOUNDARY_ERRORS` clause in this file matches.
+
+    Checked on the parse tree, not the text — the comment explaining the
+    removal names the construct, and a substring search cannot tell an
+    explanation from a use."""
+    import ast as _ast
+
+    tree = _ast.parse(_module_source())
+    uses = [
+        node
+        for node in _ast.walk(tree)
+        if isinstance(node, _ast.Call)
+        and isinstance(node.func, _ast.Attribute)
+        and node.func.attr == "TaskGroup"
+    ]
+    assert not uses, f"TaskGroup constructed at line(s) {[n.lineno for n in uses]}"
+
+
+def test_a_taskgroup_really_does_swallow_the_except_clause():
+    """The claim above, demonstrated rather than asserted."""
+    import asyncio as _asyncio
+
+    async def _body():
+        try:
+            async with _asyncio.TaskGroup():
+                raise ValueError("boom")
+        except ValueError:
+            return "caught"
+        except BaseExceptionGroup:
+            return "escaped as a group"
+
+    assert _asyncio.run(_body()) == "escaped as a group"
+
+
+def test_the_second_pipeline_never_runs_silently():
+    from core.mind_tick import MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS
+
+    source = _module_source()
+    marker = source.index("DEGRADED MODE: MindTick runs its own phases")
+    block = source[marker : marker + 3200]
+
+    assert "_ticks_without_kernel" in block
+    assert '"second_phase_pipeline_active"' in block
+    assert 'else "error"' in block, "kernel absence never escalates"
+    assert "MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS" in block
+    assert MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS > 0
+
+
+def test_a_live_kernel_clears_the_absence_counter():
+    source = _module_source()
+    marker = source.index("skipping degraded-mode self-execution")
+    window = source[max(0, marker - 300) : marker]
+
+    assert "self._ticks_without_kernel = 0" in window
+
+
+def test_the_reflex_fallback_says_it_is_not_an_answer():
+    source = _module_source()
+    marker = source.index('"origin": "mind_tick_fallback"')
+    block = source[max(0, marker - 2000) : marker + 1200]
+
+    assert '"placeholder": True' in block
+    assert '"answers_request": False' in block
+    assert '"failure_disclosure"' in block
+    assert '"missing_phases": missing' in block
+    assert '"reflex_fallback_served"' in block
+
+
+def test_a_placeholder_does_not_close_the_request():
+    """Completing the objective after serving a holding line retires a request
+    the runtime never answered, and the next tick finds nothing left to do."""
+    source = _module_source()
+    marker = source.index("complete_current_objective")
+    window = source[max(0, marker - 400) : marker]
+
+    assert "not reflex_fallback_used" in window

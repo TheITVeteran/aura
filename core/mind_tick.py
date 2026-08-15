@@ -145,6 +145,13 @@ TICK_INTERVALS = {
 # hundred consecutive beats and still report alive, which is far past any
 # conversation-readiness budget. Both stay overridable by env.
 MAX_BOUNDED_TICK_STAGE_S = 120.0
+
+# How many consecutive ticks may run on the second phase pipeline before the
+# kernel's absence is an error rather than a boot-time condition. One minute of
+# CognitiveMode.NORMAL ticks: long enough to cover a slow kernel boot, short
+# enough that a kernel which never arrives is reported while someone is still
+# looking at the logs.
+MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS = 30
 DEFAULT_STALE_PROGRESS_S = MAX_BOUNDED_TICK_STAGE_S * 1.5
 DEFAULT_HARD_STALL_S = MAX_BOUNDED_TICK_STAGE_S * 2.0
 
@@ -978,7 +985,24 @@ class MindTick:
                     logger.debug("MindTick: World state update failed: %s", exc)
 
                 # ── LLM HEALTH: Proactive recovery for ALL tiers every 10 ticks ──
-                if self._tick_count % 10 == 0:
+                #
+                # Never while the conversation lane holds the model. The sweep
+                # probes every tier and its recovery paths spawn and load
+                # workers, so running it during a turn puts a maintenance probe
+                # in contention with the person waiting for an answer — on the
+                # one process that serves them. The bound below keeps a wedge
+                # from stopping the rhythm; it does nothing about contention,
+                # because a probe that finishes inside its budget has still
+                # taken the lane. The kernel tick already yields on this exact
+                # signal; the sweep that can load a 32B did not.
+                health_pause = (
+                    self._background_reasoning_pause_reason()
+                    if self._tick_count % 10 == 0
+                    else ""
+                )
+                if health_pause:
+                    self._mark_loop_progress(f"llm_health_deferred:{health_pause}")
+                if self._tick_count % 10 == 0 and not health_pause:
                     try:
                         gate = ServiceContainer.get("inference_gate", default=None)
                         if gate and hasattr(gate, "ensure_all_tiers_healthy"):
@@ -1392,87 +1416,174 @@ class MindTick:
                     # Once the kernel has booted, degraded self-execution is a
                     # constitutional violation, not a convenience fallback.
                     if kernel_live:
+                        self._ticks_without_kernel = 0
                         logger.debug("💓 MindTick: Kernel is live; skipping degraded-mode self-execution.")
                         return current_state
 
                     # ── DEGRADED MODE: MindTick runs its own phases ──
-                    # Only reached when kernel is not yet booted or tick acquisition fails.
+                    # Only reached when the kernel has not booted. Two pipelines
+                    # can execute cognition in this runtime, and which one ran
+                    # decides what the answer was made of, so the second one
+                    # never runs quietly: every entry is recorded against the
+                    # kernel's absence, and after a bounded grace it escalates
+                    # rather than settling in. A fallback nobody escalates is
+                    # how a kernel that never boots becomes the normal case.
+                    self._ticks_without_kernel = int(
+                        getattr(self, "_ticks_without_kernel", 0) or 0
+                    ) + 1
                     logger.debug("💓 MindTick: Running degraded-mode phase pipeline (kernel unavailable).")
-                    async with asyncio.TaskGroup():
-                        for name, phase_fn in self.phases:
-                            # Relaxed failure threshold for complex phases
-                            max_f = 5 if name == "response_generation" else 2
-                            breaker = self.phase_breakers.setdefault(name, CircuitBreaker(f"phase_{name}", max_failures=max_f, reset_timeout=60.0))
+                    if self._ticks_without_kernel == 1 or (
+                        self._ticks_without_kernel % MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS == 0
+                    ):
+                        record_degraded_event(
+                            "mind_tick",
+                            "second_phase_pipeline_active",
+                            detail=(
+                                "kernel absent; MindTick is executing cognition on its own "
+                                f"phase pipeline (tick {self._ticks_without_kernel} without a kernel)"
+                            ),
+                            severity=(
+                                "warning"
+                                if self._ticks_without_kernel
+                                < MIND_TICK_KERNEL_ABSENCE_ESCALATION_TICKS
+                                else "error"
+                            ),
+                            classification="background_degraded",
+                            context={
+                                "ticks_without_kernel": self._ticks_without_kernel,
+                                "tick_count": self._tick_count,
+                            },
+                        )
+                    # Sequential on purpose: each phase takes the state the
+                    # previous one returned, so there is nothing to run in
+                    # parallel. This was wrapped in `async with
+                    # asyncio.TaskGroup():` that never created a task — the
+                    # construct named a concurrency that does not exist, and
+                    # it was not inert: a TaskGroup collects an exception
+                    # escaping its body into an ExceptionGroup, which none of
+                    # this method's `except _MIND_BOUNDARY_ERRORS` clauses
+                    # match. The decoration was disabling the tick's own
+                    # error handling.
+                    for name, phase_fn in self.phases:
+                        # Relaxed failure threshold for complex phases
+                        max_f = 5 if name == "response_generation" else 2
+                        breaker = self.phase_breakers.setdefault(name, CircuitBreaker(f"phase_{name}", max_failures=max_f, reset_timeout=60.0))
                             
-                            if not breaker.is_available:
-                                logger.warning("⚠️ MindTick: Phase '%s' SKIPPED (Circuit Open)", name)
-                                continue
+                        if not breaker.is_available:
+                            logger.warning("⚠️ MindTick: Phase '%s' SKIPPED (Circuit Open)", name)
+                            continue
 
-                            try:
-                                # Per-phase timeouts — adaptive during early boot
-                                timeout = self.phase_timeouts.get(name, self.default_timeout)
-                                if self._tick_count < 20:
-                                    if name == "response_generation":
-                                        timeout = min(timeout, 60.0)
-                                    elif name == "cognitive_routing":
-                                        timeout = min(timeout, 120.0) 
-                                    else:
-                                        timeout = min(timeout, 10.0)
-                                phase_start = time.perf_counter()
-                                self._active_tick_stage = f"phase:{name}"
-                                self._mark_loop_progress(f"phase:{name}")
-                                current_state = await asyncio.wait_for(phase_fn(current_state), timeout=timeout)
-                                self._mark_loop_progress(f"phase_done:{name}")
-                                phase_duration = time.perf_counter() - phase_start
+                        try:
+                            # Per-phase timeouts — adaptive during early boot
+                            timeout = self.phase_timeouts.get(name, self.default_timeout)
+                            if self._tick_count < 20:
+                                if name == "response_generation":
+                                    timeout = min(timeout, 60.0)
+                                elif name == "cognitive_routing":
+                                    timeout = min(timeout, 120.0) 
+                                else:
+                                    timeout = min(timeout, 10.0)
+                            phase_start = time.perf_counter()
+                            self._active_tick_stage = f"phase:{name}"
+                            self._mark_loop_progress(f"phase:{name}")
+                            current_state = await asyncio.wait_for(phase_fn(current_state), timeout=timeout)
+                            self._mark_loop_progress(f"phase_done:{name}")
+                            phase_duration = time.perf_counter() - phase_start
                                 
-                                tick_metadata.phases_executed.append(name)
-                                tick_metadata.phase_durations[name] = phase_duration
+                            tick_metadata.phases_executed.append(name)
+                            tick_metadata.phase_durations[name] = phase_duration
                                 
-                                if phase_duration > 1.0:
-                                    logger.warning("🐢 MindTick: Slow phase detected: '%s' took %ss", name, f"{phase_duration:.3f}")
+                            if phase_duration > 1.0:
+                                logger.warning("🐢 MindTick: Slow phase detected: '%s' took %ss", name, f"{phase_duration:.3f}")
                                 
-                                breaker.record_success()
-                            except TimeoutError:
-                                logger.error("🛑 MindTick: Phase '%s' STALLED (timeout). Tripping circuit.", name)
-                                breaker.record_failure()
-                            except _MIND_BOUNDARY_ERRORS as phase_err:
-                                _record_mind_degradation(phase_err)
-                                logger.error("❌ MindTick: Phase '%s' failed: %s", name, phase_err)
-                                breaker.record_failure()
+                            breaker.record_success()
+                        except TimeoutError:
+                            logger.error("🛑 MindTick: Phase '%s' STALLED (timeout). Tripping circuit.", name)
+                            breaker.record_failure()
+                        except _MIND_BOUNDARY_ERRORS as phase_err:
+                            _record_mind_degradation(phase_err)
+                            logger.error("❌ MindTick: Phase '%s' failed: %s", name, phase_err)
+                            breaker.record_failure()
                                 
-                            # Auto-reset breakers if system has been stable for 100+ cycles.
-                            if self._tick_count % 100 == 0:
-                                for b in self.phase_breakers.values():
-                                    if not b.is_available:
-                                        logger.info("♻️ MindTick: Periodic recovery - Resetting circuit for phase %s", b.name)
-                                        b.reset()
+                        # Auto-reset breakers if system has been stable for 100+ cycles.
+                        if self._tick_count % 100 == 0:
+                            for b in self.phase_breakers.values():
+                                if not b.is_available:
+                                    logger.info("♻️ MindTick: Periodic recovery - Resetting circuit for phase %s", b.name)
+                                    b.reset()
                     
-                        if "response_generation" not in tick_metadata.phases_executed:
-                            user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test", "benchmark")
-                            current_origin = getattr(current_state.cognition, "current_origin", None)
-                            if current_origin in user_origins:
-                                logger.warning("🛡️ MindTick: Emergency Fallback - Injecting reflexive response.")
-                                latest = current_state.cognition.working_memory[-1] if current_state.cognition.working_memory else {}
-                                if not (
-                                    latest.get("origin") == "mind_tick_fallback"
-                                    and latest.get("content") == "Give me a moment — I'm thinking through something."
-                                ):
-                                    current_state.cognition.working_memory.append({
-                                        "role": "assistant",
-                                        "content": "Give me a moment — I'm thinking through something.",
-                                        "timestamp": time.time(),
-                                        "origin": "mind_tick_fallback",
-                                        "ephemeral": True,
-                                    })
-                                    current_state = current_state.derive("reflexive_fallback")
-                            else:
-                                logger.debug(
-                                    "🛡️ MindTick: Skipping reflexive fallback for non-user origin %r.",
-                                    current_origin,
-                                )
+                    reflex_fallback_used = False
+                    if "response_generation" not in tick_metadata.phases_executed:
+                        user_origins = ("user", "voice", "admin", "external", "gui", "api", "websocket", "direct", "test", "benchmark")
+                        current_origin = getattr(current_state.cognition, "current_origin", None)
+                        if current_origin in user_origins:
+                            # A placeholder is not an answer, and the previous
+                            # version could not be told apart from one: a canned
+                            # sentence went into working memory as an ordinary
+                            # assistant turn, the objective was completed right
+                            # below, and the request was finished without ever
+                            # having been answered. Three things are missing from
+                            # a holding line and each is restored here — which
+                            # phases did not run, that this is a placeholder, and
+                            # a continuation so the real answer still arrives.
+                            missing = [
+                                name
+                                for name, _fn in self.phases
+                                if name not in tick_metadata.phases_executed
+                            ]
+                            logger.warning(
+                                "🛡️ MindTick: Emergency Fallback — no response_generation; missing phases=%s",
+                                missing,
+                            )
+                            latest = (
+                                current_state.cognition.working_memory[-1]
+                                if current_state.cognition.working_memory
+                                else {}
+                            )
+                            if latest.get("origin") != "mind_tick_fallback":
+                                current_state.cognition.working_memory.append({
+                                    "role": "assistant",
+                                    "content": "Give me a moment — I'm thinking through something.",
+                                    "timestamp": time.time(),
+                                    "origin": "mind_tick_fallback",
+                                    "ephemeral": True,
+                                    # Machine-readable, so a consumer never
+                                    # renders this as the reply to the request.
+                                    "placeholder": True,
+                                    "answers_request": False,
+                                    "failure_disclosure": {
+                                        "reason": "cognitive_phases_incomplete",
+                                        "missing_phases": missing,
+                                        "kernel_present": False,
+                                        "tick_count": self._tick_count,
+                                    },
+                                    "continuation": "objective_retained_for_next_tick",
+                                })
+                                current_state = current_state.derive("reflexive_fallback")
+                            reflex_fallback_used = True
+                            record_degraded_event(
+                                "mind_tick",
+                                "reflex_fallback_served",
+                                detail=(
+                                    "returned a placeholder instead of an answer; "
+                                    f"missing phases={missing}"
+                                ),
+                                severity="error",
+                                classification="background_degraded",
+                                context={
+                                    "missing_phases": missing,
+                                    "origin": str(current_origin or ""),
+                                    "tick_count": self._tick_count,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "🛡️ MindTick: Skipping reflexive fallback for non-user origin %r.",
+                                current_origin,
+                            )
                             
                     try:
-                        if current_state:
+                        if current_state and not reflex_fallback_used:
                             from core.consciousness.executive_authority import (
                                 get_executive_authority,
                             )
@@ -1482,6 +1593,14 @@ class MindTick:
                                 current_state,
                                 reason="tick_cycle_complete",
                                 source="mind_tick",
+                            )
+                        elif reflex_fallback_used:
+                            # The continuation the placeholder promised. Closing
+                            # the objective here would have retired a request the
+                            # runtime never answered, and the next tick would find
+                            # nothing left to do about it.
+                            logger.info(
+                                "🛡️ MindTick: Objective retained after reflex fallback; the next tick answers it."
                             )
                     except _MIND_BOUNDARY_ERRORS as e:
                         _record_mind_degradation(e)
