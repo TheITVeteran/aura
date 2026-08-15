@@ -128,6 +128,21 @@ _RECOGNISED_FRONTIER_PROVIDERS: frozenset[str] = frozenset(
 #: downstream can read a provider's own word as an independent attestation.
 EXTERNAL_CONTROL_ATTESTATION = "provider_asserted_unsigned"
 
+#: What the RESIDENT model's identity is backed by.
+#:
+#: The bundle is checked hard for internal consistency: the parameter count
+#: must be manifest-derived, the manifest digest must equal the declared
+#: checkpoint fingerprint, that fingerprint must equal the preregistered one,
+#: architecture and quantization must be present, and the architecture freeze
+#: must match. Those catch a producer contradicting itself.
+#:
+#: What they cannot catch is a producer that is consistently wrong. Every
+#: identity hash — worker binary, app build, build provenance — is validated
+#: for SYNTAX only; nothing resolves them against bytes on disk, and no binary
+#: signature is verified. So this establishes a coherent self-report bound to
+#: preregistration, not an independent attestation of what ran.
+RESIDENT_MODEL_ATTESTATION = "self_reported_internally_consistent"
+
 
 def _normalised_provider(value: Any) -> str:
     return str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
@@ -1325,7 +1340,9 @@ def verify_frontier_gain_bundle(
         claim_statement = (
             "the full resident-32B Recursive Latent Cortex improves over its own "
             "preregistered same-checkpoint vanilla ablation (treatment contribution "
-            "only — NOT evidence of frontier competitiveness)"
+            "only — NOT evidence of frontier competitiveness; resident identity is "
+            f"{RESIDENT_MODEL_ATTESTATION}: hashes are bound to preregistration but "
+            "not resolved against bytes on disk)"
         )
     # Compute evidence must survive INTO the claim. The grader was previously
     # told to ignore it (tolerance 1.0, require_compute False), so a claim
