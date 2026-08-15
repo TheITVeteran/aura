@@ -1,0 +1,19 @@
+{
+  "schema": "aura.unified_intrinsic.campaign_model_identity_repair.v1",
+  "failed_campaign_id": "cp485-gated-transition-memory-1p5b-20260814",
+  "campaign_config_sha256": "770f771a4735e4e1b601ddfbfbcd19eff4f4db1dd6977f8d2d78fe01d840edfc",
+  "source_commit": "c8e1f9730d43a50dd75e6228a39b8d0f58e035b5",
+  "requested_lane": "Qwen2.5-1.5B-Instruct-4bit",
+  "packaged_model": "Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "root_cause": "The public prepare command defaulted an omitted model argument to the resident 32B path, even when the operator intended a bounded 1.5B campaign.",
+  "containment": {
+    "exact_launchd_label_booted_out": true,
+    "orphan_supervisor_group_terminated": true,
+    "preload_barrier_released": false,
+    "trainer_started": false,
+    "checkpoint_present": false
+  },
+  "repair": "Public campaign preparation now requires an explicit model path; the internal capsule freeze command already required one.",
+  "replacement_campaign_id": "cp486-gated-transition-memory-1p5b-20260814",
+  "claim_boundary": "Launch identity repair only; no training or capability result was produced by CP485."
+}

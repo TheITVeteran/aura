@@ -49397,3 +49397,25 @@ This checkpoint establishes the mechanism and migration contract only. A
 source-bound 1.5B acquisition campaign must still demonstrate exact unseen
 processes and survive the matched history lesion before any answer-level,
 resident-32B, fusion, frontier or `WOW Signal` claim.
+
+## Checkpoint 2026-08-14-487: Make Campaign Model Identity Explicit
+
+The first CP484 launch package was named for the bounded 1.5B lane but omitted
+the preparation tool's optional `--model` argument. The tool silently selected
+its resident-32B default. Inspection caught the mismatch at the unreleased
+preload barrier; the exact launchd label and orphaned supervisor group were
+stopped before a trainer or checkpoint existed. The failure boundary is frozen
+in
+`artifacts/closeout/latent_cortex/cp487_explicit_campaign_model_identity.json`.
+
+Public campaign preparation now requires an explicit model path. Model choice
+is a scientific, memory and time identity and cannot be supplied by a
+convenience default. The capsule's private `_freeze` command already required
+the model, so all public and internal preparation surfaces now agree. Parser
+contracts require omission to fail and preserve the explicit path exactly;
+resident campaign contracts pass `39/39` and Ruff passes.
+
+CP486 was prepared from the same published CP484 source with the exact 1.5B
+model manifest and CP478 step-8 bootstrap. This repair establishes launch
+identity only and carries no model-gain, fusion, frontier or `WOW Signal`
+authority.

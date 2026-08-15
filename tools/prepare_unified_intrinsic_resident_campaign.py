@@ -75,10 +75,6 @@ PROFILES: Final = frozenset(
         "recovery",
     }
 )
-DEFAULT_MODEL: Final = Path(
-    "/Users/bryan/.aura/live-source/training/fused-model/"
-    "Aura-32B-crsm-closeout-jul1-20260701-215118"
-)
 DEFAULT_CAPSULE_ROOT: Final = Path.home() / ".aura/training-capsules"
 DEFAULT_CAMPAIGN_ROOT: Final = Path.home() / ".aura/training-campaigns"
 _CAMPAIGN_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
@@ -1006,7 +1002,10 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--source-commit", default="HEAD")
     prepare.add_argument("--capsule-root", type=Path, default=DEFAULT_CAPSULE_ROOT)
     prepare.add_argument("--campaign-root", type=Path, default=DEFAULT_CAMPAIGN_ROOT)
-    prepare.add_argument("--model", type=Path, default=DEFAULT_MODEL)
+    # Model choice is a scientific and resource identity, not a convenience
+    # default. An omitted flag previously turned a campaign explicitly named
+    # for 1.5B into a 32B launch package before the mismatch was noticed.
+    prepare.add_argument("--model", type=Path, required=True)
     prepare.add_argument("--bootstrap-output-dir", type=Path)
     prepare.add_argument("--bootstrap-stem", default="checkpoint_latest")
     prepare.add_argument("--bootstrap-checkpoint-sha256")

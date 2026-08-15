@@ -18,6 +18,9 @@ from tools.prepare_unified_intrinsic_resident_campaign import (
     _training_cli,
     _validate_task_depth_admission,
 )
+from tools.prepare_unified_intrinsic_resident_campaign import (
+    _parser as preparation_parser,
+)
 from tools.unified_intrinsic_checkpoint import resolve_checkpoint_generation
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
@@ -26,6 +29,33 @@ def _private(path: Path) -> Path:
     path.mkdir(parents=True)
     path.chmod(0o700)
     return path
+
+
+def test_campaign_preparation_requires_explicit_model_identity() -> None:
+    parser = preparation_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "prepare",
+                "--profile",
+                "canary",
+                "--campaign-id",
+                "missing-model",
+            ]
+        )
+
+    parsed = parser.parse_args(
+        [
+            "prepare",
+            "--profile",
+            "canary",
+            "--campaign-id",
+            "explicit-model",
+            "--model",
+            "/tmp/frozen-model",
+        ]
+    )
+    assert parsed.model == Path("/tmp/frozen-model")
 
 
 def _model_manifest(root: Path) -> dict:
