@@ -163,6 +163,27 @@ class ModelComputeProfile:
         return projections + mlp + elementwise
 
     @property
+    def structural_parameter_count(self) -> int:
+        """Weights this architecture implies, counted from the shapes.
+
+        The frontier certificate declares a parameter count and, separately, a
+        compute profile. Nothing tied the two together, so a producer could
+        claim a 32B model and estimate its FLOPs against a toy decoder. This
+        is the arithmetic that connects them.
+
+        Counted: untied input and output embeddings, the four attention
+        projections, and the three SwiGLU projections per layer. Omitted:
+        norms, biases, and rotary tables, which are well under one percent of
+        a decoder's weights — so the reconciliation is a tolerance check, not
+        an equality.
+        """
+        kv_width = self.num_key_value_heads * self.head_dim
+        embeddings = 2 * self.vocab_size * self.hidden_size
+        attention = self.hidden_size * (2 * self.hidden_size + 2 * kv_width)
+        mlp = 3 * self.hidden_size * self.intermediate_size
+        return embeddings + self.num_hidden_layers * (attention + mlp)
+
+    @property
     def flops_per_attention_pair(self) -> int:
         # QK dot product and attention-value product, multiply + add each.
         return 4 * self.num_attention_heads * self.head_dim

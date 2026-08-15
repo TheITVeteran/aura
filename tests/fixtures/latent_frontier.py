@@ -105,21 +105,28 @@ _VERIFIER_KEYS = {
 }
 
 
+# The architecture the claim is actually about. A toy decoder here made every
+# FLOPs comparison internally consistent and unrelated to a 32B model, which
+# is precisely what the profile/parameter reconciliation now refuses.
+_RESIDENT_PROFILE = ModelComputeProfile(
+    model_type="qwen2",
+    hidden_size=5120,
+    intermediate_size=27648,
+    num_hidden_layers=64,
+    num_attention_heads=40,
+    num_key_value_heads=8,
+    vocab_size=152064,
+    head_dim=128,
+)
+_RESIDENT_PROFILE_RECEIPT = _RESIDENT_PROFILE.to_receipt()
+
+
 def _trial_accounting(task_payload_sha256: str) -> tuple[dict, dict]:
-    profile = ModelComputeProfile(
-        model_type="fixture-decoder",
-        hidden_size=8,
-        intermediate_size=16,
-        num_hidden_layers=2,
-        num_attention_heads=2,
-        num_key_value_heads=1,
-        vocab_size=64,
-        head_dim=4,
-    )
+    profile = _RESIDENT_PROFILE
     ledger = ResourceLedger(profile)
     ledger.charge(
         "fixture_inference",
-        transformer_layer_apps=1_000,
+        transformer_layer_apps=64 * 16,
         attention_query_key_pairs=400,
         output_head_tokens=10,
         verifier_calls=1,
@@ -363,6 +370,11 @@ def _bundle(
         "architecture_freeze_sha256": "a" * 64,
         "tool_policy_sha256": "c" * 64,
         "compute_estimator_sha256": "e" * 64,
+        # The architecture the estimator was pointed at, and the per-trial
+        # forward-pass budget. 1000 layer applications over 64 layers is not
+        # a whole number of passes, so the fixture charges whole stacks.
+        "compute_profile_sha256": _RESIDENT_PROFILE_RECEIPT["profile_sha256"],
+        "max_forward_passes_per_trial": 64,
         "treatment_checkpoint_fingerprint": checkpoint,
         "frozen_at": 1000.0,
         "domains": ["math", "coding", "science"],
@@ -469,13 +481,13 @@ def _bundle(
                     "control_success": cell % 4 == 0,
                     "treatment_compute": {
                         "estimated_flops": treatment_resource["estimated_flops"],
-                        "layer_apps": 1000,
+                        "layer_apps": 64 * 16,
                         "estimator_sha256": "e" * 64,
                         "resource_accounting": treatment_resource,
                     },
                     "control_compute": {
                         "estimated_flops": control_resource["estimated_flops"],
-                        "layer_apps": 1000,
+                        "layer_apps": 64 * 16,
                         "estimator_sha256": "e" * 64,
                         "resource_accounting": control_resource,
                     },
@@ -625,6 +637,7 @@ def _bundle(
             "build_provenance_sha256": "6" * 64,
             "source_commit": "7" * 40,
             "latent_cortex_architecture_sha256": "a" * 64,
+            "compute_profile": dict(_RESIDENT_PROFILE_RECEIPT),
         },
         "raw_artifact_manifest_sha256": "9" * 64,
         "trials": trials,
@@ -670,6 +683,7 @@ def _bundle(
 
 __all__ = [
     "_PRODUCER_ID",
+    "_RESIDENT_PROFILE",
     "_SECOND_VERIFIER_ID",
     "_TASK_ISSUER_ID",
     "_TRUSTED_PRODUCERS",

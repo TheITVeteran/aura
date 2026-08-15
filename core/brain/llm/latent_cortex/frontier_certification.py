@@ -20,6 +20,7 @@ from core.brain.llm.latent_cortex.experiments import (
     grade_paired_treatment_vs_control,
 )
 from core.brain.llm.latent_cortex.resource_accounting import (
+    ModelComputeProfile,
     certify_comparison_accounting,
     validate_information_receipt,
     validate_resource_receipt,
@@ -45,7 +46,15 @@ _COMPARISON_KINDS = {
     "resident_32b_vs_external_frontier",
 }
 _SHA256_LENGTH = 64
+# A ceiling that only excludes a 64-bit overflow is not a budget. The real
+# bound is preregistered per trial and enforced against the architecture; this
+# stays as the arithmetic guard it always was.
 _MAX_LAYER_APPS = (1 << 63) - 1
+#: How far the shapes may sit from the declared parameter count. The
+#: structural count omits norms, biases and rotary tables, which are well
+#: under one percent of a decoder's weights; five percent leaves room for
+#: tied embeddings and vocabulary padding without admitting a different model.
+_PARAMETER_RECONCILIATION_TOLERANCE = 0.05
 
 
 def canonical_sha256(payload: Any) -> str:
@@ -230,6 +239,18 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
         reasons.append("missing_tool_policy_sha256")
     if not _is_sha256(prereg.get("compute_estimator_sha256")):
         reasons.append("missing_compute_estimator_sha256")
+    # CP126 3f30dcf3: the estimator was pinned and the ARCHITECTURE it
+    # estimated against was not. A producer could pin the right estimator and
+    # hand it a toy decoder, and the FLOPs comparison between arms would be
+    # internally consistent and meaningless.
+    if not _is_sha256(prereg.get("compute_profile_sha256")):
+        reasons.append("missing_compute_profile_sha256")
+    # CP126 b4dc41d3: eight counters had to be positive and nothing capped
+    # them. A forward pass is the whole stack, so the budget is expressed in
+    # passes and checked against the architecture's own layer count.
+    max_forward_passes = prereg.get("max_forward_passes_per_trial")
+    if type(max_forward_passes) is not int or max_forward_passes <= 0:
+        reasons.append("invalid_max_forward_passes_per_trial")
     if not _is_sha256(prereg.get("treatment_checkpoint_fingerprint")):
         reasons.append("missing_treatment_checkpoint_fingerprint")
     if not _finite_number(prereg.get("frozen_at"), positive=True):
@@ -356,6 +377,37 @@ def _validate_contamination_receipt(
     return scanner
 
 
+def _reconcile_compute_profile(
+    resident: dict[str, Any], prereg: dict[str, Any], reasons: list[str]
+) -> None:
+    """Tie the declared parameter count to the architecture that was costed.
+
+    The bundle declared a 32B-class model in one place and a compute profile
+    in another, and nothing connected them. A producer could pin the right
+    estimator, hand it a toy decoder, and every FLOPs comparison between the
+    arms would come out internally consistent and mean nothing about the model
+    the claim is about.
+    """
+    profile_receipt = resident.get("compute_profile")
+    if not isinstance(profile_receipt, dict):
+        reasons.append("resident_compute_profile_missing")
+        return
+    expected = str(prereg.get("compute_profile_sha256") or "")
+    if expected and profile_receipt.get("profile_sha256") != expected:
+        reasons.append("resident_compute_profile_not_preregistered")
+    try:
+        profile = ModelComputeProfile.from_receipt(profile_receipt)
+    except (TypeError, ValueError):
+        reasons.append("resident_compute_profile_invalid")
+        return
+    declared = resident.get("parameter_count")
+    if type(declared) is not int or declared <= 0:
+        return
+    structural = profile.structural_parameter_count
+    if abs(structural - declared) / declared > _PARAMETER_RECONCILIATION_TOLERANCE:
+        reasons.append("resident_compute_profile_parameter_count_mismatch")
+
+
 def _validate_resident_model(
     resident: Any, prereg: dict[str, Any], reasons: list[str]
 ) -> dict[str, Any]:
@@ -422,6 +474,9 @@ def _trial_compute(
     arm: str,
     expected_estimator: str,
     reasons: list[str],
+    *,
+    expected_profile: str = "",
+    max_forward_passes: int = 0,
 ) -> tuple[float | None, int | None, dict[str, Any] | None]:
     compute = trial.get(f"{arm}_compute")
     trial_id = str(trial.get("trial_id") or "unknown")
@@ -455,6 +510,27 @@ def _trial_compute(
             reasons.append(f"{trial_id}:{arm}_resource_accounting_incomplete")
         if flops is not None and float(resource["estimated_flops"]) != float(flops):
             reasons.append(f"{trial_id}:{arm}_compute_receipt_mismatch")
+        profile = resource.get("model_profile")
+        profile = profile if isinstance(profile, Mapping) else {}
+        if expected_profile and profile.get("profile_sha256") != expected_profile:
+            # The estimator was pinned; the architecture it estimated against
+            # was not. Both have to be.
+            reasons.append(f"{trial_id}:{arm}_compute_profile_not_preregistered")
+        totals = resource.get("totals")
+        totals = totals if isinstance(totals, Mapping) else {}
+        accounted = totals.get("transformer_layer_apps")
+        if layer_apps is not None and accounted != layer_apps:
+            # layer_apps was a free-standing number beside a receipt that had
+            # its own count of the same thing, and nobody compared them.
+            reasons.append(f"{trial_id}:{arm}_layer_apps_not_accounted")
+        layers = profile.get("num_hidden_layers")
+        if layer_apps is not None and type(layers) is int and layers > 0:
+            if layer_apps % layers:
+                # A forward pass applies the whole stack. A count that is not
+                # a multiple of the depth did not come from whole passes.
+                reasons.append(f"{trial_id}:{arm}_layer_apps_not_whole_passes")
+            elif max_forward_passes and layer_apps // layers > max_forward_passes:
+                reasons.append(f"{trial_id}:{arm}_forward_passes_over_budget")
     return float(flops) if flops is not None else None, layer_apps, resource
 
 
@@ -1349,12 +1425,20 @@ def verify_frontier_gain_bundle(
     if str(bundle.get("preregistration_sha256") or "") != expected_prereg_hash:
         reasons.append("preregistration_hash_mismatch")
     resident = _validate_resident_model(bundle.get("resident_model"), prereg, reasons)
+    _reconcile_compute_profile(resident, prereg, reasons)
     checkpoint = str(resident.get("checkpoint_fingerprint") or "")
     worker_boot_id = str(resident.get("worker_boot_id") or "")
     installed_app_build_sha256 = str(
         resident.get("installed_app_build_sha256") or ""
     )
     expected_estimator = str(prereg.get("compute_estimator_sha256") or "")
+    expected_profile = str(prereg.get("compute_profile_sha256") or "")
+    raw_forward_passes = prereg.get("max_forward_passes_per_trial")
+    max_forward_passes = (
+        raw_forward_passes
+        if type(raw_forward_passes) is int and raw_forward_passes > 0
+        else 0
+    )
     if not _is_sha256(bundle.get("task_commitment_sha256")):
         reasons.append("task_commitment_missing")
     if not _is_sha256(bundle.get("raw_artifact_manifest_sha256")):
@@ -1584,10 +1668,20 @@ def verify_frontier_gain_bundle(
             ):
                 trial_reasons.append(f"{trial_id}:{arm}_outcome_contradicts_score")
         treatment_flops, treatment_layers, treatment_resource = _trial_compute(
-            trial, "treatment", expected_estimator, trial_reasons
+            trial,
+            "treatment",
+            expected_estimator,
+            trial_reasons,
+            expected_profile=expected_profile,
+            max_forward_passes=max_forward_passes,
         )
         control_flops, control_layers, control_resource = _trial_compute(
-            trial, "control", expected_estimator, trial_reasons
+            trial,
+            "control",
+            expected_estimator,
+            trial_reasons,
+            expected_profile=expected_profile,
+            max_forward_passes=max_forward_passes,
         )
         if treatment_flops is not None and control_flops is not None:
             mismatch = abs(treatment_flops - control_flops) / max(1.0, control_flops)
