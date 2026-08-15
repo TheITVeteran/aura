@@ -147,6 +147,9 @@ def _integrity_verdict(
             expected_fast_weights_applied=(
                 receipt.get("fast_weights_applied") is True
             ),
+            expected_fast_weights_attach_attempted=(
+                receipt.get("fast_weights_attach_attempted") is True
+            ),
             expected_checkpoint_fingerprint=str(
                 receipt.get("checkpoint_fingerprint") or ""
             ),
@@ -3281,6 +3284,7 @@ class LatentCortexService:
                 if not_admitted:
                     if (
                         receipt.get("fast_weights_applied") is not False
+                        or receipt.get("fast_weights_attach_attempted") is not False
                         or receipt.get("fast_weights_layers") != 0
                         or receipt.get("fast_weight_optimization_attempts") != 0
                         or receipt.get("fast_weight_optimized_steps") != 0
@@ -5687,6 +5691,7 @@ class LatentCortexService:
                     "episode_id",
                     "input_token_count",
                     "params_unchanged",
+                    "fast_weights_attach_attempted",
                     "fast_weights_applied",
                     "fast_weights_erased",
                     "fast_weight_optimizer",
@@ -5751,6 +5756,7 @@ class LatentCortexService:
                     "verifier_probe_max_tokens",
                     "verifier_probe_contract",
                     "latent_opt_verifier",
+                    "fast_weights_attach_attempted",
                     "fast_weights_applied",
                     "fast_weight_optimization_attempts",
                     "fast_weight_optimized_steps",

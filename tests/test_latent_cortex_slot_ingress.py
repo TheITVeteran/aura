@@ -121,7 +121,7 @@ def test_context_seeds_become_identifiable_causal_prefix():
     ws = LatentWorkspace.from_prompt_embeddings(
         embeddings,
         WorkspaceConfig(n_slots=8, seed=1),
-        context_seeds=[("memory", vec), ("goals", vec)],
+        context_seeds=[(0, "memory", vec), (1, "goals", vec)],
     )
     assert ws.context_slots == [
         {"slot": 1, "context_index": 0, "source": "memory"},
@@ -140,7 +140,11 @@ def test_context_slot_cap_preserves_thought_slots():
     ws = LatentWorkspace.from_prompt_embeddings(
         embeddings,
         WorkspaceConfig(n_slots=4, seed=1),
-        context_seeds=[("memory", vec), ("goals", vec), ("world_model", vec)],
+        context_seeds=[
+            (0, "memory", vec),
+            (1, "goals", vec),
+            (2, "world_model", vec),
+        ],
     )
     # m=4 ⇒ two evidence rows fit between mailbox 0 and hypothesis row 3.
     assert len(ws.context_slots) == 2
@@ -154,7 +158,7 @@ def test_eight_slot_topology_keeps_all_six_admitted_evidence_items():
     ws = LatentWorkspace.from_prompt_embeddings(
         embeddings,
         WorkspaceConfig(n_slots=8, seed=1),
-        context_seeds=[(f"source-{index}", vec) for index in range(6)],
+        context_seeds=[(index, f"source-{index}", vec) for index in range(6)],
     )
 
     assert [row["slot"] for row in ws.context_slots] == [1, 2, 3, 4, 5, 6]
@@ -167,7 +171,7 @@ def test_sealed_evidence_is_restored_without_reverting_hypothesis_rows():
     ws = LatentWorkspace.from_prompt_embeddings(
         embeddings,
         WorkspaceConfig(n_slots=6, seed=1),
-        context_seeds=[("memory", vec), ("reference", vec)],
+        context_seeds=[(0, "memory", vec), (1, "reference", vec)],
     )
     ws.seal_context_evidence()
     candidate = ws.z + mx.ones_like(ws.z)

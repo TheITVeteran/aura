@@ -40,6 +40,24 @@ def role_anchor(role: str, dim: int, base_seed: int = 0):
     return vec / mx.maximum(mx.linalg.norm(vec), 1e-6)
 
 
+def _validated_context_seed(seed: Any) -> tuple[int, str, Any]:
+    """A seed states which context item it came from, or it is not a seed.
+
+    The two-element form let the caller's position be reconstructed from the
+    row count downstream, which is wrong the moment any item is skipped.
+    """
+
+    if not isinstance(seed, tuple) or len(seed) != 3:
+        raise TypeError(
+            "a context seed is (context_index, source, vector); the "
+            "two-element form cannot say which item it came from"
+        )
+    index, source, vector = seed
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise ValueError("a context seed index must be a non-negative integer")
+    return int(index), str(source), vector
+
+
 def per_position_rms(x):
     """Per-position RMS over the hidden dimension: (..., L, D) → (..., L, 1).
 
@@ -179,7 +197,9 @@ class LatentWorkspace:
         if branch_role:
             base_seed = _role_seed(branch_role, base_seed)
 
-        requested_seeds = list(context_seeds or [])
+        requested_seeds = [
+            _validated_context_seed(seed) for seed in (context_seeds or [])
+        ]
         # Keep the comm slot (0) and at least one persistent hypothesis slot.
         # The prior quarter-workspace cap silently discarded admitted evidence
         # on the live four-slot profile.
@@ -209,16 +229,21 @@ class LatentWorkspace:
                 ),
                 enforce_failure_policy=False,
             )
+        # The context index is the item's OWN position, carried through from
+        # the embedder. Recomputing it from the row count silently reassigned
+        # provenance whenever an item encoded to nothing and was skipped.
         context_by_slot = {
-            1 + j: (j, str(source), vector)
-            for j, (source, vector) in enumerate(seeds)
+            1 + j: (int(index), str(source), vector)
+            for j, (index, source, vector) in enumerate(seeds)
         }
         context_admission = {
             "schema": "aura.workspace_context_admission.v1",
             "requested": len(requested_seeds),
             "admitted": len(seeds),
             "dropped": len(dropped),
-            "dropped_sources": [str(source) for source, _vector in dropped][:8],
+            "dropped_sources": [
+                str(source) for _index, source, _vector in dropped
+            ][:8],
             "n_slots": m,
             "complete": not dropped,
         }

@@ -281,6 +281,9 @@ def _runtime_integrity_proven(receipt: Mapping[str, Any]) -> bool:
             expected_fast_weights_applied=(
                 receipt.get("fast_weights_applied") is True
             ),
+            expected_fast_weights_attach_attempted=(
+                receipt.get("fast_weights_attach_attempted") is True
+            ),
             expected_checkpoint_fingerprint=str(
                 receipt.get("checkpoint_fingerprint") or ""
             ),

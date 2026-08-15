@@ -191,7 +191,7 @@ def test_escape_perturbation_preserves_sealed_evidence_rows():
     workspace = LatentWorkspace.from_prompt_embeddings(
         embeddings,
         WorkspaceConfig(n_slots=6, seed=11),
-        context_seeds=[("reference", evidence)],
+        context_seeds=[(0, "reference", evidence)],
     )
     workspace.seal_context_evidence()
     branch = _FakeBranch()

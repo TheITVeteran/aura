@@ -108,6 +108,7 @@ def engine_runtime_integrity(
     episode_id: str,
     input_tokens_sha256: str,
     fast_weights_applied: bool = False,
+    fast_weights_attach_attempted: bool | None = None,
     fast_weight_learning: Mapping[str, Any] | None = None,
     fast_weight_cleanup: Mapping[str, Any] | None = None,
     probe_cache: Mapping[str, Any] | None = None,
@@ -118,7 +119,11 @@ def engine_runtime_integrity(
 ) -> dict[str, Any]:
     parameters = _parameter_measurement()
     adapted = _adapted_measurement()
-    if fast_weights_applied and fast_weight_cleanup is None:
+    if fast_weights_attach_attempted is None:
+        fast_weights_attach_attempted = fast_weights_applied
+    if (
+        fast_weights_applied or fast_weights_attach_attempted
+    ) and fast_weight_cleanup is None:
         cleanup = (
             fast_weight_learning.get("cleanup")
             if isinstance(fast_weight_learning, Mapping)
@@ -161,6 +166,7 @@ def engine_runtime_integrity(
         serving_stack_before=_stack_measurement(),
         serving_stack_after=_stack_measurement(),
         fast_weights_applied=fast_weights_applied,
+        fast_weights_attach_attempted=fast_weights_attach_attempted,
         fast_weight_learning=fast_weight_learning,
         fast_weight_cleanup=fast_weight_cleanup,
         probe_cache=probe_cache,
@@ -333,6 +339,7 @@ def bound_runtime_integrity(
     input_tokens_sha256: str,
     worker_identity: Mapping[str, Any] | None = None,
     fast_weights_applied: bool = False,
+    fast_weights_attach_attempted: bool | None = None,
     fast_weight_learning: Mapping[str, Any] | None = None,
     fast_weight_cleanup: Mapping[str, Any] | None = None,
     probe_cache: Mapping[str, Any] | None = None,
@@ -346,6 +353,7 @@ def bound_runtime_integrity(
             episode_id=episode_id,
             input_tokens_sha256=input_tokens_sha256,
             fast_weights_applied=fast_weights_applied,
+            fast_weights_attach_attempted=fast_weights_attach_attempted,
             fast_weight_learning=fast_weight_learning,
             fast_weight_cleanup=fast_weight_cleanup,
             probe_cache=probe_cache,
@@ -376,6 +384,10 @@ def attach_bound_runtime_integrity(
         input_tokens_sha256=input_tokens_sha256,
         worker_identity=worker,
         fast_weights_applied=receipt.get("fast_weights_applied") is True,
+        fast_weights_attach_attempted=(
+            receipt.get("fast_weights_attach_attempted") is True
+            or receipt.get("fast_weights_applied") is True
+        ),
         fast_weight_learning=receipt.get("fast_weight_learning"),
         fast_weight_cleanup=receipt.get("fast_weight_cleanup"),
         probe_cache=receipt.get("probe_cache"),

@@ -223,6 +223,10 @@ class CheckpointInvariant:
                 fast_weights_applied=(
                     getattr(receipt, "fast_weights_applied", False) is True
                 ),
+                fast_weights_attach_attempted=(
+                    getattr(receipt, "fast_weights_attach_attempted", False)
+                    is True
+                ),
                 fast_weight_learning=getattr(
                     receipt,
                     "fast_weight_learning",

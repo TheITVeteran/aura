@@ -21,6 +21,7 @@ reaching for it by hand and getting it half right: it checked
 """
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -33,6 +34,19 @@ def _token(receipt: str, domain: str, ttl: float = 300.0) -> GovernanceToken:
     return GovernanceToken(
         receipt_id=receipt, domain=domain, source="test", ttl=ttl
     )
+
+
+# A half-built engine has enough state for the guard clause and not enough
+# for the shaping that follows it. Only the errors a missing attribute can
+# raise are absorbed here — anything else is a real failure and must surface.
+_STUB_SHAPING_ERRORS = (AttributeError, IndexError, KeyError, TypeError, ValueError)
+
+
+def _filter_through_the_guard(engine) -> None:
+    from core.brain import personality_engine as pe
+
+    with contextlib.suppress(*_STUB_SHAPING_ERRORS):
+        pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
 
 
 # ─────────────────────────── the three tokens are distinguishable
@@ -181,11 +195,7 @@ def test_an_unverified_engine_records_it_when_it_filters(monkeypatch):
         lambda exc, **kw: recorded.append(kw),
     )
 
-    # Only the guard clause matters here; stop before the shaping machinery.
-    try:
-        pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
-    except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
-        pass
+    _filter_through_the_guard(engine)
 
     assert recorded, "an unverified engine filtered a reply and said nothing"
     assert recorded[0].get("severity") == "critical"
@@ -208,10 +218,7 @@ def test_the_report_fires_once_per_engine(monkeypatch):
     )
 
     for _ in range(3):
-        try:
-            pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
-        except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
-            pass
+        _filter_through_the_guard(engine)
 
     assert len(recorded) == 1
 
@@ -229,10 +236,7 @@ def test_a_verified_engine_records_nothing(monkeypatch):
         lambda exc, **kw: recorded.append(kw),
     )
 
-    try:
-        pe.PersonalityEngine.filter_response(engine, "hello", user_facing=True)
-    except Exception:  # noqa: BLE001 - shaping needs state this stub lacks
-        pass
+    _filter_through_the_guard(engine)
 
     assert not recorded
 

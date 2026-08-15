@@ -20,6 +20,7 @@ import inspect
 import json
 import logging
 import math
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -86,6 +87,7 @@ from core.brain.llm.latent_cortex.test_time_training import (
     deterministic_sham_target,
 )
 from core.brain.llm.latent_cortex.types import (
+    ABSOLUTE_MAX_LAYER_APPS,
     ComputeBudget,
     CortexConfig,
     EpisodeReceipt,
@@ -111,6 +113,7 @@ from core.brain.llm.latent_cortex.verifier_gain_search import (
 )
 from core.brain.llm.latent_cortex.workspace import per_position_rms, role_anchor
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_lock
 
 # Cognitive-slot sources whose content is RETRIEVED knowledge (already
 # epistemically admitted) — eligible for compilation into the fast-weight
@@ -143,7 +146,6 @@ _BRIDGE_TEXT_BY_POLICY = {
 # newlines = one blank line — enough for any legitimate paragraph/list break.
 _MAX_NEWLINE_RUN = 2
 _MAX_TEACHER_TRAJECTORY_TOKENS = 768
-_NEWLINE_RESAMPLE_ATTEMPTS = 4
 # Sentence grace: when the token limit lands mid-sentence, sampling may
 # continue up to this many extra tokens until sentence-final punctuation —
 # still entirely model-sampled tokens, charged to the budget, receipted as
@@ -194,6 +196,23 @@ _LATENT_PHASE_ERRORS = (
 )
 
 
+class LatentEngineBusyError(RuntimeError):
+    """A second episode was asked for while one already holds the model.
+
+    The engine mutates ``self.model`` in place — fast weights attach to
+    resident layers, the checkpoint invariant samples parameters before and
+    after, and the probe cache is keyed per episode. Two overlapping callers
+    interleave those mutations and each one's proof then describes a model
+    the other was also editing. This is refused rather than queued: a caller
+    that wanted to wait can wait, and a caller that did not want to wait must
+    not silently get an episode measured against somebody else's weights.
+    """
+
+
+class NonFiniteLogitsError(RuntimeError):
+    """A forward pass returned NaN or infinity where a distribution belongs."""
+
+
 class _FastWeightCleanupError(RuntimeError):
     """The resident model could not be proven clean after an episode."""
 
@@ -207,14 +226,46 @@ class _ActionContinuationCapturedError(Exception):
 
 
 def _logits_digest(logits) -> str:
-    """Stable digest of a logits vector — the causal audit fingerprint."""
+    """Stable digest of a logits vector — the causal audit fingerprint.
+
+    A NaN payload hashes perfectly well and fingerprints nothing: the whole
+    point of the digest is that two runs of the same computation agree, and
+    NaN does not compare equal to itself in the arithmetic that produced it.
+    A digest over a non-finite forward pass is a receipt for a broken one.
+    """
     import hashlib
 
     import mlx.core as mx
 
     arr = logits.astype(mx.float32)
     mx.eval(arr)
+    if not bool(mx.all(mx.isfinite(arr)).item()):
+        raise NonFiniteLogitsError(
+            "cannot fingerprint a forward pass that returned non-finite logits"
+        )
     return hashlib.sha256(memoryview(arr)).hexdigest()
+
+
+def _validated_verifier_result(result: Any) -> Any:
+    """Reject a verdict that cannot be ordered before anything orders by it.
+
+    A verifier is caller-supplied. A bool reads as 1.0/0.0 and silently joins
+    a scale it was never on; NaN makes every comparison false, so a branch
+    scored NaN loses every ordering AND wins the "no worse than" tests; and
+    infinity is not representable in the JSON evidence the receipt publishes.
+    None of the three has a sensible fallback here, so this refuses rather
+    than substituting a number the verifier never returned.
+    """
+
+    if isinstance(result, bool):
+        raise TypeError(
+            "a verifier returned a boolean; a score must be a real number on "
+            "a stated scale"
+        )
+    if isinstance(result, (int, float)):
+        if not math.isfinite(float(result)):
+            raise ValueError(f"a verifier returned a non-finite score: {result!r}")
+    return result
 
 
 def _contract_admitted_branch_score(
@@ -300,6 +351,15 @@ class LatentCortexEngine:
         # tokenizer, so per engine) and the last final-decode suppression
         # count for the episode receipt.
         self._newline_token_cache: dict[int, bool] = {}
+        self._newline_token_ids_cache: tuple[int, ...] | None = None
+        self._vocab_size = 0
+        self._input_token_ceiling: int | None = None
+        # One episode at a time. See LatentEngineBusyError.
+        self._episode_lock = checked_lock(
+            "latent_cortex.engine.episode",
+            rank=LockRank.UNRANKED,
+        )
+        self._episode_holder = ""
         self._last_decode_newline_suppressions = 0
         self._last_decode_contract_required = False
         self._last_decode_contract_satisfied = False
@@ -403,18 +463,98 @@ class LatentCortexEngine:
         return now
 
     # ── Tokenization ────────────────────────────────────────────────────
+    def vocabulary_size(self) -> int:
+        """The serving model's embedding row count — the only real ID range."""
+        if self._vocab_size == 0:
+            self._vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
+        return self._vocab_size
+
+    def input_token_ceiling(self) -> int:
+        """The largest prompt this model can position-encode.
+
+        Derived, never invented: the model's own ``max_position_embeddings``
+        first, then the tokenizer's ``model_max_length``. Tokenizers ship
+        sentinel values (1e30 is common) that mean "unset" rather than
+        "unlimited", so a value that cannot be a position count is not one.
+        Zero means the ceiling is undiscoverable here — the compute budget is
+        then the only bound, and it is enforced either way.
+        """
+        if self._input_token_ceiling is not None:
+            return self._input_token_ceiling
+        ceiling = 0
+        for candidate in (
+            getattr(getattr(self.model, "args", None), "max_position_embeddings", 0),
+            getattr(self.tokenizer, "model_max_length", 0),
+        ):
+            try:
+                value = int(candidate)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            # A position count above the vocabulary's own scale is a sentinel,
+            # not a window. ABSOLUTE_MAX_LAYER_APPS bounds what any episode
+            # could pay for regardless.
+            if 0 < value <= ABSOLUTE_MAX_LAYER_APPS:
+                ceiling = value
+                break
+        self._input_token_ceiling = ceiling
+        return ceiling
+
+    def _validate_token_ids(self, token_ids) -> list[int]:
+        """Every ID is an exact index into the embedding table, or none are.
+
+        ``list(token_ids)`` used to be the whole check. A float, a bool, or a
+        negative index reached the embedding lookup, where the backend decides
+        what it means — and by then the input commitment had already been
+        hashed over values the model would not read the same way.
+        """
+        vocab_size = self.vocabulary_size()
+        tokens: list[int] = []
+        for position, raw in enumerate(token_ids):
+            if type(raw) is not int:
+                raise TypeError(
+                    f"token_ids[{position}] is {type(raw).__name__}, not an exact "
+                    "integer token id"
+                )
+            if not 0 <= raw < vocab_size:
+                raise ValueError(
+                    f"token_ids[{position}]={raw} is outside the serving "
+                    f"vocabulary [0, {vocab_size})"
+                )
+            tokens.append(raw)
+        return tokens
+
+    def _admit_input_length(self, token_count: int, budget: ComputeBudget) -> None:
+        """Refuse an oversized prompt before anything expensive commits to it.
+
+        The commitment payload is a JSON serialization of every token; the
+        prefill is one forward pass per layer over all of them. Both used to
+        happen before anything asked whether the episode could pay.
+        """
+        ceiling = self.input_token_ceiling()
+        if ceiling and token_count > ceiling:
+            raise ValueError(
+                f"input of {token_count} tokens exceeds the model's "
+                f"{ceiling}-token position window"
+            )
+        if not budget.can_afford(token_count, self.n_layers):
+            raise ComputeBudgetUnaffordable(
+                f"prefill of {token_count} tokens over {self.n_layers} layers "
+                f"needs {token_count * self.n_layers} layer applications; "
+                f"remaining={budget.remaining_layer_apps}"
+            )
+
     def _encode(self, prompt: str | None, messages: list | None, token_ids: list[int] | None):
         if token_ids is not None:
-            return list(token_ids)
+            return self._validate_token_ids(token_ids)
         if self.tokenizer is None:
             raise ValueError("no tokenizer: pass token_ids for substrate-level use")
         if messages:
-            return list(
+            return self._validate_token_ids(
                 self.tokenizer.apply_chat_template(
                     messages, add_generation_prompt=True, tokenize=True
                 )
             )
-        return list(self.tokenizer.encode(prompt or ""))
+        return self._validate_token_ids(self.tokenizer.encode(prompt or ""))
 
     def _decode_bridge_tokens(self) -> list[int]:
         policy = self.config.decode_bridge_policy
@@ -596,7 +736,7 @@ class LatentCortexEngine:
 
         def charge(callback: Callable[[str], Any], text: str) -> Any:
             rendered = str(text)
-            result = callback(rendered)
+            result = _validated_verifier_result(callback(rendered))
             budget.charge_verifier(
                 "task_verifier",
                 input_bytes=len(rendered.encode("utf-8")),
@@ -657,6 +797,25 @@ class LatentCortexEngine:
         if normalized and receipt is not None:
             receipt.flag("decoded_text_control_characters_normalized")
         return rendered
+
+    def _newline_token_ids(self) -> tuple[int, ...]:
+        """Every token in the serving vocabulary that renders to newlines only.
+
+        The cap is advertised as a maximum, so it has to be one. Masking just
+        the token that had been sampled let a model with several newline-family
+        tokens — "\n", "\n\n", "\r\n", indented variants — walk from one to
+        the next and emit an unbounded run under a rule that said two.
+
+        Scanned once per engine, and only when a decode actually reaches the
+        cap. A vocabulary sweep is cheap next to the babble it stops.
+        """
+        if self._newline_token_ids_cache is None:
+            self._newline_token_ids_cache = tuple(
+                token
+                for token in range(self.vocabulary_size())
+                if self._is_pure_newline_token(token)
+            )
+        return self._newline_token_ids_cache
 
     def _is_pure_newline_token(self, token: int) -> bool:
         """True when the token renders to newline-only whitespace."""
@@ -759,20 +918,30 @@ class LatentCortexEngine:
         self._cognitive_context_truncations = []
         return normalize_cognitive_context(cognitive_context)
 
-    def _embed_cognitive_context(self, items: list[dict]) -> list[tuple[str, object]]:
+    def _embed_cognitive_context(
+        self, items: list[dict]
+    ) -> list[tuple[int, str, object]]:
         """Pooled embed_tokens vectors for each organ item — no layer passes.
 
         Embedding lookup is table indexing, so the ingress costs no layer
         applications; the seeded slots then ride every subsequent window pass
         exactly like ordinary thought slots (charged as usual).
+
+        Each row carries the item's own position in ``items``. The position
+        used to be inferred downstream by counting the rows that came back,
+        and this function skips an item that encodes to nothing — so one
+        empty item shifted every later slot's recorded text, length and hash
+        onto its neighbour's content. Two items sharing a source name had the
+        same effect for the same reason: identity was being reconstructed
+        instead of carried.
         """
         import mlx.core as mx
 
         if not items or self.tokenizer is None:
             return []
         inner = self.model.model
-        seeds: list[tuple[str, object]] = []
-        for item in items:
+        seeds: list[tuple[int, str, object]] = []
+        for position, item in enumerate(items):
             embedding_text = item["text"]
             if item.get("context_role") == "memory_observation":
                 # The slot receives the remembered semantics, but the
@@ -820,7 +989,7 @@ class LatentCortexEngine:
             h = inner.embed_tokens(mx.array([tokens]))
             pooled = mx.mean(h, axis=1, keepdims=True)  # (1,1,D)
             mx.eval(pooled)
-            seeds.append((item["source"], pooled))
+            seeds.append((position, item["source"], pooled))
         return seeds
 
     def cognitive_context_admission(self) -> dict:
@@ -861,7 +1030,9 @@ class LatentCortexEngine:
                 for action, instruction in _ACTION_CONTROL_TEXT.items()
             ]
         )
-        controls = {OperationKind(source): vector for source, vector in rows}
+        controls = {
+            OperationKind(source): vector for _position, source, vector in rows
+        }
         dim = int(self.model.model.embed_tokens.weight.shape[-1])
         embedding_rms = mx.mean(per_position_rms(self.model.model.embed_tokens.weight))
         for action in _ACTION_CONTROL_TEXT:
@@ -1356,6 +1527,25 @@ class LatentCortexEngine:
         mx.eval(logits, self._last_prefill_hidden)
         return embeddings, logits
 
+    @staticmethod
+    def _require_finite_logits(logits, operation: str) -> None:
+        """A NaN row is not a distribution, and argmax over one is arbitrary.
+
+        Recurrence, fast-weight optimization and an unstable adapter can all
+        produce non-finite logits. Sampling consumed them directly, so the
+        token that came back was whatever the backend happened to do with NaN
+        — and the episode still reported ok. There is no safe recovery inside
+        the sampler: the delta has to be erased or the episode refused, so
+        this raises and lets the episode's own cleanup decide.
+        """
+        import mlx.core as mx
+
+        if not bool(mx.all(mx.isfinite(logits)).item()):
+            raise NonFiniteLogitsError(
+                f"{operation} produced non-finite logits; the adapted "
+                "function is unusable"
+            )
+
     def _sample(
         self,
         logits,
@@ -1376,6 +1566,7 @@ class LatentCortexEngine:
                 element_writes=vocab if temperature > 0.0 else 1,
                 host_scalar_ops=vocab * multiplier,
             )
+        self._require_finite_logits(logits, "decode_sampling")
         if temperature and temperature > 0:
             scaled = logits / temperature
             if top_p < 1.0:
@@ -1477,6 +1668,7 @@ class LatentCortexEngine:
         stochastic_draw = 0
         newline_run = 0
         suppressions = 0
+        newline_discipline_exhausted = False
         self._last_decode_newline_suppressions = 0
         contract_required = (
             self.config.decode_contract == "final_answer_v1"
@@ -1547,7 +1739,7 @@ class LatentCortexEngine:
             product-quality gate (excessive_blank_lines). Masking newline
             logits for the next sample is a sampling CONSTRAINT — the emitted
             text is still entirely the model's own tokens, never edited."""
-            nonlocal stochastic_draw, suppressions
+            nonlocal stochastic_draw, suppressions, newline_discipline_exhausted
             logits = penalize_repeats(logits)
             # EOS floor: below decode_min_tokens, end-of-sequence logits are
             # masked so sampling variance cannot abandon the answer a few
@@ -1575,29 +1767,33 @@ class LatentCortexEngine:
             )
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token, sample_logprob(logits, token)
-            masked = logits
-            for _ in range(_NEWLINE_RESAMPLE_ATTEMPTS):
-                if not self._is_pure_newline_token(token):
-                    return token, sample_logprob(masked, token)
-                suppressions += 1
-                masked = mx.where(
-                    mx.arange(masked.shape[-1]) == token,
-                    mx.full(masked.shape, -1e9),
-                    masked,
+            if not self._is_pure_newline_token(token):
+                return token, sample_logprob(logits, token)
+            newline_ids = self._newline_token_ids()
+            if not newline_ids:
+                return token, sample_logprob(logits, token)
+            suppressions += 1
+            ids = mx.array(sorted(newline_ids))
+            gathered = logits[ids]
+            masked = logits.at[ids].add(mx.full(gathered.shape, -1e9) - gathered)
+            random_key = None
+            if sample_seed is not None and temp > 0.0:
+                random_key = mx.random.key(
+                    (sample_seed + stochastic_draw * 0x9E3779B1) & 0x7FFFFFFF
                 )
-                random_key = None
-                if sample_seed is not None and temp > 0.0:
-                    random_key = mx.random.key(
-                        (sample_seed + stochastic_draw * 0x9E3779B1) & 0x7FFFFFFF
-                    )
-                    stochastic_draw += 1
-                token = self._sample(
-                    masked,
-                    temp,
-                    nucleus,
-                    budget=budget,
-                    random_key=random_key,
-                )
+                stochastic_draw += 1
+            token = self._sample(
+                masked,
+                temp,
+                nucleus,
+                budget=budget,
+                random_key=random_key,
+            )
+            if self._is_pure_newline_token(token):
+                # Every newline token is masked to -1e9, so one coming back
+                # means the rest of the distribution is masked too. There is
+                # no admissible continuation; stopping is the honest move.
+                newline_discipline_exhausted = True
             return token, sample_logprob(masked, token)
 
         # Contract-aware termination (CP180): once a single FINAL_ANSWER
@@ -1619,6 +1815,9 @@ class LatentCortexEngine:
             return contract_decode_disposition(text)
 
         token, token_logprob = sample_disciplined(initial_logits)
+        if newline_discipline_exhausted:
+            self._last_decode_newline_suppressions = suppressions
+            return out, "newline_discipline_exhausted_before_decode"
         termination = "token_limit"
         decode_started = time.monotonic()
         extension = contract_grace if contract_required else grace_tokens
@@ -1700,6 +1899,9 @@ class LatentCortexEngine:
             else:
                 logits = external_step_logits(token)
             token, token_logprob = sample_disciplined(logits)
+            if newline_discipline_exhausted:
+                termination = "newline_discipline_exhausted"
+                break
             if (index + 1) % 16 == 0:
                 self._emit_progress(
                     progress,
@@ -2380,7 +2582,7 @@ class LatentCortexEngine:
         )
 
     # ── The integrated episode ──────────────────────────────────────────
-    def reason(
+    def _reason_episode(
         self,
         prompt: str | None = None,
         *,
@@ -2570,6 +2772,7 @@ class LatentCortexEngine:
                     if isinstance(content, str) and content.strip():
                         verification_objective = content
                         break
+        self._admit_input_length(len(tokens), budget)
         encoded_tokens = json.dumps(tokens, separators=(",", ":"), allow_nan=False).encode("ascii")
         receipt.input_tokens_sha256 = hashlib.sha256(encoded_tokens).hexdigest()
         receipt.input_token_count = len(tokens)
@@ -2750,7 +2953,10 @@ class LatentCortexEngine:
                         if isinstance(exc, ComputeBudgetUnaffordable)
                         else f"latent_phase_failed:{type(exc).__name__}:{exc}"
                     )
-                elif receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
+                elif (
+                    receipt.fast_weights_applied
+                    or receipt.fast_weights_attach_attempted
+                ) and receipt.fast_weights_erased is not True:
                     receipt.flag("fallback_refused_unproven_model_state")
                     failure_reason = "fast_weight_cleanup_unproven"
                 else:
@@ -2895,6 +3101,13 @@ class LatentCortexEngine:
             "confidence_bound_replacement",
         }:
             failure_reason = f"decode_incomplete:{receipt.decode_termination}"
+        if not failure_reason and not out_tokens:
+            # An immediate EOS appends nothing and terminates as "eos", which
+            # the acceptance set above reads as a complete decode. The episode
+            # then returned ok with no answer in it. "The tokenizer said stop"
+            # is a different claim from "here is the answer".
+            receipt.flag("decode_produced_no_tokens")
+            failure_reason = "decode_incomplete:no_tokens_generated"
         if receipt.params_unchanged is False:
             receipt.flag("checkpoint_invariant_violated")
             failure_reason = failure_reason or "checkpoint_invariant_violated"
@@ -2928,6 +3141,47 @@ class LatentCortexEngine:
             decode_token_logprobs=decode_token_logprobs,
             answer_replacement_private=answer_replacement_private,
         )
+
+    @contextmanager
+    def _single_flight_episode(self):
+        """Hold the resident model for exactly one episode.
+
+        Refuse rather than queue. A caller that is willing to wait can wait
+        on its own; a caller that is not must not receive an episode whose
+        proofs were measured while another episode was editing the same
+        weights.
+        """
+        if not self._episode_lock.acquire(blocking=False):
+            raise LatentEngineBusyError(
+                "the latent cortex engine is already running an episode "
+                f"(held by {self._episode_holder or 'another caller'})"
+            )
+        self._episode_holder = f"thread:{threading.get_ident()}"
+        try:
+            yield
+        finally:
+            self._episode_holder = ""
+            self._episode_lock.release()
+
+    def episode_in_flight(self) -> bool:
+        """True while an episode holds the resident model."""
+
+        return bool(self._episode_holder)
+
+    def reason(self, *args: Any, **kwargs: Any) -> LatentReasoningResult:
+        """Run one episode under the engine's single-flight guard.
+
+        The whole lifecycle is inside the lock: the pre-episode checkpoint
+        probe, encoding, the recurrent passes, fast-weight attach and erase,
+        and the post-episode invariant. Splitting any of it out would let a
+        second caller measure "before" against the other episode's "after".
+        """
+        with self._single_flight_episode():
+            return self._reason_episode(*args, **kwargs)
+
+    # inspect.signature() follows __wrapped__, so the public entry point
+    # still reports the real parameter list rather than (*args, **kwargs).
+    reason.__wrapped__ = _reason_episode
 
     # The latent phases, separated so the fallback wrapper stays readable.
     def _latent_episode(
@@ -3548,7 +3802,11 @@ class LatentCortexEngine:
                         budget,
                         bridge_tokens=bridge_tokens,
                     )
-                    probe_score = float(verifier(self.tokenizer.decode(probe)))
+                    probe_score = float(
+                        _validated_verifier_result(
+                            verifier(self.tokenizer.decode(probe))
+                        )
+                    )
                     previous_score = last_probe_scores.get(target.index)
                     event.update(
                         {
@@ -3569,7 +3827,9 @@ class LatentCortexEngine:
                             ensemble.revert_branch_to_savepoint(target)
                         )
                         receipt.flag("bytecode_probe_reverted")
-                    elif math.isfinite(probe_score):
+                    else:
+                        # Finiteness is now guaranteed at the verifier
+                        # boundary, so there is no third outcome to skip.
                         last_probe_scores[target.index] = max(
                             last_probe_scores.get(target.index, -math.inf),
                             probe_score,
@@ -6216,8 +6476,15 @@ class LatentCortexEngine:
             receipt.latent_opt_verifier = optimizer.trace.verifier_receipt()
             if optimizer.trace.budget_exhausted:
                 receipt.flag("latent_opt_budget_exhausted")
-            if not receipt.latent_opt_applied:
+            if optimizer.trace.accepted <= 0:
+                # The flag names accepted steps, so it has to read accepted
+                # steps. Keyed off attempts, a run that proposed forty edits
+                # and took none of them was receipted as applied, with no
+                # rejection flag anywhere — the exact case the comment above
+                # promises is receipted.
                 receipt.flag("latent_opt_no_accepted_step")
+            if optimizer.trace.attempts <= 0:
+                receipt.flag("latent_opt_not_attempted")
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
                 budget=budget,
@@ -6447,18 +6714,34 @@ class LatentCortexEngine:
                         contrast_tokens=incumbent_tokens,
                         rank=self.config.fast_weights.rank,
                     )
-                wrapped = fast_weights.attach(
-                    self.model.model,
-                    self.plasticity_layer_range,
-                    seed_stat=seed_stat,
-                    episode_id=receipt.episode_id,
-                    seed_vectors=retrieval_seed_vectors,
-                    seed_source=seed_source,
-                )
-                receipt.fast_weights_applied = True
-                receipt.fast_weights_layers = wrapped
-                receipt.flag(f"fast_weight_site:{self.plasticity_site.site_id}")
+                # The model is dirty from the first layer attach onwards,
+                # not from the moment attach RETURNS. A partial attach that
+                # mutated three of eight layers and then raised used to leave
+                # fast_weights_applied False, so the outer handler read an
+                # unproven model as a clean one and served a vanilla decode
+                # against it. Mark the mutation before it happens, and keep
+                # the attach inside the block whose handler finalizes.
+                receipt.fast_weights_attach_attempted = True
                 try:
+                    wrapped = fast_weights.attach(
+                        self.model.model,
+                        self.plasticity_layer_range,
+                        seed_stat=seed_stat,
+                        episode_id=receipt.episode_id,
+                        seed_vectors=retrieval_seed_vectors,
+                        seed_source=seed_source,
+                    )
+                    if int(wrapped) <= 0:
+                        # An admitted episode that wrapped nothing has no
+                        # adapted function to attribute anything to. Saying
+                        # "applied" here made every downstream proof describe
+                        # a plasticity site that does not exist.
+                        raise RuntimeError(
+                            "fast-weight attach wrapped zero layers"
+                        )
+                    receipt.fast_weights_applied = True
+                    receipt.fast_weights_layers = wrapped
+                    receipt.flag(f"fast_weight_site:{self.plasticity_site.site_id}")
                     fast_weight_learning_state["lease"] = fast_weights.lease_receipt()
                     attach_probe = self._fw_probe(budget)
                     pre_probe_sha256 = tensor_sha256(fw_baseline)
@@ -9556,4 +9839,4 @@ class LatentCortexEngine:
         return out
 
 
-__all__ = ["LatentCortexEngine"]
+__all__ = ["LatentCortexEngine", "LatentEngineBusyError"]

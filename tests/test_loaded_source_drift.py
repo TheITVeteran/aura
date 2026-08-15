@@ -22,7 +22,16 @@ def test_source_comparison_uses_the_governed_dynamic_compile_owner(
 ):
     source = tmp_path / "subject.py"
     source.write_bytes(b"VALUE = 1\n")
-    compiled = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
+    # The fixture goes through the same owner the module under test uses.
+    # A raw compile() here would be the one call site in this file that
+    # bypasses the boundary the file exists to prove.
+    compiled = DynamicExecutionGateway().compile_source(
+        source.read_bytes(),
+        filename=str(source),
+        mode="exec",
+        source="unit.source_comparison_fixture",
+        dont_inherit=True,
+    )
     cache = tmp_path / "subject.pyc"
     cache.write_bytes(b"\x00" * 16 + marshal.dumps(compiled))
     calls: list[dict] = []
@@ -60,8 +69,11 @@ def test_dynamic_compile_owner_preserves_byte_source_and_future_isolation():
         dont_inherit=True,
     )
 
-    namespace: dict[str, object] = {}
-    exec(code, namespace)
+    namespace = gateway.execute_code_object(
+        code,
+        globals_dict={},
+        source="unit.source_comparison",
+    )
     assert namespace["VALUE"] == 1
 
 

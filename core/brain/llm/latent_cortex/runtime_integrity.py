@@ -330,8 +330,13 @@ def _fast_weight_erase(
     fast_weights_applied: bool,
     fast_weight_learning: Mapping[str, Any] | None,
     fast_weight_cleanup: Mapping[str, Any] | None,
+    fast_weights_attach_attempted: bool = False,
 ) -> dict[str, Any]:
-    required = fast_weights_applied is True
+    # An attach that mutated some layers and then raised leaves
+    # fast_weights_applied False while the resident model is dirty. Keying
+    # "cleanup required" off the completed attach made the proof optional in
+    # exactly the state that needs it.
+    required = fast_weights_applied is True or fast_weights_attach_attempted is True
     learning: dict[str, Any] = {}
     if isinstance(fast_weight_learning, Mapping):
         try:
@@ -428,16 +433,18 @@ def _cache_proof(
     *,
     fast_weights_applied: bool,
     probe_cache: Mapping[str, Any] | None,
+    fast_weights_attach_attempted: bool = False,
 ) -> dict[str, Any]:
     cache = dict(probe_cache) if isinstance(probe_cache, Mapping) else {}
     enabled = bool(cache)
     invalidations = list(cache.get("invalidations") or []) if enabled else []
     entries = cache.get("entries", 0)
+    touched = fast_weights_applied or fast_weights_attach_attempted
     safe = bool(
         type(entries) is int
         and entries >= 0
         and (
-            not fast_weights_applied
+            not touched
             or not enabled
             or (
                 entries == 0
@@ -498,6 +505,7 @@ def build_engine_runtime_integrity(
     fast_weight_learning: Mapping[str, Any] | None,
     fast_weight_cleanup: Mapping[str, Any] | None,
     probe_cache: Mapping[str, Any] | None,
+    fast_weights_attach_attempted: bool = False,
 ) -> dict[str, Any]:
     checkpoint_payload = {
         "required": bool(checkpoint.get("required")),
@@ -562,10 +570,12 @@ def build_engine_runtime_integrity(
             fast_weights_applied=fast_weights_applied,
             fast_weight_learning=fast_weight_learning,
             fast_weight_cleanup=fast_weight_cleanup,
+            fast_weights_attach_attempted=fast_weights_attach_attempted,
         ),
         "cache": _cache_proof(
             fast_weights_applied=fast_weights_applied,
             probe_cache=probe_cache,
+            fast_weights_attach_attempted=fast_weights_attach_attempted,
         ),
         "worker": {
             "bound": False,
@@ -752,6 +762,7 @@ def validate_runtime_integrity_receipt(
     expected_input_tokens_sha256: str | None = None,
     expected_worker_identity: Mapping[str, Any] | None = None,
     expected_fast_weights_applied: bool | None = None,
+    expected_fast_weights_attach_attempted: bool | None = None,
     expected_checkpoint_fingerprint: str | None = None,
     expected_checkpoint_method: str | None = None,
     expected_checkpoint_file_count: int | None = None,
@@ -1010,9 +1021,13 @@ def validate_runtime_integrity_receipt(
         raise ValueError("runtime-integrity erase verdict does not reconstruct")
     if (
         expected_fast_weights_applied is not None
-        and erase["required"] is not expected_fast_weights_applied
+        or expected_fast_weights_attach_attempted is not None
     ):
-        raise ValueError("runtime-integrity fast-weight scope mismatch")
+        expected_scope = bool(expected_fast_weights_applied) or bool(
+            expected_fast_weights_attach_attempted
+        )
+        if erase["required"] is not expected_scope:
+            raise ValueError("runtime-integrity fast-weight scope mismatch")
     cache = value["cache"]
     if not isinstance(cache, Mapping) or set(cache) != {
         "enabled",
@@ -1150,6 +1165,7 @@ def runtime_integrity_safe(
     expected_input_tokens_sha256: str | None = None,
     expected_worker_identity: Mapping[str, Any] | None = None,
     expected_fast_weights_applied: bool | None = None,
+    expected_fast_weights_attach_attempted: bool | None = None,
     expected_checkpoint_fingerprint: str | None = None,
     expected_checkpoint_method: str | None = None,
     expected_checkpoint_file_count: int | None = None,
@@ -1162,6 +1178,9 @@ def runtime_integrity_safe(
             expected_input_tokens_sha256=expected_input_tokens_sha256,
             expected_worker_identity=expected_worker_identity,
             expected_fast_weights_applied=expected_fast_weights_applied,
+            expected_fast_weights_attach_attempted=(
+                expected_fast_weights_attach_attempted
+            ),
             expected_checkpoint_fingerprint=expected_checkpoint_fingerprint,
             expected_checkpoint_method=expected_checkpoint_method,
             expected_checkpoint_file_count=expected_checkpoint_file_count,
@@ -1181,6 +1200,7 @@ def runtime_integrity_claim_verdict(
     expected_input_tokens_sha256: str | None = None,
     expected_worker_identity: Mapping[str, Any] | None = None,
     expected_fast_weights_applied: bool | None = None,
+    expected_fast_weights_attach_attempted: bool | None = None,
     expected_checkpoint_fingerprint: str | None = None,
     expected_checkpoint_method: str | None = None,
     expected_checkpoint_file_count: int | None = None,
@@ -1195,6 +1215,9 @@ def runtime_integrity_claim_verdict(
             expected_input_tokens_sha256=expected_input_tokens_sha256,
             expected_worker_identity=expected_worker_identity,
             expected_fast_weights_applied=expected_fast_weights_applied,
+            expected_fast_weights_attach_attempted=(
+                expected_fast_weights_attach_attempted
+            ),
             expected_checkpoint_fingerprint=expected_checkpoint_fingerprint,
             expected_checkpoint_method=expected_checkpoint_method,
             expected_checkpoint_file_count=expected_checkpoint_file_count,

@@ -7,6 +7,8 @@ import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Final
 
+from core.runtime.errors import record_degradation
+
 from core.brain.llm.unified_recurrent_shadow_probe_contract import (
     seal_shadow_probe_request,
     shadow_probe_receipt_errors,
@@ -340,6 +342,25 @@ def adjudicate_shadow_canary(
     return {**body, "verdict_sha256": _sha(body)}
 
 
+# A probe is caller-supplied and reaches a resident worker over IPC, so the
+# failure surface belongs to the transport rather than to this module.
+# asyncio.CancelledError derives from BaseException and passes through
+# untouched, which is what a cancelled sweep needs.
+_PROBE_TRANSPORT_FAILURES: Final = (
+    ArithmeticError,
+    AssertionError,
+    AttributeError,
+    EOFError,
+    ImportError,
+    LookupError,
+    MemoryError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+
 async def run_shadow_canary(
     cases: Sequence[Mapping[str, Any]],
     *,
@@ -383,7 +404,17 @@ async def run_shadow_canary(
                 request["expected_token_ids"],
                 max_tokens=request["max_tokens"],
             )
-        except Exception as exc:  # The verdict records infrastructure failure.
+        except _PROBE_TRANSPORT_FAILURES as exc:
+            # Enumerated rather than blanket. A transport or worker failure is
+            # a canary observation; an exception class this boundary does not
+            # know is a defect in the caller's probe, and turning that into a
+            # tidy "probe_exception" row hides it inside a passing sweep.
+            record_degradation(
+                "unified_recurrent_shadow_canary",
+                exc,
+                action="recorded the case as a probe failure and continued the sweep",
+                severity="warning",
+            )
             result = {
                 "status": "probe_exception",
                 "reason": f"{type(exc).__name__}:{str(exc)[:160]}",

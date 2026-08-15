@@ -1253,6 +1253,7 @@ def validate_causal_recurrent_transition_pair_receipt(
             expected_episode_id=normalized["episode_id"],
             expected_input_tokens_sha256=transition["prompt_tokens_sha256"],
             expected_fast_weights_applied=False,
+            expected_fast_weights_attach_attempted=False,
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("causal_recurrent_pair_runtime_integrity_invalid") from exc
@@ -1814,6 +1815,9 @@ def sample_recurrent_completion(
         expected_episode_id=result.receipt.episode_id,
         expected_input_tokens_sha256=result.receipt.input_tokens_sha256,
         expected_fast_weights_applied=result.receipt.fast_weights_applied,
+        expected_fast_weights_attach_attempted=(
+            result.receipt.fast_weights_attach_attempted
+        ),
         expected_checkpoint_fingerprint=(result.receipt.checkpoint_fingerprint),
         expected_checkpoint_method=(result.receipt.checkpoint_fingerprint_method),
         expected_checkpoint_file_count=(result.receipt.checkpoint_file_count),

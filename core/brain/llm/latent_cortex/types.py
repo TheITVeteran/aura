@@ -1541,6 +1541,11 @@ class EpisodeReceipt:
     latent_opt_verifier: dict[str, Any] = field(default_factory=dict)
     verifier_probe_max_tokens: int = 48
     verifier_probe_contract: str = "none"
+    # True from the moment the first resident layer is touched. It says the
+    # model MAY be dirty; fast_weights_applied says the attach completed.
+    # A partial attach sets the first and not the second, and that gap is
+    # exactly the state a vanilla fallback must refuse to decode against.
+    fast_weights_attach_attempted: bool = False
     fast_weights_applied: bool = False
     fast_weights_layers: int = 0
     fast_weight_optimization_attempts: int = 0
@@ -1772,6 +1777,9 @@ class EpisodeReceipt:
                     expected_episode_id=self.episode_id,
                     expected_input_tokens_sha256=self.input_tokens_sha256,
                     expected_fast_weights_applied=self.fast_weights_applied,
+                    expected_fast_weights_attach_attempted=(
+                        self.fast_weights_attach_attempted
+                    ),
                     expected_checkpoint_fingerprint=(
                         self.checkpoint_fingerprint
                     ),
@@ -1930,6 +1938,9 @@ class EpisodeReceipt:
             ),
             "verifier_probe_max_tokens": self.verifier_probe_max_tokens,
             "verifier_probe_contract": self.verifier_probe_contract,
+            "fast_weights_attach_attempted": (
+                self.fast_weights_attach_attempted
+            ),
             "fast_weights_applied": self.fast_weights_applied,
             "fast_weights_layers": self.fast_weights_layers,
             "fast_weight_optimization_attempts": self.fast_weight_optimization_attempts,

@@ -40,7 +40,10 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+from core.brain.llm.latent_cortex.engine import (
+    LatentCortexEngine,
+    LatentEngineBusyError,
+)
 from core.brain.llm.latent_cortex.schedules import ScheduleLibrary
 from core.brain.llm.latent_cortex.types import (
     BranchConfig,
@@ -1078,6 +1081,16 @@ def handle_latent_reason(
                         action_state_runtime.resident_worker_origin_binding
                     ),
                 )
+    except LatentEngineBusyError as exc:
+        # Single-flight refusal, not a broken episode. Nothing touched the
+        # model, so the worker stays usable and the caller can come back.
+        return {
+            "status": "error",
+            "message": f"latent_reason refused: {exc}",
+            "retryable": True,
+            "requires_worker_recycle": False,
+            "requires_cache_clear": False,
+        }
     finally:
         if action_state_store is not None:
             action_state_store.close()
@@ -1198,6 +1211,9 @@ def handle_latent_reason(
         expected_input_tokens_sha256=receipt.input_tokens_sha256,
         expected_worker_identity=worker_identity,
         expected_fast_weights_applied=receipt.fast_weights_applied,
+        expected_fast_weights_attach_attempted=(
+            receipt.fast_weights_attach_attempted
+        ),
         expected_checkpoint_fingerprint=receipt.checkpoint_fingerprint,
         expected_checkpoint_method=receipt.checkpoint_fingerprint_method,
         expected_checkpoint_file_count=receipt.checkpoint_file_count,
@@ -1231,7 +1247,11 @@ def handle_latent_reason(
     # Compatibility booleans remain telemetry only. The measured, worker-bound
     # proof is the sole authority for cache retention and process reuse.
     body["requires_cache_clear"] = bool(
-        result.receipt.fast_weights_applied and not integrity_safe
+        (
+            result.receipt.fast_weights_applied
+            or result.receipt.fast_weights_attach_attempted
+        )
+        and not integrity_safe
     )
     body["requires_worker_recycle"] = not integrity_safe
     if not integrity_safe:

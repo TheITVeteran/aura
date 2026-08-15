@@ -914,7 +914,7 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
         runner,
         cache,
         P_END,
-        context_seeds=[("world_model", mx.ones((64,)))],
+        context_seeds=[(0, "world_model", mx.ones((64,)))],
     )
 
     assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)

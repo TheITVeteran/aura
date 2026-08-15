@@ -2390,6 +2390,9 @@ def _bind_sweep_runtime_identity(
         expected_input_tokens_sha256=receipt["input_tokens_sha256"],
         expected_worker_identity=worker_identity,
         expected_fast_weights_applied=receipt.get("fast_weights_applied") is True,
+        expected_fast_weights_attach_attempted=(
+            receipt.get("fast_weights_attach_attempted") is True
+        ),
         expected_checkpoint_fingerprint=receipt["checkpoint_fingerprint"],
         expected_checkpoint_method=receipt["checkpoint_fingerprint_method"],
         expected_checkpoint_file_count=receipt["checkpoint_file_count"],
