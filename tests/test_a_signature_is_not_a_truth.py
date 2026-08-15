@@ -320,3 +320,408 @@ def test_the_self_digest_alone_still_proves_only_consistency():
 
     with pytest.raises(ValueError, match="digest mismatch"):
         frontier_gap._validate_model_manifest(manifest)
+
+
+# ─────────────────────────── the counters come from the evidence
+
+
+def _worker(fallbacks=(), output_tokens=8):
+    return {
+        "payload": {
+            "fallbacks_used": list(fallbacks),
+            "resource_usage": {"output_tokens": output_tokens},
+        }
+    }
+
+
+def _correctness(checked=True):
+    return {"payload": {"checked": checked, "correct": True}}
+
+
+def test_a_clean_run_recomputes_to_zero():
+    summary = frontier_gap._recomputed_execution_summary(
+        evidence_items=[{"answer": "42"}, {"answer": "7"}],
+        worker_receipts=[_worker(), _worker()],
+        correctness_receipts=[_correctness(), _correctness()],
+    )
+
+    assert summary == {
+        "attempted": 2,
+        "completed": 2,
+        "failed": 0,
+        "invalid": 0,
+        "empty": 0,
+        "disqualifying_fallbacks": 0,
+    }
+
+
+def test_an_empty_answer_is_counted_even_when_the_report_says_zero():
+    summary = frontier_gap._recomputed_execution_summary(
+        evidence_items=[{"answer": "   "}],
+        worker_receipts=[_worker()],
+        correctness_receipts=[_correctness()],
+    )
+
+    assert summary["empty"] == 1
+
+
+def test_an_execution_error_is_counted():
+    summary = frontier_gap._recomputed_execution_summary(
+        evidence_items=[{"answer": "x", "execution_error": "backend died"}],
+        worker_receipts=[_worker()],
+        correctness_receipts=[_correctness()],
+    )
+
+    assert summary["failed"] == 1
+
+
+def test_an_unchecked_verdict_is_counted_invalid():
+    summary = frontier_gap._recomputed_execution_summary(
+        evidence_items=[{"answer": "x"}],
+        worker_receipts=[_worker()],
+        correctness_receipts=[_correctness(checked=False)],
+    )
+
+    assert summary["invalid"] == 1
+
+
+def test_worker_fallbacks_are_counted_from_the_receipts():
+    summary = frontier_gap._recomputed_execution_summary(
+        evidence_items=[{"answer": "x"}],
+        worker_receipts=[_worker(fallbacks=("cloud_route", "cached_answer"))],
+        correctness_receipts=[_correctness()],
+    )
+
+    assert summary["disqualifying_fallbacks"] == 2
+
+
+def test_a_run_that_used_a_fallback_is_not_claim_eligible():
+    """A fallback means the measured lane is not the lane that answered."""
+    with pytest.raises(ValueError, match="used fallbacks"):
+        frontier_gap._reject_worker_fallbacks(
+            [_worker(fallbacks=("cloud_route",))], subject="capability candidate"
+        )
+
+
+def test_a_run_with_no_fallbacks_passes():
+    frontier_gap._reject_worker_fallbacks(
+        [_worker(), _worker()], subject="frontier reference"
+    )
+
+
+def test_the_summary_recomputation_is_wired_into_the_validator():
+    source = inspect.getsource(frontier_gap)
+
+    assert "_recomputed_execution_summary(" in source
+    assert "capability execution summary contradicts the item evidence" in source
+    assert source.count("_reject_worker_fallbacks(") == 3
+
+
+# ─────────────────────────── the answer is retokenized
+
+
+def _output(item_id, answer):
+    return {"item_id": item_id, "answer": answer}
+
+
+def test_without_a_tokenizer_the_count_stays_worker_asserted():
+    measurement = frontier_gap.measure_output_tokens(
+        [_output("a", "hello")], [_worker(output_tokens=1)], token_counter=None
+    )
+
+    assert measurement["measured"] is False
+    assert measurement["reason"] == "no_effective_tokenizer_supplied"
+
+
+def test_a_measured_count_that_agrees_is_clean():
+    measurement = frontier_gap.measure_output_tokens(
+        [_output("a", "one two three")],
+        [_worker(output_tokens=3)],
+        token_counter=lambda text: len(text.split()),
+    )
+
+    assert measurement["measured"] is True
+    assert measurement["over_budget"] == []
+    assert measurement["disagreements"] == []
+
+
+def test_a_long_answer_with_a_small_claimed_count_is_caught():
+    """256 KiB of text could arrive with a claimed count at or below 256."""
+    answer = " ".join(str(index) for index in range(400))
+
+    measurement = frontier_gap.measure_output_tokens(
+        [_output("a", answer)],
+        [_worker(output_tokens=12)],
+        token_counter=lambda text: len(text.split()),
+    )
+
+    assert measurement["over_budget"] == ["a:400"]
+    assert measurement["disagreements"] == ["a:12!=400"]
+
+
+def test_the_budget_it_measures_against_is_the_matched_one():
+    from core.brain.frontier_evidence_v5 import MATCHED_BUDGET
+
+    measurement = frontier_gap.measure_output_tokens(
+        [], [], token_counter=lambda text: len(text)
+    )
+
+    assert measurement["budget_max_tokens"] == int(MATCHED_BUDGET["max_tokens"])
+
+
+def test_the_validator_can_require_a_measured_count():
+    parameters = inspect.signature(frontier_gap.validate_capability_report).parameters
+
+    assert "output_token_counter" in parameters
+    assert "require_measured_output_tokens" in parameters
+
+
+def test_freshness_reaches_both_the_challenge_and_the_reference():
+    source = inspect.getsource(frontier_gap.validate_capability_report)
+
+    assert source.count("require_fresh_challenge=require_fresh_challenge") == 1
+    assert source.count("require_fresh=require_fresh_challenge") == 1
+    assert source.count("verification_time_unix=verification_time_unix") == 2
+
+
+# ─────────────────────────── the stratum is the measurement's identity
+
+
+def _stratum(**overrides):
+    base = {
+        "per_class": 4,
+        "reference_runtime_manifest_sha256": "a" * 64,
+        "seed": 11,
+        "challenge_bundle_sha256": "b" * 64,
+        "reference_scores": {"integer": 0.5},
+    }
+    base.update(overrides)
+    return frontier_gap.comparison_stratum_sha256(**base)
+
+
+def test_the_same_measurement_gives_the_same_stratum():
+    assert _stratum() == _stratum()
+
+
+def test_a_different_seed_is_a_different_stratum():
+    """Different task draws are a different benchmark, not a model change."""
+    assert _stratum(seed=12) != _stratum()
+
+
+def test_a_different_challenge_is_a_different_stratum():
+    assert _stratum(challenge_bundle_sha256="c" * 64) != _stratum()
+
+
+def test_a_different_reference_result_is_a_different_stratum():
+    assert _stratum(reference_scores={"integer": 0.75}) != _stratum()
+
+
+def test_the_builder_and_the_validator_use_one_definition():
+    source = inspect.getsource(frontier_gap)
+
+    assert source.count("comparison_stratum_sha256(") == 3
+
+
+# ─────────────────────────── restore is bounded
+
+
+def test_an_ordinary_blob_restores():
+    blob = {"evidence_class": "x", "items": [{"answer": "y"}]}
+
+    assert frontier_gap._bounded_evidence_blob(blob, digest="d" * 64) is blob
+
+
+def test_a_blob_that_is_not_an_object_is_refused():
+    with pytest.raises(ValueError, match="missing or altered"):
+        frontier_gap._bounded_evidence_blob(["not", "a", "report"], digest="d" * 64)
+
+
+def test_a_deeply_nested_blob_is_refused():
+    payload: dict = {"leaf": 1}
+    for _ in range(frontier_gap.MAX_EVIDENCE_BLOB_DEPTH + 4):
+        payload = {"next": payload}
+
+    with pytest.raises(ValueError, match="nests deeper"):
+        frontier_gap._bounded_evidence_blob(payload, digest="d" * 64)
+
+
+def test_an_enormous_blob_is_refused():
+    payload = {"items": ["x" * 1024] * (frontier_gap.MAX_EVIDENCE_BLOB_BYTES // 512)}
+
+    with pytest.raises(ValueError, match="restore bound"):
+        frontier_gap._bounded_evidence_blob(payload, digest="d" * 64)
+
+
+def test_the_bound_runs_before_the_digest_is_computed():
+    source = inspect.getsource(frontier_gap.GapLedger.from_dict)
+    bound = source.index("_bounded_evidence_blob(snapshot")
+    digest = source.index("sha256_json(snapshot) != digest")
+
+    assert bound < digest
+
+
+# ─────────────────────────── control and rejected evidence
+
+
+def _non_capability(**overrides):
+    report = {
+        "schema_version": frontier_gap.SCHEMA_VERSION,
+        "battery_version": frontier_gap.BATTERY_VERSION,
+        "evidence_class": frontier_gap.REJECTED_EVIDENCE_CLASS,
+        "capability_claim_eligible": False,
+        "generated_at_unix": 1_700_000_000.0,
+        "overall_candidate_score": 0.5,
+        "effective_n": 2,
+    }
+    report.update(overrides)
+    return report
+
+
+def test_a_well_formed_rejected_report_validates():
+    assert frontier_gap.validate_non_capability_report(_non_capability())
+
+
+def test_a_claim_eligible_flag_is_refused():
+    with pytest.raises(ValueError, match="cannot be claim eligible"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(capability_claim_eligible=True)
+        )
+
+
+def test_a_capability_class_is_refused_here():
+    with pytest.raises(ValueError, match="evidence class is invalid"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(evidence_class=frontier_gap.CAPABILITY_EVIDENCE_CLASS)
+        )
+
+
+@pytest.mark.parametrize("score", [-0.1, 1.5])
+def test_a_score_outside_the_battery_range_is_refused(score):
+    with pytest.raises(ValueError, match="outside"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(overall_candidate_score=score)
+        )
+
+
+def test_items_must_match_the_effective_sample_count():
+    with pytest.raises(ValueError, match="contradicts effective_n"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(items=[{"answer": "one"}])
+        )
+
+
+def test_a_retained_output_needs_no_invented_schema():
+    """These classes retain outputs for audit; they were never capability
+    items, so demanding a capability item shape would reject real evidence."""
+    assert frontier_gap.validate_non_capability_report(
+        _non_capability(items=[{"answer": "one"}, {"answer": "two"}])
+    )
+
+
+def test_a_declared_index_must_be_the_items_own_position():
+    with pytest.raises(ValueError, match="contradicts its position"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(items=[{"index": 1}, {"index": 1}])
+        )
+
+
+def test_a_declared_task_class_must_exist():
+    with pytest.raises(ValueError, match="unknown task class"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(items=[{"task_class": "telepathy"}, {}])
+        )
+
+
+def test_fully_graded_items_must_agree_with_the_summary_score():
+    with pytest.raises(ValueError, match="contradicts its item verdicts"):
+        frontier_gap.validate_non_capability_report(
+            _non_capability(items=[{"correct": True}, {"correct": True}])
+        )
+
+
+def test_partially_graded_items_make_no_claim_to_contradict():
+    assert frontier_gap.validate_non_capability_report(
+        _non_capability(items=[{"correct": True}, {"answer": "ungraded"}])
+    )
+
+
+# ─────────────────────────── the prune count is committed to
+
+
+def test_a_fresh_ledger_has_no_prune_chain():
+    ledger = frontier_gap.GapLedger()
+
+    assert ledger.pruned_chain_sha256 == ""
+    assert ledger.to_dict()["retention"]["pruned_chain_sha256"] == ""
+
+
+def test_a_prune_chain_without_a_count_is_refused():
+    ledger = frontier_gap.GapLedger()
+    payload = ledger.to_dict()
+    payload["retention"]["pruned_chain_sha256"] = "e" * 64
+
+    with pytest.raises(ValueError, match="contradicts a zero count"):
+        frontier_gap.GapLedger.from_dict(payload)
+
+
+def test_the_chain_commits_to_the_running_count():
+    """The anchor alone is one digest; the count sits inside every link, so
+    the two cannot be written independently."""
+    source = inspect.getsource(frontier_gap.GapLedger.add)
+
+    assert '"previous_pruned_chain_sha256": self.pruned_chain_sha256' in source
+    assert '"pruned_count": self.pruned_count' in source
+
+
+def test_an_older_retention_block_without_the_chain_still_restores():
+    """Only a ledger that actually pruned is required to carry it."""
+    ledger = frontier_gap.GapLedger()
+    payload = ledger.to_dict()
+    payload["retention"].pop("pruned_chain_sha256")
+
+    assert frontier_gap.GapLedger.from_dict(payload).pruned_count == 0
+
+
+# ─────────────────────────── pruned blobs are reclaimable
+
+
+def test_the_ledger_accepts_a_blob_remover():
+    parameters = inspect.signature(frontier_gap.GapLedger.add).parameters
+
+    assert "evidence_blob_remover" in parameters
+
+
+def test_a_digest_still_referenced_is_never_removed():
+    source = inspect.getsource(frontier_gap.GapLedger.add)
+
+    assert "still_referenced" in source
+    assert "if not digest or digest in still_referenced:" in source
+
+
+def test_a_failed_reclaim_does_not_break_the_chain():
+    source = inspect.getsource(frontier_gap.GapLedger.add)
+
+    assert "could not reclaim pruned evidence" in source
+
+
+def test_erased_history_is_diagnosed_before_the_missing_chain():
+    """Both refusals are correct; the sharper one has to be the one reported."""
+    from core.brain.frontier_gap import CONTROL_EVIDENCE_CLASS, GapLedger
+
+    payload = {
+        "schema_version": frontier_gap.SCHEMA_VERSION,
+        "evidence_class": CONTROL_EVIDENCE_CLASS,
+        "capability_claim_eligible": False,
+        "retention": {
+            "max_entries": 8,
+            "pruned_count": 5,
+            "pruned_through_sha256": "a" * 64,
+            "retains_outputs_in_content_addressed_blobs": True,
+        },
+        "head_entry_sha256": "a" * 64,
+        "runs": [],
+        "trend": {},
+    }
+
+    with pytest.raises(ValueError, match="retains no entries"):
+        GapLedger.from_dict(payload, evidence_class=CONTROL_EVIDENCE_CLASS)

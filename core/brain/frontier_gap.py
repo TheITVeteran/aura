@@ -550,6 +550,283 @@ def build_battery(
     return items
 
 
+OUTPUT_TOKEN_MEASUREMENT_SCHEMA = "aura.frontier_gap.output_token_measurement.v1"
+
+
+def comparison_stratum_sha256(
+    *,
+    per_class: int,
+    reference_runtime_manifest_sha256: str,
+    seed: int,
+    challenge_bundle_sha256: str,
+    reference_scores: Mapping[str, float],
+) -> str:
+    """The identity of a comparable measurement.
+
+    A trend only means something when its points measured the same thing. The
+    stratum bound battery version, per-class count, reference runtime and the
+    protocol — and left out the seed, the challenge and the reference's own
+    realized scores. Runs against different task draws, and against different
+    reference results, entered one stratum, so a change in benchmark difficulty
+    read as a change in the model.
+    """
+
+    return sha256_json(
+        {
+            "battery_version": BATTERY_VERSION,
+            "per_class": int(per_class),
+            "reference_runtime_manifest_sha256": str(reference_runtime_manifest_sha256),
+            "protocol_manifest_sha256": PROTOCOL_MANIFEST_SHA256,
+            "seed": int(seed),
+            "challenge_bundle_sha256": str(challenge_bundle_sha256),
+            "reference_scores": {
+                str(key): round(float(value), 6)
+                for key, value in sorted(dict(reference_scores).items())
+            },
+        }
+    )
+
+# A restored evidence blob is arbitrary content the store handed back, and
+# canonicalizing it is O(size) before any validator sees it. These bound the
+# work: a capability report is a fixed shape with per-item evidence, so a blob
+# far outside it is not a report that this ledger ever wrote.
+MAX_EVIDENCE_BLOB_BYTES = 8 * 1024 * 1024
+MAX_EVIDENCE_BLOB_DEPTH = 32
+
+
+def validate_non_capability_report(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Structural validation for control and rejected evidence.
+
+    These classes are durably indexed as SUPPORTED evidence, and a handful of
+    scalar checks let malformed content in beside a real capability report.
+    They are deliberately not claim-eligible, so they carry no signatures to
+    verify — what can be checked is that the summary is internally coherent and
+    that any item evidence describes the classes and counts it claims.
+    """
+
+    report = json.loads(canonical_json_bytes(snapshot))
+    if report.get("capability_claim_eligible") is not False:
+        raise ValueError("non-capability evidence cannot be claim eligible")
+    if report.get("evidence_class") not in (
+        CONTROL_EVIDENCE_CLASS,
+        REJECTED_EVIDENCE_CLASS,
+    ):
+        raise ValueError("non-capability evidence class is invalid")
+    if (
+        report.get("schema_version") != SCHEMA_VERSION
+        or report.get("battery_version") != BATTERY_VERSION
+    ):
+        raise ValueError("non-capability evidence version is invalid")
+    generated_at = _finite_float(
+        report.get("generated_at_unix"), field_name="non-capability generated time"
+    )
+    if generated_at < 0.0:
+        raise ValueError("non-capability evidence predates the epoch")
+    score = _finite_float(
+        report.get("overall_candidate_score"), field_name="non-capability score"
+    )
+    # A score is a proportion of the battery. Outside [0, 1] it is not a score
+    # this battery could have produced, whatever produced it.
+    if not 0.0 <= score <= 1.0:
+        raise ValueError("non-capability evidence score is outside [0, 1]")
+    effective_n = report.get("effective_n")
+    if (
+        isinstance(effective_n, bool)
+        or not isinstance(effective_n, int)
+        or effective_n <= 0
+    ):
+        raise ValueError("non-capability effective sample count is invalid")
+    # A gap may be computed locally, but it is never claim evidence here: the
+    # ledger nulls it in the index entry. What is checked is that a present
+    # value is a real number rather than an arbitrary object.
+    if report.get("overall_gap") is not None:
+        _finite_float(report.get("overall_gap"), field_name="non-capability gap")
+    items = report.get("items")
+    if items is not None:
+        if not isinstance(items, list) or len(items) != effective_n:
+            raise ValueError("non-capability item evidence contradicts effective_n")
+        # These classes retain outputs for audit rather than proving a claim,
+        # so they carry no fixed item schema. What is claimed is what is
+        # checked: a declared index must be the item's own position, a
+        # declared task class must exist, an answer must be a bounded string,
+        # and a verdict must be a boolean.
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                raise ValueError("non-capability item evidence is malformed")
+            if "index" in item and item.get("index") != index:
+                raise ValueError("non-capability item index contradicts its position")
+            if "task_class" in item and item["task_class"] not in _BATTERY_BUILDERS:
+                raise ValueError("non-capability item names an unknown task class")
+            if "answer" in item and (
+                not isinstance(item["answer"], str)
+                or len(item["answer"].encode()) > 256 * 1024
+            ):
+                raise ValueError("non-capability item answer is malformed")
+            if "correct" in item and not isinstance(item["correct"], bool):
+                raise ValueError("non-capability item verdict is not a boolean")
+        verdicts = [item["correct"] for item in items if "correct" in item]
+        if len(verdicts) == len(items) and items:
+            # Every item graded itself, so the summary has something to be
+            # contradicted BY.
+            recomputed = round(sum(1 for value in verdicts if value) / len(items), 4)
+            if abs(recomputed - round(score, 4)) > 1e-9:
+                raise ValueError(
+                    "non-capability evidence score contradicts its item verdicts"
+                )
+    return report
+
+
+def _is_sha256_hex(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _bounded_evidence_blob(snapshot: Any, *, digest: str) -> dict[str, Any]:
+    """Refuse a blob too large or too deeply nested to canonicalize safely.
+
+    ``from_dict`` resolved each snapshot and hashed it with no bound at all, so
+    a content store returning a huge nested object forced expensive
+    canonicalization and a full capability validation before anything could
+    object.
+    """
+
+    if not isinstance(snapshot, dict):
+        raise ValueError("evidence blob is missing or altered")
+
+    def depth(value: Any, level: int = 0) -> int:
+        if level > MAX_EVIDENCE_BLOB_DEPTH:
+            raise ValueError(
+                f"evidence blob {digest[:12]} nests deeper than "
+                f"{MAX_EVIDENCE_BLOB_DEPTH} levels"
+            )
+        if isinstance(value, dict):
+            return max((depth(item, level + 1) for item in value.values()), default=level)
+        if isinstance(value, list):
+            return max((depth(item, level + 1) for item in value), default=level)
+        return level
+
+    depth(snapshot)
+    encoded = canonical_json_bytes(snapshot)
+    if len(encoded) > MAX_EVIDENCE_BLOB_BYTES:
+        raise ValueError(
+            f"evidence blob {digest[:12]} is {len(encoded)} bytes, over the "
+            f"{MAX_EVIDENCE_BLOB_BYTES}-byte restore bound"
+        )
+    return snapshot
+
+
+def measure_output_tokens(
+    outputs: list[Mapping[str, Any]],
+    worker_receipts: list[Mapping[str, Any]],
+    *,
+    token_counter: Callable[[str], int] | None,
+) -> dict[str, Any]:
+    """Recount every answer against the matched token budget.
+
+    Outputs may be 256 KiB of text while the only token count in evidence is
+    the worker's own signed ``resource_usage.output_tokens`` — so a very long
+    answer could arrive with a claimed count at or below the 256-token budget
+    and nothing would notice.
+
+    ``token_counter`` is the effective tokenizer. Without one the count stays
+    WORKER-ASSERTED, and the receipt says so instead of implying a measurement
+    that never happened.
+    """
+
+    if token_counter is None:
+        return {
+            "schema": OUTPUT_TOKEN_MEASUREMENT_SCHEMA,
+            "measured": False,
+            "reason": "no_effective_tokenizer_supplied",
+            "budget_max_tokens": int(MATCHED_BUDGET["max_tokens"]),
+            "over_budget": [],
+            "disagreements": [],
+        }
+    over_budget: list[str] = []
+    disagreements: list[str] = []
+    for output, receipt in zip(outputs, worker_receipts, strict=True):
+        answer = str(output.get("answer") or "")
+        counted = int(token_counter(answer))
+        claimed = int(
+            receipt["payload"].get("resource_usage", {}).get("output_tokens", -1)
+        )
+        item_id = str(output.get("item_id") or "")
+        if counted > int(MATCHED_BUDGET["max_tokens"]):
+            over_budget.append(f"{item_id}:{counted}")
+        if counted != claimed:
+            disagreements.append(f"{item_id}:{claimed}!={counted}")
+    return {
+        "schema": OUTPUT_TOKEN_MEASUREMENT_SCHEMA,
+        "measured": True,
+        "reason": "",
+        "budget_max_tokens": int(MATCHED_BUDGET["max_tokens"]),
+        "over_budget": sorted(over_budget)[:8],
+        "disagreements": sorted(disagreements)[:8],
+    }
+
+
+def _reject_worker_fallbacks(worker_receipts: list[dict[str, Any]], *, subject: str) -> None:
+    """A fallback means the measured lane is not the lane that answered.
+
+    Worker receipts carry ``fallbacks_used`` and validation only checked that
+    the list was WELL-FORMED. A claim-eligible run has to have used the runtime
+    it attested to; a report could otherwise carry a full fallback list and a
+    separate disqualifying_fallbacks counter reading zero.
+    """
+
+    used: list[str] = []
+    for receipt in worker_receipts:
+        for value in receipt["payload"].get("fallbacks_used") or ():
+            used.append(str(value))
+    if used:
+        raise ValueError(
+            f"{subject} used fallbacks and is not claim-eligible: "
+            f"{','.join(sorted(set(used))[:4])}"
+        )
+
+
+def _recomputed_execution_summary(
+    *,
+    evidence_items: list[dict[str, Any]],
+    worker_receipts: list[dict[str, Any]],
+    correctness_receipts: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Derive the execution counters from the item evidence itself.
+
+    The report supplies attempted/completed/failed/invalid/empty and a
+    disqualifying-fallback count, and validation only compared them against
+    len(items) and zero. Nothing recomputed them, so clean counters could sit
+    over contradictory item evidence.
+    """
+
+    empty = 0
+    invalid = 0
+    failed = 0
+    fallbacks = 0
+    for evidence, worker, correctness in zip(
+        evidence_items, worker_receipts, correctness_receipts, strict=True
+    ):
+        answer = str(evidence.get("answer") or "")
+        if not answer.strip():
+            empty += 1
+        if evidence.get("execution_error"):
+            failed += 1
+        if correctness["payload"].get("checked") is not True:
+            invalid += 1
+        fallbacks += len(worker["payload"].get("fallbacks_used") or ())
+    return {
+        "attempted": len(evidence_items),
+        "completed": len(evidence_items),
+        "failed": failed,
+        "invalid": invalid,
+        "empty": empty,
+        "disqualifying_fallbacks": fallbacks,
+    }
+
+
 def _regrade_against_deterministic_grader(
     *,
     item: "BatteryItem",
@@ -880,6 +1157,7 @@ def validate_reference_artifact(
         correctness_receipts=correctness_receipts,
         run_envelope=run,
     )
+    _reject_worker_fallbacks(worker_receipts, subject="frontier reference")
     correct_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     count_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     for item, receipt, output in zip(
@@ -908,6 +1186,21 @@ def validate_reference_artifact(
     measured_at = _finite_float(
         signed.get("measured_at_unix"), field_name="reference measurement time"
     )
+    # A measurement time that only has to be finite is not a chronology: a
+    # negative value passed, and nothing compared it with the run it claims to
+    # describe or with the challenge that had to be revealed first.
+    run_started = float(run["payload"]["started_at_unix"])
+    run_completed = float(run["payload"]["completed_at_unix"])
+    challenge_revealed = float(challenge["revealed_at_unix"])
+    challenge_expires = float(challenge["expires_at_unix"])
+    if measured_at < 0.0:
+        raise ValueError("frontier reference measurement time precedes the epoch")
+    if run_started < challenge_revealed:
+        raise ValueError("frontier reference run began before the challenge was revealed")
+    if measured_at + 0.25 < run_completed:
+        raise ValueError("frontier reference was measured before its own run completed")
+    if challenge_expires and run_started > challenge_expires:
+        raise ValueError("frontier reference run began after the challenge expired")
     signer = envelope["signer"]
     return ReferenceEvidence(
         model_id=model_id,
@@ -1192,15 +1485,16 @@ async def run_battery(
         "effective_runtime_manifest": None,
         "source_identity": None,
         "comparison_stratum_sha256": (
-            sha256_json(
-                {
-                    "battery_version": BATTERY_VERSION,
-                    "per_class": per_class,
-                    "reference_runtime_manifest_sha256": reference.effective_runtime_manifest[
-                        "manifest_sha256"
-                    ],
-                    "protocol_manifest_sha256": PROTOCOL_MANIFEST_SHA256,
-                }
+            comparison_stratum_sha256(
+                per_class=per_class,
+                reference_runtime_manifest_sha256=(
+                    reference.effective_runtime_manifest["manifest_sha256"]
+                ),
+                seed=seed,
+                # The same digest validate_challenge_bundle computes over the
+                # bundle it was handed.
+                challenge_bundle_sha256=sha256_json(dict(reference.challenge)),
+                reference_scores=reference.scores,
             )
             if reference
             else None
@@ -1519,6 +1813,10 @@ def validate_capability_report(
     model_manifest_resolver: Callable[[Mapping[str, Any]], Mapping[str, Any]]
     | None = resolve_model_manifest,
     require_resolved_model: bool = False,
+    verification_time_unix: float | None = None,
+    require_fresh_challenge: bool = False,
+    output_token_counter: Callable[[str], int] | None = None,
+    require_measured_output_tokens: bool = False,
 ) -> dict[str, Any]:
     """Recompute a v5 claim from signed execution and correctness evidence.
 
@@ -1528,6 +1826,17 @@ def validate_capability_report(
     UNRESOLVED rather than pretending. ``require_resolved_model=True`` makes
     resolution a precondition of the claim, which is what a release gate wants
     and what an offline audit cannot have.
+
+    ``require_fresh_challenge`` reaches BOTH the challenge bundle and the
+    embedded reference. Neither path asked for freshness, so an expired
+    challenge and a historical run validated as current claim evidence, and a
+    caller who set the flag on one validator still got a stale answer through
+    the other.
+
+    ``output_token_counter`` is the effective tokenizer. Supply it and every
+    answer is recounted against the matched budget and the worker's own claim;
+    omit it and the count stays worker-asserted, which the returned report
+    states rather than implies.
     """
 
     if not isinstance(report, dict):
@@ -1662,6 +1971,8 @@ def validate_capability_report(
         trusted_run_keys=trusted_run_keys,
         trusted_release_keys=trusted_release_keys,
         expected_identity_freeze_sha256=expected_freeze,
+        verification_time_unix=verification_time_unix,
+        require_fresh_challenge=require_fresh_challenge,
     )
     if normalized.get("reference_basis") != TRUSTED_REFERENCE_BASIS:
         raise ValueError("capability report lacks a trusted signed reference")
@@ -1678,6 +1989,8 @@ def validate_capability_report(
         normalized["challenge"],
         trusted_evaluator_keys=trusted_evaluator_keys,
         expected_identity_freeze_sha256=expected_freeze,
+        verification_time_unix=verification_time_unix,
+        require_fresh=require_fresh_challenge,
     )
     manifest = battery_manifest(
         seed=seed,
@@ -1859,6 +2172,7 @@ def validate_capability_report(
         correctness_receipts=correctness_receipts,
         run_envelope=run,
     )
+    _reject_worker_fallbacks(worker_receipts, subject="capability candidate")
 
     correct_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     count_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
@@ -1913,15 +2227,14 @@ def validate_capability_report(
         raise ValueError("capability candidate score is not verifier-reproducible")
     if _finite_float(normalized.get("overall_gap"), field_name="overall gap") != expected_gap:
         raise ValueError("capability gap is not verifier-reproducible")
-    expected_stratum = sha256_json(
-        {
-            "battery_version": BATTERY_VERSION,
-            "per_class": per_class,
-            "reference_runtime_manifest_sha256": reference.effective_runtime_manifest[
-                "manifest_sha256"
-            ],
-            "protocol_manifest_sha256": PROTOCOL_MANIFEST_SHA256,
-        }
+    expected_stratum = comparison_stratum_sha256(
+        per_class=per_class,
+        reference_runtime_manifest_sha256=reference.effective_runtime_manifest[
+            "manifest_sha256"
+        ],
+        seed=seed,
+        challenge_bundle_sha256=challenge["bundle_sha256"],
+        reference_scores=reference.scores,
     )
     if normalized.get("comparison_stratum_sha256") != expected_stratum:
         raise ValueError("capability comparison stratum is invalid")
@@ -1935,6 +2248,44 @@ def validate_capability_report(
     for field_name in ("failed", "invalid", "empty", "disqualifying_fallbacks"):
         if execution.get(field_name) != 0:
             raise ValueError(f"capability execution has nonzero {field_name}")
+    # The counters above are the REPORT'S. Derive them from the item evidence
+    # and require agreement: clean counters could otherwise sit over
+    # contradictory answers, execution errors and fallback lists.
+    recomputed = _recomputed_execution_summary(
+        evidence_items=evidence_items,
+        worker_receipts=worker_receipts,
+        correctness_receipts=correctness_receipts,
+    )
+    disagreements = [
+        field_name
+        for field_name, value in recomputed.items()
+        if execution.get(field_name) != value
+    ]
+    if disagreements:
+        raise ValueError(
+            "capability execution summary contradicts the item evidence: "
+            f"{','.join(sorted(disagreements))}"
+        )
+    token_measurement = measure_output_tokens(
+        outputs,
+        worker_receipts,
+        token_counter=output_token_counter,
+    )
+    if token_measurement["over_budget"]:
+        raise ValueError(
+            "capability output exceeds the matched token budget: "
+            f"{','.join(token_measurement['over_budget'])}"
+        )
+    if token_measurement["disagreements"]:
+        raise ValueError(
+            "capability output token count contradicts the worker receipt: "
+            f"{','.join(token_measurement['disagreements'])}"
+        )
+    if require_measured_output_tokens and token_measurement["measured"] is not True:
+        raise ValueError(
+            "capability output tokens were not measured: "
+            f"{token_measurement['reason']}"
+        )
     if normalized.get("eligibility_reasons") not in ([], None):
         raise ValueError("claim-eligible capability report contains rejection reasons")
     if normalized.get("reference_validation_error") not in (None, ""):
@@ -1944,6 +2295,8 @@ def validate_capability_report(
     normalized["source_identity"] = source_identity
     normalized["candidate_model"] = model_stability
     normalized["effective_runtime_manifest"] = runtime_manifest
+    normalized["model_manifest_resolution"] = model_resolution
+    normalized["output_token_measurement"] = token_measurement
     return normalized
 
 
@@ -1957,6 +2310,12 @@ class GapLedger:
     max_entries: int = MAX_LEDGER_ENTRIES
     pruned_count: int = 0
     pruned_through_sha256: str | None = None
+    # Hash chain over everything this ledger has pruned. The anchor alone is
+    # the last removed entry's digest and says nothing about how many entries
+    # preceded it, so a count and an anchor could be written independently.
+    # Each link commits to its predecessor, the removed entry AND the running
+    # count, which is what ties the two together.
+    pruned_chain_sha256: str = ""
 
     def __post_init__(self) -> None:
         # Serializes the read-previous-head → write-blob → append → prune
@@ -1981,6 +2340,7 @@ class GapLedger:
         report: dict[str, Any],
         *,
         evidence_blob_writer: Callable[[str, dict[str, Any]], None] | None = None,
+        evidence_blob_remover: Callable[[str], None] | None = None,
         trusted_evaluator_keys: Mapping[str, str] | None = None,
         trusted_worker_keys: Mapping[str, str] | None = None,
         trusted_verifiers: Mapping[str, Mapping[str, str]] | None = None,
@@ -2010,25 +2370,7 @@ class GapLedger:
                 source_component_resolver=source_component_resolver,
             )
         else:
-            snapshot = json.loads(canonical_json_bytes(report))
-            if snapshot.get("capability_claim_eligible") is not False:
-                raise ValueError("non-capability evidence cannot be claim eligible")
-            if (
-                snapshot.get("schema_version") != SCHEMA_VERSION
-                or snapshot.get("battery_version") != BATTERY_VERSION
-                or not isinstance(snapshot.get("generated_at_unix"), (int, float))
-                or isinstance(snapshot.get("generated_at_unix"), bool)
-                or not math.isfinite(float(snapshot["generated_at_unix"]))
-                or not isinstance(snapshot.get("overall_candidate_score"), (int, float))
-                or isinstance(snapshot.get("overall_candidate_score"), bool)
-                or not math.isfinite(float(snapshot["overall_candidate_score"]))
-                or not isinstance(snapshot.get("effective_n"), int)
-                or isinstance(snapshot.get("effective_n"), bool)
-                or snapshot["effective_n"] <= 0
-            ):
-                raise ValueError("non-capability evidence summary is malformed")
-            if "items" in snapshot and not isinstance(snapshot["items"], list):
-                raise ValueError("non-capability item evidence is malformed")
+            snapshot = validate_non_capability_report(report)
         evidence_digest = sha256_json(snapshot)
         indexed_report = dict(snapshot)
         if not self.capability_claim_eligible:
@@ -2053,17 +2395,49 @@ class GapLedger:
                 previous_entry_sha256=previous,
             )
             self.runs.append(entry)
+            reclaimable: list[str] = []
             try:
                 while len(self.runs) > self.max_entries:
                     removed = self.runs.pop(0)
                     self.pruned_count += 1
                     self.pruned_through_sha256 = removed["entry_sha256"]
+                    self.pruned_chain_sha256 = sha256_json(
+                        {
+                            "previous_pruned_chain_sha256": self.pruned_chain_sha256,
+                            "entry_sha256": removed["entry_sha256"],
+                            "pruned_count": self.pruned_count,
+                        }
+                    )
+                    reclaimable.append(str(removed.get("evidence_sha256") or ""))
             except Exception:
                 # Roll the append back so a partial prune cannot leave the
                 # chain inconsistent with its own head.
                 if self.runs and self.runs[-1] is entry:
                     self.runs.pop()
                 raise
+            # Pruning removed the index entry and left the blob. The ledger
+            # advertises a bound on its own size while the evidence store grew
+            # without one — and those blobs hold the outputs, which is the
+            # material a retention policy exists to release. Content-addressed
+            # storage means a digest still referenced by a surviving entry must
+            # NOT be removed.
+            if reclaimable and evidence_blob_remover is not None:
+                still_referenced = {
+                    str(run.get("evidence_sha256") or "") for run in self.runs
+                }
+                for digest in reclaimable:
+                    if not digest or digest in still_referenced:
+                        continue
+                    try:
+                        evidence_blob_remover(digest)
+                    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                        # The index is already correct; an unreclaimed blob is
+                        # wasted space, not a broken chain.
+                        logger.warning(
+                            "Frontier ledger could not reclaim pruned evidence %s: %s",
+                            digest[:12],
+                            exc,
+                        )
 
     def trend(self) -> dict[str, Any]:
         if not self.capability_claim_eligible:
@@ -2085,6 +2459,7 @@ class GapLedger:
                 "max_entries": self.max_entries,
                 "pruned_count": self.pruned_count,
                 "pruned_through_sha256": self.pruned_through_sha256,
+                "pruned_chain_sha256": self.pruned_chain_sha256,
                 "retains_outputs_in_content_addressed_blobs": True,
             },
             "head_entry_sha256": (
@@ -2134,12 +2509,16 @@ class GapLedger:
         if d.get("capability_claim_eligible") is not expected_eligibility:
             raise ValueError("stored ledger eligibility contradicts its class")
         retention = d.get("retention")
-        if not isinstance(retention, dict) or set(retention) != {
+        retention_fields = {
             "max_entries",
             "pruned_count",
             "pruned_through_sha256",
             "retains_outputs_in_content_addressed_blobs",
-        }:
+        }
+        if not isinstance(retention, dict) or set(retention) not in (
+            retention_fields,
+            retention_fields | {"pruned_chain_sha256"},
+        ):
             raise ValueError("gap ledger retention metadata is malformed")
         if retention.get("retains_outputs_in_content_addressed_blobs") is not True:
             raise ValueError("gap ledger does not retain auditable evidence blobs")
@@ -2170,6 +2549,20 @@ class GapLedger:
             raise ValueError(
                 "gap ledger claims pruned history but retains no entries"
             )
+        pruned_chain = retention.get("pruned_chain_sha256", "")
+        if not isinstance(pruned_chain, str):
+            raise ValueError("gap ledger prune chain is malformed")
+        # A ledger that pruned anything must carry the chain that commits to
+        # how much it pruned. Its absence is only admissible on a ledger that
+        # has never pruned, where there is nothing for it to commit to.
+        if pruned_count == 0:
+            if pruned_chain:
+                raise ValueError("gap ledger prune chain contradicts a zero count")
+        else:
+            if not _is_sha256_hex(pruned_chain):
+                raise ValueError(
+                    "gap ledger claims pruned history without a prune chain"
+                )
         runs = validate_index_chain(
             d.get("runs"),
             max_entries=max_entries,
@@ -2187,10 +2580,13 @@ class GapLedger:
                 snapshot = evidence_blob_resolver(digest) if evidence_blob_resolver else None
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 raise ValueError("evidence blob cannot be resolved") from exc
-            if not isinstance(snapshot, dict) or sha256_json(snapshot) != digest:
+            snapshot = _bounded_evidence_blob(snapshot, digest=digest)
+            if sha256_json(snapshot) != digest:
                 raise ValueError("evidence blob is missing or altered")
             if snapshot.get("evidence_class") != stored_class:
                 raise ValueError("evidence blob class contradicts its index")
+            if not expected_eligibility:
+                snapshot = validate_non_capability_report(snapshot)
             if expected_eligibility:
                 snapshot = validate_capability_report(
                     snapshot,
@@ -2220,6 +2616,7 @@ class GapLedger:
             max_entries=max_entries,
             pruned_count=pruned_count,
             pruned_through_sha256=pruned_through,
+            pruned_chain_sha256=pruned_chain,
         )
         if canonical_json_bytes(d.get("trend")) != canonical_json_bytes(ledger.trend()):
             raise ValueError("gap ledger trend contradicts its evidence index")
