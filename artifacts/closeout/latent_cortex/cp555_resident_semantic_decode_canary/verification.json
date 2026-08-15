@@ -1,0 +1,53 @@
+{
+  "artifact_receipt_sha256": "24a6fdcfd17456d99a6a20f1f25dd75516de007ad634e94bef0b13903d9d795a",
+  "artifact_sha256": "9693a41b75461909b2dd995c53da4d34a98853c708196a0f8bdf5c5cbe6ab475",
+  "claim_boundary": "bounded teacher-free multi-domain neural-state-to-free-decode transfer on the resident model bound by model_identity and resident_manifest_identity; not open-domain, broad reasoning, fusion, frontier performance, or WOW",
+  "gain_count": 18,
+  "independent_exact_by_arm": {
+    "coefficient_lesion": 9,
+    "matched_wire_base": 3,
+    "matched_wrong_state": 0,
+    "ordinary_base": 9,
+    "treatment": 27
+  },
+  "independent_parsed_by_arm": {
+    "coefficient_lesion": 27,
+    "matched_wire_base": 27,
+    "matched_wrong_state": 27,
+    "ordinary_base": 9,
+    "treatment": 27
+  },
+  "journal_decode_count": 135,
+  "journal_event_count": 137,
+  "journal_final_receipt_sha256": "85ab155e16a861d0f76ff8a1764fc16f5e839d633fc0e1995f4a2b82ba8d439d",
+  "journal_sha256": "cdf47990df61982b28d4e5b51c20906fe10162f00e989ae1aeaeffafb21f3eda",
+  "model_identity": {
+    "config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "weights_index_sha256": "8ae48f398d91156dc01a99e58de936e4ddd94c0768f4d0e2e9537170aee60d0b"
+  },
+  "paired_discordant_count": 18,
+  "paired_one_sided_exact_p": 3.814697265625e-06,
+  "producer_claim_boundary": "bounded teacher-free multi-domain neural-state-to-free-decode transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "producer_claim_boundary_legacy": true,
+  "raw_output_count": 135,
+  "regression_count": 0,
+  "resident_manifest_identity": {
+    "active_model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "base_model": "/Users/bryan/.aura/live-source/models/Qwen2.5-32B-Instruct-4bit",
+    "fused_at": 1782967900,
+    "path": "/Users/bryan/.aura/live-source/training/fused-model/active.json",
+    "schema_version": 2,
+    "sha256": "05b4a40e57251651b2c31a99390c6babb69fe57862e702112e6ac574c8a6b83f",
+    "tag": "crsm-closeout-jul1"
+  },
+  "schema": "aura.rlc.semantic_neural_decode_verification.v1",
+  "seed": 2026081555,
+  "source_commit": "ef2c048ffaa7cad8bcd596518be949f8efacb493",
+  "task_count": 27,
+  "tasks_per_difficulty": 3,
+  "treatment_state_replay_count": 27,
+  "verification_receipt_sha256": "3b7871678ded6decee6654bab01704dd082083c839ef4f92b8383fc996903088",
+  "verified": true,
+  "verifier_source_sha256": "c245f22d3851895fae20dd7a81842bf0ed7e926606dae8bc70199ee1803072d0"
+}

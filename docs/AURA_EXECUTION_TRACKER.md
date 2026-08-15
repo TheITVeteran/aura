@@ -50466,3 +50466,37 @@ producer/verifier contracts pass `12/12`; canonical smoke passes `110/110`.
 The interrupted base-8-bit and pre-manifest fused rows carry no resident claim.
 The next run starts from this clean checkpoint against the manifest-selected
 fused model and must still pass the unchanged five-arm admission rule.
+
+## Checkpoint 2026-08-15-555: Resident Semantic Decode Transfer Is Independently Positive
+
+The manifest-bound five-arm resident canary completed all `135` decodes over
+`27` fresh coding, calibration and premise-audit tasks in 1,357.09 seconds.
+Treatment decoded `27/27`; ordinary resident decoding decoded `9/27`;
+syntax-matched wire control decoded `3/27`; same-family wrong-state control
+decoded `0/27`; and the learned multiplication-coefficient lesion decoded
+`9/27`. Treatment converted 18 ordinary failures and regressed none of the nine
+ordinary successes.
+
+The independent verifier reopened Aura's active fused-model manifest, rehashed
+the exact resident model and committed producer sources, regenerated and
+regraded all tasks, replayed all 27 authenticated treatment states, and
+verified the complete `137`-event receipt-chained journal. It independently
+derived the same arm counts and accepted the 18-gain, zero-loss paired result
+with one-sided exact `p=3.814697265625e-6`. Producer output, raw journal and
+attestation are frozen in
+`artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/`.
+
+The run also exposed and repaired a claim-label defect: the producer's signed
+legacy boundary conservatively said `not resident-32B` despite binding a
+resident manifest. The verifier preserves that original text, marks it legacy,
+and derives the resident-qualified boundary from the independently reopened
+identity. Future producers emit the correct boundary directly.
+
+This establishes bounded teacher-free neural-state-to-free-decode transfer on
+Aura's manifest-selected resident 32B checkpoint for the three exact executable
+families. It does not establish open-domain or broad reasoning gain, ordinary
+runtime activation, static fusion, frontier performance or `WOW!`. The current
+single coefficient lesion erases multiplication and therefore does not damage
+addition-only coding; a family-targeted lesion matrix and canonical governed
+runtime integration are the next implementation gates before powered broad
+replication.

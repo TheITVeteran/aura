@@ -172,6 +172,8 @@ def test_semantic_decode_verifier_binds_resident_manifest(tmp_path):
         resident_manifest_path=manifest,
     )
     assert report["resident_manifest_identity"]["tag"] == "resident-test"
+    assert "resident model bound by" in report["claim_boundary"]
+    assert report["producer_claim_boundary_legacy"] is True
 
     manifest_payload["tag"] = "changed"
     manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")

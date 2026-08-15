@@ -10,6 +10,7 @@ from core.learning.frontier_process_supervision import frontier_process_task_bat
 from tools.run_semantic_neural_decode_canary import (
     _append_journal_event,
     _arm_order,
+    _claim_boundary,
     _grade,
     _lane_kwargs,
     _resident_manifest_identity,
@@ -17,6 +18,15 @@ from tools.run_semantic_neural_decode_canary import (
     _summary,
     _wire_prefill,
 )
+
+
+def test_semantic_neural_decode_claim_boundary_tracks_resident_identity():
+    nonresident = _claim_boundary(None)
+    resident = _claim_boundary({"sha256": "a" * 64})
+    assert "not open-domain, resident-32B" in nonresident
+    assert "resident model bound by" in resident
+    assert "not open-domain, broad reasoning" in resident
+    assert "not open-domain, resident-32B" not in resident
 
 
 def test_semantic_neural_decode_arm_order_is_complete_and_deterministic():

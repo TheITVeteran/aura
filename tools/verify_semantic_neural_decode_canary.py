@@ -29,6 +29,11 @@ from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 CANARY_SCHEMA: Final = "aura.rlc.semantic_neural_decode_canary.v1"
 JOURNAL_SCHEMA: Final = "aura.rlc.semantic_neural_decode_journal.v1"
 VERIFICATION_SCHEMA: Final = "aura.rlc.semantic_neural_decode_verification.v1"
+LEGACY_CLAIM_BOUNDARY: Final = (
+    "bounded teacher-free multi-domain neural-state-to-free-decode transfer on "
+    "the model bound in model_identity; not open-domain, resident-32B, broad "
+    "reasoning, fusion, frontier performance, or WOW"
+)
 ARMS: Final = (
     "ordinary_base",
     "matched_wire_base",
@@ -46,6 +51,17 @@ SOURCE_PATHS: Final = (
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
+
+
+def _claim_boundary(resident_manifest_identity: dict[str, Any] | None) -> str:
+    if resident_manifest_identity is not None:
+        return (
+            "bounded teacher-free multi-domain neural-state-to-free-decode "
+            "transfer on the resident model bound by model_identity and "
+            "resident_manifest_identity; not open-domain, broad reasoning, "
+            "fusion, frontier performance, or WOW"
+        )
+    return LEGACY_CLAIM_BOUNDARY
 
 
 def _sha(value: Any) -> str:
@@ -354,6 +370,14 @@ def verify_canary(
     )
     paired_p = _paired_one_sided_p(len(gains), len(regressions))
 
+    verified_claim_boundary = _claim_boundary(resident_manifest_identity)
+    producer_claim_boundary = payload.get("claim_boundary")
+    if producer_claim_boundary not in {
+        verified_claim_boundary,
+        LEGACY_CLAIM_BOUNDARY,
+    }:
+        raise RuntimeError("semantic decode claim boundary is not recognized")
+
     body = {
         "schema": VERIFICATION_SCHEMA,
         "verified": True,
@@ -374,7 +398,11 @@ def verify_canary(
         "paired_one_sided_exact_p": paired_p,
         "treatment_state_replay_count": len(replayed_state_receipts),
         **journal_verification,
-        "claim_boundary": payload.get("claim_boundary"),
+        "claim_boundary": verified_claim_boundary,
+        "producer_claim_boundary": producer_claim_boundary,
+        "producer_claim_boundary_legacy": (
+            producer_claim_boundary != verified_claim_boundary
+        ),
         "verifier_source_sha256": _file_sha(Path(__file__)),
     }
     return {**body, "verification_receipt_sha256": _sha(body)}

@@ -42,7 +42,7 @@ from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.rlc.semantic_neural_decode_canary.v1"
 JOURNAL_SCHEMA: Final = "aura.rlc.semantic_neural_decode_journal.v1"
-CLAIM_BOUNDARY: Final = (
+LEGACY_CLAIM_BOUNDARY: Final = (
     "bounded teacher-free multi-domain neural-state-to-free-decode transfer on "
     "the model bound in model_identity; not open-domain, resident-32B, broad "
     "reasoning, fusion, frontier performance, or WOW"
@@ -62,6 +62,17 @@ SOURCE_PATHS: Final = (
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
+
+
+def _claim_boundary(resident_manifest_identity: dict[str, Any] | None) -> str:
+    if resident_manifest_identity is not None:
+        return (
+            "bounded teacher-free multi-domain neural-state-to-free-decode "
+            "transfer on the resident model bound by model_identity and "
+            "resident_manifest_identity; not open-domain, broad reasoning, "
+            "fusion, frontier performance, or WOW"
+        )
+    return LEGACY_CLAIM_BOUNDARY
 
 
 def _sha(value: Any) -> str:
@@ -524,7 +535,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             state.receipt()["receipt_sha256"] for state in treatment_states
         ],
         "admitted": admitted,
-        "claim_boundary": CLAIM_BOUNDARY,
+        "claim_boundary": _claim_boundary(resident_manifest_identity),
         "elapsed_seconds": round(time.time() - started, 3),
         "journal_path": str(journal_path),
         "journal_last_decode_receipt_sha256": journal_receipt,

@@ -5968,3 +5968,23 @@ checkpoint. The canary and independent verifier now cryptographically bind and
 reopen that manifest and refuse model-path or manifest drift. Two interrupted
 pre-manifest probes are diagnostic only. The fresh claim-grade resident run is
 next; no SPARK or `WOW Signal` gate closes here.
+
+### 2026-08-15 - CP555 resident semantic decode transfer passes its bounded gate
+
+Aura's manifest-selected fused resident 32B completed the fresh five-arm matrix
+with treatment `27/27`, ordinary decode `9/27`, syntax-matched wire control
+`3/27`, wrong-state control `0/27`, and multiplication-coefficient lesion
+`9/27`. The treatment made 18 wrong-to-right conversions with zero regressions.
+Independent task regeneration, grading, neural-state replay, source/model and
+resident-manifest verification, and the complete 137-event journal chain all
+passed. The paired one-sided exact probability is `3.81e-6`; evidence is frozen
+under `artifacts/closeout/latent_cortex/cp555_resident_semantic_decode_canary/`.
+
+This is the first independently positive state-to-free-decode result on Aura's
+active resident cortex for the three exact executable families. It remains
+bounded: coding survives the multiplication-only lesion because that family
+uses learned addition, the semantic machine is not yet on the canonical
+governed serving path, and the run is not broad or open-domain. SPARK-069
+through SPARK-072 remain open. The next gates are family-targeted lesions,
+runtime promotion with rollback and receipts, then fresh powered broad
+falsification before any `WOW!` or frontier claim.
