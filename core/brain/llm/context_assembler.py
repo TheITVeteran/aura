@@ -113,6 +113,10 @@ _DELIBERATE_SIGNALS = (
     "analyze", "explain", "research", "architecture", "system", "code",
     "debug", "implement", "design", "review", "evaluate", "compare",
 )
+#: Longest an utterance can be and still be small talk. A casual signal in a
+#: long message is a word, not a register.
+_CASUAL_MAX_WORDS = 6
+
 _CASUAL_SIGNALS = (
     "hey", "hi", "hello", "sup", "yo", "lol", "haha", "hehe",
     "ok", "okay", "sure", "thanks", "thank you", "got it", "cool", "nice",
@@ -122,6 +126,22 @@ _GREETING_RE = re.compile(
     r"^(hey|hi|hello|sup|yo|what'?s up|how'?s it going|good (morning|afternoon|evening))[\s!?.]*$",
     re.IGNORECASE,
 )
+
+
+def _signal_pattern(signals: tuple[str, ...]) -> re.Pattern[str]:
+    """Whole-word matcher for a signal list.
+
+    These were substring tests. "ok" matched inside look, book, broke and
+    token; "hi" inside this, which and hire; "real" inside really, realize and
+    unreal. So "can you tokenize this?" carried a casual signal and "it looks
+    unreal" carried two, and the prompt was trimmed or expanded on the strength
+    of letters inside unrelated words.
+    """
+    alternatives = "|".join(re.escape(signal) for signal in sorted(signals, key=len, reverse=True))
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+
+_DELIBERATE_RE = _signal_pattern(_DELIBERATE_SIGNALS)
+_CASUAL_RE = _signal_pattern(_CASUAL_SIGNALS)
 
 class ContextAssembler:
     """Unified prompt construction from state."""
@@ -1766,6 +1786,21 @@ class ContextAssembler:
                         "mentions a tool is not by itself an instruction to execute it.\n"
                         "\n- If a task is genuinely multi-step, execute it instead of only describing a plan.\n"
                         "- If a needed tool is unavailable, say so plainly instead of pretending.\n"
+                        # What "available" was checked against, stated, because
+                        # the list read as a guarantee and is not one. The
+                        # catalog verifies the skill is enabled, not in an error
+                        # state, validated, dependency-ready, and past preflight.
+                        # It does not call the tool: nothing here proves the
+                        # network is up, the credential is current, the target
+                        # answers, or that the last real attempt worked. Telling
+                        # her the difference is what lets her say "I have a
+                        # search tool, let me try it" instead of "I can search",
+                        # and the second sentence is the one that turns a dead
+                        # credential into a confident wrong answer.
+                        "- \"Available\" means registered, validated and past preflight. "
+                        "It is not proof the tool works right now: no credential, network "
+                        "path or remote target has been contacted. Treat the first use in a "
+                        "turn as the test, and say what happened if it fails.\n"
                     )
                     base += f"\n{skills_summary}\n"
         except (ImportError, AttributeError, RuntimeError) as _e:
@@ -1939,15 +1974,19 @@ class ContextAssembler:
         if _GREETING_RE.match(text):
             return True
 
-        if any(signal in lowered for signal in _DELIBERATE_SIGNALS):
+        if _DELIBERATE_RE.search(lowered):
             return False
 
         if "?" in text and len(words) < 15:
             return False
 
-        if len(words) <= 6 and any(signal in lowered for signal in _CASUAL_SIGNALS):
+        if len(words) <= _CASUAL_MAX_WORDS and _CASUAL_RE.search(lowered):
             return True
 
+        # Everything unrecognised — another language, a code paste, anything
+        # adversarial — lands here and is treated as deliberate. That is the
+        # survivable direction: a full prompt for small talk costs context,
+        # while a trimmed prompt for a real question costs the answer.
         return False
 
     @staticmethod
