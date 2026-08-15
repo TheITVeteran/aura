@@ -1183,6 +1183,7 @@ def _terminal_contract_refusal(
     *,
     proof_evaluation_contract: bool = False,
     operator_evidence_contract: bool = False,
+    model_continuation: Any = None,
 ) -> str:
     """The terminal contract this text FAILS, or "" if it passes them all.
 
@@ -1203,7 +1204,15 @@ def _terminal_contract_refusal(
     if operator_evidence_contract:
         if _operator_evidence_fragment_incomplete(text):
             return "operator_evidence_fragment_incomplete"
-        if _operator_evidence_model_contribution_insufficient(text):
+        # The delivered answer is scaffolding + continuation, and the fixed
+        # scaffolding already contains every required evidence term and is
+        # long enough to clear the word floor on its own. Handing this check
+        # the COMBINED text made it inert on exactly this path: it measured
+        # the prefix and passed. It has to see the model's own share.
+        continuation = (
+            text if model_continuation is None else str(model_continuation or "")
+        )
+        if _operator_evidence_model_contribution_insufficient(continuation):
             return "operator_evidence_model_contribution_insufficient"
     if bool(job.get("capability_inventory_contract", False)):
         grounded, _evidence = _capability_inventory_minimum_grounding(text)
@@ -2520,6 +2529,20 @@ def _operator_evidence_model_contribution_insufficient(continuation: str) -> boo
     body = str(continuation or "").strip()
     if len(body.split()) < 16:
         return True
+    # Most of what the model said has to be its own. Counting every word let a
+    # continuation that restates the fixed prefix — or the prefix itself, if a
+    # caller ever passes the delivered answer here — clear a check whose whole
+    # purpose is the model's share. The rule is proportional rather than a
+    # second word count: a short, specific answer is fine, an echo is not.
+    scaffold_words = {
+        word.strip(".,;:").lower() for word in _OPERATOR_EVIDENCE_PREFIX.split()
+    }
+    words = body.split()
+    own_words = [
+        word for word in words if word.strip(".,;:").lower() not in scaffold_words
+    ]
+    if len(own_words) * 2 <= len(words):
+        return True
     if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(body):
         return True
     if _OPERATOR_EVIDENCE_DRIFT_MARKERS.search(body):
@@ -2585,6 +2608,55 @@ def _first_token_suppression_ids(tokenizer: Any) -> list[int]:
         if isinstance(ids, list) and len(ids) == 1 and isinstance(ids[0], int):
             banned.add(ids[0])
     return sorted(banned)
+
+
+def _schema_root_openers(schema: Any) -> tuple[str, ...]:
+    """The characters that can legitimately open THIS schema's root value.
+
+    A schema declaring ``"type": "array"`` cannot start with a brace, and one
+    that declares nothing can start with either.
+    """
+
+    declared = schema.get("type") if isinstance(schema, dict) else None
+    if isinstance(declared, str):
+        declared = [declared]
+    if isinstance(declared, (list, tuple)):
+        kinds = {str(item) for item in declared}
+        openers = tuple(
+            character
+            for character, kind in (("{", "object"), ("[", "array"))
+            if kind in kinds
+        )
+        if openers:
+            return openers
+    return ("{", "[")
+
+
+def _json_start_token_ids(tokenizer: Any, schema: Any) -> tuple[int, ...]:
+    """Token ids whose text opens the JSON value this schema declares.
+
+    ``encode("{")[0]`` admits exactly one token. An array-rooted schema could
+    therefore never begin, and a tokenizer that merges the brace with what
+    follows — ``{"`` is a single token in most BPE vocabularies — had its own
+    natural opening banned, which is how "forced JSON" produced a first token
+    the model had to fight. Every way the tokenizer can spell an admissible
+    opening is admissible.
+    """
+
+    seeds = {
+        "{": ("{", '{"', "{\n", '{ "'),
+        "[": ("[", "[{", "[\n", '["'),
+    }
+    ids: list[int] = []
+    for opener in _schema_root_openers(schema):
+        for seed in seeds.get(opener, (opener,)):
+            try:
+                encoded = tokenizer.encode(seed, add_special_tokens=False)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if encoded and int(encoded[0]) not in ids:
+                ids.append(int(encoded[0]))
+    return tuple(ids)
 
 
 def _validate_schema_output(
@@ -5900,16 +5972,27 @@ def _mlx_worker_loop(
 
                 if schema:
                     try:
-                        brace_id = tokenizer.encode("{", add_special_tokens=False)[0]
-                        def json_start_processor(tokens, logits, brace_id=brace_id):
+                        start_ids = _json_start_token_ids(tokenizer, schema)
+                        if not start_ids:
+                            raise ValueError(
+                                "tokenizer spells no admissible JSON opening"
+                            )
+
+                        def json_start_processor(tokens, logits, start_ids=start_ids):
                             if len(tokens) == 0:
-                                # Force first token to be '{'
+                                # Every way this tokenizer can open the value
+                                # the schema declares — not the one token that
+                                # `encode("{")[0]` happened to return.
                                 mask = mx.full_like(logits, -float("inf"))
-                                mask[:, brace_id] = 0.0
+                                for token_id in start_ids:
+                                    mask[:, token_id] = 0.0
                                 return mask
                             return logits
                         logits_processors.append(json_start_processor)
-                        logger.info("🎯 [WORKER] JSON start enforcement ACTIVE.")
+                        logger.info(
+                            "🎯 [WORKER] JSON start enforcement ACTIVE (%d openings).",
+                            len(start_ids),
+                        )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         _record_mlx_degradation(
                             e,
@@ -6669,6 +6752,7 @@ def _mlx_worker_loop(
                                                 response_text,
                                                 proof_evaluation_contract=proof_evaluation_contract,
                                                 operator_evidence_contract=operator_evidence_contract,
+                                                model_continuation=current_response,
                                             )
                                             if cancel_refusal:
                                                 logger.warning(
