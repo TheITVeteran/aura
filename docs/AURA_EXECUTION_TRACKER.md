@@ -50629,3 +50629,24 @@ compatibility. This adapter is deliberately not in CP560's activated runtime,
 so construction cannot invalidate Aura's current four-domain package. The next
 gate is a short 1.5B treatment/matched-control/lesion canary over these alternate
 surfaces.
+
+## Checkpoint 2026-08-15-562: Alternate Language Reaches the Same Causal Tissue
+
+The first source-clean `mixed_scientific_v1` five-arm canary completed in 22.77
+seconds on the 1.5B gate. Its nine fresh tasks were balanced across laboratory,
+narrative and compact surfaces at all three difficulty levels. Treatment decoded
+`9/9`; ordinary, syntax-matched wire, family-targeted coefficient-lesion and
+same-family wrong-state controls each decoded `0/9`. Treatment converted all
+nine ordinary failures with zero regressions.
+
+The independent verifier regenerated each alternate prompt from the sealed seed,
+reparsed its public causal graph, replayed every adapter and recurrent-state
+receipt, regraded all `45` raw model outputs and verified the complete `47`-event
+journal. It accepted the result with one-sided exact `p=0.001953125`; verification
+receipt `c4e3181aaf25775f8922b0c8a1f06ae2a7176d4e8e6d2fe16eeca65c77600ecc`.
+
+This is positive evidence that the causal recurrent computation survives
+meaning-preserving language and presentation changes rather than only one exact
+sentence. The sample is intentionally a fast canary, not powered evidence. A
+larger fresh local replication is the next gate and still does not require the
+resident 32B.
