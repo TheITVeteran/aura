@@ -147,6 +147,13 @@ def _summary(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     return {**body, "receipt_sha256": _sha(body)}
 
 
+def _grade(task: Any, response: str) -> tuple[bool, bool]:
+    verdict = task.grade(response)
+    if not isinstance(verdict, dict) or type(verdict.get("correct")) is not bool:
+        raise RuntimeError("semantic decode grader returned an invalid verdict")
+    return bool(verdict["correct"]), verdict.get("parsed") is not None
+
+
 def _lesion_machine() -> SemanticNeuralMachine:
     tissue = SemanticNeuralMachine().tissue
     tissue.raw_coefficients = tissue.raw_coefficients.at[1, 2].add(
@@ -247,14 +254,14 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 completion_check=lambda values: _complete(tokenizer, values),
             )
             text = tokenizer.decode(list(generated), skip_special_tokens=True)
-            score = task.score(text)
+            correct, parsed = _grade(task, text)
             row = {
                 "task_id": task.task_id,
                 "family": task.family,
                 "difficulty": task.depth,
                 "arm": arm,
-                "correct": bool(score.correct),
-                "parsed": bool(score.parsed),
+                "correct": correct,
+                "parsed": parsed,
                 "prompt_tokens": len(prompt),
                 "generated_tokens": len(generated) - len(active_prefill),
                 "stopped": stopped,
@@ -274,7 +281,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                         "total": len(tasks) * len(ARMS),
                         "family": task.family,
                         "arm": arm,
-                        "correct": bool(score.correct),
+                        "correct": correct,
                         "latency_ms": latency_ms,
                     },
                     sort_keys=True,

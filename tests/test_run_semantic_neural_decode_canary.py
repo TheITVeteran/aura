@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from tools.run_semantic_neural_decode_canary import _arm_order, _lane_kwargs, _summary
+from tools.run_semantic_neural_decode_canary import (
+    _arm_order,
+    _grade,
+    _lane_kwargs,
+    _summary,
+)
 
 
 def test_semantic_neural_decode_arm_order_is_complete_and_deterministic():
@@ -48,3 +53,13 @@ def test_semantic_neural_decode_uses_current_nonpreemptible_lane_contract(tmp_pa
     assert values["preemptible"] is False
     assert values["allow_owner_eviction"] is False
     assert "require_live_runtime_absent" not in values
+
+
+def test_semantic_neural_decode_uses_training_task_grade_contract():
+    class Task:
+        @staticmethod
+        def grade(response):
+            return {"correct": response == "right", "parsed": {"value": response}}
+
+    assert _grade(Task(), "right") == (True, True)
+    assert _grade(Task(), "wrong") == (False, True)
