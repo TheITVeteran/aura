@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,13 +20,18 @@ from tools.migrate_unified_intrinsic_checkpoint import (  # noqa: E402
     _controller_sha256,
     _target_identity,
 )
+from tools.unified_intrinsic_checkpoint import (  # noqa: E402
+    UnifiedCheckpointError,
+    adopt_source_migration_identity,
+)
 from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     CAMPAIGN_BINDING_SCHEMA,
+    canonical_bytes,
     canonical_sha256,
 )
 
 
-def _campaign() -> dict:
+def _campaign(*, training_profile_sha256: str = "a" * 64) -> dict:
     body = {
         "schema": CAMPAIGN_BINDING_SCHEMA,
         "campaign_id": "cp-test",
@@ -38,7 +44,7 @@ def _campaign() -> dict:
         "dataset_identity_sha256": "7" * 64,
         "tokenizer_identity_sha256": "8" * 64,
         "tokenized_dataset_identity_sha256": "9" * 64,
-        "training_profile_sha256": "a" * 64,
+        "training_profile_sha256": training_profile_sha256,
     }
     return {**body, "binding_sha256": canonical_sha256(body)}
 
@@ -77,10 +83,15 @@ def test_target_identity_changes_only_the_explicit_source_allowlist(
 ) -> None:
     from tools import migrate_unified_intrinsic_checkpoint as migration
 
+    training_profile_sha256 = canonical_sha256(
+        {"profile": "recovery", "training": {}, "training_args": []}
+    )
     source_identity = {
         "schema": "aura.unified_intrinsic_training.v1",
         "source_sha256s": {"trainer.py": "a" * 64, "objective.py": "b" * 64},
-        "campaign_binding": _campaign(),
+        "campaign_binding": _campaign(
+            training_profile_sha256=training_profile_sha256
+        ),
         "bootstrap": {"schema": "old"},
         "initial_controller_sha256": "c" * 64,
     }
@@ -128,7 +139,7 @@ def test_target_identity_changes_only_the_explicit_source_allowlist(
     assert target["source_sha256s"]["objective.py"] == "b" * 64
     assert target["initial_controller_sha256"] == "c" * 64
     assert target["source_migration_controller_sha256"] == "1" * 64
-    assert target["bootstrap"]["parent_step"] == 34
+    assert target["bootstrap"] == {"schema": "old"}
     assert target["identity_sha256"] == canonical_sha256(
         {key: value for key, value in target.items() if key != "identity_sha256"}
     )
@@ -143,3 +154,151 @@ def test_target_identity_changes_only_the_explicit_source_allowlist(
             controller_sha256="1" * 64,
             allowed_source_changes=frozenset({"objective.py"}),
         )
+
+
+def test_target_identity_rejects_a_different_recovery_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import migrate_unified_intrinsic_checkpoint as migration
+
+    source_identity = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "source_sha256s": {"trainer.py": "a" * 64},
+        "campaign_binding": _campaign(),
+        "bootstrap": {"schema": "original"},
+        "initial_controller_sha256": "c" * 64,
+    }
+    source_identity["identity_sha256"] = canonical_sha256(source_identity)
+    monkeypatch.setattr(migration, "TRAINING_SOURCE_FILES", ("trainer.py",))
+    monkeypatch.setattr(
+        migration,
+        "_source_sha256s",
+        lambda _root: {"trainer.py": "d" * 64},
+    )
+    config = {
+        "campaign_id": "cp-test",
+        "config_sha256": "1" * 64,
+        "profile": "recovery",
+        "source": {
+            "git": {"root": "/source", "commit": "2" * 40, "tree": "3" * 40},
+            "manifest": {"manifest_sha256": "4" * 64},
+        },
+        "model": {"manifest_sha256": "5" * 64},
+        "runtime": {"identity_sha256": "6" * 64},
+        "dataset": {"identity_sha256": "7" * 64},
+        "tokenizer": {"identity_sha256": "8" * 64},
+        "tokenized_dataset": {"identity_sha256": "9" * 64},
+        "training": {"max_steps": 36},
+        "training_args": ["--max-steps", "36"],
+        "bootstrap": {"stem": "checkpoint_latest"},
+    }
+    with pytest.raises(
+        UnifiedIntrinsicMigrationError,
+        match="migration_training_profile_changed",
+    ):
+        _target_identity(
+            source_identity,
+            target_config=config,
+            controller_sha256="1" * 64,
+            allowed_source_changes=frozenset({"trainer.py"}),
+        )
+
+
+def test_resume_adopts_only_a_fully_bound_source_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import unified_intrinsic_checkpoint as checkpoint
+
+    campaign = tmp_path / "campaign"
+    output = campaign / "training-output"
+    source_output = tmp_path / "source-output"
+    output.mkdir(parents=True)
+    source_output.mkdir()
+    binding = _campaign()
+    computed = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "campaign_binding": binding,
+        "initial_controller_sha256": "1" * 64,
+        "bootstrap": {"schema": "resume"},
+        "source_sha256s": {"trainer.py": "2" * 64},
+    }
+    stored = {
+        **computed,
+        "initial_controller_sha256": "3" * 64,
+        "bootstrap": {"schema": "original"},
+        "source_migration_controller_sha256": "1" * 64,
+    }
+    stored["identity_sha256"] = canonical_sha256(stored)
+    target_receipt = {
+        "step": 8,
+        "checkpoint_sha256": "4" * 64,
+        "receipt_sha256": "5" * 64,
+        "identity": stored,
+    }
+    source_receipt = {
+        "step": 8,
+        "checkpoint_sha256": "4" * 64,
+        "receipt_sha256": "6" * 64,
+        "identity": {"identity_sha256": "7" * 64},
+    }
+    target = SimpleNamespace(
+        receipt=target_receipt,
+        generation_dir=Path("checkpoint_latest-step-00000008-target"),
+    )
+    source = SimpleNamespace(
+        receipt=source_receipt,
+        generation_dir=Path("checkpoint_latest-step-00000008-source"),
+    )
+
+    def resolve(path: Path, **_kwargs: object) -> SimpleNamespace:
+        return target if Path(path).resolve() == output.resolve() else source
+
+    monkeypatch.setattr(checkpoint, "resolve_checkpoint_generation", resolve)
+    monkeypatch.setattr(
+        checkpoint,
+        "_stable_file_identity",
+        lambda *_args, **_kwargs: {"sha256": "8" * 64},
+    )
+    body = {
+        "schema": checkpoint.SOURCE_MIGRATION_SCHEMA,
+        "state": "complete",
+        "source": {
+            "output": str(source_output),
+            "generation": source.generation_dir.name,
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "6" * 64,
+            "identity_sha256": "7" * 64,
+        },
+        "destination": {
+            "campaign_id": binding["campaign_id"],
+            "config_sha256": binding["campaign_config_sha256"],
+            "generation": target.generation_dir.name,
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "5" * 64,
+            "identity_sha256": stored["identity_sha256"],
+        },
+        "payload_byte_identical": True,
+        "optimizer_and_bundle_bytes_preserved": True,
+        "history_preserved": True,
+        "training_state_preserved": True,
+        "scientific_initialization_preserved": True,
+        "training_profile_preserved": True,
+        "migration_tool_sha256": "8" * 64,
+    }
+    migration = {**body, "migration_sha256": canonical_sha256(body)}
+    (campaign / "checkpoint-source-migration.json").write_bytes(
+        canonical_bytes(migration) + b"\n"
+    )
+    assert adopt_source_migration_identity(output, computed) == stored
+
+    migration["training_profile_preserved"] = False
+    material = {key: value for key, value in migration.items() if key != "migration_sha256"}
+    migration["migration_sha256"] = canonical_sha256(material)
+    (campaign / "checkpoint-source-migration.json").write_bytes(
+        canonical_bytes(migration) + b"\n"
+    )
+    with pytest.raises(UnifiedCheckpointError, match="source migration differs"):
+        adopt_source_migration_identity(output, computed)

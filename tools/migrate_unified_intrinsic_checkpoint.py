@@ -44,7 +44,7 @@ from tools.unified_intrinsic_resident_identity import (  # noqa: E402
     canonical_sha256,
 )
 
-MIGRATION_SCHEMA = "aura.unified_intrinsic.checkpoint_source_migration.v1"
+MIGRATION_SCHEMA = "aura.unified_intrinsic.checkpoint_source_migration.v2"
 MIGRATION_FILENAME = "checkpoint-source-migration.json"
 
 
@@ -131,22 +131,35 @@ def _target_identity(
     if frozenset(differences) != allowed_source_changes:
         _fail("migration_source_change_set_differs")
 
-    bootstrap = target_config.get("bootstrap")
-    if not isinstance(bootstrap, dict):
+    target_bootstrap = target_config.get("bootstrap")
+    if not isinstance(target_bootstrap, dict):
         _fail("migration_target_bootstrap_missing")
+    source_binding = source_identity.get("campaign_binding")
+    target_binding = campaign_checkpoint_binding(target_config)
+    if not isinstance(source_binding, dict):
+        _fail("migration_source_campaign_binding_missing")
+    if target_binding.get("training_profile_sha256") != source_binding.get(
+        "training_profile_sha256"
+    ):
+        _fail("migration_training_profile_changed")
+    for field in (
+        "model_manifest_sha256",
+        "runtime_identity_sha256",
+        "dataset_identity_sha256",
+        "tokenizer_identity_sha256",
+        "tokenized_dataset_identity_sha256",
+    ):
+        if target_binding.get(field) != source_binding.get(field):
+            _fail(f"migration_scientific_input_changed:{field}")
+    original_bootstrap = source_identity.get("bootstrap")
+    if not isinstance(original_bootstrap, dict):
+        _fail("migration_source_bootstrap_missing")
     target["source_sha256s"] = target_hashes
-    target["campaign_binding"] = campaign_checkpoint_binding(target_config)
-    target["bootstrap"] = {
-        "schema": "aura.unified_intrinsic.bootstrap_tissue.v1",
-        "stem": bootstrap["stem"],
-        "parent_step": bootstrap["parent_step"],
-        "parent_checkpoint_sha256": bootstrap["parent_checkpoint_sha256"],
-        "parent_receipt_sha256": bootstrap["parent_receipt_sha256"],
-        "parent_identity_sha256": bootstrap["parent_identity_sha256"],
-        "optimizer_inherited": False,
-        "history_inherited": False,
-        "dataset_inherited": False,
-    }
+    target["campaign_binding"] = target_binding
+    # This is one experiment crossing a source-only repair. The operational
+    # bootstrap points at the resume checkpoint, but the scientific bootstrap
+    # remains the experiment's original initialization.
+    target["bootstrap"] = copy.deepcopy(original_bootstrap)
     # A source-only migration resumes the same experiment.  The controller in
     # the migrated payload is the current resume state, not a new scientific
     # initialization.  Re-labelling it as the initial controller silently
@@ -176,8 +189,6 @@ def migrate(
     if source is None:  # pragma: no cover - required=True is authoritative
         _fail("migration_source_checkpoint_missing")
     config = _load_config(target_config_path)
-    if config.get("profile") != "recovery":
-        _fail("migration_target_profile_invalid")
     bootstrap = config.get("bootstrap")
     if not isinstance(bootstrap, dict) or any(
         bootstrap.get(key) != source.receipt.get(receipt_key)
@@ -283,6 +294,8 @@ def migrate(
         "optimizer_and_bundle_bytes_preserved": True,
         "history_preserved": True,
         "training_state_preserved": True,
+        "scientific_initialization_preserved": True,
+        "training_profile_preserved": True,
         "complete_receipt_sha256": complete["receipt_sha256"],
     }
     receipt = {**body, "migration_sha256": canonical_sha256(body)}

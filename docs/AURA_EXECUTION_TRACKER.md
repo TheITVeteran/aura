@@ -49294,3 +49294,34 @@ diff integrity pass before the aggregate smoke gate. CP478 produced no valid
 model verdict and authorizes no fusion, resident transfer, frontier claim or
 `WOW Signal`. Its exact step-8 tissue is eligible only for source-bound recovery
 after independent migration verification.
+
+## Checkpoint 2026-08-14-480: Preserve The Experiment Across Source Repair
+
+The existing source-migration helper could copy CP478's step-8 tensors,
+optimizer, history and training state exactly, but it required a generic
+`recovery` profile with a different 36-step curriculum. It also replaced the
+experiment's original bootstrap with the operational step-8 bootstrap. That
+would have resumed the bytes while silently changing both the schedule and the
+claimed initialization. The trainer had no path for adopting the migrated
+identity, so a correctly preserved original controller identity would then fail
+its local resume check.
+
+Source-only migration now requires the destination's complete training-profile
+digest and every non-source scientific input to equal the source campaign. The
+original bootstrap and initial controller remain the scientific origin; the
+step-8 controller receives a separate migration binding. The migration receipt
+explicitly commits that initialization and training profile were preserved.
+
+Before restoring any local checkpoint, the trainer independently validates the
+canonical migration receipt, current migration implementation, source and
+destination generations, byte-identical checkpoint digest, step, receipts,
+campaign binding and all non-transport identity fields. Only that complete
+contract may replace the operational bootstrap identity with the original
+scientific identity. A changed recovery schedule and an incomplete migration
+receipt both fail closed in regression tests.
+
+Focused migration and resident-controller contracts pass `42/42`; Ruff,
+compilation and diff integrity pass before the aggregate smoke gate. This
+checkpoint repairs exact recovery authority only. It does not turn CP478's
+prefix failure into a model result or authorize fusion, resident transfer,
+frontier claims or `WOW Signal`.

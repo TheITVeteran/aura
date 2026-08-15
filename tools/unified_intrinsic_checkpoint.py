@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -22,6 +23,9 @@ _CHECKPOINT_ID: Final = re.compile(
 )
 _STAGING_ID: Final = re.compile(r"\.checkpoint-stage-[0-9a-f]{32}")
 MAX_GENERATION_ENTRIES: Final = 10_000
+SOURCE_MIGRATION_SCHEMA: Final = (
+    "aura.unified_intrinsic.checkpoint_source_migration.v2"
+)
 
 
 class UnifiedCheckpointError(RuntimeError):
@@ -388,12 +392,126 @@ def resolve_checkpoint_generation(
     )
 
 
+def adopt_source_migration_identity(
+    output_dir: Path,
+    computed_identity: dict[str, Any],
+) -> dict[str, Any]:
+    """Verify and adopt an exact source-only resume identity when present.
+
+    A migrated run retains the original experiment initialization while its
+    operational bootstrap is the current resume tissue. The normal bootstrap
+    path cannot represent both facts, so this verifier adopts the stored
+    migration identity only after independently checking both checkpoints and
+    every non-transport identity field.
+    """
+
+    output = output_dir.expanduser().resolve(strict=True)
+    migration_path = output.parent / "checkpoint-source-migration.json"
+    if not migration_path.exists() and not migration_path.is_symlink():
+        return computed_identity
+    migration, _raw = _canonical_json(migration_path, max_bytes=4 * 1024 * 1024)
+    material = {
+        key: value for key, value in migration.items() if key != "migration_sha256"
+    }
+    source = migration.get("source")
+    destination = migration.get("destination")
+    if (
+        migration.get("schema") != SOURCE_MIGRATION_SCHEMA
+        or migration.get("state") != "complete"
+        or migration.get("migration_sha256") != canonical_sha256(material)
+        or not isinstance(source, dict)
+        or not isinstance(destination, dict)
+        or migration.get("payload_byte_identical") is not True
+        or migration.get("optimizer_and_bundle_bytes_preserved") is not True
+        or migration.get("history_preserved") is not True
+        or migration.get("training_state_preserved") is not True
+        or migration.get("scientific_initialization_preserved") is not True
+        or migration.get("training_profile_preserved") is not True
+    ):
+        raise UnifiedCheckpointError("unified checkpoint source migration differs")
+
+    target = resolve_checkpoint_generation(output, required=True)
+    if target is None:  # pragma: no cover - required=True is authoritative
+        raise UnifiedCheckpointError("unified checkpoint source migration target missing")
+    stored_identity = target.receipt.get("identity")
+    campaign_binding = computed_identity.get("campaign_binding")
+    if (
+        not isinstance(stored_identity, dict)
+        or not isinstance(campaign_binding, dict)
+        or destination.get("campaign_id") != campaign_binding.get("campaign_id")
+        or destination.get("config_sha256")
+        != campaign_binding.get("campaign_config_sha256")
+        or destination.get("generation") != target.generation_dir.name
+        or destination.get("step") != target.receipt.get("step")
+        or destination.get("checkpoint_sha256")
+        != target.receipt.get("checkpoint_sha256")
+        or destination.get("receipt_sha256") != target.receipt.get("receipt_sha256")
+        or destination.get("identity_sha256")
+        != stored_identity.get("identity_sha256")
+    ):
+        raise UnifiedCheckpointError("unified checkpoint source migration target differs")
+
+    try:
+        source_checkpoint = resolve_checkpoint_generation(
+            Path(str(source["output"])), required=True
+        )
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise UnifiedCheckpointError(
+            "unified checkpoint source migration source invalid"
+        ) from exc
+    if (
+        source_checkpoint is None
+        or source.get("generation") != source_checkpoint.generation_dir.name
+        or source.get("step") != source_checkpoint.receipt.get("step")
+        or source.get("checkpoint_sha256")
+        != source_checkpoint.receipt.get("checkpoint_sha256")
+        or source.get("receipt_sha256")
+        != source_checkpoint.receipt.get("receipt_sha256")
+        or source.get("identity_sha256")
+        != source_checkpoint.receipt.get("identity", {}).get("identity_sha256")
+        or source.get("checkpoint_sha256") != destination.get("checkpoint_sha256")
+        or source.get("step") != destination.get("step")
+    ):
+        raise UnifiedCheckpointError("unified checkpoint source migration source differs")
+
+    implementation = Path(__file__).with_name("migrate_unified_intrinsic_checkpoint.py")
+    if _stable_file_identity(implementation, max_bytes=4 * 1024 * 1024)["sha256"] != (
+        migration.get("migration_tool_sha256")
+    ):
+        raise UnifiedCheckpointError(
+            "unified checkpoint source migration implementation differs"
+        )
+
+    expected = copy.deepcopy(computed_identity)
+    expected.pop("identity_sha256", None)
+    current_controller = expected.get("initial_controller_sha256")
+    original_controller = stored_identity.get("initial_controller_sha256")
+    original_bootstrap = stored_identity.get("bootstrap")
+    if (
+        not isinstance(current_controller, str)
+        or len(current_controller) != 64
+        or not isinstance(original_controller, str)
+        or len(original_controller) != 64
+        or not isinstance(original_bootstrap, dict)
+    ):
+        raise UnifiedCheckpointError("unified checkpoint source migration origin differs")
+    expected["initial_controller_sha256"] = original_controller
+    expected["bootstrap"] = copy.deepcopy(original_bootstrap)
+    expected["source_migration_controller_sha256"] = current_controller
+    expected["identity_sha256"] = canonical_sha256(expected)
+    if expected != stored_identity:
+        raise UnifiedCheckpointError("unified checkpoint source migration identity differs")
+    return copy.deepcopy(stored_identity)
+
+
 __all__ = [
     "CHECKPOINT_GENERATION_SCHEMA",
     "CHECKPOINT_POINTER_SCHEMA",
+    "SOURCE_MIGRATION_SCHEMA",
     "TRAINING_SCHEMA",
     "ResolvedUnifiedCheckpoint",
     "UnifiedCheckpointError",
+    "adopt_source_migration_identity",
     "resolve_checkpoint_generation",
     "unpointed_checkpoint_inventory",
 ]

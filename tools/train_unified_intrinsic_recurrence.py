@@ -101,6 +101,7 @@ from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     CHECKPOINT_POINTER_SCHEMA,
     TRAINING_SCHEMA,
     UnifiedCheckpointError,
+    adopt_source_migration_identity,
     bootstrap_topology_mismatches,
     resolve_checkpoint_generation,
 )
@@ -5005,7 +5006,9 @@ def main() -> int:
         )
         identity["initial_controller_sha256"] = controller.parameter_sha256()
         identity["bootstrap"] = bootstrap
-        identity["identity_sha256"] = _canonical_sha256(identity)
+        identity = adopt_source_migration_identity(out_dir, identity)
+        if "identity_sha256" not in identity:
+            identity["identity_sha256"] = _canonical_sha256(identity)
 
         def phase_learning_rate(phase: str) -> float:
             return {
