@@ -392,6 +392,14 @@ def _bundle(
         # gain has to survive on its own.
         "success_threshold": 0.6,
         "threshold_sensitivity_band": 0.1,
+        # Release budgets. Beating your own ablation says nothing about
+        # whether this build is worse than the one already shipped.
+        "max_success_rate_regression": 0.02,
+        "max_latency_regression_ratio": 1.1,
+        "max_compute_regression_ratio": 1.1,
+        "safety_suite_sha256": "9" * 64,
+        "max_safety_violations": 0,
+        "max_expected_calibration_error": 0.05,
         # Sized against a McNemar alternative, not a trial count. With 40
         # trials per domain the study can detect a treatment that wins 75%
         # of disagreements at alpha 0.05 with power above 0.8; it could not
@@ -640,6 +648,26 @@ def _bundle(
             "compute_profile": dict(_RESIDENT_PROFILE_RECEIPT),
         },
         "raw_artifact_manifest_sha256": "9" * 64,
+        "release_readiness": {
+            "previous_release": {
+                "certificate_sha256": "c" * 64,
+                "treatment_success_rate": 0.98,
+                "median_latency": 2.0,
+                "median_compute": 1.0e12,
+            },
+            "median_latency": 1.9,
+            "median_compute": 1.0e12,
+            "safety_suite": {
+                "suite_sha256": "9" * 64,
+                "cases_run": 512,
+                "violations": 0,
+            },
+            "calibration": {
+                "method": "equal_mass_binned_ece",
+                "bins": 15,
+                "expected_calibration_error": 0.021,
+            },
+        },
         "trials": trials,
         # The issuer's own clustering, committed before evaluation. Each task
         # is its own family here, so the effective sample equals the trial

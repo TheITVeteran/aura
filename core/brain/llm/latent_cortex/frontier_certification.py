@@ -1395,6 +1395,119 @@ def _validate_raw_artifact_receipt(
     return True
 
 
+def _validate_release_readiness(
+    bundle: dict[str, Any],
+    prereg: dict[str, Any],
+    *,
+    treatment_success_rate: float,
+    reasons: list[str],
+) -> dict[str, Any]:
+    """A win over the control is not a release.
+
+    The certificate compared the treatment against the control in the same
+    run and stopped there. Nothing asked whether this release was worse than
+    the last one, whether it was miscalibrated, whether it was slower or more
+    expensive, or whether it had started failing safety cases it used to
+    pass. A model can beat its ablation on every domain while regressing
+    against the version already shipped, and the certificate would have said
+    PROVEN.
+
+    Returns the measured regression summary for the certificate to carry.
+    """
+    summary: dict[str, Any] = {}
+    readiness = bundle.get("release_readiness")
+    if not isinstance(readiness, dict):
+        reasons.append("release_readiness_missing")
+        return summary
+
+    # ── previous release ────────────────────────────────────────────────
+    baseline = readiness.get("previous_release")
+    first_release = readiness.get("first_release") is True
+    if first_release:
+        # A first release has nothing to regress against, but it has to SAY
+        # so rather than leave the section out.
+        if baseline is not None:
+            reasons.append("first_release_carries_a_baseline")
+        summary["baseline"] = "first_release"
+    elif not isinstance(baseline, dict):
+        reasons.append("release_baseline_missing")
+    else:
+        if not _is_sha256(baseline.get("certificate_sha256")):
+            reasons.append("release_baseline_certificate_unidentified")
+        previous_rate = baseline.get("treatment_success_rate")
+        allowed = prereg.get("max_success_rate_regression")
+        if not _finite_number(previous_rate) or not 0.0 <= float(previous_rate) <= 1.0:
+            reasons.append("release_baseline_success_rate_invalid")
+        elif not _finite_number(allowed) or not 0.0 <= float(allowed) <= 0.1:
+            reasons.append("invalid_max_success_rate_regression")
+        else:
+            regression = float(previous_rate) - treatment_success_rate
+            summary["success_rate_regression"] = round(regression, 6)
+            if regression > float(allowed):
+                reasons.append("release_regresses_against_previous_certificate")
+        for metric in ("latency", "compute"):
+            previous = baseline.get(f"median_{metric}")
+            current = readiness.get(f"median_{metric}")
+            ceiling = prereg.get(f"max_{metric}_regression_ratio")
+            if not _finite_number(previous, positive=True) or not _finite_number(
+                current, positive=True
+            ):
+                reasons.append(f"release_{metric}_unmeasured")
+                continue
+            if not _finite_number(ceiling) or float(ceiling) < 1.0:
+                reasons.append(f"invalid_max_{metric}_regression_ratio")
+                continue
+            ratio = float(current) / float(previous)
+            summary[f"{metric}_ratio"] = round(ratio, 6)
+            if ratio > float(ceiling):
+                reasons.append(f"release_{metric}_regressed")
+
+    # ── safety ──────────────────────────────────────────────────────────
+    safety = readiness.get("safety_suite")
+    if not isinstance(safety, dict):
+        reasons.append("release_safety_suite_missing")
+    else:
+        if safety.get("suite_sha256") != prereg.get("safety_suite_sha256"):
+            reasons.append("release_safety_suite_not_preregistered")
+        cases = safety.get("cases_run")
+        violations = safety.get("violations")
+        allowed = prereg.get("max_safety_violations")
+        if type(cases) is not int or cases <= 0:
+            reasons.append("release_safety_suite_ran_nothing")
+        if type(violations) is not int or violations < 0:
+            reasons.append("release_safety_violations_unmeasured")
+        elif type(allowed) is not int or allowed < 0:
+            reasons.append("invalid_max_safety_violations")
+        else:
+            summary["safety_violations"] = violations
+            if violations > allowed:
+                reasons.append("release_safety_violations_exceed_budget")
+
+    # ── calibration ─────────────────────────────────────────────────────
+    calibration = readiness.get("calibration")
+    if not isinstance(calibration, dict):
+        reasons.append("release_calibration_missing")
+        return summary
+    if not str(calibration.get("method") or "").strip():
+        reasons.append("release_calibration_method_missing")
+    bins = calibration.get("bins")
+    if type(bins) is not int or bins < 2:
+        reasons.append("release_calibration_bins_invalid")
+    error = calibration.get("expected_calibration_error")
+    ceiling = prereg.get("max_expected_calibration_error")
+    if not _finite_number(error) or not 0.0 <= float(error) <= 1.0:
+        reasons.append("release_calibration_unmeasured")
+    elif not _finite_number(ceiling) or not 0.0 < float(ceiling) <= 1.0:
+        reasons.append("invalid_max_expected_calibration_error")
+    else:
+        summary["expected_calibration_error"] = round(float(error), 6)
+        if float(error) > float(ceiling):
+            # A model whose confidence does not track its accuracy is not
+            # releasable however well it scores.
+            reasons.append("release_calibration_outside_budget")
+    return summary
+
+
 def verify_frontier_gain_bundle(
     bundle: Any,
     *,
@@ -2085,6 +2198,13 @@ def verify_frontier_gain_bundle(
     if treatment_success_rate < min_success_rate:
         reasons.append("treatment_below_absolute_capability_floor")
 
+    release_summary = _validate_release_readiness(
+        bundle,
+        prereg,
+        treatment_success_rate=treatment_success_rate,
+        reasons=reasons,
+    )
+
     # RAW ARTIFACT VERIFICATION: the bundle's manifest hash was only
     # SYNTAX-checked here, so the core API could accept and claim PROVEN
     # without any raw artifact ever being loaded or recomputed. A receipt
@@ -2121,6 +2241,10 @@ def verify_frontier_gain_bundle(
         "non_positive_domains": non_positive_domains,
         "treatment_success_rate": round(treatment_success_rate, 6),
         "min_treatment_success_rate": min_success_rate,
+        # CP126 5c540b93: what this release does against the LAST one, and
+        # against safety and calibration budgets. Beating your own ablation
+        # says nothing about either.
+        "release_readiness": release_summary,
         "evidence_payload_sha256": evidence_hash,
         "independent_verifier_id": independent_verifier_id,
         "independent_attestation_sha256": independent_attestation_sha256,
