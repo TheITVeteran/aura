@@ -84,6 +84,34 @@ def _file_sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _resident_manifest_identity(path: Path, model_path: Path) -> dict[str, Any]:
+    manifest_path = path.expanduser().resolve(strict=True)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("resident model manifest is invalid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("resident model manifest is not an object")
+    active_raw = str(manifest.get("active_model_path") or "").strip()
+    if not active_raw:
+        raise ValueError("resident model manifest has no active model")
+    active_path = Path(active_raw).expanduser().resolve(strict=True)
+    if active_path != model_path:
+        raise ValueError("resident model manifest does not select measured model")
+    schema_version = manifest.get("schema_version")
+    if type(schema_version) is not int or schema_version < 1:
+        raise ValueError("resident model manifest schema is invalid")
+    return {
+        "path": str(manifest_path),
+        "sha256": _file_sha(manifest_path),
+        "active_model_path": str(active_path),
+        "schema_version": schema_version,
+        "base_model": str(manifest.get("base_model") or ""),
+        "tag": str(manifest.get("tag") or ""),
+        "fused_at": manifest.get("fused_at"),
+    }
+
+
 def _append_journal_event(
     path: Path,
     event: dict[str, Any],
@@ -230,6 +258,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--journal", type=Path)
+    parser.add_argument("--resident-manifest", type=Path)
     parser.add_argument("--seed", type=int, default=20_260_815_48)
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
     parser.add_argument("--max-tokens", type=int, default=384)
@@ -252,6 +281,11 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         raise ValueError("semantic decode task count is outside [2, 20]")
     if not 32 <= args.max_tokens <= 384:
         raise ValueError("semantic decode token budget is outside [32, 384]")
+    resident_manifest_identity = (
+        _resident_manifest_identity(args.resident_manifest, model_path)
+        if args.resident_manifest is not None
+        else None
+    )
     source_commit = _git("rev-parse", "HEAD")
     if _git("status", "--porcelain", "--untracked-files=all"):
         raise RuntimeError("semantic decode canary requires clean measured source")
@@ -286,6 +320,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "tasks_per_difficulty": args.tasks_per_difficulty,
             "task_count": len(tasks),
             "arm_count": len(ARMS),
+            "resident_manifest_identity": resident_manifest_identity,
         },
         previous_receipt_sha256="0" * 64,
     )
@@ -476,6 +511,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "config_sha256": _file_sha(model_path / "config.json"),
             "weights_index_sha256": _file_sha(model_path / "model.safetensors.index.json"),
         },
+        "resident_manifest_identity": resident_manifest_identity,
         "seed": args.seed,
         "tasks_per_difficulty": args.tasks_per_difficulty,
         "task_count": len(tasks),

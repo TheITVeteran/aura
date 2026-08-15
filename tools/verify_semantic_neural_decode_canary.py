@@ -85,6 +85,45 @@ def _verify_embedded_receipt(payload: dict[str, Any], field: str) -> None:
         raise RuntimeError(f"semantic decode {field} mismatch")
 
 
+def _verify_resident_manifest(
+    manifest_path: Path | None,
+    *,
+    payload: dict[str, Any],
+    model_path: Path,
+) -> dict[str, Any] | None:
+    identity = payload.get("resident_manifest_identity")
+    if identity is None:
+        if manifest_path is not None:
+            raise RuntimeError("semantic decode artifact is not resident-manifest bound")
+        return None
+    if not isinstance(identity, dict) or manifest_path is None:
+        raise RuntimeError("semantic decode resident manifest requires independent path")
+    resolved = manifest_path.expanduser().resolve(strict=True)
+    try:
+        manifest = json.loads(resolved.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("semantic decode resident manifest is invalid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("semantic decode resident manifest is invalid")
+    active_raw = str(manifest.get("active_model_path") or "").strip()
+    try:
+        active = Path(active_raw).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError("semantic decode resident manifest active model is invalid") from exc
+    expected = {
+        "path": str(resolved),
+        "sha256": _file_sha(resolved),
+        "active_model_path": str(active),
+        "schema_version": manifest.get("schema_version"),
+        "base_model": str(manifest.get("base_model") or ""),
+        "tag": str(manifest.get("tag") or ""),
+        "fused_at": manifest.get("fused_at"),
+    }
+    if identity != expected or active != model_path:
+        raise RuntimeError("semantic decode resident manifest identity mismatch")
+    return expected
+
+
 def _expected_tasks(seed: int, per_cell: int):
     return frontier_process_task_battery(
         DOMAINS,
@@ -142,6 +181,7 @@ def _verify_journal(
         "tasks_per_difficulty": payload["tasks_per_difficulty"],
         "task_count": payload["task_count"],
         "arm_count": len(ARMS),
+        "resident_manifest_identity": payload.get("resident_manifest_identity"),
     }
     if any(started.get(key) != value for key, value in expected_start.items()):
         raise RuntimeError("semantic decode journal campaign identity mismatch")
@@ -185,6 +225,7 @@ def verify_canary(
     *,
     model_path: Path,
     journal_path: Path | None = None,
+    resident_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     artifact_path = artifact_path.expanduser().resolve(strict=True)
     model_path = model_path.expanduser().resolve(strict=True)
@@ -215,6 +256,11 @@ def verify_canary(
     ):
         if model_identity.get(field) != _file_sha(model_path / filename):
             raise RuntimeError(f"semantic decode model identity mismatch: {field}")
+    resident_manifest_identity = _verify_resident_manifest(
+        resident_manifest_path,
+        payload=payload,
+        model_path=model_path,
+    )
 
     seed = payload.get("seed")
     per_cell = payload.get("tasks_per_difficulty")
@@ -315,6 +361,7 @@ def verify_canary(
         "artifact_receipt_sha256": payload["receipt_sha256"],
         "source_commit": source_commit,
         "model_identity": model_identity,
+        "resident_manifest_identity": resident_manifest_identity,
         "seed": seed,
         "tasks_per_difficulty": per_cell,
         "task_count": len(tasks),
@@ -338,12 +385,14 @@ def main() -> int:
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--journal", type=Path)
+    parser.add_argument("--resident-manifest", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     report = verify_canary(
         args.artifact,
         model_path=args.model,
         journal_path=args.journal,
+        resident_manifest_path=args.resident_manifest,
     )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report is not None:

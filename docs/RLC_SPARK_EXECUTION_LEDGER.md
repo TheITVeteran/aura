@@ -5959,3 +5959,12 @@ passed; the paired one-sided exact probability is `8.08e-28`.
 This authorizes the bounded resident-32B semantic decode canary. It does not
 close SPARK-069 through SPARK-072 or authorize ordinary serving, fusion,
 frontier performance or `WOW Signal`.
+
+### 2026-08-15 - CP554 resident evidence now binds Aura's active manifest
+
+Preflight found that Aura's logical 8-bit model name is overridden at live
+runtime by `training/fused-model/active.json`, which selects a fused 4-bit 32B
+checkpoint. The canary and independent verifier now cryptographically bind and
+reopen that manifest and refuse model-path or manifest drift. Two interrupted
+pre-manifest probes are diagnostic only. The fresh claim-grade resident run is
+next; no SPARK or `WOW Signal` gate closes here.

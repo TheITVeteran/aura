@@ -12,6 +12,7 @@ from tools.run_semantic_neural_decode_canary import (
     _arm_order,
     _grade,
     _lane_kwargs,
+    _resident_manifest_identity,
     _state_prefill,
     _summary,
     _wire_prefill,
@@ -63,6 +64,27 @@ def test_semantic_neural_decode_uses_current_nonpreemptible_lane_contract(tmp_pa
     assert values["preemptible"] is False
     assert values["allow_owner_eviction"] is False
     assert "require_live_runtime_absent" not in values
+
+
+def test_semantic_neural_decode_resident_manifest_selects_measured_model(tmp_path):
+    model = tmp_path / "resident"
+    model.mkdir()
+    manifest = tmp_path / "active.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "active_model_path": str(model),
+                "base_model": "base",
+                "fused_at": 1,
+                "schema_version": 2,
+                "tag": "test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = _resident_manifest_identity(manifest, model.resolve())
+    assert identity["active_model_path"] == str(model.resolve())
+    assert identity["schema_version"] == 2
 
 
 def test_semantic_neural_decode_uses_training_task_grade_contract():

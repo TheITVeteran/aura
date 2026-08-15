@@ -50446,3 +50446,23 @@ the named 1.5B checkpoint. It does not establish open-domain or broad reasoning
 gain, resident-32B transfer, ordinary runtime activation, fusion, frontier
 performance or `WOW Signal`. The next gate is the first source-bound bounded
 resident-32B five-arm canary under the same admission rule.
+
+## Checkpoint 2026-08-15-554: Bind Resident Evidence to the Active Cortex Manifest
+
+The first resident launch attempt exposed an identity ambiguity before a full
+campaign was spent. Aura's logical model name defaults to the 8-bit 32B
+artifact, while the live-source `active.json` currently selects the fused
+4-bit `Aura-32B-crsm-closeout-jul1-20260701-215118` checkpoint. A model-file
+hash alone could prove a 32B run without proving it measured Aura's active
+resident cortex.
+
+Resident canaries now accept an explicit manifest and refuse unless its
+resolved `active_model_path` equals the measured model. Producer evidence
+binds the full manifest hash, path, schema, base model, tag and fusion time;
+the independent verifier requires a separately supplied manifest, reopens it,
+and rejects missing, changed or differently resolved identity. Focused
+producer/verifier contracts pass `12/12`; canonical smoke passes `110/110`.
+
+The interrupted base-8-bit and pre-manifest fused rows carry no resident claim.
+The next run starts from this clean checkpoint against the manifest-selected
+fused model and must still pass the unchanged five-arm admission rule.

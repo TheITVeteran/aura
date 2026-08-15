@@ -140,6 +140,49 @@ def test_semantic_decode_verifier_checks_receipt_chained_journal(tmp_path):
         verify_canary(artifact, model_path=model, journal_path=journal)
 
 
+def test_semantic_decode_verifier_binds_resident_manifest(tmp_path):
+    artifact, model = _portable_artifact(tmp_path)
+    manifest = tmp_path / "active.json"
+    manifest_payload = {
+        "active_model_path": str(model.resolve()),
+        "base_model": "base",
+        "fused_at": 1,
+        "schema_version": 2,
+        "tag": "resident-test",
+    }
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    payload["resident_manifest_identity"] = {
+        "path": str(manifest.resolve()),
+        "sha256": _file_sha(manifest),
+        "active_model_path": str(model.resolve()),
+        "schema_version": 2,
+        "base_model": "base",
+        "tag": "resident-test",
+        "fused_at": 1,
+    }
+    payload["receipt_sha256"] = _sha(
+        {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    )
+    artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+    report = verify_canary(
+        artifact,
+        model_path=model,
+        resident_manifest_path=manifest,
+    )
+    assert report["resident_manifest_identity"]["tag"] == "resident-test"
+
+    manifest_payload["tag"] = "changed"
+    manifest.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="resident manifest identity mismatch"):
+        verify_canary(
+            artifact,
+            model_path=model,
+            resident_manifest_path=manifest,
+        )
+
+
 def test_semantic_decode_verifier_rejects_resealed_response_tamper(tmp_path):
     artifact, model = _portable_artifact(tmp_path)
     payload = json.loads(artifact.read_text(encoding="utf-8"))
