@@ -2922,7 +2922,7 @@ def test_ownership_optimizer_preserves_rate_ratio_after_adam_normalization() -> 
         _ownership_optimizer(0.01, transformer_rate_scale=1.1)
 
 
-def test_ownership_optimizer_updates_after_eager_disjoint_state_initialization() -> None:
+def test_ownership_optimizer_initializes_disjoint_state_from_parameter_topology() -> None:
     parameters = {
         "model": {
             "layers": [
@@ -2945,10 +2945,11 @@ def test_ownership_optimizer_updates_after_eager_disjoint_state_initialization()
         [(name, mx.ones_like(value)) for name, value in tree_flatten(parameters)]
     )
     optimizer = _ownership_optimizer(0.01, transformer_rate_scale=0.1)
-    optimizer.init(parameters)
 
     updated = optimizer.apply_gradients(gradients, parameters)
     mx.eval(updated, optimizer.state)
+    updated_again = optimizer.apply_gradients(gradients, updated)
+    mx.eval(updated_again, optimizer.state)
 
     assert {name for name, _value in tree_flatten(updated)} == {
         name for name, _value in tree_flatten(parameters)

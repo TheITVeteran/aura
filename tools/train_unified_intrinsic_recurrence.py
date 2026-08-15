@@ -253,6 +253,12 @@ class _DisjointPathMultiOptimizer(optim.MultiOptimizer):
             parameter_groups,
             strict=True,
         ):
+            # MLX otherwise initializes Adam moments from the potentially
+            # sparse gradient group. Module-list experts can omit inactive
+            # siblings on a step, making that state shorter than the owned
+            # parameter tree and crashing the first or resumed update.
+            if not optimizer._initialized:  # noqa: SLF001 - MLX has no public probe
+                optimizer.init(parameter_group)
             for name, value in tree_flatten(
                 optimizer.apply_gradients(gradient_group, parameter_group)
             ):
