@@ -39,6 +39,7 @@ from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 CANARY_SCHEMA: Final = "aura.rlc.mathematics_memory_decode_canary.v1"
 ARMS: Final = (
     "ordinary_base",
+    "matched_wire_base",
     "treatment",
     "matched_initialization",
     "no_write",
@@ -137,6 +138,10 @@ def _summary(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
             sum(int(row["generated_tokens"]) for row in selected) / len(selected),
             3,
         ),
+        "mean_wire_prefill_tokens": round(
+            sum(int(row["wire_prefill_tokens"]) for row in selected) / len(selected),
+            3,
+        ),
         "mean_latency_ms": round(
             sum(int(row["latency_ms"]) for row in selected) / len(selected),
             3,
@@ -224,18 +229,17 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             ],
         }
         for arm in _arm_order(task.task_id):
-            context = (
-                ""
-                if arm == "ordinary_base"
-                else render_recurrent_memory_decode_context(state_by_arm[arm])
+            context = "" if arm in {"ordinary_base", "matched_wire_base"} else (
+                render_recurrent_memory_decode_context(state_by_arm[arm])
             )
+            active_prefill = () if arm == "ordinary_base" else wire_prefill
             prompt = _prompt_tokens(tokenizer, objective, context)
             generated, stopped, latency_ms = decode_base_greedy_tokens(
                 model,
                 prompt,
                 eos_token_id=tokenizer.eos_token_id,
                 max_tokens=args.max_tokens,
-                prefill_tokens=wire_prefill,
+                prefill_tokens=active_prefill,
                 completion_check=lambda values: _complete(tokenizer, values),
             )
             text = tokenizer.decode(list(generated), skip_special_tokens=True)
@@ -247,12 +251,15 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 "correct": bool(score.correct),
                 "parsed": bool(score.parsed),
                 "prompt_tokens": len(prompt),
-                "generated_tokens": len(generated),
+                "generated_tokens": len(generated) - len(active_prefill),
+                "wire_prefill_tokens": len(active_prefill),
                 "stopped": stopped,
                 "latency_ms": latency_ms,
                 "response_sha256": hashlib.sha256(text.encode()).hexdigest(),
                 "state_receipt_sha256": (
-                    "" if arm == "ordinary_base" else state_by_arm[arm].receipt()["receipt_sha256"]
+                    ""
+                    if arm in {"ordinary_base", "matched_wire_base"}
+                    else state_by_arm[arm].receipt()["receipt_sha256"]
                 ),
             }
             rows.append(row)
@@ -308,6 +315,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     )
     treatment_accuracy = float(arms["treatment"]["exact_accuracy"])
     causal_controls = (
+        "matched_wire_base",
         "matched_initialization",
         "no_write",
         "no_read",
@@ -350,6 +358,8 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "verifier_available_during_decode": False,
             "answer_replacement_enabled": False,
             "matched_wire_prefill": True,
+            "wire_prefill_arms": [arm for arm in ARMS if arm != "ordinary_base"],
+            "ordinary_base_unconstrained": True,
             "wire_prefill_token_count": len(wire_prefill),
             "wire_prefill_sha256": _sha(list(wire_prefill)),
         },
