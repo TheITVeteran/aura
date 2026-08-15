@@ -25,6 +25,7 @@ from typing import Any
 
 from core.brain.frontier_evidence_v5 import (
     MATCHED_BUDGET,
+    actor_independence,
     PROTOCOL_MANIFEST,
     PROTOCOL_MANIFEST_SHA256,
     RUN_ENVELOPE_SCHEMA,
@@ -2339,6 +2340,8 @@ def validate_capability_report(
     require_resolved_workspace: bool = False,
     require_complete_component_coverage: bool = False,
     require_bound_runtime_identity: bool = False,
+    key_custody: Mapping[str, Mapping[str, Any]] | None = None,
+    require_attested_custody: bool = False,
 ) -> dict[str, Any]:
     """Recompute a v5 claim from signed execution and correctness evidence.
 
@@ -2695,6 +2698,21 @@ def validate_capability_report(
         run_envelope=run,
     )
     _reject_worker_fallbacks(worker_receipts, subject="capability candidate")
+    normalized["actor_independence"] = actor_independence(
+        challenge=challenge,
+        task_spec=task_spec,
+        worker_receipts=worker_receipts,
+        run_envelope=run,
+        custody=key_custody,
+    )
+    if (
+        require_attested_custody
+        and normalized["actor_independence"]["independence"] != "custody_attested"
+    ):
+        raise ValueError(
+            "evidence roles are not attested to distinct custodians: "
+            f"{normalized['actor_independence']['independence']}"
+        )
 
     correct_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}
     count_by_class = {task_class: 0 for task_class in _BATTERY_BUILDERS}

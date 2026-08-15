@@ -30,6 +30,12 @@ from core.brain.canonical_json import canonical_json_bytes
 PROTOCOL_VERSION = 5
 MAX_CHALLENGE_LIFETIME_S = 3_600.0
 MAX_CHALLENGE_CLOCK_SKEW_S = 30.0
+# The commit-to-reveal gap was unbounded: only reveal-to-expiry was limited, so
+# an evaluator could hold a commitment indefinitely and reveal it whenever the
+# result suited. A commitment is a promise made before the answer is known, and
+# a promise nobody has to keep on any schedule is not one. The same hour the
+# revealed challenge is allowed to live is the bound on how long it may wait.
+MAX_CHALLENGE_COMMIT_AGE_S = 3_600.0
 # Protocol bounds on the trend test. Callers supply these, so they are the
 # knobs an interested party would turn to manufacture eligibility: a zero
 # run floor, a negative effect floor, or an alpha above one all make
@@ -64,6 +70,14 @@ MATCHED_BUDGET: dict[str, Any] = {
     "tools_allowed": False,
     "network_allowed": False,
     "cache_policy": "no_read_no_write",
+    # Input size and memory had no ceiling at all, so a worker could consume
+    # arbitrary context and RAM with all_within_budget still true. The prompt
+    # ceiling is generous next to a battery item (tens of tokens) and still
+    # bounds a context-stuffing run; the memory ceiling is the resident 32B's
+    # working set with headroom, above which the measurement is not the
+    # matched one.
+    "max_input_tokens": 8192,
+    "max_peak_memory_bytes": 48 * 1024 * 1024 * 1024,
 }
 
 PROTOCOL_MANIFEST_BODY: dict[str, Any] = {
@@ -571,8 +585,20 @@ def validate_challenge_bundle(
     trusted_evaluator_keys: Mapping[str, str] | None,
     expected_identity_freeze_sha256: str | None = None,
     verification_time_unix: float | None = None,
-    require_fresh: bool = False,
+    require_fresh: bool | None = None,
 ) -> dict[str, Any]:
+    """Validate a committed/revealed challenge bundle.
+
+    ``require_fresh`` defaults to ON whenever a verification time is supplied.
+    It used to default to OFF unconditionally, so a caller that went to the
+    trouble of passing the current time still got expired and not-yet-valid
+    challenges accepted, with nothing in the result saying the window had been
+    skipped. Passing False is now an explicit choice; passing neither, with no
+    clock to check against, still cannot check freshness.
+    """
+
+    if require_fresh is None:
+        require_fresh = verification_time_unix is not None
     if not isinstance(raw, dict) or set(raw) != {"commit", "reveal"}:
         raise ValueError("challenge bundle is incomplete")
     commit, commit_payload, commit_signer = verify_signed_envelope(
@@ -654,6 +680,8 @@ def validate_challenge_bundle(
         raise ValueError("challenge commit/reveal chronology is invalid")
     if expires - revealed > MAX_CHALLENGE_LIFETIME_S:
         raise ValueError("challenge validity window exceeds the protocol bound")
+    if revealed - committed > MAX_CHALLENGE_COMMIT_AGE_S:
+        raise ValueError("challenge was held past the protocol commit-to-reveal bound")
     if require_fresh:
         now = _require_finite(
             verification_time_unix,
@@ -813,6 +841,10 @@ def _validate_resource_usage(raw: Any) -> dict[str, Any]:
         value = usage.get(field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise ValueError(f"worker resource usage {field_name} is invalid")
+    if usage["input_tokens"] > int(MATCHED_BUDGET["max_input_tokens"]):
+        raise ValueError("generation worker exceeded the matched input budget")
+    if usage["peak_memory_bytes"] > int(MATCHED_BUDGET["max_peak_memory_bytes"]):
+        raise ValueError("generation worker exceeded the matched memory budget")
     if usage["input_tokens"] < 1 or usage["output_tokens"] > MATCHED_BUDGET["max_tokens"]:
         raise ValueError("worker token budget was not enforced")
     if usage["token_count_method"] != "tokenizer_exact":
@@ -936,6 +968,14 @@ def validate_worker_receipt(
         not isinstance(value, str) or value != value.strip() for value in fallbacks
     ):
         raise ValueError("generation worker fallback receipt is malformed")
+    # Disclosing a fallback was enough to pass. A fallback means the path that
+    # answered is not the path the receipt attests, so the measurement is not
+    # the matched one and the receipt cannot stand as evidence for it.
+    if fallbacks:
+        raise ValueError(
+            "generation worker used fallbacks and cannot attest a matched run: "
+            f"{','.join(sorted(set(fallbacks))[:4])}"
+        )
     return {
         "envelope": envelope,
         "payload": payload,
@@ -1010,11 +1050,23 @@ def validate_supervisor_observation(
         raise ValueError("execution supervisor process identity is invalid")
     if observation.get("process_running_after_response") is not True:
         raise ValueError("generation worker did not survive the supervised response")
-    _require_finite(
+    observed_at = _require_finite(
         observation.get("observed_at_unix"),
         field_name="execution supervisor observation time",
         minimum=0,
     )
+    # An observation time that only had to be a non-negative number could sit
+    # anywhere — before the run, after it, years away — while still claiming to
+    # have watched this response.
+    response_completed = bindings.get("response_completed_at_unix")
+    run_started = bindings.get("run_started_at_unix")
+    run_completed = bindings.get("run_completed_at_unix")
+    if response_completed is not None and observed_at + 0.25 < float(response_completed):
+        raise ValueError("execution supervisor observed before the response completed")
+    if run_started is not None and observed_at + 0.25 < float(run_started):
+        raise ValueError("execution supervisor observed before the run began")
+    if run_completed is not None and observed_at > float(run_completed) + 0.25:
+        raise ValueError("execution supervisor observed after the run completed")
     return observation
 
 
@@ -1193,6 +1245,21 @@ def validate_run_envelope(
         )
     ):
         raise ValueError("correctness receipt chronology is outside the signed run window")
+    # The supervisor is the independent observer of the run. Its observation
+    # times were checked as finite numbers and nothing else, so an observation
+    # could claim to have watched a response it could not have seen.
+    if any(
+        float(observation["observed_at_unix"])
+        + 0.25 < float(worker["payload"]["completed_at_unix"])
+        or float(observation["observed_at_unix"]) < started
+        or float(observation["observed_at_unix"]) > completed + 0.25
+        for worker, observation in zip(
+            worker_receipts,
+            supervisor_observations,
+            strict=True,
+        )
+    ):
+        raise ValueError("supervisor observation is outside the signed run window")
     usage = [item["payload"]["resource_usage"] for item in worker_receipts]
     supervised_wall = [float(item["observed_wall_time_s"]) for item in supervisor_observations]
     expected_budget_summary = {
@@ -1215,6 +1282,74 @@ def validate_run_envelope(
     }
 
 
+ACTOR_INDEPENDENCE_SCHEMA = "aura.frontier_evidence.actor_independence.v1"
+
+
+def actor_independence(
+    *,
+    challenge: Mapping[str, Any],
+    task_spec: Mapping[str, Any],
+    worker_receipts: Sequence[Mapping[str, Any]],
+    run_envelope: Mapping[str, Any],
+    custody: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """How far the four-key separation actually goes.
+
+    Four distinct signer ids with four distinct public keys is what the module
+    checks, and the docstring called it "mutually distinct actors". It is not:
+    one operator — or one candidate-controlled process — can hold all four
+    private keys, and the signatures would be exactly as valid. Key
+    distinctness rules out the laziest case and nothing more.
+
+    ``custody`` is the missing half: per-role organizational identity and key
+    custody, supplied by whoever pinned the keys. Absent, this reports the
+    separation as CRYPTOGRAPHIC ONLY rather than letting the phrase "distinct
+    actors" carry weight it has not earned.
+    """
+
+    roles = {
+        "evaluator": str(challenge.get("evaluator_id") or ""),
+        "worker": str(
+            (worker_receipts[0].get("signer_id") if worker_receipts else "") or ""
+        ),
+        "verifier": str(task_spec.get("verifier_id") or ""),
+        "run_coordinator": str(run_envelope.get("signer_id") or ""),
+    }
+    custody = dict(custody or {})
+    attested: dict[str, Any] = {}
+    organizations: list[str] = []
+    for role, signer_id in roles.items():
+        record = custody.get(signer_id) or custody.get(role) or {}
+        organization = str(record.get("organization") or "")
+        holder = str(record.get("key_custodian") or "")
+        attested[role] = {
+            "signer_id": signer_id,
+            "organization": organization,
+            "key_custodian": holder,
+            "attested": bool(organization and holder),
+        }
+        if organization:
+            organizations.append(organization)
+    complete = all(row["attested"] for row in attested.values())
+    distinct_custodians = len(
+        {row["key_custodian"] for row in attested.values() if row["key_custodian"]}
+    )
+    return {
+        "schema": ACTOR_INDEPENDENCE_SCHEMA,
+        "roles": attested,
+        "custody_attested": complete,
+        "distinct_key_custodians": distinct_custodians,
+        "distinct_organizations": len(set(organizations)),
+        "independence": (
+            "custody_attested"
+            if complete and distinct_custodians == len(roles)
+            else "shared_custody"
+            if complete
+            else "cryptographic_only"
+        ),
+    }
+
+
 def validate_evidence_role_separation(
     *,
     challenge: Mapping[str, Any],
@@ -1223,7 +1358,11 @@ def validate_evidence_role_separation(
     correctness_receipts: Sequence[Mapping[str, Any]],
     run_envelope: Mapping[str, Any],
 ) -> None:
-    """Require distinct cryptographic principals for every evidence role."""
+    """Require distinct cryptographic KEYS for every evidence role.
+
+    Distinct keys are necessary and nowhere near sufficient: one holder can own
+    all four. ``actor_independence`` reports how far the separation goes.
+    """
 
     evaluator_id = challenge.get("evaluator_id")
     if task_spec.get("evaluator_id") != evaluator_id:
