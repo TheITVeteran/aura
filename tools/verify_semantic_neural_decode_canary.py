@@ -43,6 +43,23 @@ ARMS: Final = (
 )
 DOMAINS: Final = ("coding", "calibration", "misleading_premise")
 DIFFICULTIES: Final = (1, 2, 3)
+EXPECTED_COEFFICIENT_LESION_CONTRACT: Final = {
+    "frontier_coding": {
+        "operation": "addition",
+        "operation_index": 0,
+        "coefficient_index": 1,
+    },
+    "frontier_calibration": {
+        "operation": "multiplication",
+        "operation_index": 1,
+        "coefficient_index": 2,
+    },
+    "frontier_misleading_premise": {
+        "operation": "multiplication",
+        "operation_index": 1,
+        "coefficient_index": 2,
+    },
+}
 SOURCE_PATHS: Final = (
     "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
     "core/brain/llm/unified_recurrent_transfer_decode.py",
@@ -158,6 +175,15 @@ def _paired_one_sided_p(gains: int, regressions: int) -> float:
     )
 
 
+def _verify_optional_lesion_contract(payload: dict[str, Any]) -> bool:
+    contract = payload.get("coefficient_lesion_contract")
+    if contract is None:
+        return False
+    if contract != EXPECTED_COEFFICIENT_LESION_CONTRACT:
+        raise RuntimeError("semantic decode coefficient lesion contract mismatch")
+    return True
+
+
 def _verify_journal(
     journal_path: Path,
     *,
@@ -250,6 +276,7 @@ def verify_canary(
     if not isinstance(payload, dict) or payload.get("schema") != CANARY_SCHEMA:
         raise RuntimeError("semantic decode canary schema mismatch")
     _verify_embedded_receipt(payload, "receipt_sha256")
+    lesion_contract_verified = _verify_optional_lesion_contract(payload)
 
     source_commit = payload.get("source_commit")
     source_sha256s = payload.get("source_sha256s")
@@ -397,6 +424,7 @@ def verify_canary(
         "paired_discordant_count": len(gains) + len(regressions),
         "paired_one_sided_exact_p": paired_p,
         "treatment_state_replay_count": len(replayed_state_receipts),
+        "coefficient_lesion_contract_verified": lesion_contract_verified,
         **journal_verification,
         "claim_boundary": verified_claim_boundary,
         "producer_claim_boundary": producer_claim_boundary,

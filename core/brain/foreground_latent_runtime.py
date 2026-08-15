@@ -372,13 +372,19 @@ async def run_foreground_latent_episode(
                         return ForegroundLatentOutcome(
                             text="", trace=trace, fallback_allowed=False
                         )
+                    semantic_neural = (
+                        qualified.get("reason")
+                        == "qualified_semantic_neural_completed"
+                    )
                     trace.update(
                         {
                             "latent_cortex_selected": True,
                             "latent_cortex_attempted": True,
                             "latent_cortex_succeeded": True,
                             "latent_cortex_selection_reason": (
-                                "qualified_recurrent_exact_domain"
+                                "qualified_semantic_neural_exact_domain"
+                                if semantic_neural
+                                else "qualified_recurrent_exact_domain"
                             ),
                             "latent_cortex_identity_bound": True,
                             "latent_cortex_receipt": qualified_receipt,
@@ -388,7 +394,11 @@ async def run_foreground_latent_episode(
                         text=text,
                         trace=trace,
                         fallback_allowed=False,
-                        evidence=("qualified_recurrent_typed_execution",),
+                        evidence=(
+                            "qualified_semantic_neural_execution"
+                            if semantic_neural
+                            else "qualified_recurrent_typed_execution",
+                        ),
                     )
                 if qualified.get("attempted") is True:
                     trace.update(

@@ -8,6 +8,7 @@ used by training and evaluation, and renders only worker-authorized values.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -53,6 +54,12 @@ _RESULT_KEYS: Final = {
     "modular": ("residue",),
     "register_trace": ("r0", "r1", "r2"),
 }
+_SEMANTIC_PARSER_IDS: Final = {
+    "frontier_coding": "semantic_coding_canonical.v1",
+    "frontier_calibration": "semantic_calibration_canonical.v1",
+    "frontier_misleading_premise": "semantic_premise_canonical.v1",
+}
+_QUALIFIED_FAMILIES: Final = frozenset({*_RESULT_KEYS, *_SEMANTIC_PARSER_IDS})
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -81,7 +88,7 @@ class QualifiedRecurrentAdmission:
     def __post_init__(self) -> None:
         if (
             self.schema != QUALIFIED_RECURRENT_INGRESS_SCHEMA
-            or self.family not in _RESULT_KEYS
+            or self.family not in _QUALIFIED_FAMILIES
             or type(self.task_depth) is not int
             or not 1 <= self.task_depth <= 64
             or not isinstance(self.parser_id, str)
@@ -201,6 +208,33 @@ def admit_qualified_recurrent_objective(
         except ValueError:
             return None
     try:
+        from core.learning.public_frontier_action_compiler import (
+            compile_public_frontier_actions,
+        )
+        from core.learning.semantic_neural_controls import (
+            classify_public_semantic_objective,
+        )
+
+    except ImportError:
+        semantic_family = None
+    else:
+        semantic_family = classify_public_semantic_objective(prompt)
+        if semantic_family is not None:
+            try:
+                program = compile_public_frontier_actions(prompt, semantic_family)
+            except (TypeError, ValueError):
+                return None
+            if not 1 <= len(program.values) <= 64:
+                return None
+            return QualifiedRecurrentAdmission(
+                schema=QUALIFIED_RECURRENT_INGRESS_SCHEMA,
+                family=semantic_family,
+                task_depth=len(program.values),
+                parser_id=_SEMANTIC_PARSER_IDS[semantic_family],
+                public_source_sha256=program.public_prompt_sha256,
+                syntax_sha256=program.program_sha256,
+            )
+    try:
         from core.brain.llm.latent_cortex.typed_action_compiler import (
             compile_public_transition_program,
         )
@@ -288,6 +322,59 @@ async def execute_qualified_recurrent_objective(
             "attempted": False,
             "ok": False,
             "reason": "qualified_recurrent_objective_unsupported",
+        }
+    if admission.family in _SEMANTIC_PARSER_IDS:
+        from core.brain.llm.latent_cortex.semantic_neural_decode_context import (
+            execute_semantic_neural_decode_state,
+            render_semantic_neural_answer,
+        )
+        from core.brain.llm.semantic_neural_serving import (
+            semantic_neural_serving_status,
+        )
+
+        model_path = str(getattr(client, "model_path", "") or "")
+        if not model_path:
+            raise RuntimeError("qualified_recurrent_model_identity_unavailable")
+        status = semantic_neural_serving_status(model_path)
+        if not isinstance(status, Mapping) or status.get("active") is not True:
+            return {
+                "eligible": True,
+                "attempted": False,
+                "ok": False,
+                "reason": str(
+                    status.get("reason")
+                    if isinstance(status, Mapping)
+                    else "semantic_neural_serving_status_invalid"
+                ),
+                "admission": admission.receipt(),
+            }
+        state = await asyncio.wait_for(
+            asyncio.to_thread(
+                execute_semantic_neural_decode_state,
+                prompt,
+                admission.family,
+            ),
+            timeout=max(1.0, min(30.0, timeout_s)),
+        )
+        text = render_semantic_neural_answer(state)
+        activation_receipt = status.get("receipt")
+        if not isinstance(activation_receipt, Mapping):
+            raise RuntimeError("semantic_neural_activation_receipt_unavailable")
+        body = {
+            "schema": QUALIFIED_RECURRENT_RESULT_SCHEMA,
+            "admission": admission.receipt(),
+            "semantic_state_receipt": state.receipt(),
+            "activation_receipt": dict(activation_receipt),
+            "serialization": "canonical_json_from_authenticated_semantic_state",
+            "answer_sha256": hashlib.sha256(text.encode("ascii")).hexdigest(),
+        }
+        return {
+            "eligible": True,
+            "attempted": True,
+            "ok": True,
+            "text": text,
+            "reason": "qualified_semantic_neural_completed",
+            "receipt": {**body, "receipt_sha256": _canonical_sha256(body)},
         }
     status_reader = getattr(client, "unified_recurrent_qualified_serving_status", None)
     if not callable(status_reader):

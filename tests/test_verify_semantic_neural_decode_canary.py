@@ -196,3 +196,42 @@ def test_semantic_decode_verifier_rejects_resealed_response_tamper(tmp_path):
     artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="summary disagrees with raw output"):
         verify_canary(artifact, model_path=model)
+
+
+def test_semantic_decode_verifier_independently_checks_declared_lesions(tmp_path):
+    artifact, model = _portable_artifact(tmp_path)
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    payload["coefficient_lesion_contract"] = {
+        "frontier_coding": {
+            "operation": "addition",
+            "operation_index": 0,
+            "coefficient_index": 1,
+        },
+        "frontier_calibration": {
+            "operation": "multiplication",
+            "operation_index": 1,
+            "coefficient_index": 2,
+        },
+        "frontier_misleading_premise": {
+            "operation": "multiplication",
+            "operation_index": 1,
+            "coefficient_index": 2,
+        },
+    }
+    payload["receipt_sha256"] = _sha(
+        {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    )
+    artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    assert verify_canary(artifact, model_path=model)[
+        "coefficient_lesion_contract_verified"
+    ] is True
+
+    payload["coefficient_lesion_contract"]["frontier_coding"][
+        "coefficient_index"
+    ] = 2
+    payload["receipt_sha256"] = _sha(
+        {key: value for key, value in payload.items() if key != "receipt_sha256"}
+    )
+    artifact.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="coefficient lesion contract mismatch"):
+        verify_canary(artifact, model_path=model)

@@ -771,7 +771,7 @@ def install_runtime_validation() -> dict[str, Any]:
         ValidationTest(
             name="qualified_recurrent_tissue_reaches_exact_foreground_tasks",
             description=(
-                "all three certified public grammars reach qualified recurrent "
+                "all legacy and semantic certified public grammars reach qualified recurrent "
                 "serving before general exact-format exclusion, while unsupported "
                 "language remains on Aura's ordinary reasoning path"
             ),
@@ -2609,6 +2609,9 @@ def _qualified_recurrent_foreground_contract_holds() -> bool:
     from core.brain.llm.qualified_recurrent_ingress import (
         admit_qualified_recurrent_objective,
     )
+    from core.learning.frontier_process_supervision import (
+        frontier_process_task_battery,
+    )
     from core.learning.recurrence_curriculum import (
         khop_reachability,
         modular_chain,
@@ -2628,6 +2631,20 @@ def _qualified_recurrent_foreground_contract_holds() -> bool:
             admission is None
             or admission.family != family
             or admission.task_depth != 4
+        ):
+            return False
+    semantic_tasks = frontier_process_task_battery(
+        ("coding", "calibration", "misleading_premise"),
+        (1,),
+        1,
+        seed=2026081559,
+    )
+    for task in semantic_tasks:
+        admission = admit_qualified_recurrent_objective(task.prompt)
+        if (
+            admission is None
+            or admission.family != task.family
+            or admission.task_depth != task.depth
         ):
             return False
     if admit_qualified_recurrent_objective(

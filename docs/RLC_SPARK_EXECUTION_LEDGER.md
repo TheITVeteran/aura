@@ -5988,3 +5988,29 @@ governed serving path, and the run is not broad or open-domain. SPARK-069
 through SPARK-072 remain open. The next gates are family-targeted lesions,
 runtime promotion with rollback and receipts, then fresh powered broad
 falsification before any `WOW!` or frontier claim.
+
+### 2026-08-15 - CP556 qualified semantic tissue is active on the canonical path
+
+The three CP555-qualified exact families now enter the healthy sovereign
+foreground path through strict canonical grammar admission. The runtime
+reopens a content-addressed activation before execution and refuses on source,
+evidence, manifest or model drift. The activation is on by default, has an
+explicit `AURA_SEMANTIC_NEURAL_SERVING=0` rollback, and is bound to Aura's
+manifest-selected fused resident 32B identity under receipt
+`be8567d8075e48381215421a61c36c8523adc0be117c9918afca2fb55d9392c1`.
+
+A fresh canonical-ingress verification solved `90/90` tasks and every
+family-targeted learned-coefficient lesion disrupted its target (`90/90`),
+while unsupported natural language was refused instead of captured by a broad
+pattern. Median execution latency was `47.844 ms`, mean was `41.165 ms`, and
+maximum was `73.510 ms`. The runtime verification receipt is
+`19d9d2439269623924616f32d96edb48155a55f81ef7ca5c35747831ea91b83f`.
+Future producer artifacts that declare targeted lesions are independently
+checked against the verifier's own lesion map; historical sealed artifacts
+remain verifiable without retroactive mutation.
+
+This closes family-targeted lesions and rollback-safe canonical runtime
+promotion for the bounded exact families. It does not establish broad or
+open-domain reasoning, static weight fusion, frontier capability or `WOW!`.
+SPARK-069 through SPARK-072 remain open pending fresh broader-domain,
+equal-compute, lesion-backed powered replication.

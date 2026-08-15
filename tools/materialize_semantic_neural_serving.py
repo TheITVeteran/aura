@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Materialize the CP555-bound semantic neural runtime activation."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from core.brain.llm.semantic_neural_serving import (  # noqa: E402
+    DEFAULT_ACTIVATION_PATH,
+    build_semantic_neural_activation,
+    semantic_neural_activation_errors,
+)
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--resident-manifest",
+        type=Path,
+        default=Path("/Users/bryan/.aura/live-source/training/fused-model/active.json"),
+    )
+    parser.add_argument("--model", type=Path)
+    parser.add_argument("--out", type=Path, default=DEFAULT_ACTIVATION_PATH)
+    args = parser.parse_args()
+
+    manifest = args.resident_manifest.expanduser().resolve(strict=True)
+    manifest_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if not isinstance(manifest_payload, dict):
+        raise RuntimeError("resident manifest is not an object")
+    model = (
+        args.model.expanduser().resolve(strict=True)
+        if args.model is not None
+        else Path(str(manifest_payload.get("active_model_path") or "")).resolve(
+            strict=True
+        )
+    )
+    activation = build_semantic_neural_activation(
+        resident_manifest_path=manifest,
+        model_path=model,
+    )
+    errors = semantic_neural_activation_errors(
+        activation,
+        model_path=model,
+    )
+    if errors:
+        raise RuntimeError(f"materialized semantic activation is invalid: {errors}")
+    destination = args.out.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        destination,
+        json.dumps(activation, indent=2, sort_keys=True) + "\n",
+    )
+    print(json.dumps(activation, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

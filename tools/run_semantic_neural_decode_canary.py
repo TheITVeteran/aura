@@ -36,6 +36,10 @@ from core.brain.llm.unified_recurrent_transfer_decode import (  # noqa: E402
 from core.learning.frontier_process_supervision import (  # noqa: E402
     frontier_process_task_battery,
 )
+from core.learning.semantic_neural_controls import (  # noqa: E402
+    SEMANTIC_FAMILY_LESIONS,
+    semantic_neural_family_lesion_machine,
+)
 from core.learning.semantic_neural_machine import SemanticNeuralMachine  # noqa: E402
 from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
@@ -256,12 +260,8 @@ def _grade(task: Any, response: str) -> tuple[bool, bool]:
     return bool(verdict["correct"]), verdict.get("parsed") is not None
 
 
-def _lesion_machine() -> SemanticNeuralMachine:
-    tissue = SemanticNeuralMachine().tissue
-    tissue.raw_coefficients = tissue.raw_coefficients.at[1, 2].add(
-        -tissue.raw_coefficients[1, 2]
-    )
-    return SemanticNeuralMachine(tissue)
+def _lesion_machine(family: str) -> SemanticNeuralMachine:
+    return semantic_neural_family_lesion_machine(family)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -335,13 +335,14 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         },
         previous_receipt_sha256="0" * 64,
     )
-    lesion = _lesion_machine()
     lesion_states: list[SemanticNeuralDecodeState | None] = []
     for task in tasks:
         try:
             lesion_states.append(
                 execute_semantic_neural_decode_state(
-                    task.prompt, task.family, machine=lesion
+                    task.prompt,
+                    task.family,
+                    machine=_lesion_machine(task.family),
                 )
             )
         except (RuntimeError, ValueError):
@@ -531,6 +532,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "gain_count": len(gain_set),
         "regression_set_sha256": _sha(regressions),
         "regression_count": len(regressions),
+        "coefficient_lesion_contract": SEMANTIC_FAMILY_LESIONS,
         "treatment_state_receipt_sha256s": [
             state.receipt()["receipt_sha256"] for state in treatment_states
         ],

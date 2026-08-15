@@ -306,6 +306,56 @@ async def test_qualified_exact_domain_precedes_general_incompatible_exclusion(mo
 
 
 @pytest.mark.asyncio
+async def test_qualified_semantic_neural_domain_is_observable_and_canonical(monkeypatch):
+    from core.learning.frontier_process_supervision import (
+        frontier_process_task_battery,
+    )
+
+    task = frontier_process_task_battery(
+        ("coding",),
+        (1,),
+        1,
+        seed=2026081560,
+    )[0]
+    service = _QualifiedService(
+        {
+            "eligible": True,
+            "attempted": True,
+            "ok": True,
+            "reason": "qualified_semantic_neural_completed",
+            "text": task.answer,
+            "receipt": {"schema": "qualified.test", "receipt_sha256": "a" * 64},
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service", lambda: service
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        lambda **_kwargs: pytest.fail("semantic task must precede general selection"),
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": task.prompt}],
+        visible_objective=task.prompt,
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="reactive",
+        request_timeout_s=30.0,
+        strict_output_contract=True,
+        incompatible_contract=True,
+    )
+
+    assert outcome.succeeded is True
+    assert outcome.text == task.answer
+    assert outcome.trace["latent_cortex_selection_reason"] == (
+        "qualified_semantic_neural_exact_domain"
+    )
+    assert outcome.evidence == ("qualified_semantic_neural_execution",)
+
+
+@pytest.mark.asyncio
 async def test_activated_qualified_failure_suppresses_uncertified_fallback(monkeypatch):
     from core.learning.recurrence_curriculum import khop_reachability
 

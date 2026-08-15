@@ -50500,3 +50500,34 @@ single coefficient lesion erases multiplication and therefore does not damage
 addition-only coding; a family-targeted lesion matrix and canonical governed
 runtime integration are the next implementation gates before powered broad
 replication.
+
+## Checkpoint 2026-08-15-556: Activate the Proven Tissue Without Broadening Its Claim
+
+The CP555-qualified semantic machine is now part of Aura's healthy sovereign
+foreground path for only its three exact canonical grammars. Admission
+reconstructs the issuer prompt from public literals and rejects altered,
+prefixed, suffixed or ordinary natural-language requests. Execution produces
+canonical JSON from the authenticated recurrent state instead of spending a
+resident-model call copying already-computed exact values. Existing modular,
+register and graph qualified paths remain intact.
+
+Serving requires a content-addressed activation that reopens the CP555 result
+and independent verification, the active fused-model manifest, the model
+configuration and weight index, and every runtime source file involved in the
+path. Any drift fails closed. The package is active by default and reversible
+through `AURA_SEMANTIC_NEURAL_SERVING=0`; activation receipt
+`be8567d8075e48381215421a61c36c8523adc0be117c9918afca2fb55d9392c1`
+binds the exact deployed identity.
+
+The canonical ingress proof passed `90/90` fresh tasks, and independent
+family-targeted coefficient lesions disrupted all `90/90` corresponding
+executions. Unsupported language was refused. Runtime latency was `41.165 ms`
+mean, `47.844 ms` p50 and `73.510 ms` maximum; verification receipt
+`19d9d2439269623924616f32d96edb48155a55f81ef7ca5c35747831ea91b83f`.
+The producer/verifier contract also prevents a resealed artifact from changing
+which learned coefficient a lesion claims to remove.
+
+This completes bounded runtime promotion with causal controls and rollback. It
+does not close broad reasoning, open-domain transfer, static fusion, frontier
+performance or `WOW!`. The next work is broader neural state schemas and fresh
+powered equal-compute replication with matched and causal lesion arms.
