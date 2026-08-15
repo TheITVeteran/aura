@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -20,6 +21,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (  # noqa: E402
     execute_semantic_neural_decode_state,
+)
+from core.brain.llm.latent_cortex.semantic_surface_adapter import (  # noqa: E402
+    SEMANTIC_SURFACE_PROFILES,
+    execute_scientific_surface,
+    render_scientific_surface,
 )
 from core.learning.frontier_process_supervision import (  # noqa: E402
     frontier_process_task_battery,
@@ -89,17 +95,36 @@ SOURCE_PATHS: Final = (
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
+SURFACE_SOURCE_PATHS: Final = (
+    *SOURCE_PATHS,
+    "core/brain/llm/latent_cortex/semantic_surface_adapter.py",
+)
+SURFACE_PROFILES: Final = ("canonical", "mixed_scientific_v1")
 
 
-def _claim_boundary(resident_manifest_identity: dict[str, Any] | None) -> str:
+def _claim_boundary(
+    resident_manifest_identity: dict[str, Any] | None,
+    surface_profile: str = "canonical",
+) -> str:
+    qualifier = (
+        "less-constrained scientific surface transfer and "
+        if surface_profile == "mixed_scientific_v1"
+        else ""
+    )
     if resident_manifest_identity is not None:
         return (
-            "bounded teacher-free multi-domain neural-state-to-free-decode "
+            f"bounded teacher-free {qualifier}multi-domain neural-state-to-free-decode "
             "transfer on the resident model bound by model_identity and "
             "resident_manifest_identity; not open-domain, broad reasoning, "
             "fusion, frontier performance, or WOW"
         )
-    return LEGACY_CLAIM_BOUNDARY
+    if surface_profile == "canonical":
+        return LEGACY_CLAIM_BOUNDARY
+    return (
+        "bounded teacher-free less-constrained scientific surface transfer on "
+        "the model bound in model_identity; not open-domain, resident-32B, broad "
+        "reasoning, fusion, frontier performance, or WOW"
+    )
 
 
 def _sha(value: Any) -> str:
@@ -183,13 +208,41 @@ def _expected_tasks(
     per_cell: int,
     domains: tuple[str, ...],
     difficulties: tuple[int, ...],
+    surface_profile: str = "canonical",
 ):
-    return frontier_process_task_battery(
+    tasks = frontier_process_task_battery(
         domains,
         difficulties,
         per_cell,
         seed=seed,
     )
+    if surface_profile == "canonical":
+        return tasks
+    if surface_profile != "mixed_scientific_v1" or domains != ("scientific_inference",):
+        raise RuntimeError("semantic decode mixed surface cohort is invalid")
+    adapted = []
+    for index, task in enumerate(tasks):
+        profile = SEMANTIC_SURFACE_PROFILES[index % len(SEMANTIC_SURFACE_PROFILES)]
+        adapted.append(
+            replace(
+                task,
+                prompt=render_scientific_surface(
+                    task.prompt,
+                    profile=profile,
+                    permutation_seed=seed + index,
+                ),
+                transition_trace=None,
+                transition_program=None,
+            )
+        )
+    return adapted
+
+
+def _replay_state(task: Any, surface_profile: str):
+    if surface_profile == "canonical":
+        return execute_semantic_neural_decode_state(task.prompt, task.family), ""
+    decoded = execute_scientific_surface(task.prompt)
+    return decoded.state, decoded.receipt()["receipt_sha256"]
 
 
 def _paired_one_sided_p(gains: int, regressions: int) -> float:
@@ -266,6 +319,8 @@ def _verify_journal(
         expected_start["domains"] = payload["domains"]
     if "difficulties" in payload:
         expected_start["difficulties"] = payload["difficulties"]
+    if "surface_profile" in payload:
+        expected_start["surface_profile"] = payload["surface_profile"]
     if any(started.get(key) != value for key, value in expected_start.items()):
         raise RuntimeError("semantic decode journal campaign identity mismatch")
 
@@ -325,6 +380,7 @@ def verify_canary(
     if frozenset(source_paths) not in {
         frozenset(LEGACY_SOURCE_PATHS),
         frozenset(SOURCE_PATHS),
+        frozenset(SURFACE_SOURCE_PATHS),
     }:
         raise RuntimeError("semantic decode source manifest mismatch")
     for path in source_paths:
@@ -365,8 +421,17 @@ def verify_canary(
         raise RuntimeError("semantic decode cohort identity is invalid")
     domains = tuple(domains_raw)
     difficulties = tuple(difficulties_raw)
+    surface_profile = payload.get("surface_profile", "canonical")
+    if surface_profile not in SURFACE_PROFILES:
+        raise RuntimeError("semantic decode surface profile is invalid")
     lesion_contract_verified = _verify_optional_lesion_contract(payload, domains)
-    tasks = _expected_tasks(seed, per_cell, domains, difficulties)
+    tasks = _expected_tasks(
+        seed,
+        per_cell,
+        domains,
+        difficulties,
+        surface_profile,
+    )
     task_by_id = {task.task_id: task for task in tasks}
     if len(task_by_id) != len(tasks) or payload.get("task_count") != len(tasks):
         raise RuntimeError("semantic decode task cohort is invalid")
@@ -430,12 +495,15 @@ def verify_canary(
     ) != _sha(regressions):
         raise RuntimeError("semantic decode regression set mismatch")
 
-    replayed_state_receipts = [
-        execute_semantic_neural_decode_state(task.prompt, task.family).receipt()["receipt_sha256"]
-        for task in tasks
-    ]
+    replayed = [_replay_state(task, surface_profile) for task in tasks]
+    replayed_state_receipts = [state.receipt()["receipt_sha256"] for state, _receipt in replayed]
+    replayed_surface_receipts = [receipt for _state, receipt in replayed]
     if payload.get("treatment_state_receipt_sha256s") != replayed_state_receipts:
         raise RuntimeError("semantic decode treatment-state replay mismatch")
+    if payload.get("surface_adapter_receipt_sha256s", ["" for _task in tasks]) != (
+        replayed_surface_receipts
+    ):
+        raise RuntimeError("semantic decode surface-adapter replay mismatch")
 
     admitted = bool(
         exact_counts["treatment"] == len(tasks)
@@ -456,7 +524,7 @@ def verify_canary(
     )
     paired_p = _paired_one_sided_p(len(gains), len(regressions))
 
-    verified_claim_boundary = _claim_boundary(resident_manifest_identity)
+    verified_claim_boundary = _claim_boundary(resident_manifest_identity, surface_profile)
     producer_claim_boundary = payload.get("claim_boundary")
     if producer_claim_boundary not in {
         verified_claim_boundary,
@@ -476,6 +544,7 @@ def verify_canary(
         "domains": domains,
         "difficulties": difficulties,
         "tasks_per_difficulty": per_cell,
+        "surface_profile": surface_profile,
         "task_count": len(tasks),
         "raw_output_count": len(raw_outputs),
         "independent_exact_by_arm": exact_counts,

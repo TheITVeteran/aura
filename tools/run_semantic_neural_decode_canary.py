@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -29,6 +30,11 @@ from core.brain.llm.latent_cortex.semantic_neural_decode_context import (  # noq
     render_semantic_neural_decode_context,
     render_semantic_neural_decode_correction,
     semantic_result_matches_response,
+)
+from core.brain.llm.latent_cortex.semantic_surface_adapter import (  # noqa: E402
+    SEMANTIC_SURFACE_PROFILES,
+    execute_scientific_surface,
+    render_scientific_surface,
 )
 from core.brain.llm.unified_recurrent_transfer_decode import (  # noqa: E402
     decode_base_greedy_tokens,
@@ -80,17 +86,85 @@ SOURCE_PATHS: Final = (
     "core/learning/semantic_neural_machine.py",
     "tools/run_semantic_neural_decode_canary.py",
 )
+SURFACE_SOURCE_PATHS: Final = (
+    *SOURCE_PATHS,
+    "core/brain/llm/latent_cortex/semantic_surface_adapter.py",
+)
+SURFACE_PROFILES: Final = ("canonical", "mixed_scientific_v1")
 
 
-def _claim_boundary(resident_manifest_identity: dict[str, Any] | None) -> str:
+def _claim_boundary(
+    resident_manifest_identity: dict[str, Any] | None,
+    surface_profile: str = "canonical",
+) -> str:
+    qualifier = (
+        "less-constrained scientific surface transfer and "
+        if surface_profile == "mixed_scientific_v1"
+        else ""
+    )
     if resident_manifest_identity is not None:
         return (
-            "bounded teacher-free multi-domain neural-state-to-free-decode "
+            f"bounded teacher-free {qualifier}multi-domain neural-state-to-free-decode "
             "transfer on the resident model bound by model_identity and "
             "resident_manifest_identity; not open-domain, broad reasoning, "
             "fusion, frontier performance, or WOW"
         )
-    return LEGACY_CLAIM_BOUNDARY
+    if surface_profile == "canonical":
+        return LEGACY_CLAIM_BOUNDARY
+    return (
+        "bounded teacher-free less-constrained scientific surface transfer on "
+        "the model bound in model_identity; not open-domain, resident-32B, broad "
+        "reasoning, fusion, frontier performance, or WOW"
+    )
+
+
+def _task_cohort(
+    domains: tuple[str, ...],
+    per_cell: int,
+    *,
+    seed: int,
+    surface_profile: str,
+) -> list[Any]:
+    tasks = frontier_process_task_battery(
+        domains,
+        DIFFICULTIES,
+        per_cell,
+        seed=seed,
+    )
+    if surface_profile == "canonical":
+        return tasks
+    if surface_profile != "mixed_scientific_v1" or domains != ("scientific_inference",):
+        raise ValueError("mixed semantic surface canary requires only scientific_inference")
+    adapted = []
+    for index, task in enumerate(tasks):
+        profile = SEMANTIC_SURFACE_PROFILES[index % len(SEMANTIC_SURFACE_PROFILES)]
+        prompt = render_scientific_surface(
+            task.prompt,
+            profile=profile,
+            permutation_seed=seed + index,
+        )
+        adapted.append(
+            replace(
+                task,
+                prompt=prompt,
+                transition_trace=None,
+                transition_program=None,
+            )
+        )
+    return adapted
+
+
+def _execute_task_state(
+    task: Any,
+    *,
+    surface_profile: str,
+    machine: SemanticNeuralMachine | None = None,
+) -> tuple[SemanticNeuralDecodeState, str]:
+    if surface_profile == "canonical":
+        state = execute_semantic_neural_decode_state(task.prompt, task.family, machine=machine)
+        return state, ""
+    decoded = execute_scientific_surface(task.prompt, machine=machine)
+    return decoded.state, decoded.receipt()["receipt_sha256"]
 
 
 def _sha(value: Any) -> str:
@@ -291,6 +365,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=20_260_815_48)
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
     parser.add_argument("--max-tokens", type=int, default=384)
+    parser.add_argument("--surface-profile", choices=SURFACE_PROFILES, default="canonical")
     return parser
 
 
@@ -325,15 +400,17 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     from mlx_lm import load
 
     started = time.time()
-    tasks = frontier_process_task_battery(
+    tasks = _task_cohort(
         domains,
-        DIFFICULTIES,
         args.tasks_per_difficulty,
         seed=args.seed,
+        surface_profile=args.surface_profile,
     )
-    treatment_states = [
-        execute_semantic_neural_decode_state(task.prompt, task.family) for task in tasks
+    treatment_pairs = [
+        _execute_task_state(task, surface_profile=args.surface_profile) for task in tasks
     ]
+    treatment_states = [pair[0] for pair in treatment_pairs]
+    surface_receipts = [pair[1] for pair in treatment_pairs]
     journal_path = (
         args.journal.expanduser().resolve()
         if args.journal is not None
@@ -354,6 +431,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             "tasks_per_difficulty": args.tasks_per_difficulty,
             "task_count": len(tasks),
             "arm_count": len(ARMS),
+            "surface_profile": args.surface_profile,
             "resident_manifest_identity": resident_manifest_identity,
         },
         previous_receipt_sha256="0" * 64,
@@ -362,11 +440,11 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     for task in tasks:
         try:
             lesion_states.append(
-                execute_semantic_neural_decode_state(
-                    task.prompt,
-                    task.family,
+                _execute_task_state(
+                    task,
+                    surface_profile=args.surface_profile,
                     machine=_lesion_machine(task.family),
-                )
+                )[0]
             )
         except (RuntimeError, ValueError):
             lesion_states.append(None)
@@ -528,7 +606,14 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     payload = {
         "schema": CANARY_SCHEMA,
         "source_commit": source_commit,
-        "source_sha256s": {path: _file_sha(REPO_ROOT / path) for path in SOURCE_PATHS},
+        "source_sha256s": {
+            path: _file_sha(REPO_ROOT / path)
+            for path in (
+                SURFACE_SOURCE_PATHS
+                if args.surface_profile == "mixed_scientific_v1"
+                else SOURCE_PATHS
+            )
+        },
         "model_identity": {
             "path": str(model_path),
             "config_sha256": _file_sha(model_path / "config.json"),
@@ -539,6 +624,7 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "domains": domains,
         "difficulties": DIFFICULTIES,
         "tasks_per_difficulty": args.tasks_per_difficulty,
+        "surface_profile": args.surface_profile,
         "task_count": len(tasks),
         "arms": arms,
         "gain_set_sha256": _sha(gain_set),
@@ -552,8 +638,12 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "treatment_state_receipt_sha256s": [
             state.receipt()["receipt_sha256"] for state in treatment_states
         ],
+        "surface_adapter_receipt_sha256s": surface_receipts,
         "admitted": admitted,
-        "claim_boundary": _claim_boundary(resident_manifest_identity),
+        "claim_boundary": _claim_boundary(
+            resident_manifest_identity,
+            args.surface_profile,
+        ),
         "elapsed_seconds": round(time.time() - started, 3),
         "journal_path": str(journal_path),
         "journal_last_decode_receipt_sha256": journal_receipt,

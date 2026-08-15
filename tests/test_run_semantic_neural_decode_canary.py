@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (
     execute_semantic_neural_decode_state,
     render_semantic_neural_answer,
@@ -16,6 +18,7 @@ from tools.run_semantic_neural_decode_canary import (
     _resident_manifest_identity,
     _state_prefill,
     _summary,
+    _task_cohort,
     _wire_prefill,
 )
 
@@ -159,3 +162,30 @@ def test_semantic_state_prefill_is_state_grounded_and_leaves_model_suffix():
     assert full.startswith(prefix)
     assert len(prefix) == 64
     assert len(prefix) < len(full)
+
+
+def test_mixed_surface_cohort_is_fresh_answer_blind_and_profile_balanced():
+    tasks = _task_cohort(
+        ("scientific_inference",),
+        3,
+        seed=2026081565,
+        surface_profile="mixed_scientific_v1",
+    )
+    assert len(tasks) == 9
+    assert {task.prompt.splitlines()[0] for task in tasks} == {
+        "Causal study report.",
+        "Controlled causal field note.",
+        "CAUSAL_FACTS_V1",
+    }
+    assert all("predicted_downstream\":" not in task.prompt for task in tasks)
+    assert all(task.transition_trace is None for task in tasks)
+
+
+def test_mixed_surface_cohort_refuses_non_scientific_domain():
+    with pytest.raises(ValueError, match="only scientific_inference"):
+        _task_cohort(
+            ("coding",),
+            2,
+            seed=2026081566,
+            surface_profile="mixed_scientific_v1",
+        )

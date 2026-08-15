@@ -50603,3 +50603,29 @@ The remaining fixed path to `WOW!` is a less-constrained transfer gate built and
 falsified locally, followed only after it passes by a powered fresh resident
 replication and fixed adjudication. Construction and diagnosis must not occupy
 the resident 32B lane.
+
+## Checkpoint 2026-08-15-561: Separate Meaning From One Canonical Sentence
+
+The scientific recurrent tissue now has an inactive, answer-blind surface
+adapter for three distinct public evidence styles: laboratory report,
+controlled narrative and compact causal facts. Each style randomizes variable,
+delta and intervention presentation order and carries a bounded irrelevant
+context fact. The adapter infers a unique three-node causal graph from the
+unordered intervention topology; it does not trust sentence position to name
+the root or receive a verifier answer.
+
+The adapter refuses ambiguous graphs, inexact or contradictory gains, changed
+assumptions, hidden-cause permission, out-of-capacity values, query/chain
+mismatches, answer-bearing suffixes and unsupported ordinary language. Every
+accepted surface emits a receipt binding the original text, normalized public
+fact graph, canonical action objective and recurrent state with explicit
+teacher/verifier/answer absence.
+
+Randomized contracts passed `144/144` alternate surfaces and corresponding
+semantic results; family-targeted tissue lesions disrupted all `144/144`.
+The five-arm canary and independent verifier can now preregister
+`mixed_scientific_v1` as a source-bound cohort while preserving old artifact
+compatibility. This adapter is deliberately not in CP560's activated runtime,
+so construction cannot invalidate Aura's current four-domain package. The next
+gate is a short 1.5B treatment/matched-control/lesion canary over these alternate
+surfaces.
