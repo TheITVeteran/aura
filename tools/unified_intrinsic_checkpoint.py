@@ -501,6 +501,39 @@ def adopt_source_migration_identity(
     expected["initial_controller_sha256"] = original_controller
     expected["bootstrap"] = copy.deepcopy(original_bootstrap)
     expected["source_migration_controller_sha256"] = current_controller
+    current_schedule = expected.get("phase_schedule")
+    original_schedule = stored_identity.get("phase_schedule")
+    if canonical_bytes(current_schedule) != canonical_bytes(original_schedule):
+        current_schedule_body = copy.deepcopy(current_schedule)
+        original_schedule_body = copy.deepcopy(original_schedule)
+        if not isinstance(current_schedule_body, dict) or not isinstance(
+            original_schedule_body, dict
+        ):
+            raise UnifiedCheckpointError(
+                "unified checkpoint source migration phase schedule differs"
+            )
+        current_mode = current_schedule_body.pop("mode", None)
+        original_mode = original_schedule_body.pop("mode", None)
+        current_bootstrap = current_schedule_body.pop("bootstrap_required", None)
+        original_bootstrap_required = original_schedule_body.pop(
+            "bootstrap_required", None
+        )
+        if not (
+            current_mode == "bootstrap_process_acquisition_only"
+            and original_mode == "process_acquisition_only"
+            and current_bootstrap is True
+            and original_bootstrap_required is False
+            and canonical_bytes(current_schedule_body)
+            == canonical_bytes(original_schedule_body)
+        ):
+            raise UnifiedCheckpointError(
+                "unified checkpoint source migration phase schedule differs"
+            )
+        # The imported checkpoint is an operational resume mechanism, not a new
+        # scientific bootstrap. Preserve the phase schedule under which the
+        # experiment actually began while requiring every phase boundary and
+        # optimization field to remain byte-equivalent after canonicalization.
+        expected["phase_schedule"] = copy.deepcopy(original_schedule)
     expected["identity_sha256"] = canonical_sha256(expected)
     if canonical_bytes(expected) != canonical_bytes(stored_identity):
         raise UnifiedCheckpointError("unified checkpoint source migration identity differs")

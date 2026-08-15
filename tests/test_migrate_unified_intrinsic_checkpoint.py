@@ -319,6 +319,11 @@ def test_resume_adopts_only_a_fully_bound_source_migration(
         "campaign_binding": binding,
         "initial_controller_sha256": "1" * 64,
         "bootstrap": {"schema": "resume"},
+        "phase_schedule": {
+            "mode": "bootstrap_process_acquisition_only",
+            "bootstrap_required": True,
+            "state_transition": {"start": 0, "stop": 384},
+        },
         "spec": {"train_depths": (1, 3, 5)},
         "source_sha256s": {"trainer.py": "2" * 64},
     }
@@ -326,6 +331,11 @@ def test_resume_adopts_only_a_fully_bound_source_migration(
         **computed,
         "initial_controller_sha256": "3" * 64,
         "bootstrap": original_bootstrap,
+        "phase_schedule": {
+            "mode": "process_acquisition_only",
+            "bootstrap_required": False,
+            "state_transition": {"start": 0, "stop": 384},
+        },
         "spec": {"train_depths": [1, 3, 5]},
         "source_migration_controller_sha256": "1" * 64,
     }
@@ -401,4 +411,110 @@ def test_resume_adopts_only_a_fully_bound_source_migration(
         canonical_bytes(migration) + b"\n"
     )
     with pytest.raises(UnifiedCheckpointError, match="source migration differs"):
+        adopt_source_migration_identity(output, computed)
+
+
+def test_resume_rejects_a_changed_scientific_phase_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import unified_intrinsic_checkpoint as checkpoint
+
+    campaign = tmp_path / "campaign"
+    output = campaign / "training-output"
+    source_output = tmp_path / "source-output"
+    output.mkdir(parents=True)
+    source_output.mkdir()
+    binding = _campaign()
+    computed = {
+        "schema": "aura.unified_intrinsic_training.v1",
+        "campaign_binding": binding,
+        "initial_controller_sha256": "1" * 64,
+        "bootstrap": {"schema": "resume"},
+        "phase_schedule": {
+            "mode": "bootstrap_process_acquisition_only",
+            "bootstrap_required": True,
+            "state_transition": {"start": 0, "stop": 383},
+        },
+        "source_sha256s": {"trainer.py": "2" * 64},
+    }
+    stored = {
+        **computed,
+        "initial_controller_sha256": "3" * 64,
+        "bootstrap": None,
+        "phase_schedule": {
+            "mode": "process_acquisition_only",
+            "bootstrap_required": False,
+            "state_transition": {"start": 0, "stop": 384},
+        },
+        "source_migration_controller_sha256": "1" * 64,
+    }
+    stored["identity_sha256"] = canonical_sha256(stored)
+    target = SimpleNamespace(
+        receipt={
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "5" * 64,
+            "identity": stored,
+        },
+        generation_dir=Path("checkpoint_latest-step-00000008-target"),
+    )
+    source = SimpleNamespace(
+        receipt={
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "6" * 64,
+            "identity": {"identity_sha256": "7" * 64},
+        },
+        generation_dir=Path("checkpoint_latest-step-00000008-source"),
+    )
+
+    monkeypatch.setattr(
+        checkpoint,
+        "resolve_checkpoint_generation",
+        lambda path, **_kwargs: (
+            target if Path(path).resolve() == output.resolve() else source
+        ),
+    )
+    monkeypatch.setattr(
+        checkpoint,
+        "_stable_file_identity",
+        lambda *_args, **_kwargs: {"sha256": "8" * 64},
+    )
+    body = {
+        "schema": checkpoint.SOURCE_MIGRATION_SCHEMA,
+        "state": "complete",
+        "source": {
+            "output": str(source_output),
+            "generation": source.generation_dir.name,
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "6" * 64,
+            "identity_sha256": "7" * 64,
+        },
+        "destination": {
+            "campaign_id": binding["campaign_id"],
+            "config_sha256": binding["campaign_config_sha256"],
+            "generation": target.generation_dir.name,
+            "step": 8,
+            "checkpoint_sha256": "4" * 64,
+            "receipt_sha256": "5" * 64,
+            "identity_sha256": stored["identity_sha256"],
+        },
+        "payload_byte_identical": True,
+        "optimizer_and_bundle_bytes_preserved": True,
+        "history_preserved": True,
+        "training_state_preserved": True,
+        "scientific_initialization_preserved": True,
+        "training_profile_preserved": True,
+        "migration_tool_sha256": "8" * 64,
+    }
+    (campaign / "checkpoint-source-migration.json").write_bytes(
+        canonical_bytes({**body, "migration_sha256": canonical_sha256(body)}) + b"\n"
+    )
+
+    with pytest.raises(
+        UnifiedCheckpointError,
+        match="source migration phase schedule differs",
+    ):
         adopt_source_migration_identity(output, computed)
