@@ -1,0 +1,55 @@
+{
+  "artifact_receipt_sha256": "2d838fa60bbfe33faa15cd89759d75b0110175ee501ea4389971669246411dcd",
+  "artifact_sha256": "eba29e0edf6acf82e89195115aa24d6a9d99107bd407fd600601572420dec407",
+  "claim_boundary": "bounded teacher-free less-constrained scientific surface transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "coefficient_lesion_contract_verified": true,
+  "difficulties": [
+    1,
+    2,
+    3
+  ],
+  "domains": [
+    "scientific_inference"
+  ],
+  "gain_count": 30,
+  "independent_exact_by_arm": {
+    "coefficient_lesion": 0,
+    "matched_wire_base": 0,
+    "matched_wrong_state": 0,
+    "ordinary_base": 0,
+    "treatment": 30
+  },
+  "independent_parsed_by_arm": {
+    "coefficient_lesion": 27,
+    "matched_wire_base": 26,
+    "matched_wrong_state": 30,
+    "ordinary_base": 29,
+    "treatment": 30
+  },
+  "journal_decode_count": 150,
+  "journal_event_count": 152,
+  "journal_final_receipt_sha256": "a17dff26c65398779c78ad78c5ab81fbc0941e3a0c9b7577165f0bfdd5c880bb",
+  "journal_sha256": "45f923c2b7d36dca2494fef9fa4680717785552022669ab142bdb517e715f951",
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "paired_discordant_count": 30,
+  "paired_one_sided_exact_p": 9.313225746154785e-10,
+  "producer_claim_boundary": "bounded teacher-free less-constrained scientific surface transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "producer_claim_boundary_legacy": false,
+  "raw_output_count": 150,
+  "regression_count": 0,
+  "resident_manifest_identity": null,
+  "schema": "aura.rlc.semantic_neural_decode_verification.v1",
+  "seed": 2026081568,
+  "source_commit": "05c002654b4716a630cf2684bcc82e98c0964357",
+  "surface_profile": "mixed_scientific_v1",
+  "task_count": 30,
+  "tasks_per_difficulty": 10,
+  "treatment_state_replay_count": 30,
+  "verification_receipt_sha256": "c7f5da12eebae373637b3a9dcb40e3c0f1f365f4e676f60be00b6df55d243cdb",
+  "verified": true,
+  "verifier_source_sha256": "75c60aa8eeed19b28c0d10f7a2216ac1ad7d9ef41a7131430ee1b5b3feed74ff"
+}

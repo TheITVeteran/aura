@@ -50650,3 +50650,22 @@ meaning-preserving language and presentation changes rather than only one exact
 sentence. The sample is intentionally a fast canary, not powered evidence. A
 larger fresh local replication is the next gate and still does not require the
 resident 32B.
+
+## Checkpoint 2026-08-15-563: Powered Local Replication Confirms Surface Transfer
+
+The fresh mixed-surface replication completed `150` real-model decodes over 30
+unseen 1.5B tasks in 54.59 seconds. Treatment decoded `30/30`; ordinary,
+syntax-matched wire, family-targeted coefficient-lesion and same-family
+wrong-state controls each decoded `0/30`. Treatment converted all 30 ordinary
+failures and regressed none.
+
+Independent verification regenerated the balanced three-profile cohort,
+replayed all adapter and recurrent-state receipts, regraded every raw response
+and verified the `152`-event journal. It accepted the result with one-sided
+exact `p=9.313225746154785e-10`; verification receipt
+`c7f5da12eebae373637b3a9dcb40e3c0f1f365f4e676f60be00b6df55d243cdb`.
+
+The local language-transfer gate is now closed. The terminal resident profile
+must combine fresh coding, calibration and premise tasks with the alternate
+scientific surfaces in one matched five-arm matrix. A bounded local preflight
+must pass first; only that final replication may occupy Aura's 32B lane.

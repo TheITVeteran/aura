@@ -1,0 +1,2778 @@
+{
+  "admitted": true,
+  "arms": {
+    "coefficient_lesion": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 17.367,
+      "mean_latency_ms": 262.5,
+      "mean_prompt_tokens": 244.8,
+      "parsed": 27,
+      "parsed_accuracy": 0.9,
+      "receipt_sha256": "73925959b59c104f34f587d2561f2990cfe0af3c47b0c33479be15c9f0e8583d"
+    },
+    "matched_wire_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 17.7,
+      "mean_latency_ms": 264.8,
+      "mean_prompt_tokens": 226.8,
+      "parsed": 26,
+      "parsed_accuracy": 0.866667,
+      "receipt_sha256": "baac757379aeb4ad5126c37cfc3c6b112c90bebc4d636f90b233db78ed730483"
+    },
+    "matched_wrong_state": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 32.133,
+      "mean_latency_ms": 443.633,
+      "mean_prompt_tokens": 395.267,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "e3782c4e2df38b7886f65b47d097abc858aaf5b30b1049bc16e2f10145cc671b"
+    },
+    "ordinary_base": {
+      "exact": 0,
+      "exact_accuracy": 0.0,
+      "examples": 30,
+      "mean_generated_tokens": 34.567,
+      "mean_latency_ms": 410.933,
+      "mean_prompt_tokens": 226.8,
+      "parsed": 29,
+      "parsed_accuracy": 0.966667,
+      "receipt_sha256": "fc69e12a52b49419bdea36701416124e4a09161f4a46e249817c414e35b0fa4b"
+    },
+    "treatment": {
+      "exact": 30,
+      "exact_accuracy": 1.0,
+      "examples": 30,
+      "mean_generated_tokens": 29.2,
+      "mean_latency_ms": 393.967,
+      "mean_prompt_tokens": 333.0,
+      "parsed": 30,
+      "parsed_accuracy": 1.0,
+      "receipt_sha256": "b517e82dcef8b693b96de6f9480801de9bceb3bb730c31dabab5814ce81b392a"
+    }
+  },
+  "claim_boundary": "bounded teacher-free less-constrained scientific surface transfer on the model bound in model_identity; not open-domain, resident-32B, broad reasoning, fusion, frontier performance, or WOW",
+  "coefficient_lesion_contract": {
+    "frontier_scientific_inference": {
+      "coefficient_index": 2,
+      "operation": "multiplication",
+      "operation_index": 1
+    }
+  },
+  "difficulties": [
+    1,
+    2,
+    3
+  ],
+  "domains": [
+    "scientific_inference"
+  ],
+  "elapsed_seconds": 54.588,
+  "gain_count": 30,
+  "gain_set_sha256": "bc17aaabcef5ccbe1a85e7bf37f51debb6df00d7c528f5b29bb7b3f2c7edb0e7",
+  "journal_last_decode_receipt_sha256": "37098bacd9a6d9b94e3d3e50e9abe429655fd0119459af9c43f84a190cb0187b",
+  "journal_path": "/Users/bryan/.aura/live-source/.claude/worktrees/codex-wow-cp400/artifacts/closeout/latent_cortex/cp563_mixed_surface_decode_replication/journal.jsonl",
+  "model_identity": {
+    "config_sha256": "636d3e2a15e8914b8cf82b05cc2288a811f9bd93c3bf1afc00cab701a70b47c0",
+    "path": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+    "weights_index_sha256": "6b98634d5044f0e2ad45228a374f8445904e571f1082392d08a6ce54f5d517ca"
+  },
+  "raw_outputs": [
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\":25, \"mediator\": \"elara\":52, \"predicted_downstream\": 52}",
+          "raw_response_sha256": "b508936e45fc1ec7e4884961416af10a7a0d8e8f8a98ad2f2a24523be65176a4",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":25, \"mediator\": \"elara\":52, \"predicted_downstream\": 52}",
+          "response_sha256": "b508936e45fc1ec7e4884961416af10a7a0d8e8f8a98ad2f2a24523be65176a4",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":25, \"mediator\": \"elara\":52, \"predicted_downstream\": 52}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s843298056878680658"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+          "raw_response_sha256": "ad57a1f542c39dd6a2f91336591f6871533129d8f6a529b805151cd33a9c27a8",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+          "response_sha256": "ad57a1f542c39dd6a2f91336591f6871533129d8f6a529b805151cd33a9c27a8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s843298056878680658"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"55\", \"predicted_downstream\": 55}",
+          "raw_response_sha256": "2dc4f7b5ff3b0e62bdd015887bd842a5876f3a07648ed3f8749b74417c7fc662",
+          "response": "FINAL_ANSWER: {\"downstream\": \"55\", \"predicted_downstream\": 55}",
+          "response_sha256": "2dc4f7b5ff3b0e62bdd015887bd842a5876f3a07648ed3f8749b74417c7fc662",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"55\", \"predicted_downstream\": 55}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s843298056878680658"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+          "raw_response_sha256": "6839db8525ad2835a73c1c215fac4a862935f928d4aeb96a55873c07612c55f9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+          "response_sha256": "6839db8525ad2835a73c1c215fac4a862935f928d4aeb96a55873c07612c55f9",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s843298056878680658"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"elara\", \"downstream\": \"cressa\", \"predicted_downstream\": 15}",
+          "raw_response_sha256": "a7455de62b1a5b9c835a831902f680b3bf5aab27f9dd9df6b3392267bcfeeb89",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"elara\", \"downstream\": \"cressa\", \"predicted_downstream\": 15}",
+          "response_sha256": "a7455de62b1a5b9c835a831902f680b3bf5aab27f9dd9df6b3392267bcfeeb89",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"elara\", \"downstream\": \"cressa\", \"predicted_downstream\": 15}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s843298056878680658"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"6\", \"predicted_downstream\": 6}",
+          "raw_response_sha256": "70d237dbabcccdd146e6d82349079f7713b30151fe06dd6f73ea8efad4f63a84",
+          "response": "FINAL_ANSWER: {\"downstream\": \"6\", \"predicted_downstream\": 6}",
+          "response_sha256": "70d237dbabcccdd146e6d82349079f7713b30151fe06dd6f73ea8efad4f63a84",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"6\", \"predicted_downstream\": 6}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s874746611569871557"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"elara\", \"predicted_downstream\": 59, \"root\": \"aeron\"}",
+          "raw_response_sha256": "adcd59a8b1955b3fbad50f3524fdef91c8aaa79e0f8f9ae4abbbf3bd4808c0c9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"elara\", \"predicted_downstream\": 59, \"root\": \"aeron\"}",
+          "response_sha256": "adcd59a8b1955b3fbad50f3524fdef91c8aaa79e0f8f9ae4abbbf3bd4808c0c9",
+          "serialization_verified": false,
+          "wire_normalized": false
+        },
+        {
+          "attempt": 2,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"elara\", \"predicted_downstream\": 59, \"root\": \"aeron\"}",
+          "raw_response_sha256": "adcd59a8b1955b3fbad50f3524fdef91c8aaa79e0f8f9ae4abbbf3bd4808c0c9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"elara\", \"predicted_downstream\": 59, \"root\": \"aeron\"}",
+          "response_sha256": "adcd59a8b1955b3fbad50f3524fdef91c8aaa79e0f8f9ae4abbbf3bd4808c0c9",
+          "serialization_verified": false,
+          "wire_normalized": false
+        },
+        {
+          "attempt": 3,
+          "prefill_tokens": 28,
+          "raw_response": "FINAL_ANSWER: {\"downstream\":\"faron\",\"mediator\":\"elara\",\"predicted_downstream\":78,\"root\":\"aeron\"}",
+          "raw_response_sha256": "06ec61c1fdb767a169e370b4625ad2ede378ca7bf4ef71df390c9eebd4a6aabd",
+          "response": "FINAL_ANSWER: {\"downstream\":\"faron\",\"mediator\":\"elara\",\"predicted_downstream\":78,\"root\":\"aeron\"}",
+          "response_sha256": "06ec61c1fdb767a169e370b4625ad2ede378ca7bf4ef71df390c9eebd4a6aabd",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\":\"faron\",\"mediator\":\"elara\",\"predicted_downstream\":78,\"root\":\"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s874746611569871557"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 6}",
+          "raw_response_sha256": "e959c6e0bb76b4488e362cfb0c6a89cefdcaecd8a1b5f732510cc027a3c95ad0",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 6}",
+          "response_sha256": "e959c6e0bb76b4488e362cfb0c6a89cefdcaecd8a1b5f732510cc027a3c95ad0",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 6}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s874746611569871557"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5}",
+          "raw_response_sha256": "9529249a7ef261376b136152cd9abcce0521663e25fad6595fd0f81f917ee83c",
+          "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5}",
+          "response_sha256": "9529249a7ef261376b136152cd9abcce0521663e25fad6595fd0f81f917ee83c",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s874746611569871557"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+          "raw_response_sha256": "6839db8525ad2835a73c1c215fac4a862935f928d4aeb96a55873c07612c55f9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+          "response_sha256": "6839db8525ad2835a73c1c215fac4a862935f928d4aeb96a55873c07612c55f9",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"faron\", \"predicted_downstream\": 112, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s874746611569871557"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "3a4825e99661f3f42a84f83d969754fa9e6b087249463d1c8bc97c3106e5fa08",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "3a4825e99661f3f42a84f83d969754fa9e6b087249463d1c8bc97c3106e5fa08",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s170230080176255576"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "83dbde1e1f5ad7c08d547073be34228ec5e5581babcdb6550d470c0f3ae2be68",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 12}",
+          "response_sha256": "83dbde1e1f5ad7c08d547073be34228ec5e5581babcdb6550d470c0f3ae2be68",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s170230080176255576"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"faron=9\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "06bbe55c7363d191e82e4db32d4520053f607be218e6398151161a8480dd2bc5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"faron=9\", \"predicted_downstream\": 12}",
+          "response_sha256": "06bbe55c7363d191e82e4db32d4520053f607be218e6398151161a8480dd2bc5",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"faron=9\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s170230080176255576"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 78, \"root\": \"aeron\"}",
+          "raw_response_sha256": "e763530a58a7206224636a98f33d96a1f9d46f144a994eff3dbe91b30891312f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 78, \"root\": \"aeron\"}",
+          "response_sha256": "e763530a58a7206224636a98f33d96a1f9d46f144a994eff3dbe91b30891312f",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 78, \"root\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s170230080176255576"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"aeron\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "0009fee9029b37c0754677c30697ec6bd21a1b8db4dffcc3fd0b240b3b49a05d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"aeron\", \"predicted_downstream\": 12}",
+          "response_sha256": "0009fee9029b37c0754677c30697ec6bd21a1b8db4dffcc3fd0b240b3b49a05d",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron=11\", \"mediator\": \"aeron\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s170230080176255576"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "1aecedd8780ce3e6bba7c90738cf45cb213aebe541637d6bca41536f9196e656",
+          "response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "response_sha256": "1aecedd8780ce3e6bba7c90738cf45cb213aebe541637d6bca41536f9196e656",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s592993361775270512"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "3a4825e99661f3f42a84f83d969754fa9e6b087249463d1c8bc97c3106e5fa08",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "3a4825e99661f3f42a84f83d969754fa9e6b087249463d1c8bc97c3106e5fa08",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"elara\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s592993361775270512"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "1aecedd8780ce3e6bba7c90738cf45cb213aebe541637d6bca41536f9196e656",
+          "response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "response_sha256": "1aecedd8780ce3e6bba7c90738cf45cb213aebe541637d6bca41536f9196e656",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"58\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s592993361775270512"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+          "raw_response_sha256": "216a2dbeb880bd5cdfa2c41fba03cb41ecb6aa50d425ec3c79982f2d1ecf0bf7",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+          "response_sha256": "216a2dbeb880bd5cdfa2c41fba03cb41ecb6aa50d425ec3c79982f2d1ecf0bf7",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s592993361775270512"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"elara\", \"downstream\": \"dovin\", \"predicted_downstream\": 58}",
+          "raw_response_sha256": "3c879a342e23f200c5414076afd5a3eb67d7d539064c06634c1beb1da511d4da",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"elara\", \"downstream\": \"dovin\", \"predicted_downstream\": 58}",
+          "response_sha256": "3c879a342e23f200c5414076afd5a3eb67d7d539064c06634c1beb1da511d4da",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"elara\", \"downstream\": \"dovin\", \"predicted_downstream\": 58}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s592993361775270512"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+          "raw_response_sha256": "216a2dbeb880bd5cdfa2c41fba03cb41ecb6aa50d425ec3c79982f2d1ecf0bf7",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+          "response_sha256": "216a2dbeb880bd5cdfa2c41fba03cb41ecb6aa50d425ec3c79982f2d1ecf0bf7",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"dovin\", \"predicted_downstream\": 72, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s700610339178859377"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+          "raw_response_sha256": "f24554e076ab8184a836c976bbfd9f2b21a4cb4660a3f77d7cc17e791d595b9a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+          "response_sha256": "f24554e076ab8184a836c976bbfd9f2b21a4cb4660a3f77d7cc17e791d595b9a",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s700610339178859377"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+          "raw_response_sha256": "789599e1afdeb21b5519fa079910c654c2f808b6717fac43d02eed6b74a54790",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+          "response_sha256": "789599e1afdeb21b5519fa079910c654c2f808b6717fac43d02eed6b74a54790",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s700610339178859377"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"cressa\", \"downstream\": \"57\", \"predicted_downstream\": 60}",
+          "raw_response_sha256": "958d320d7939b22f4508cb4784d94abe51595430c7db05d35d217882488bb8ef",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"cressa\", \"downstream\": \"57\", \"predicted_downstream\": 60}",
+          "response_sha256": "958d320d7939b22f4508cb4784d94abe51595430c7db05d35d217882488bb8ef",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"cressa\", \"downstream\": \"57\", \"predicted_downstream\": 60}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s700610339178859377"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+          "raw_response_sha256": "f24554e076ab8184a836c976bbfd9f2b21a4cb4660a3f77d7cc17e791d595b9a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+          "response_sha256": "f24554e076ab8184a836c976bbfd9f2b21a4cb4660a3f77d7cc17e791d595b9a",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"54\", \"predicted_downstream\": 57}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s700610339178859377"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"root\": \"cressa\", \"mediator\": \"brin\"}",
+          "raw_response_sha256": "68a583b24a4a126cf3f08f09726ce1b5be2d3d97fe3b7094b995acbdd3377202",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"root\": \"cressa\", \"mediator\": \"brin\"}",
+          "response_sha256": "68a583b24a4a126cf3f08f09726ce1b5be2d3d97fe3b7094b995acbdd3377202",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"root\": \"cressa\", \"mediator\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1123616198294097787"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+          "raw_response_sha256": "789599e1afdeb21b5519fa079910c654c2f808b6717fac43d02eed6b74a54790",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+          "response_sha256": "789599e1afdeb21b5519fa079910c654c2f808b6717fac43d02eed6b74a54790",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1123616198294097787"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"mediator\": \"cressa\", \"root\": \"brin\"}",
+          "raw_response_sha256": "c014049b8a3313b981e04370e3a0d69f0fb678e6440b842be96a071f4943b409",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"mediator\": \"cressa\", \"root\": \"brin\"}",
+          "response_sha256": "c014049b8a3313b981e04370e3a0d69f0fb678e6440b842be96a071f4943b409",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 27, \"mediator\": \"cressa\", \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1123616198294097787"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+          "raw_response_sha256": "8fed1bc8f78c121b4f4caa0ba9ca6422f623dab2d6ccf659617e0d24d16629c8",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+          "response_sha256": "8fed1bc8f78c121b4f4caa0ba9ca6422f623dab2d6ccf659617e0d24d16629c8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1123616198294097787"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 9}",
+          "raw_response_sha256": "284eae3bb7c7b45c45c246c9c3db4b3d188ac828bd7a13ecae338186c5677854",
+          "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 9}",
+          "response_sha256": "284eae3bb7c7b45c45c246c9c3db4b3d188ac828bd7a13ecae338186c5677854",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 9}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1123616198294097787"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+          "raw_response_sha256": "ad440bbb8a45899f1098c40ee31550bd9f40a96bfd40aff95921b87fd8ecea4c",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+          "response_sha256": "ad440bbb8a45899f1098c40ee31550bd9f40a96bfd40aff95921b87fd8ecea4c",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s664882890658152232"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+          "raw_response_sha256": "45b980e1afd15e8a6a65547427b8db429bb3f1807b8f9ee82ba1284b5aee04a9",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+          "response_sha256": "45b980e1afd15e8a6a65547427b8db429bb3f1807b8f9ee82ba1284b5aee04a9",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 6}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s664882890658152232"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\":59}",
+          "raw_response_sha256": "d4d55cc68727ec699edc1caf1539cf0667ba6cbe62bdd5d7d919222626cc1edc",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":59}",
+          "response_sha256": "d4d55cc68727ec699edc1caf1539cf0667ba6cbe62bdd5d7d919222626cc1edc",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\":59}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s664882890658152232"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+          "raw_response_sha256": "8fed1bc8f78c121b4f4caa0ba9ca6422f623dab2d6ccf659617e0d24d16629c8",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+          "response_sha256": "8fed1bc8f78c121b4f4caa0ba9ca6422f623dab2d6ccf659617e0d24d16629c8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 77, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s664882890658152232"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron:25\"}",
+          "raw_response_sha256": "64788d5fad4bae129c60236ba8544fc8096f40335601f87bd0e1c9f9b8363248",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron:25\"}",
+          "response_sha256": "64788d5fad4bae129c60236ba8544fc8096f40335601f87bd0e1c9f9b8363248",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron:25\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s664882890658152232"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 53}",
+          "raw_response_sha256": "bbd12bf0b96564c8e8b0010c8661c7fa4f57e2d37eb4b2b8374ccda5090e8e88",
+          "response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 53}",
+          "response_sha256": "bbd12bf0b96564c8e8b0010c8661c7fa4f57e2d37eb4b2b8374ccda5090e8e88",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 53}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s232514201645473219"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+          "raw_response_sha256": "ad440bbb8a45899f1098c40ee31550bd9f40a96bfd40aff95921b87fd8ecea4c",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+          "response_sha256": "ad440bbb8a45899f1098c40ee31550bd9f40a96bfd40aff95921b87fd8ecea4c",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 80, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s232514201645473219"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 50}",
+          "raw_response_sha256": "8be4288fb159599f38e06bea1eb6e6634d8d50cfdca0d4877fbb59e2f48cde43",
+          "response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 50}",
+          "response_sha256": "8be4288fb159599f38e06bea1eb6e6634d8d50cfdca0d4877fbb59e2f48cde43",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"50\", \"predicted_downstream\": 50}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s232514201645473219"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+          "raw_response_sha256": "ec483fd7a945a306b23196704fa5a946b0b24904b5418902f7d0538b06a07f56",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+          "response_sha256": "ec483fd7a945a306b23196704fa5a946b0b24904b5418902f7d0538b06a07f56",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s232514201645473219"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"cressa\", \"downstream\": \"5\", \"predicted_downstream\": 18}",
+          "raw_response_sha256": "b47a1a8ff51ccd2c8234eeeadb8bd9cfdd0953b37869aa9d741946fb5e80ff44",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"cressa\", \"downstream\": \"5\", \"predicted_downstream\": 18}",
+          "response_sha256": "b47a1a8ff51ccd2c8234eeeadb8bd9cfdd0953b37869aa9d741946fb5e80ff44",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"cressa\", \"downstream\": \"5\", \"predicted_downstream\": 18}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s232514201645473219"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+          "raw_response_sha256": "ec483fd7a945a306b23196704fa5a946b0b24904b5418902f7d0538b06a07f56",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+          "response_sha256": "ec483fd7a945a306b23196704fa5a946b0b24904b5418902f7d0538b06a07f56",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"cressa\", \"predicted_downstream\": 84, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s126169431165566116"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "raw_response_sha256": "6a58efe086b26a2edf4bb96371c6e37345e050b93c13b2b197d7bf622f198343",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "response_sha256": "6a58efe086b26a2edf4bb96371c6e37345e050b93c13b2b197d7bf622f198343",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s126169431165566116"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+          "raw_response_sha256": "f6484a4c714dc25c0d9bfc9cca16642aabc87d1bca36bde4179cf34b61cb4c11",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+          "response_sha256": "f6484a4c714dc25c0d9bfc9cca16642aabc87d1bca36bde4179cf34b61cb4c11",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s126169431165566116"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "raw_response_sha256": "647454b2666ae43696fd3161f13f635fd66bf00427c189058c51df9ac78326cb",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "response_sha256": "647454b2666ae43696fd3161f13f635fd66bf00427c189058c51df9ac78326cb",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 8}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s126169431165566116"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "raw_response_sha256": "6a58efe086b26a2edf4bb96371c6e37345e050b93c13b2b197d7bf622f198343",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+          "response_sha256": "6a58efe086b26a2edf4bb96371c6e37345e050b93c13b2b197d7bf622f198343",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"predicted_downstream\": 8}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s126169431165566116"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "c156aaa6edf16dea6d3c73d02b5c7dd6489933cd302338d00f61e38eac989d3f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "response_sha256": "c156aaa6edf16dea6d3c73d02b5c7dd6489933cd302338d00f61e38eac989d3f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1020707157492420189"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+          "raw_response_sha256": "86e57f2702c8c5afbb2810e7557d49013ec90ab0bc4a28fcf7df12bfe1b5bc71",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+          "response_sha256": "86e57f2702c8c5afbb2810e7557d49013ec90ab0bc4a28fcf7df12bfe1b5bc71",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1020707157492420189"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"aeron\", \"downstream\": \"elara\", \"predicted_downstream\": 60}",
+          "raw_response_sha256": "7dff393d86f56afbd413ba667a7c6b7cfd6577612803d7ab97ad89e0038be717",
+          "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"aeron\", \"downstream\": \"elara\", \"predicted_downstream\": 60}",
+          "response_sha256": "7dff393d86f56afbd413ba667a7c6b7cfd6577612803d7ab97ad89e0038be717",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"aeron\", \"downstream\": \"elara\", \"predicted_downstream\": 60}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1020707157492420189"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "c156aaa6edf16dea6d3c73d02b5c7dd6489933cd302338d00f61e38eac989d3f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "response_sha256": "c156aaa6edf16dea6d3c73d02b5c7dd6489933cd302338d00f61e38eac989d3f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1020707157492420189"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+          "raw_response_sha256": "f6484a4c714dc25c0d9bfc9cca16642aabc87d1bca36bde4179cf34b61cb4c11",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+          "response_sha256": "f6484a4c714dc25c0d9bfc9cca16642aabc87d1bca36bde4179cf34b61cb4c11",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 104, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1020707157492420189"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+          "raw_response_sha256": "9bc24c2401813e60d26a0724ba363110f3d5902bd1b3ef3f7d601103d444c83a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+          "response_sha256": "9bc24c2401813e60d26a0724ba363110f3d5902bd1b3ef3f7d601103d444c83a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1004208467822026702"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"8\", \"predicted_downstream\": 14}",
+          "raw_response_sha256": "67fd428080dcc46ccb613d6780e9be24eaf99ee16171d123d2c8c2b4363309aa",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"8\", \"predicted_downstream\": 14}",
+          "response_sha256": "67fd428080dcc46ccb613d6780e9be24eaf99ee16171d123d2c8c2b4363309aa",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"8\", \"predicted_downstream\": 14}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1004208467822026702"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "raw_response_sha256": "ac46032cc133b723e867d63bd50a2505f00224ff4a5ff9e83e22d4003e2f663f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "response_sha256": "ac46032cc133b723e867d63bd50a2505f00224ff4a5ff9e83e22d4003e2f663f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"4\", \"predicted_downstream\": 4, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1004208467822026702"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+          "raw_response_sha256": "86e57f2702c8c5afbb2810e7557d49013ec90ab0bc4a28fcf7df12bfe1b5bc71",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+          "response_sha256": "86e57f2702c8c5afbb2810e7557d49013ec90ab0bc4a28fcf7df12bfe1b5bc71",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 75, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1004208467822026702"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"8\", \"predicted_downstream\": 11}",
+          "raw_response_sha256": "c1110a5864485bb03e8c3f6ba7a3f5a8c8c1f7538415f51ee186b05a8428c17e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"8\", \"predicted_downstream\": 11}",
+          "response_sha256": "c1110a5864485bb03e8c3f6ba7a3f5a8c8c1f7538415f51ee186b05a8428c17e",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"8\", \"predicted_downstream\": 11}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1004208467822026702"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream\": \"cressa\", \"predicted_downstream\": 60}",
+          "raw_response_sha256": "98e53de98f3eba0e737390a28cee4c2e1a0908864b9f15c55bdeb233343591c9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream\": \"cressa\", \"predicted_downstream\": 60}",
+          "response_sha256": "98e53de98f3eba0e737390a28cee4c2e1a0908864b9f15c55bdeb233343591c9",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream\": \"cressa\", \"predicted_downstream\": 60}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s308785791706704987"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+          "raw_response_sha256": "9bc24c2401813e60d26a0724ba363110f3d5902bd1b3ef3f7d601103d444c83a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+          "response_sha256": "9bc24c2401813e60d26a0724ba363110f3d5902bd1b3ef3f7d601103d444c83a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"faron\", \"predicted_downstream\": 96, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s308785791706704987"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"0\", \"predicted_downstream\": 0, \"mediator\": \"none\", \"root\": \"none\"}",
+          "raw_response_sha256": "247b991f847def6f9c1581c8641a591916f5b1dd9584a538b2b9357634c751fa",
+          "response": "FINAL_ANSWER: {\"downstream\": \"0\", \"predicted_downstream\": 0, \"mediator\": \"none\", \"root\": \"none\"}",
+          "response_sha256": "247b991f847def6f9c1581c8641a591916f5b1dd9584a538b2b9357634c751fa",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"0\", \"predicted_downstream\": 0, \"mediator\": \"none\", \"root\": \"none\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s308785791706704987"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s308785791706704987"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "873248fe20afef1f7b57324d895f28712bc95b04d92814bb6607534e24aa3cb8",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+          "response_sha256": "873248fe20afef1f7b57324d895f28712bc95b04d92814bb6607534e24aa3cb8",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s308785791706704987"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 13}",
+          "raw_response_sha256": "c297f9a16bc7b9224b285d77a08962e66b95b3d779a032bac4384224ab88d466",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 13}",
+          "response_sha256": "c297f9a16bc7b9224b285d77a08962e66b95b3d779a032bac4384224ab88d466",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 13}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s172670699705833314"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s172670699705833314"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin=40\", \"predicted_downstream\": 40}",
+          "raw_response_sha256": "528dd3d4b00cae855adbb276709cc58bfcbf8bbf5e35c84b3539c529f95f2f3e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin=40\", \"predicted_downstream\": 40}",
+          "response_sha256": "528dd3d4b00cae855adbb276709cc58bfcbf8bbf5e35c84b3539c529f95f2f3e",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin=40\", \"predicted_downstream\": 40}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s172670699705833314"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+          "raw_response_sha256": "c1cad4d4b7d96b2c33ed587c669653be31925f6cf12912243441d5da9d8c8f6e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+          "response_sha256": "c1cad4d4b7d96b2c33ed587c669653be31925f6cf12912243441d5da9d8c8f6e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s172670699705833314"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"aeron\", \"predicted_downstream\": 63}",
+          "raw_response_sha256": "57ee84aab903f5323896f4f77763b881ccec4f803224e31def6ffa3b3a6aea18",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"aeron\", \"predicted_downstream\": 63}",
+          "response_sha256": "57ee84aab903f5323896f4f77763b881ccec4f803224e31def6ffa3b3a6aea18",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"aeron\", \"predicted_downstream\": 63}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s172670699705833314"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+          "raw_response_sha256": "c1cad4d4b7d96b2c33ed587c669653be31925f6cf12912243441d5da9d8c8f6e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+          "response_sha256": "c1cad4d4b7d96b2c33ed587c669653be31925f6cf12912243441d5da9d8c8f6e",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 126, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s625222624268987114"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 66}",
+          "raw_response_sha256": "f47b81facd65c79af852be62a54715ac5c88edb189f65b382c9cf57910894970",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 66}",
+          "response_sha256": "f47b81facd65c79af852be62a54715ac5c88edb189f65b382c9cf57910894970",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 66}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s625222624268987114"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+          "raw_response_sha256": "076952b1f301aa4606901491d4ca0f298ad81dfe65e3595058e846859242bce0",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+          "response_sha256": "076952b1f301aa4606901491d4ca0f298ad81dfe65e3595058e846859242bce0",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s625222624268987114"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+          "raw_response_sha256": "be8c907eda5a32510f7ae555ad56996e4d5854d21cf4df4e38169aa2c72898be",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+          "response_sha256": "be8c907eda5a32510f7ae555ad56996e4d5854d21cf4df4e38169aa2c72898be",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"aeron\", \"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s625222624268987114"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+          "raw_response_sha256": "cef87b1c4d700e9d4b74321d8e83d844ae84d468b2922ddc92513234e2cc4cd2",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+          "response_sha256": "cef87b1c4d700e9d4b74321d8e83d844ae84d468b2922ddc92513234e2cc4cd2",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 68}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s625222624268987114"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"brin\", \"downstream\": \"cressa\", \"predicted_downstream\": 24}",
+          "raw_response_sha256": "efe4f141bfb2f89d832ec61f9296a0a1139e6e82206f5b4a2eb3fce983478bac",
+          "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"brin\", \"downstream\": \"cressa\", \"predicted_downstream\": 24}",
+          "response_sha256": "efe4f141bfb2f89d832ec61f9296a0a1139e6e82206f5b4a2eb3fce983478bac",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"brin\", \"downstream\": \"cressa\", \"predicted_downstream\": 24}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s873617948067613010"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"BASE+3\", \"predicted_downstream\": 69, \"root\": \"BASE\", \"mediator\": \"cressa\"}",
+          "raw_response_sha256": "d71ca06b1fca64b4a06607b51b75207549c3143a51975052aed2277122ed113f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"BASE+3\", \"predicted_downstream\": 69, \"root\": \"BASE\", \"mediator\": \"cressa\"}",
+          "response_sha256": "d71ca06b1fca64b4a06607b51b75207549c3143a51975052aed2277122ed113f",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"BASE+3\", \"predicted_downstream\": 69, \"root\": \"BASE\", \"mediator\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s873617948067613010"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+          "raw_response_sha256": "076952b1f301aa4606901491d4ca0f298ad81dfe65e3595058e846859242bce0",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+          "response_sha256": "076952b1f301aa4606901491d4ca0f298ad81dfe65e3595058e846859242bce0",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"brin\", \"predicted_downstream\": 93, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s873617948067613010"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "ec1171f11ac97e7c43b915fbc3da1400077c08eb768618f234ebce41712f0cde",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+          "response_sha256": "ec1171f11ac97e7c43b915fbc3da1400077c08eb768618f234ebce41712f0cde",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"downstream\": \"faron\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s873617948067613010"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+          "raw_response_sha256": "2a5184c3aa97b27717db6207bee9e2cabfdef72c84aefe868f095679cecf23da",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+          "response_sha256": "2a5184c3aa97b27717db6207bee9e2cabfdef72c84aefe868f095679cecf23da",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s873617948067613010"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"none\", \"downstream\": \"57\", \"predicted_downstream\": 52}",
+          "raw_response_sha256": "9b729f75349b66ea893466007d2d58d98da5009682b174fa66332da85fab39cd",
+          "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"none\", \"downstream\": \"57\", \"predicted_downstream\": 52}",
+          "response_sha256": "9b729f75349b66ea893466007d2d58d98da5009682b174fa66332da85fab39cd",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"none\", \"downstream\": \"57\", \"predicted_downstream\": 52}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s509538151712266240"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"52\", \"predicted_downstream\": 57}",
+          "raw_response_sha256": "6531e17548e19d86e93d2d08d11f472a912e7b0f6117ea7e57911e907f678e47",
+          "response": "FINAL_ANSWER: {\"downstream\": \"52\", \"predicted_downstream\": 57}",
+          "response_sha256": "6531e17548e19d86e93d2d08d11f472a912e7b0f6117ea7e57911e907f678e47",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"52\", \"predicted_downstream\": 57}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s509538151712266240"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+          "raw_response_sha256": "2a5184c3aa97b27717db6207bee9e2cabfdef72c84aefe868f095679cecf23da",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+          "response_sha256": "2a5184c3aa97b27717db6207bee9e2cabfdef72c84aefe868f095679cecf23da",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"elara\", \"predicted_downstream\": 82, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s509538151712266240"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"57\", \"predicted_downstream\": 57}",
+          "raw_response_sha256": "a11700931e9f165ca04a4a738e25d9ff5154f94176cfacf42aefeeab01c1f159",
+          "response": "FINAL_ANSWER: {\"downstream\": \"57\", \"predicted_downstream\": 57}",
+          "response_sha256": "a11700931e9f165ca04a4a738e25d9ff5154f94176cfacf42aefeeab01c1f159",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"57\", \"predicted_downstream\": 57}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s509538151712266240"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+          "raw_response_sha256": "8180c1d0ec28969915970c7e94f305f9db7011da76506aea6ad7e629bd6f806b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+          "response_sha256": "8180c1d0ec28969915970c7e94f305f9db7011da76506aea6ad7e629bd6f806b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s509538151712266240"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"109\", \"predicted_downstream\": 109}",
+          "raw_response_sha256": "6a294964985cee95a176c80995598cbbf45448eababf084faaab087984c6d619",
+          "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"109\", \"predicted_downstream\": 109}",
+          "response_sha256": "6a294964985cee95a176c80995598cbbf45448eababf084faaab087984c6d619",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"109\", \"predicted_downstream\": 109}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388657273842867390"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 67}",
+          "raw_response_sha256": "415f956cd838bb462e5549935dc17f1a40760d5228ee4697dc6a1d4542e7c788",
+          "response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 67}",
+          "response_sha256": "415f956cd838bb462e5549935dc17f1a40760d5228ee4697dc6a1d4542e7c788",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 67}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388657273842867390"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+          "raw_response_sha256": "8180c1d0ec28969915970c7e94f305f9db7011da76506aea6ad7e629bd6f806b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+          "response_sha256": "8180c1d0ec28969915970c7e94f305f9db7011da76506aea6ad7e629bd6f806b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"cressa\", \"predicted_downstream\": 87, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388657273842867390"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 63}",
+          "raw_response_sha256": "daea95df6711c46bacae8001e112ffa3395bbfafeee41b82f82398ad7672f929",
+          "response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 63}",
+          "response_sha256": "daea95df6711c46bacae8001e112ffa3395bbfafeee41b82f82398ad7672f929",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"63\", \"predicted_downstream\": 63}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388657273842867390"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+          "raw_response_sha256": "0aea51c273746a7809c16213a941d51d009c85cdd54ebcf7bb39038aa8edba0d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+          "response_sha256": "0aea51c273746a7809c16213a941d51d009c85cdd54ebcf7bb39038aa8edba0d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s388657273842867390"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+          "raw_response_sha256": "762f4bc79570a0017219250d40494a6cce7436285e29bdca889521c4cb26cf90",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+          "response_sha256": "762f4bc79570a0017219250d40494a6cce7436285e29bdca889521c4cb26cf90",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1036609554551118460"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+          "raw_response_sha256": "bbe02e7bd99f961e65610ded00364ab991e3b091a23252398d07bdc65f747bbc",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+          "response_sha256": "bbe02e7bd99f961e65610ded00364ab991e3b091a23252398d07bdc65f747bbc",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1036609554551118460"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"aeron\", \"predicted_downstream\": 18}",
+          "raw_response_sha256": "145f37a624a526bdc8fe03182d2aba45d4eeed51fe9dd21933a9e8efaa05d1b9",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"aeron\", \"predicted_downstream\": 18}",
+          "response_sha256": "145f37a624a526bdc8fe03182d2aba45d4eeed51fe9dd21933a9e8efaa05d1b9",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"\", \"downstream\": \"aeron\", \"predicted_downstream\": 18}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1036609554551118460"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+          "raw_response_sha256": "762f4bc79570a0017219250d40494a6cce7436285e29bdca889521c4cb26cf90",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+          "response_sha256": "762f4bc79570a0017219250d40494a6cce7436285e29bdca889521c4cb26cf90",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 18, \"root\": \"dovin\", \"mediator\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1036609554551118460"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+          "raw_response_sha256": "0aea51c273746a7809c16213a941d51d009c85cdd54ebcf7bb39038aa8edba0d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+          "response_sha256": "0aea51c273746a7809c16213a941d51d009c85cdd54ebcf7bb39038aa8edba0d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"cressa\", \"predicted_downstream\": 82, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1036609554551118460"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+          "raw_response_sha256": "06866214a8009c94f70ebe34ebede756860a758599ab36342d7f5f35b94e4de9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+          "response_sha256": "06866214a8009c94f70ebe34ebede756860a758599ab36342d7f5f35b94e4de9",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s94370034694298934"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "8b345bcd683c60f36842d1feff3834a38906a458ef9a27102c1576f175312247",
+          "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 62}",
+          "response_sha256": "8b345bcd683c60f36842d1feff3834a38906a458ef9a27102c1576f175312247",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"dovin\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s94370034694298934"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"9\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "aa7f67bed36e3ac624140c77cf0bd336cb3a690025fc3a2f1043b4f8ca7ce682",
+          "response": "FINAL_ANSWER: {\"downstream\": \"9\", \"predicted_downstream\": 12}",
+          "response_sha256": "aa7f67bed36e3ac624140c77cf0bd336cb3a690025fc3a2f1043b4f8ca7ce682",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"9\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s94370034694298934"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+          "raw_response_sha256": "bbe02e7bd99f961e65610ded00364ab991e3b091a23252398d07bdc65f747bbc",
+          "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+          "response_sha256": "bbe02e7bd99f961e65610ded00364ab991e3b091a23252398d07bdc65f747bbc",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"dovin\", \"mediator\": \"faron\", \"predicted_downstream\": 95, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s94370034694298934"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 59}",
+          "raw_response_sha256": "25243b992479965fffd399cbedfb5f3d816add49de63b694533994f00b9f08fe",
+          "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 59}",
+          "response_sha256": "25243b992479965fffd399cbedfb5f3d816add49de63b694533994f00b9f08fe",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"59\", \"predicted_downstream\": 59}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s94370034694298934"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"aeron\", \"downstream\": \"23\", \"predicted_downstream\": 27}",
+          "raw_response_sha256": "577b576f46bcf9793a548b35f878134527ccca576dcb25641d59e6a285f39020",
+          "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"aeron\", \"downstream\": \"23\", \"predicted_downstream\": 27}",
+          "response_sha256": "577b576f46bcf9793a548b35f878134527ccca576dcb25641d59e6a285f39020",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"aeron\", \"downstream\": \"23\", \"predicted_downstream\": 27}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s869419937492198560"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+          "raw_response_sha256": "de350898228675c2b51ee778fa1ea61c65596a647d47aeac3d5204f31a5d311e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+          "response_sha256": "de350898228675c2b51ee778fa1ea61c65596a647d47aeac3d5204f31a5d311e",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s869419937492198560"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+          "raw_response_sha256": "06866214a8009c94f70ebe34ebede756860a758599ab36342d7f5f35b94e4de9",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+          "response_sha256": "06866214a8009c94f70ebe34ebede756860a758599ab36342d7f5f35b94e4de9",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"elara\", \"predicted_downstream\": 69, \"root\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s869419937492198560"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+          "raw_response_sha256": "de350898228675c2b51ee778fa1ea61c65596a647d47aeac3d5204f31a5d311e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+          "response_sha256": "de350898228675c2b51ee778fa1ea61c65596a647d47aeac3d5204f31a5d311e",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"51\", \"predicted_downstream\": 55}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s869419937492198560"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "raw_response_sha256": "b1d988e4a86172c7fe97aeb70caf3d1cfa65fe4cc64af4d2c3053d86a66b9de2",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "response_sha256": "b1d988e4a86172c7fe97aeb70caf3d1cfa65fe4cc64af4d2c3053d86a66b9de2",
+          "serialization_verified": false,
+          "wire_normalized": false
+        },
+        {
+          "attempt": 2,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "raw_response_sha256": "29dfff56336cb8a1e9a389cc97f515e7a61be8f8115918caf52a2144d2a81f0f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "response_sha256": "29dfff56336cb8a1e9a389cc97f515e7a61be8f8115918caf52a2144d2a81f0f",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s869419937492198560"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"mediator\": \"cressa=12\", \"predicted_downstream\": 4}",
+          "raw_response_sha256": "fe3aca66fba14d1ad61a92496639c9d00c27261f6eb71358b90867e6846236cd",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"mediator\": \"cressa=12\", \"predicted_downstream\": 4}",
+          "response_sha256": "fe3aca66fba14d1ad61a92496639c9d00c27261f6eb71358b90867e6846236cd",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"mediator\": \"cressa=12\", \"predicted_downstream\": 4}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s557473862987747473"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+          "raw_response_sha256": "75b05c307519b702f62ec046b657ba5820a3795cd5f6f23556a3ba4df6398bc5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+          "response_sha256": "75b05c307519b702f62ec046b657ba5820a3795cd5f6f23556a3ba4df6398bc5",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s557473862987747473"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+4\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "b687957b4dbe21e60104e43ec02130263191e6b6663d0fab0f8044917f317d82",
+          "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+4\", \"predicted_downstream\": 12}",
+          "response_sha256": "b687957b4dbe21e60104e43ec02130263191e6b6663d0fab0f8044917f317d82",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"cressa\", \"mediator\": \"\", \"downstream\": \"BASE+4\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s557473862987747473"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"downstream\": \"cressa=16\", \"predicted_downstream\": 40}",
+          "raw_response_sha256": "fab4d40151023fa81844f6acea261ce44aa005b55c967dab87cbb5c478316fb8",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"downstream\": \"cressa=16\", \"predicted_downstream\": 40}",
+          "response_sha256": "fab4d40151023fa81844f6acea261ce44aa005b55c967dab87cbb5c478316fb8",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron=29\", \"downstream\": \"cressa=16\", \"predicted_downstream\": 40}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s557473862987747473"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "raw_response_sha256": "29dfff56336cb8a1e9a389cc97f515e7a61be8f8115918caf52a2144d2a81f0f",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+          "response_sha256": "29dfff56336cb8a1e9a389cc97f515e7a61be8f8115918caf52a2144d2a81f0f",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 82, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s557473862987747473"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 68}",
+          "raw_response_sha256": "d9731e27a41068d255501ee672762bc849023aea05fa9f6504728a6e0ab215b1",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 68}",
+          "response_sha256": "d9731e27a41068d255501ee672762bc849023aea05fa9f6504728a6e0ab215b1",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 68}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s916661312469941983"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin:12\", \"predicted_downstream\": 12}",
+          "raw_response_sha256": "32c5e221598267084fc627734dbe1f73259ef05f494eaa210cc03e9978a52ecd",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin:12\", \"predicted_downstream\": 12}",
+          "response_sha256": "32c5e221598267084fc627734dbe1f73259ef05f494eaa210cc03e9978a52ecd",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin:12\", \"predicted_downstream\": 12}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s916661312469941983"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+          "raw_response_sha256": "75b05c307519b702f62ec046b657ba5820a3795cd5f6f23556a3ba4df6398bc5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+          "response_sha256": "75b05c307519b702f62ec046b657ba5820a3795cd5f6f23556a3ba4df6398bc5",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 116, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s916661312469941983"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin:68\", \"predicted_downstream\": 106}",
+          "raw_response_sha256": "cb3cb0e89ec0c81d407ae63f53056bfcf0d09100a21703b48134a5ef65ad0a92",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin:68\", \"predicted_downstream\": 106}",
+          "response_sha256": "cb3cb0e89ec0c81d407ae63f53056bfcf0d09100a21703b48134a5ef65ad0a92",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin:68\", \"predicted_downstream\": 106}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s916661312469941983"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s916661312469941983"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "raw_response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+          "response_sha256": "d6debf7199e988fbc48bac40c78a378f45b68a429825a7bf19034e7f2c790bdb",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"dovin\", \"predicted_downstream\": 90, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s759241662068315356"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "raw_response_sha256": "00728a79eefc0e293614c8eb77e27ec6e77e79741cf275e32ecc98eab150166b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "response_sha256": "00728a79eefc0e293614c8eb77e27ec6e77e79741cf275e32ecc98eab150166b",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s759241662068315356"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+          "raw_response_sha256": "cc60e87d3d6f5bdcb2a35960b5815480d1216ad6b10cf991ae7b3bc85008feef",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+          "response_sha256": "cc60e87d3d6f5bdcb2a35960b5815480d1216ad6b10cf991ae7b3bc85008feef",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s759241662068315356"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"5\", \"predicted_downstream\": 84}",
+          "raw_response_sha256": "09f00dda602d650bd62b37230225b77f029321b2a4f8fe5689fc813e91768f24",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"5\", \"predicted_downstream\": 84}",
+          "response_sha256": "09f00dda602d650bd62b37230225b77f029321b2a4f8fe5689fc813e91768f24",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"brin\", \"downstream\": \"5\", \"predicted_downstream\": 84}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s759241662068315356"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "raw_response_sha256": "00728a79eefc0e293614c8eb77e27ec6e77e79741cf275e32ecc98eab150166b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+          "response_sha256": "00728a79eefc0e293614c8eb77e27ec6e77e79741cf275e32ecc98eab150166b",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"5\", \"predicted_downstream\": 5, \"root\": \"brin\", \"mediator\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s759241662068315356"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+          "raw_response_sha256": "cc60e87d3d6f5bdcb2a35960b5815480d1216ad6b10cf991ae7b3bc85008feef",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+          "response_sha256": "cc60e87d3d6f5bdcb2a35960b5815480d1216ad6b10cf991ae7b3bc85008feef",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"faron\", \"predicted_downstream\": 93, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s138262662216011907"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"brin\", \"predicted_downstream\": 18}",
+          "raw_response_sha256": "678d2d4388e35c54047a71aa8410f5daa66331f0578a198cdc9aa19c6583dcd5",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"brin\", \"predicted_downstream\": 18}",
+          "response_sha256": "678d2d4388e35c54047a71aa8410f5daa66331f0578a198cdc9aa19c6583dcd5",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"brin\", \"predicted_downstream\": 18}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s138262662216011907"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "raw_response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s138262662216011907"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: root",
+          "raw_response_sha256": "102d30120872d7c0658e995d48d425e57df50bd56116d98e89b13986977b6b67",
+          "response": "FINAL_ANSWER: root",
+          "response_sha256": "102d30120872d7c0658e995d48d425e57df50bd56116d98e89b13986977b6b67",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: root",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s138262662216011907"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 15}",
+          "raw_response_sha256": "6755bd6ac59b2bde21141e933f3910f8ee9889c1d933cdfddb2c5e4cc7f85237",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 15}",
+          "response_sha256": "6755bd6ac59b2bde21141e933f3910f8ee9889c1d933cdfddb2c5e4cc7f85237",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"predicted_downstream\": 15}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s138262662216011907"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 86}",
+          "raw_response_sha256": "477eaf0441a7301a3c26f95fe2d0d832e104ee0171c60dde100856e76d77c851",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 86}",
+          "response_sha256": "477eaf0441a7301a3c26f95fe2d0d832e104ee0171c60dde100856e76d77c851",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 86}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "raw_response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+          "response_sha256": "481d9c9fbb41ed45ea6b9cbc7bed0f24bec06973e50e6828234be19aff35d57b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"cressa\", \"predicted_downstream\": 104, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\": 86}",
+          "raw_response_sha256": "a89666d7051f88ce4f77ec780c1eacdf5c715d5abac5521d92aa9762a7a67f10",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\": 86}",
+          "response_sha256": "a89666d7051f88ce4f77ec780c1eacdf5c715d5abac5521d92aa9762a7a67f10",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\": 86}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "raw_response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "6155bab3070495532c33cb6175ea017511d11564ef03964a78fe0bff874b34ef",
+          "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 64}",
+          "response_sha256": "6155bab3070495532c33cb6175ea017511d11564ef03964a78fe0bff874b34ef",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"brin\", \"downstream\": \"59\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s23366451881944352"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "raw_response_sha256": "fb856fbe551f7e7cc0d0ed0809f05bd280bcaa6ae75b472c00dadda03cdae496",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "response_sha256": "fb856fbe551f7e7cc0d0ed0809f05bd280bcaa6ae75b472c00dadda03cdae496",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"dovin\", \"predicted_downstream\": 4}",
+          "raw_response_sha256": "e4e37c2723b4fc5045851beb7e806e2e9b09680302ab98ec9005af5a802f27a2",
+          "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"dovin\", \"predicted_downstream\": 4}",
+          "response_sha256": "e4e37c2723b4fc5045851beb7e806e2e9b09680302ab98ec9005af5a802f27a2",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"elara\", \"mediator\": \"faron\", \"downstream\": \"dovin\", \"predicted_downstream\": 4}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"73\", \"predicted_downstream\": 73}",
+          "raw_response_sha256": "80d0f0da2c6b9371ea2e08ab03a351b4875b3c329d2a24e932d9f75119e2b8f6",
+          "response": "FINAL_ANSWER: {\"downstream\": \"73\", \"predicted_downstream\": 73}",
+          "response_sha256": "80d0f0da2c6b9371ea2e08ab03a351b4875b3c329d2a24e932d9f75119e2b8f6",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"73\", \"predicted_downstream\": 73}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "raw_response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+          "response_sha256": "1c8a861790f82c12cd63ddce03bd81381b793f6f50d665428b8046b55e0f096a",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"faron\", \"predicted_downstream\": 106, \"root\": \"dovin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"74\", \"predicted_downstream\": 74}",
+          "raw_response_sha256": "c1b386aac2ac15ee3cf01f7b8a235f36b910a7308fe47f1b8e7c319a82f4c55e",
+          "response": "FINAL_ANSWER: {\"downstream\": \"74\", \"predicted_downstream\": 74}",
+          "response_sha256": "c1b386aac2ac15ee3cf01f7b8a235f36b910a7308fe47f1b8e7c319a82f4c55e",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"74\", \"predicted_downstream\": 74}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s507372649341104064"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin:+0\", \"predicted_downstream\": 6, \"mediator\": \"aeron\", \"root\": \"BASE\"}",
+          "raw_response_sha256": "5f135b106a83e35bbc01f3320205f66296e8d3496b33487c0bfc0f2ea3600414",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin:+0\", \"predicted_downstream\": 6, \"mediator\": \"aeron\", \"root\": \"BASE\"}",
+          "response_sha256": "5f135b106a83e35bbc01f3320205f66296e8d3496b33487c0bfc0f2ea3600414",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin:+0\", \"predicted_downstream\": 6, \"mediator\": \"aeron\", \"root\": \"BASE\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1057777682970653997"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+          "raw_response_sha256": "4b4c52d76a16101569a2c4271e022cdca45ab8b5e317ec9c143cde9015484273",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+          "response_sha256": "4b4c52d76a16101569a2c4271e022cdca45ab8b5e317ec9c143cde9015484273",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1057777682970653997"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 3}",
+          "raw_response_sha256": "a71122032b91151e45acde9e0dcbcf492649d2cdc503df458c3c04d09ef9eca8",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 3}",
+          "response_sha256": "a71122032b91151e45acde9e0dcbcf492649d2cdc503df458c3c04d09ef9eca8",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"brin\", \"downstream\": \"brin\", \"predicted_downstream\": 3}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1057777682970653997"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 3, \"root\": \"BASE\", \"mediator\": \"aeron\"}",
+          "raw_response_sha256": "0185d3fa7c321a532d846a4746c441d6c50fc12873afa8c980f363050abbae51",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 3, \"root\": \"BASE\", \"mediator\": \"aeron\"}",
+          "response_sha256": "0185d3fa7c321a532d846a4746c441d6c50fc12873afa8c980f363050abbae51",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"predicted_downstream\": 3, \"root\": \"BASE\", \"mediator\": \"aeron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1057777682970653997"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "raw_response_sha256": "fb856fbe551f7e7cc0d0ed0809f05bd280bcaa6ae75b472c00dadda03cdae496",
+          "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "response_sha256": "fb856fbe551f7e7cc0d0ed0809f05bd280bcaa6ae75b472c00dadda03cdae496",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"aeron\", \"mediator\": \"elara\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1057777682970653997"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+          "raw_response_sha256": "67c6ec667ea41f75a099dbc3814e9951cc1c52a6ab39ebf5a5359a1586bba56d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+          "response_sha256": "67c6ec667ea41f75a099dbc3814e9951cc1c52a6ab39ebf5a5359a1586bba56d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s558118503676325347"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"faron\", \"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "177b79911e5158ca08f1262ae570504ac0e8239fa07ef80cf3e61709357f36a4",
+          "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"faron\", \"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "response_sha256": "177b79911e5158ca08f1262ae570504ac0e8239fa07ef80cf3e61709357f36a4",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"aeron\", \"mediator\": \"faron\", \"downstream\": \"64\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s558118503676325347"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "374e92320a6fc1cbe60fee89c53a072112d9909f91f5990d895d840941db02dd",
+          "response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "response_sha256": "374e92320a6fc1cbe60fee89c53a072112d9909f91f5990d895d840941db02dd",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s558118503676325347"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+          "raw_response_sha256": "4b4c52d76a16101569a2c4271e022cdca45ab8b5e317ec9c143cde9015484273",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+          "response_sha256": "4b4c52d76a16101569a2c4271e022cdca45ab8b5e317ec9c143cde9015484273",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"mediator\": \"aeron\", \"predicted_downstream\": 96, \"root\": \"elara\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s558118503676325347"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "raw_response_sha256": "374e92320a6fc1cbe60fee89c53a072112d9909f91f5990d895d840941db02dd",
+          "response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+          "response_sha256": "374e92320a6fc1cbe60fee89c53a072112d9909f91f5990d895d840941db02dd",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"64\", \"predicted_downstream\": 64}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s558118503676325347"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+          "raw_response_sha256": "975a41a074f6a7c80cf91d407fa25c3d1fac9cc8aac91d62de3b411d73e0b9df",
+          "response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+          "response_sha256": "975a41a074f6a7c80cf91d407fa25c3d1fac9cc8aac91d62de3b411d73e0b9df",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s848933631551290390"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "raw_response_sha256": "982ce7f2b76b51d4a785a8151c280ea784be91902bed98faca6972c93bf4fbfb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "response_sha256": "982ce7f2b76b51d4a785a8151c280ea784be91902bed98faca6972c93bf4fbfb",
+          "serialization_verified": false,
+          "wire_normalized": false
+        },
+        {
+          "attempt": 2,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "raw_response_sha256": "982ce7f2b76b51d4a785a8151c280ea784be91902bed98faca6972c93bf4fbfb",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"brin\"}",
+          "response_sha256": "982ce7f2b76b51d4a785a8151c280ea784be91902bed98faca6972c93bf4fbfb",
+          "serialization_verified": false,
+          "wire_normalized": false
+        },
+        {
+          "attempt": 3,
+          "prefill_tokens": 29,
+          "raw_response": "FINAL_ANSWER: {\"downstream\":\"cressa\",\"mediator\":\"aeron\",\"predicted_downstream\":88,\"root\":\"faron\"}",
+          "raw_response_sha256": "83072218a5c90b2efe84cbfc0141a12193e075d34f8bfe1be476cf2f9dc555ed",
+          "response": "FINAL_ANSWER: {\"downstream\":\"cressa\",\"mediator\":\"aeron\",\"predicted_downstream\":88,\"root\":\"faron\"}",
+          "response_sha256": "83072218a5c90b2efe84cbfc0141a12193e075d34f8bfe1be476cf2f9dc555ed",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\":\"cressa\",\"mediator\":\"aeron\",\"predicted_downstream\":88,\"root\":\"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s848933631551290390"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "raw_response_sha256": "63fdb0b78d2b33ca93df656eae5a082f2cb851d778f41e4c93e7445529caf184",
+          "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"58\", \"predicted_downstream\": 62}",
+          "response_sha256": "63fdb0b78d2b33ca93df656eae5a082f2cb851d778f41e4c93e7445529caf184",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"brin\", \"mediator\": \"aeron\", \"downstream\": \"58\", \"predicted_downstream\": 62}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s848933631551290390"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+          "raw_response_sha256": "975a41a074f6a7c80cf91d407fa25c3d1fac9cc8aac91d62de3b411d73e0b9df",
+          "response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+          "response_sha256": "975a41a074f6a7c80cf91d407fa25c3d1fac9cc8aac91d62de3b411d73e0b9df",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"10\", \"predicted_downstream\": 10}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s848933631551290390"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+          "raw_response_sha256": "67c6ec667ea41f75a099dbc3814e9951cc1c52a6ab39ebf5a5359a1586bba56d",
+          "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+          "response_sha256": "67c6ec667ea41f75a099dbc3814e9951cc1c52a6ab39ebf5a5359a1586bba56d",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"brin\", \"mediator\": \"aeron\", \"predicted_downstream\": 74, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s848933631551290390"
+    },
+    {
+      "arm": "treatment",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"faron\"}",
+          "raw_response_sha256": "a88a0e7048cf167d619e5185cb051f9b9b2f927adfaa8d7aef76eb522ed2e98b",
+          "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"faron\"}",
+          "response_sha256": "a88a0e7048cf167d619e5185cb051f9b9b2f927adfaa8d7aef76eb522ed2e98b",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"cressa\", \"mediator\": \"aeron\", \"predicted_downstream\": 88, \"root\": \"faron\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1111365079548466694"
+    },
+    {
+      "arm": "coefficient_lesion",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron=13\", \"downstream\": \"aeron=12\", \"mediator\": \"cressa=52\", \"root\": \"BASE=10\"}",
+          "raw_response_sha256": "49e098abc974ef2aae1c2d8ad594adb79e1b40f5cb7297f6da8121bceb0724b0",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron=13\", \"downstream\": \"aeron=12\", \"mediator\": \"cressa=52\", \"root\": \"BASE=10\"}",
+          "response_sha256": "49e098abc974ef2aae1c2d8ad594adb79e1b40f5cb7297f6da8121bceb0724b0",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron=13\", \"downstream\": \"aeron=12\", \"mediator\": \"cressa=52\", \"root\": \"BASE=10\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1111365079548466694"
+    },
+    {
+      "arm": "matched_wrong_state",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+          "raw_response_sha256": "ad57a1f542c39dd6a2f91336591f6871533129d8f6a529b805151cd33a9c27a8",
+          "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+          "response_sha256": "ad57a1f542c39dd6a2f91336591f6871533129d8f6a529b805151cd33a9c27a8",
+          "serialization_verified": true,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"elara\", \"mediator\": \"aeron\", \"predicted_downstream\": 70, \"root\": \"cressa\"}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1111365079548466694"
+    },
+    {
+      "arm": "ordinary_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 0,
+          "raw_response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 13}",
+          "raw_response_sha256": "92b8f4ea7e33a713e3e61c508a7cf372f39b073e64b35f463f60064fffc2a6a0",
+          "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 13}",
+          "response_sha256": "92b8f4ea7e33a713e3e61c508a7cf372f39b073e64b35f463f60064fffc2a6a0",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"root\": \"faron\", \"mediator\": \"\", \"downstream\": \"BASE+3\", \"predicted_downstream\": 13}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1111365079548466694"
+    },
+    {
+      "arm": "matched_wire_base",
+      "attempts": [
+        {
+          "attempt": 1,
+          "prefill_tokens": 8,
+          "raw_response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream_value\": 13, \"predicted_downstream\": 13}",
+          "raw_response_sha256": "f396bb81e8cfb6594461042d5303eda7809d59f8d6f13e6c7b4d17886fd54746",
+          "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream_value\": 13, \"predicted_downstream\": 13}",
+          "response_sha256": "f396bb81e8cfb6594461042d5303eda7809d59f8d6f13e6c7b4d17886fd54746",
+          "serialization_verified": null,
+          "wire_normalized": false
+        }
+      ],
+      "response": "FINAL_ANSWER: {\"downstream\": \"faron\", \"downstream_value\": 13, \"predicted_downstream\": 13}",
+      "task_id": "recurrence-frontier_scientific_inference-d14-s1111365079548466694"
+    }
+  ],
+  "receipt_sha256": "2d838fa60bbfe33faa15cd89759d75b0110175ee501ea4389971669246411dcd",
+  "regression_count": 0,
+  "regression_set_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "resident_manifest_identity": null,
+  "schema": "aura.rlc.semantic_neural_decode_canary.v1",
+  "seed": 2026081568,
+  "source_commit": "05c002654b4716a630cf2684bcc82e98c0964357",
+  "source_sha256s": {
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/manifest.json": "00c9d18cb25f7687eecac7389236d0a40e8ff798b428c7497242638591ec1769",
+    "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors": "059e811c0d9e1fbfd76f1a513636c713962a500f5692d4e914bd96d1372405b7",
+    "core/brain/llm/latent_cortex/frontier_tasks.py": "bef80d1a49ce9d062544dbf29a89d11f018751a85658e1d4ce44b0d7c1020780",
+    "core/brain/llm/latent_cortex/semantic_neural_decode_context.py": "affc4bc3cbf017454b50441e5c8fc7c9494f63bc8c72e0f8605f27c69c582abc",
+    "core/brain/llm/latent_cortex/semantic_surface_adapter.py": "31cd151ea864449795c4fcc8751fe9eccdb771e520efb541709bacf066807b24",
+    "core/brain/llm/latent_cortex/systematic_neural_alu.py": "141a3d16aa891be182b30c38707a3f15c208734574e5af32459a8f25ac105a72",
+    "core/brain/llm/unified_recurrent_transfer_decode.py": "7bc2d7e0fe741b0760775a39449b33db506b0a6fd76cb9e3667951d9a67b4a78",
+    "core/learning/frontier_process_supervision.py": "f4beb455da1c3cb8e77a3c17afd2a3f5c6cee8d127b60e47c4e99e038d7902bf",
+    "core/learning/public_frontier_action_compiler.py": "32da5f3169ea75003b1aeea0a7fdcb072a9ee138968eae42c0fb75f57f973592",
+    "core/learning/recurrent_action_schema.py": "9e64dff7ac586c62bc3cc519694cd5b579a6fac020ad631ea31a5d7e6e0b0904",
+    "core/learning/recurrent_state_schema.py": "56101d04275a76bc4106b7c7d2365e60d777abc759e8734218885830b7a2b79d",
+    "core/learning/semantic_neural_controls.py": "890305b703704de20d004f69cd2bd9a87cea29c3975c00bab3de5a90e8b3b689",
+    "core/learning/semantic_neural_machine.py": "c3defb6ca618f8617363cc16f8f311111c890eb10b331c6b3dfbec5479e6c382",
+    "tools/run_semantic_neural_decode_canary.py": "66f34270647619fa58fafe6a02fa907cbe630e60936ff058009e5315e7b1bfd5"
+  },
+  "surface_adapter_receipt_sha256s": [
+    "9406019376d1291354f59f280304eed2188a9d555134630c4ade9f29b59e9891",
+    "f0cc9f035e0c828f595bbd043f09a45b2ec319a178f554fbf0ec78910b09fbcd",
+    "3db0fbde74f8e74bc09f8641d696ed16847e40a4437fe179f725b0e06b9f41a3",
+    "ebcdb81e66345a51068d1f304bad461389c729758c89593c9aa7c05d2ff5965a",
+    "f77181cd0ac592bfbba3c27d56ba8bebcedfe3523ac6f3516eeae4d0979308a5",
+    "811b05a76a8dcf0794a1b6c0a75affc8c88596f0097f8922e95aed910d6bffa5",
+    "28eb4996d7ca3468cddf2fc86b8f7af911598b8d74685a2fa6eafc42a34c18d1",
+    "d8993724987e78b16c6354f5fb6e706e75285686020171d49ebd6266701a42a7",
+    "95ad8ccdea4bc0df7d2ce98953fbb46157f92f012705f61d60a30f1a32b0fc80",
+    "427b5505d42ab7bfd58871a6fad3ae31b444f54e26d2c0f8e59bbd3c4be11125",
+    "1774a19ce5df6c1b1ed94477b6c9492c9adde21c98611ab4eb147880063c23ad",
+    "846d520d3f8738960a84b1fb56d90cfed7a9204fd249724f8849ea1d5fe5ebb3",
+    "86753689b271f50e661fa3e79cd0d3b0eb36f4a524f1e6e14d41df82354c5f2a",
+    "f598a29638015114ab360a5f455f580637b7f8e63f593c2c6fb171b5dc55539d",
+    "c9b1c02ad83c01687bf70cb7a558d8b01e460e0027c2e0828d4a57897a694eef",
+    "bbe074991cce786c7bbf1fce9d8048fa80597d8a5c57183c5dafb2e7d99c8abd",
+    "36f67efcc3d8f8cea64f8486e1b3447b3a5a6d5a670899b025505c5e7a4450f2",
+    "989ab37f76af49704d4529fd623aeabe562d2a2fc5afe0b03dd90b5fde54ca9c",
+    "22a523abe3aafbc02ebaa68e5fd5cdf481d142a7c5ae8c741832f3220260f11f",
+    "77a41bc4624f42881c0660eba58dde6a81d4655851ddc7e996bda9832ad1bf81",
+    "d756b6798e299207b0bcc67382562528efd9f77ac2fbf7cd29b09b7f536d8d6d",
+    "5b316090fb0bcc7941a8ab095a998714ee5069b7bd85f38ccd73fd7de648f8fa",
+    "2f609d174298196b28e03772307ded73b2fd143b362668ed67541dfda5e21863",
+    "94dc786d34b7e7829e0d60ef526032d436b1bcb4fab8bba459e0c310c2077bba",
+    "98e628bf08dc4ab8aaa3e5f145c54b33dbc35b601dd56c77545a0a8d2f39180d",
+    "f446ce2f7e1c12e9c6d101f3a7343588d2616b8263d206e2e4890509b03a711c",
+    "dc7acd9ddea86dc333cb311175c52183fabb46fb796f178eee65b7150dbd362a",
+    "61683d26e2cec26bbbfe18ce9959f07521c66d92ac20abb3b2b5020840ac7a01",
+    "f9dd3482773b54671fa4897d0a24f255a69241cf0734b989f1c82f83c54933b4",
+    "9bc6c32d68ab9d655c9f9d3364fa9fa3f21935224194eb6ec35da57cbc4f7a77"
+  ],
+  "surface_profile": "mixed_scientific_v1",
+  "task_count": 30,
+  "tasks_per_difficulty": 10,
+  "treatment_state_receipt_sha256s": [
+    "b0076f2adb62f2684fa6845a24af7d8c8a168dba3e63a5e6e44de9e7b54abe5a",
+    "6b0564b86fc921079ef98d06ac7b0f9cd427b489768770970db19c8dbf1030ac",
+    "1e07e4f095de811492dc8855db40703d747df0d4f56b3eaefba03fd134e41916",
+    "6105a6c0eb8f93f83178c179bd0da0afc3fd348ca245d5ec975ba75663baf542",
+    "4fff759dab40252cdc8b4525bfa1fc18a6f3bc9ab892aa527487b3effcde0e0a",
+    "467c3400aeb1f9e9387711ea30f0c5c98bcb8323ccc23d58b771be23bf233732",
+    "807d835762e10ec3e4e96f5b88d3cdd2c53372026905700f9bad08c392be6776",
+    "550c3ab127ce1b9e4156d1bbf3e751cf1219495d3e64ca60ebe4365f3b1ed1ed",
+    "e231414dc4edce49f9b3e5865ba19d70cb8dc8fca421997cf66b73ed6b40a18c",
+    "8aae1b82bc51992677dbfb0b9f34f53b1b346ee3f24541b0979ce0ec977df021",
+    "882e2ea18d31be84c472d5f0f6d59d942d9bd31e74e17f5928aa032e6a2a62da",
+    "57391c1c634c5639768f979c6b2e1b0ed74264ea388883be44f08a4f5b160a12",
+    "d0721c0ad1b3ee4ceaeeea960f69509d83f469123ecabd8a6ed1c3a83333a47e",
+    "c2a0c84178e09b42e05198840d0e5ba876dfaf04870348dd8b9980089497e0ee",
+    "1ba175c9d20acefb12161daebb12559a39337f1731401ba7c07de36ffd249182",
+    "7448e791ecda99a1aa0a4fe94bad2cc199d16d7c789306a2fb4f3ac0aaba3552",
+    "75031d0b268e36dd4b36ae56339f1fd1676a7adf564efae4ab26513ff1fcd51b",
+    "cf6b261f5ac3b8d7b5dba8479b8f30c8a2406a1a6c05131497cd1e0df2bdb329",
+    "c0bf21ad5bdb26d27e08206d22f4574f489800b7ea14e746c5858a8ec3536dd1",
+    "f81900f69373e530d71ba630f538b3eeb242148850d062a5730a05844a0d1de3",
+    "9b2ac8d88af29b514d302d39089296292d84b70ec6b46820aa4cbba2951067cb",
+    "3a1b33a392b57e2073d7f8e6ec1c000e20cf145da06dccfed8665a49506f6fff",
+    "c123b7e3ce067adb23a85a4de03c0fadfef409455a1cd4435682f780d35372b3",
+    "759b4f3f84a719b4d262caac6f5e7a5acea0e8f9bcced88cae11e7598624e372",
+    "2e7eda201056e693d1a49feced0b8e082f640ce312a9384414ddbfa08ceec09a",
+    "ef9723143731446dc5f45c7a835dbb79e06a1f4293d91e30eae72ea5e2eba3a4",
+    "f5468c4e8c938a03df764b8552a743fa1100ee1d8d7ccb6be12991802c6db9f6",
+    "36b710d862a841cef15fb3778c7fc349cf830ecb680da9de20e3a9e2ace589b0",
+    "e9e1a318c932018a16ff4efd9db0c16cbe934ab0ce06a4728f66ccc79000980a",
+    "2ad5eaad63e61f91902f42d6a38d4e83b50f383c9852add5845627c0b0ed1dde"
+  ]
+}
