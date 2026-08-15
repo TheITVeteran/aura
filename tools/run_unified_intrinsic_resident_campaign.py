@@ -24,6 +24,13 @@ from typing import Any, Final, Never
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from core.learning.recurrent_state_schema import (  # noqa: E402
+    SEMANTIC_STATE_SLOT_NAMES,
+)
+from core.learning.transition_coverage import (  # noqa: E402
+    TRANSITION_COVERAGE_SCHEMA,
+    audit_transition_coverage,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_bytes_if_absent,
@@ -298,6 +305,11 @@ def _load_config(path: Path) -> dict[str, Any]:
         if isinstance(training_admission, dict)
         else None
     )
+    primitive_coverage = (
+        training_admission.get("primitive_coverage")
+        if isinstance(training_admission, dict)
+        else None
+    )
     if expected_training["state_schema"] == "semantic_v2":
         if (
             not isinstance(transition_admission, dict)
@@ -306,7 +318,31 @@ def _load_config(path: Path) -> dict[str, Any]:
             or len(transition_admission["report_sha256"]) != 64
         ):
             _fail("campaign_transition_identifiability_invalid")
-    elif training_admission != {"transition_identifiability": None}:
+        expected_coverage_families = {
+            f"frontier_{family}"
+            for family in str(expected_training["families"]).split(",")
+        }
+        if (
+            not isinstance(primitive_coverage, dict)
+            or primitive_coverage.get("schema") != TRANSITION_COVERAGE_SCHEMA
+            or primitive_coverage.get(
+                "in_distribution_primitive_coverage_admitted"
+            )
+            is not True
+            or not isinstance(primitive_coverage.get("report_sha256"), str)
+            or len(primitive_coverage["report_sha256"]) != 64
+            or primitive_coverage.get("claim_boundary")
+            != "fresh_instances_with_covered_primitives_structure_and_depth"
+            or not isinstance(primitive_coverage.get("claims_not_supported"), list)
+            or "wow_signal" not in primitive_coverage["claims_not_supported"]
+            or set(primitive_coverage.get("families", {}))
+            != expected_coverage_families
+        ):
+            _fail("campaign_transition_primitive_coverage_invalid")
+    elif training_admission != {
+        "transition_identifiability": None,
+        "primitive_coverage": None,
+    }:
         _fail("campaign_transition_identifiability_invalid")
     paths = config.get("paths")
     base_path_keys = {
@@ -477,6 +513,22 @@ def verify_package(config: Mapping[str, Any]) -> dict[str, Any]:
     dataset_identity = freeze_source_dataset(dataset_path, train, holdout)
     if dataset_identity != config["dataset"]:
         _fail("campaign_dataset_identity_drift")
+    if config["training"]["state_schema"] == "semantic_v2":
+        state_slots = len(SEMANTIC_STATE_SLOT_NAMES)
+        coverage = audit_transition_coverage(
+            train,
+            holdout,
+            state_slots=state_slots,
+        )
+        expected_coverage = config["training_admission"]["primitive_coverage"]
+        if (
+            coverage["report_sha256"] != expected_coverage["report_sha256"]
+            or coverage["admission"][
+                "in_distribution_primitive_coverage_admitted"
+            ]
+            is not True
+        ):
+            _fail("campaign_transition_primitive_coverage_drift")
     model_root = Path(config["model"]["root"])
     tokenizer = load_resident_bootstrap_tokenizer(model_root)
     tokenizer_identity = resident_bootstrap_tokenizer_identity(model_root, tokenizer)

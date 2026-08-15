@@ -34,6 +34,7 @@ from core.learning.recurrent_state_schema import (  # noqa: E402
     STATE_SLOT_NAMES,
     state_targets_from_trace,
 )
+from core.learning.transition_coverage import audit_transition_coverage  # noqa: E402
 from core.learning.transition_identifiability import (  # noqa: E402
     audit_public_transition_identifiability,
 )
@@ -687,7 +688,10 @@ def _profile_training(profile: str) -> dict[str, Any]:
             "task_depths": "3,5,10",
             "train_depths": "1,3,5,9,10",
             "heldout_depths": "12,16",
-            "per_cell": 64,
+            # CP513: 64 examples left valid calibration categories unseen in
+            # holdout. 128 closes the frozen primitive-support audit without
+            # consulting holdout answers or changing the task difficulty.
+            "per_cell": 128,
             "holdout_per_cell": 12,
             "max_steps": process_steps,
             "semantic_warmup_steps": 0,
@@ -1122,6 +1126,7 @@ def _freeze_campaign(
             "training_state_schema_cannot_encode_frozen_tasks"
         ) from exc
     transition_identifiability = None
+    primitive_coverage = None
     if training["state_schema"] == "semantic_v2":
         transition_report = audit_public_transition_identifiability(
             train_tasks,
@@ -1139,6 +1144,35 @@ def _freeze_campaign(
             ),
             "families": transition_admission["families"],
             "claim_boundary": transition_report["claim_boundary"],
+        }
+        coverage_report = audit_transition_coverage(
+            train_tasks,
+            holdout_tasks,
+            state_slots=len(state_register_order),
+        )
+        if not coverage_report["admission"][
+            "in_distribution_primitive_coverage_admitted"
+        ]:
+            _fail("semantic_transition_primitive_coverage_incomplete")
+        primitive_coverage = {
+            "schema": coverage_report["schema"],
+            "report_sha256": coverage_report["report_sha256"],
+            "in_distribution_primitive_coverage_admitted": True,
+            "claim_boundary": coverage_report["admission"]["claim_boundary"],
+            "claims_not_supported": coverage_report["claims_not_supported"],
+            "families": {
+                family: {
+                    "training_count": evidence["training"]["task_count"],
+                    "holdout_count": evidence["holdout"]["task_count"],
+                    "training_depths": evidence["training"]["depths"],
+                    "holdout_depths": evidence["holdout"]["depths"],
+                    "opcode_support": evidence["training"]["opcode_support"],
+                    "exact_program_overlap_count": evidence[
+                        "exact_program_overlap_count"
+                    ],
+                }
+                for family, evidence in coverage_report["families"].items()
+            },
         }
     random.Random(int(training["seed"])).shuffle(train_tasks)
     dataset_identity = freeze_source_dataset(
@@ -1164,6 +1198,20 @@ def _freeze_campaign(
             ]
         ):
             _fail("frozen_transition_identifiability_roundtrip_differs")
+        restored_coverage_report = audit_transition_coverage(
+            restored_train_tasks,
+            restored_holdout_tasks,
+            state_slots=len(state_register_order),
+        )
+        if (
+            primitive_coverage is None
+            or restored_coverage_report["report_sha256"]
+            != primitive_coverage["report_sha256"]
+            or not restored_coverage_report["admission"][
+                "in_distribution_primitive_coverage_admitted"
+            ]
+        ):
+            _fail("frozen_transition_primitive_coverage_roundtrip_differs")
     tokenizer = load_resident_bootstrap_tokenizer(model_path)
     tokenizer_identity = resident_bootstrap_tokenizer_identity(model_path, tokenizer)
     bridge = {"assistant_answer": "\n\nFINAL_ANSWER: "}.get(
@@ -1217,6 +1265,7 @@ def _freeze_campaign(
         "training": training,
         "training_admission": {
             "transition_identifiability": transition_identifiability,
+            "primitive_coverage": primitive_coverage,
         },
         "training_args": training_args,
         "watchdog": {

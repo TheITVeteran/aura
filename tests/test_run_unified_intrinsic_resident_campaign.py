@@ -176,6 +176,24 @@ def _config(tmp_path: Path, *, profile: str = "canary") -> tuple[Path, dict]:
                 if training["state_schema"] == "semantic_v2"
                 else None
             ),
+            "primitive_coverage": (
+                {
+                    "schema": "aura.transition_primitive_coverage.v1",
+                    "report_sha256": "e" * 64,
+                    "in_distribution_primitive_coverage_admitted": True,
+                    "claim_boundary": (
+                        "fresh_instances_with_covered_primitives_structure_and_depth"
+                    ),
+                    "claims_not_supported": ["wow_signal"],
+                    "families": {
+                        "frontier_calibration": {},
+                        "frontier_coding": {},
+                        "frontier_misleading_premise": {},
+                    },
+                }
+                if training["state_schema"] == "semantic_v2"
+                else None
+            ),
         },
         "training_args": _training_cli(training),
         "watchdog": {
@@ -533,6 +551,7 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
     assert training["direct_transition_processor"] is True
     assert training["transition_replay_mode"] == "disabled"
     assert training["process_gradient_combiner"] == "mean"
+    assert training["per_cell"] == 128
     assert "process_semantic_transition_canary" not in BOOTSTRAP_PROFILES
     assert "process_semantic_transition_canary" in OPTIONAL_BOOTSTRAP_PROFILES
     assert arguments[arguments.index("--state-schema") + 1] == "semantic_v2"
@@ -562,6 +581,9 @@ def test_semantic_transition_campaign_requires_signed_local_state_admission(
     assert loaded["training_admission"]["transition_identifiability"][
         "state_recurrent_transition_admitted"
     ] is True
+    assert loaded["training_admission"]["primitive_coverage"][
+        "in_distribution_primitive_coverage_admitted"
+    ] is True
     raw["training_admission"]["transition_identifiability"] = None
     body = {key: value for key, value in raw.items() if key != "config_sha256"}
     raw["config_sha256"] = canonical_sha256(body)
@@ -571,6 +593,24 @@ def test_semantic_transition_campaign_requires_signed_local_state_admission(
     with pytest.raises(
         controller.UnifiedResidentControllerError,
         match="campaign_transition_identifiability_invalid",
+    ):
+        controller._load_config(path)
+
+
+def test_semantic_transition_campaign_requires_primitive_coverage_admission(
+    tmp_path: Path,
+) -> None:
+    path, raw = _config(tmp_path, profile="process_semantic_transition_canary")
+    raw["training_admission"]["primitive_coverage"] = None
+    body = {key: value for key, value in raw.items() if key != "config_sha256"}
+    raw["config_sha256"] = canonical_sha256(body)
+    path.chmod(0o600)
+    path.write_bytes(canonical_bytes(raw) + b"\n")
+    path.chmod(0o400)
+
+    with pytest.raises(
+        controller.UnifiedResidentControllerError,
+        match="campaign_transition_primitive_coverage_invalid",
     ):
         controller._load_config(path)
 
