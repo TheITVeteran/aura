@@ -16,13 +16,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tools.lint_module_size import (
     MAX_NEW_CLASS_METHODS,
     MAX_NEW_MODULE_LINES,
     Measurement,
     check,
     load_baseline,
+    load_budget,
     measure_tree,
+    oversize_total,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +39,7 @@ def _live() -> tuple[dict[str, Measurement], dict[str, dict[str, int]]]:
 
 def test_the_tree_is_within_its_baseline():
     measurements, baseline = _live()
-    failures, stale = check(measurements, baseline)
+    failures, stale = check(measurements, baseline, budget=load_budget(BASELINE))
 
     assert failures == [], "\n".join(failures)
     assert stale == [], "\n".join(stale)
@@ -53,14 +57,79 @@ def test_the_baseline_records_the_known_offenders():
         assert path in baseline, path
 
 
-def test_growth_in_a_baselined_file_fails():
+def test_uncompensated_growth_fails():
+    """A file may grow only if another shrinks by more."""
     measurements, baseline = _live()
-    tightened = dict(baseline)
-    tightened["core/brain/inference_gate.py"] = {"lines": 100, "max_class_methods": 5}
+    grown = dict(measurements)
+    target = grown["core/brain/inference_gate.py"]
+    grown[target.path] = Measurement(
+        target.path, target.lines + 200, target.max_class_methods, target.largest_class
+    )
 
-    failures, _ = check(measurements, tightened)
+    failures, _ = check(grown, baseline, budget=load_budget(BASELINE))
 
-    assert any("inference_gate" in f and "grew to" in f for f in failures), failures
+    assert any("total oversize" in f for f in failures), failures
+
+
+def test_the_decomposition_this_gate_exists_to_encourage_passes():
+    """Moving four hundred lines out of chat.py into two new modules must PASS.
+    The tool's first design pinned every file individually and failed exactly
+    this, which is how a gate gets deleted: it blocks the work it was meant to
+    cause."""
+    measurements, baseline = _live()
+    traded = dict(measurements)
+    chat = traded["interface/routes/chat.py"]
+    traded[chat.path] = Measurement(
+        chat.path, chat.lines - 400, chat.max_class_methods, chat.largest_class
+    )
+    for name in ("chat_streaming", "chat_persistence"):
+        traded[f"interface/routes/{name}.py"] = Measurement(
+            f"interface/routes/{name}.py", 190, 4, "Small"
+        )
+
+    failures, _ = check(traded, baseline, budget=load_budget(BASELINE))
+
+    assert not any("total oversize" in f for f in failures), failures
+    assert not any("chat_streaming" in f for f in failures), failures
+
+
+def test_a_god_class_may_never_grow_even_while_its_file_shrinks():
+    """Method count is pinned per class rather than budgeted: splitting a God
+    class is the point, growing one is never the trade."""
+    measurements, baseline = _live()
+    grown = dict(measurements)
+    target = grown["core/brain/inference_gate.py"]
+    grown[target.path] = Measurement(
+        target.path,
+        target.lines - 5000,
+        target.max_class_methods + 1,
+        target.largest_class,
+    )
+
+    failures, _ = check(grown, baseline, budget=load_budget(BASELINE))
+
+    assert any("methods from a baseline" in f for f in failures), failures
+
+
+def test_the_budget_refuses_to_be_raised_by_a_refresh(tmp_path):
+    """`--write-baseline` is the escape hatch, and it must not become a way to
+    launder growth."""
+    import json
+
+    from tools.lint_module_size import write_baseline
+
+    target = tmp_path / "baseline.json"
+    target.write_text(json.dumps({"oversize_budget_lines": 10, "modules": {}}))
+    measurements, _ = _live()
+
+    with pytest.raises(ValueError, match="larger oversize budget"):
+        write_baseline(target, measurements)
+
+
+def test_the_budget_is_the_measured_total():
+    measurements, _ = _live()
+
+    assert load_budget(BASELINE) == oversize_total(measurements)
 
 
 def test_a_new_oversized_module_is_never_grandfathered():

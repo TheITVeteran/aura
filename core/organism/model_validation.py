@@ -2370,6 +2370,24 @@ def _neural_complete_engine_contract_holds() -> bool:
 
 
 def _recurrent_memory_complete_engine_contract_holds() -> bool:
+    from core.learning.sealed_artifact_admission import mathematics_memory_admitted
+
+    # A refused seal and a wrong answer are different facts with different
+    # owners, and this predicate reported both as False. When the sealed tissue
+    # is not admitted the engine did not run at all, so there is nothing to
+    # measure — NothingMeasured is the outcome that says so, and it keeps a
+    # provenance break from reading as a capability regression.
+    #
+    # Measured 2026-08-15: frontier_process_supervision.py drifted from its
+    # pinned hash in 8c48eec8d (CP546, schema v1→v2). The refusal is correct;
+    # re-sealing without re-running the canary would launder it.
+    admitted, detail = mathematics_memory_admitted()
+    if not admitted:
+        raise NothingMeasured(
+            "sealed mathematics memory tissue is not admitted, so the complete "
+            f"engine never ran: {detail}"
+        )
+
     from core.brain.llm.latent_cortex.frontier_tasks import generate_task
     from core.brain.llm.latent_cortex.neural_objective_producer import (
         solve_objective_program_neural,

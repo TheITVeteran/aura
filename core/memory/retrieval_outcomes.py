@@ -304,3 +304,30 @@ def _as_score(value: Any) -> float:
 
 def _as_score_of(hit: Any) -> float:
     return _as_score(getattr(hit, "score", 0.0))
+
+
+def _register_runtime_service() -> None:
+    """Publish the ledger so the runtime health surface can read it.
+
+    `core/runtime/health_contract.py` imported this module directly — a
+    layering violation grandfathered in the baseline, so the gate passed while
+    the foundation depended on memory to describe its own health. The rule
+    exists so that report still works when memory is what failed, which an
+    import cannot honour and a registry lookup can.
+    """
+    try:
+        from core.runtime.service_registry import register_runtime_service
+
+        register_runtime_service(
+            "retrieval_outcome_ledger",
+            get_outcome_ledger(),
+            owner="core/memory/retrieval_outcomes.py",
+            registered_by="core.memory.retrieval_outcomes._register_runtime_service",
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        # The surface reports an unregistered ledger as missing, which is the
+        # honest reading; nothing here should raise at import time.
+        pass
+
+
+_register_runtime_service()

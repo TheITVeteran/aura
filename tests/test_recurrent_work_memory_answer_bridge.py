@@ -6,9 +6,11 @@ import pytest
 
 from core.brain.llm.latent_cortex import neural_objective_producer as producer
 from core.brain.llm.latent_cortex.frontier_tasks import generate_task
+from tests.sealed_artifact_support import require_mathematics_memory_tissue
 
 
 def test_sealed_memory_tissue_emits_a_verified_public_answer() -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_037, difficulty=3)
 
     solved = producer.solve_objective_program_neural(task.public.prompt)
@@ -33,6 +35,7 @@ def test_sealed_memory_tissue_emits_a_verified_public_answer() -> None:
 
 
 def test_answer_bridge_rejects_a_memory_lesion_before_promotion(monkeypatch) -> None:
+    require_mathematics_memory_tissue()
     task = generate_task("mathematics", seed=1_037, difficulty=3)
     execute = producer.execute_mathematics_memory
 

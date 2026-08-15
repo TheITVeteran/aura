@@ -148,6 +148,16 @@ class MemoryFacade:
         self._repo_root = Path(__file__).resolve().parents[2]
 
     def _refresh_subsystems(self) -> None:
+        # Publish the memory health fragment for exactly as long as a facade
+        # exists. Called rather than relying on an import side effect: a module
+        # is imported once per process, so a registration that only happens at
+        # import cannot be re-established after a reset or a hot reload, and a
+        # health fragment that silently stops publishing is the failure this
+        # register was built to remove.
+        from core.memory.memory_inventory import register_memory_health_fragment
+
+        register_memory_health_fragment()
+
         """Resolve subsystem handles from the container without requiring async boot."""
         self._episodic = ServiceContainer.get("episodic_memory", default=None)
         self._semantic = ServiceContainer.get("semantic_memory", default=None)

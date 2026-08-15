@@ -230,3 +230,46 @@ __all__ = [
     "missing_env",
     "resolve_connector",
 ]
+
+
+def external_reach_report() -> dict[str, Any]:
+    """How far Aura can actually reach outside herself, right now.
+
+    `mcp_client` was registered, routable, and described as connecting Aura to
+    enterprise data connectors while the `mcp` package was not installed and no
+    connector was configured — every call returned an error and nothing
+    anywhere said so. A capability that is dead in practice must be visible as
+    dead, not discoverable only by trying it.
+
+    This lived in `core/runtime/health_contract.py`, which meant the foundation
+    layer imported this module to describe it. The dependency runs the other
+    way now: the subsystem that owns the transport publishes its own fragment,
+    and the foundation reads a register.
+    """
+    snapshot: dict[str, Any] = {"mcp": {"available": False, "connectors": 0}}
+    try:
+        import importlib.util
+
+        connectors = available_connectors()
+        snapshot["mcp"] = {
+            # The transport. Without it no connector is reachable however many
+            # are configured.
+            "available": importlib.util.find_spec("mcp") is not None,
+            "connectors": len(connectors),
+            "names": [c.name for c in connectors],
+        }
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        snapshot["mcp"]["error"] = repr(exc)
+    return snapshot
+
+
+def _register_fragment() -> None:
+    try:
+        from core.runtime.health_fragments import register_health_fragment
+
+        register_health_fragment("external_reach", external_reach_report)
+    except (ImportError, AttributeError):
+        pass  # the register is optional; its absence is reported by the surface
+
+
+_register_fragment()
