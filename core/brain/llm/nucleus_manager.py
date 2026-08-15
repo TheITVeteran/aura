@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
+import json
 import logging
 import math
 import threading
@@ -72,11 +74,141 @@ _STREAM_BACKPRESSURE_SLEEP_S = 0.01
 #: answer, and it was previously unbounded.
 _MAX_PREFILL_CHARS = 2000
 
+#: How long stop_listener waits for the listener to finish cancelling before
+#: releasing the handle anyway. The task is cancelled either way; this bounds
+#: how long shutdown blocks on it.
+_LISTENER_STOP_TIMEOUT_S = 5.0
+
+#: How long a cancelled load waits for the owned model thread to give up GPU
+#: ownership before the lane lease is released regardless. Bounded because
+#: shutdown must finish; recorded because releasing early is a real risk and
+#: not one to take silently.
+_CANCELLED_LOAD_DRAIN_S = 10.0
+
 #: Wall-clock bounds on one generation. The GPU sentinel bounds how long a call
 #: waits to START; nothing bounded how long it could then run.
 _DEFAULT_GENERATION_BUDGET_S = 180.0
 _MIN_GENERATION_BUDGET_S = 5.0
 _MAX_GENERATION_BUDGET_S = 900.0
+
+
+def _await_sentinel_idle(timeout_s: float) -> bool:
+    """Wait for the GPU sentinel to be free, or report that it was not.
+
+    Runs off the event loop. Returns True when the sentinel could be taken and
+    immediately given back, which is the observable that the previous owner has
+    actually finished — as opposed to assuming it, which is what releasing the
+    lane straight after a cancellation did.
+    """
+    try:
+        from core.utils.gpu_sentinel import get_gpu_sentinel
+
+        sentinel = get_gpu_sentinel()
+        if not sentinel.acquire(timeout=timeout_s):
+            return False
+        sentinel.release()
+        return True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _readiness_probe(model: Any, tokenizer: Any) -> dict[str, Any]:
+    """Whether this model and tokenizer can actually produce a token together.
+
+    Readiness required only that the path existed and ``load`` returned two
+    objects. Nothing checked that the tokenizer belongs to the model or that
+    the pair can do anything, and every caller reads ``loaded`` as readiness —
+    including the fallback that decides whether to swap lanes, which would
+    happily swap TO a lane that could not answer either.
+
+    The check is a round trip through the tokenizer plus a vocabulary-size
+    agreement between the two objects. It is cheap, it runs off the loop, and
+    it is a measurement rather than an assumption.
+    """
+    if model is None or tokenizer is None:
+        return {"ready": False, "reason": "load returned no model or tokenizer"}
+    try:
+        encoded = tokenizer.encode("ready")
+    except Exception as exc:  # noqa: BLE001 — any failure here means not ready
+        return {"ready": False, "reason": f"tokenizer encode failed: {type(exc).__name__}"}
+    if not encoded:
+        return {"ready": False, "reason": "tokenizer produced no tokens"}
+
+    tokenizer_vocab = 0
+    for attribute in ("vocab_size", "n_vocab"):
+        candidate = getattr(tokenizer, attribute, None)
+        if isinstance(candidate, int) and candidate > 0:
+            tokenizer_vocab = candidate
+            break
+
+    model_vocab = 0
+    args = getattr(model, "args", None)
+    raw = getattr(args, "vocab_size", None)
+    if isinstance(raw, int) and raw > 0:
+        model_vocab = raw
+
+    if tokenizer_vocab and model_vocab and tokenizer_vocab > model_vocab:
+        # A tokenizer that can emit ids the model has no embedding for is the
+        # mismatch that produces garbage rather than an error.
+        return {
+            "ready": False,
+            "reason": f"tokenizer vocab {tokenizer_vocab} exceeds model vocab {model_vocab}",
+        }
+
+    return {
+        "ready": True,
+        "reason": f"encoded {len(encoded)} tokens; vocab {tokenizer_vocab or 'unstated'}",
+        "tokenizer_vocab": tokenizer_vocab,
+        "model_vocab": model_vocab,
+    }
+
+
+def _adapter_compatibility(adapter_dir: str, base_model_path: str) -> dict[str, Any]:
+    """Whether this adapter may be attached to this base model.
+
+    The gate was the existence of ``adapter_config.json``. A filename is not a
+    provenance: it says nothing about which base model the adapter was trained
+    against, whether its weights are on disk, or whether the format is one this
+    loader understands, so a stale or mismatched adapter attached to the live
+    Cortex for free.
+    """
+    directory = Path(adapter_dir or "")
+    config_path = directory / "adapter_config.json"
+    try:
+        config = json.loads(config_path.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"compatible": False, "reason": f"unreadable adapter_config: {type(exc).__name__}"}
+    if not isinstance(config, dict):
+        return {"compatible": False, "reason": "adapter_config is not a mapping"}
+
+    weights = [
+        candidate
+        for candidate in ("adapters.safetensors", "adapter_model.safetensors", "adapters.npz")
+        if (directory / candidate).exists()
+    ]
+    if not weights:
+        return {"compatible": False, "reason": "no adapter weights beside the config"}
+
+    declared_base = str(
+        config.get("base_model_name_or_path") or config.get("model") or ""
+    ).strip()
+    if declared_base:
+        # Compared on the leaf name: the config records whatever path the
+        # training host used, which is not this host's path, but the model
+        # directory name is the identity both sides share.
+        declared_leaf = Path(declared_base).name.lower()
+        actual_leaf = Path(str(base_model_path or "")).name.lower()
+        if declared_leaf and actual_leaf and declared_leaf != actual_leaf:
+            return {
+                "compatible": False,
+                "reason": f"adapter trained against {declared_leaf!r}, lane is {actual_leaf!r}",
+            }
+        return {"compatible": True, "reason": f"base {declared_leaf or 'unstated'}, weights {weights[0]}"}
+
+    return {
+        "compatible": False,
+        "reason": "adapter_config names no base model, so compatibility cannot be established",
+    }
 
 
 def _bounded_prefill(value: Any) -> str:
@@ -226,6 +358,12 @@ class NucleusManager(LLMProvider):
         self._tokens_seen = 0
         self._listener_task = None
         self._running = True
+        #: Serializes listener start. Two concurrent ensure_listener_started
+        #: calls could both observe None and both create a subscription, so the
+        #: bus had two readers for one manager and the second task was
+        #: unreachable — nothing held a handle to it.
+        self._listener_lock = asyncio.Lock()
+        self._listener_subscription = None
         # Defer event subscription to avoid create_task in __init__
         try:
             from core.event_bus import get_event_bus
@@ -233,10 +371,89 @@ class NucleusManager(LLMProvider):
         except (ImportError, AttributeError, RuntimeError):
             self.bus = None
 
-    async def ensure_listener_started(self):
-        """Start the event listener if not already running. Call from async context."""
-        if self._listener_task is None and self.bus is not None:
-            self._listener_task = get_task_tracker().create_task(self._listen_for_updates())
+    async def ensure_listener_started(self) -> bool:
+        """Start the event listener if not already running.
+
+        Two callers could both observe ``_listener_task is None`` and both
+        create a subscription, leaving the bus with two readers for one manager
+        and no handle on the second. And nothing ever cleared the handle, so a
+        listener that died stayed "started" forever: every later call saw a
+        non-None task and returned, and update handling never came back.
+        """
+        if self.bus is None:
+            return False
+        async with self._listener_lock:
+            existing = self._listener_task
+            if existing is not None and not existing.done():
+                return True
+            self._running = True
+            task = get_task_tracker().create_task(self._listen_for_updates())
+            if task is None:
+                return False
+
+            def _clear(finished: Any) -> None:
+                # The handle is what ensure_listener_started reads to decide
+                # whether a listener exists. A dead task holding it is the
+                # reason update handling could never be restarted.
+                if self._listener_task is finished:
+                    self._listener_task = None
+                try:
+                    error = finished.exception()
+                except (asyncio.CancelledError, RuntimeError):
+                    return
+                if error is not None:
+                    _record_nucleus_degradation(
+                        error,
+                        severity="warning",
+                        action="cleared the listener handle so a later caller can restart it",
+                        extra={"phase": "listener_exit"},
+                    )
+
+            task.add_done_callback(_clear)
+            self._listener_task = task
+            return True
+
+    async def stop_listener(self) -> None:
+        """Cancel the listener and release its subscription.
+
+        There was no shutdown path at all: ``_running`` started true, was never
+        cleared, and no caller could cancel, unsubscribe or join. A manager
+        being replaced left its listener reading the bus forever.
+        """
+        self._running = False
+        async with self._listener_lock:
+            task = self._listener_task
+            self._listener_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=_LISTENER_STOP_TIMEOUT_S)
+            except (TimeoutError, asyncio.CancelledError):
+                pass  # the handle is released either way; the task is cancelled
+            except _NUCLEUS_RECOVERABLE_ERRORS as exc:
+                _record_nucleus_degradation(
+                    exc,
+                    severity="warning",
+                    action="released the listener handle after an error during shutdown",
+                    extra={"phase": "listener_stop"},
+                )
+        subscription = self._listener_subscription
+        self._listener_subscription = None
+        unsubscribe = getattr(subscription, "unsubscribe", None) or getattr(
+            subscription, "close", None
+        )
+        if callable(unsubscribe):
+            try:
+                result = unsubscribe()
+                if inspect.isawaitable(result):
+                    await result
+            except _NUCLEUS_RECOVERABLE_ERRORS as exc:
+                _record_nucleus_degradation(
+                    exc,
+                    severity="warning",
+                    action="stopped the listener without releasing its bus subscription",
+                    extra={"phase": "listener_unsubscribe"},
+                )
 
 
     async def _adopt_promoted_cortex(self, data: dict[str, Any]) -> None:
@@ -302,6 +519,7 @@ class NucleusManager(LLMProvider):
         if not self.bus:
             return
         sub = await self.bus.subscribe("core/optimizer/completed")
+        self._listener_subscription = sub
         while self._running:
             try:
                 _, _, event = await sub.get()
@@ -470,8 +688,29 @@ class NucleusManager(LLMProvider):
                 and await asyncio.to_thread(adapter_config.exists)
             )
             if adapter_config_exists:
-                adapter_path = self._adapter_dir
-                logger.info("🧠 [NUCLEUS] Found LoRA adapter directory for Cortex: %s", adapter_path)
+                # The existence of adapter_config.json was the whole gate. It
+                # said nothing about which base model the adapter was trained
+                # against, whether its weights are present, or whether the
+                # format is one this loader understands — so a stale or
+                # mismatched adapter attached to the live Cortex on the
+                # strength of a filename.
+                verdict = await asyncio.to_thread(
+                    _adapter_compatibility, self._adapter_dir, path
+                )
+                if verdict["compatible"]:
+                    adapter_path = self._adapter_dir
+                    logger.info(
+                        "🧠 [NUCLEUS] Attaching LoRA adapter for Cortex: %s (%s)",
+                        adapter_path,
+                        verdict["reason"],
+                    )
+                else:
+                    _record_nucleus_degradation(
+                        RuntimeError(f"adapter refused: {verdict['reason']}"),
+                        severity="warning",
+                        action="loaded the base Cortex without the adapter",
+                        extra={"model": name, "adapter_dir": str(self._adapter_dir)[:200]},
+                    )
 
         try:
             from mlx_lm import load
@@ -513,10 +752,28 @@ class NucleusManager(LLMProvider):
                 operation_name=f"nucleus-{name}-load",
             )
                 
+            # "loaded" meant load() returned two objects. It did not mean the
+            # tokenizer belongs to the model, that the pair can produce a
+            # token, or that anything about this lane works — and every caller
+            # reads `loaded` as readiness, including the fallback that decides
+            # whether to swap lanes.
+            readiness = await asyncio.to_thread(_readiness_probe, model, tokenizer)
+            if not readiness["ready"]:
+                _record_nucleus_degradation(
+                    RuntimeError(f"nucleus {name} failed its readiness probe: {readiness['reason']}"),
+                    action="left the lane marked unavailable rather than declaring it ready",
+                    extra={"model": name, "reason": readiness["reason"]},
+                )
+                self.models[name].update(
+                    {"loaded": False, "last_error": readiness["reason"], "cache": None}
+                )
+                return False
+
             self.models[name]["model"] = model
             self.models[name]["tokenizer"] = tokenizer
             self.models[name]["loaded"] = True
             self.models[name]["last_error"] = None
+            self.models[name]["readiness"] = readiness
 
             if name == "cortex":
                 # Set a default anchor text when cortex is loaded
@@ -529,13 +786,40 @@ class NucleusManager(LLMProvider):
                 self._tokens_seen = 0 # Reset token count for new conversation/load
                 logger.debug("🧠 [NUCLEUS] Cortex loaded. Anchor text set and token counter reset.")
 
-            logger.info("✅ [NUCLEUS] %s load success.", name.upper())
-            logger.info("✅ [NUCLEUS] %s ready.", name.upper())
+            logger.info(
+                "✅ [NUCLEUS] %s ready (%s).", name.upper(), readiness["reason"]
+            )
             return True
         except asyncio.CancelledError:
+            # The blocking load runs on an owned thread that a cancellation
+            # cannot reach: awaiting it is what gets cancelled, not the work.
+            # This released the lane immediately, so a NEW load could take the
+            # lease and start while the previous thread was still holding GPU
+            # sentinel ownership and unwinding — correctness resting on an
+            # unstated guarantee from a helper.
+            #
+            # The lease is released only after the sentinel is observed free,
+            # or after a bounded wait with the failure recorded, so the next
+            # holder is never handed a lane that is still in use silently.
             lease = entry.get("lane_lease")
             entry["lane_lease"] = None
+            entry.update({"loaded": False, "cache": None})
             if lease is not None:
+                released_cleanly = await asyncio.to_thread(
+                    _await_sentinel_idle, _CANCELLED_LOAD_DRAIN_S
+                )
+                if not released_cleanly:
+                    _record_nucleus_degradation(
+                        TimeoutError(
+                            "owned model thread still held GPU ownership after load cancellation"
+                        ),
+                        severity="warning",
+                        action=(
+                            "released the lane lease anyway; the previous load thread may "
+                            "still be unwinding"
+                        ),
+                        extra={"model": name, "phase": "load_cancelled"},
+                    )
                 await lease.release(reason="nucleus_load_cancelled")
             raise
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
@@ -1112,6 +1396,20 @@ class NucleusManager(LLMProvider):
                         mx.clear_cache()
                 finally:
                     sentinel.release()
+            else:
+                # References were cleared, the sentinel was not acquired, and
+                # the function returned as though unload had completed. The
+                # weights can still be resident; a caller that unloads to free
+                # memory and is told nothing has no way to know it did not.
+                _record_nucleus_degradation(
+                    TimeoutError("GPU sentinel unavailable during unload"),
+                    severity="warning",
+                    action=(
+                        "cleared model references but could not reclaim the MLX cache; "
+                        "memory may still be resident"
+                    ),
+                    extra={"phase": "unload_models", "cache_reclaimed": False},
+                )
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
             _record_nucleus_degradation(
                 e,

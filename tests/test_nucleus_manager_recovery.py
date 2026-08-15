@@ -11,6 +11,30 @@ from core.brain.llm.nucleus_manager import NucleusManager
 from core.runtime.errors import get_degradation_tracker
 
 
+class _StubTokenizer:
+    """Enough of a tokenizer for the readiness probe to be a real check.
+
+    The doubles were `object()`, which the probe correctly refuses: a load that
+    returns two objects is not a lane that can answer, and that is the whole
+    point of the probe. A test double now has to be able to do the one thing
+    readiness asks about.
+    """
+
+    vocab_size = 32_000
+
+    @staticmethod
+    def encode(text: str) -> list[int]:
+        return [1] * max(1, len(str(text).split()))
+
+
+class _StubModel:
+    args = SimpleNamespace(vocab_size=32_000)
+
+
+def _stub_load(*_args, **_kwargs):
+    return _StubModel(), _StubTokenizer()
+
+
 def _manager_with_missing_models(tmp_path) -> NucleusManager:
     manager = NucleusManager()
     manager.bus = None
@@ -124,7 +148,7 @@ async def test_loaded_nucleus_model_holds_lane_lease_until_unload(
     monkeypatch.setitem(
         sys.modules,
         "mlx_lm",
-        SimpleNamespace(load=lambda *_args, **_kwargs: (object(), object())),
+        SimpleNamespace(load=_stub_load),
     )
 
     assert await manager.load_model("brainstem") is True
@@ -176,7 +200,7 @@ async def test_concurrent_nucleus_loaders_materialize_one_owned_model(
         load_calls += 1
         load_entered.set()
         assert release_load.wait(timeout=2.0)
-        return object(), object()
+        return _stub_load()
 
     monkeypatch.setattr(model_lane_control, "acquire_in_process_model_lane", _acquire)
     monkeypatch.setattr(gpu_sentinel, "get_gpu_sentinel", lambda: _Sentinel())
@@ -207,8 +231,8 @@ async def test_nucleus_unload_waits_for_exact_worker_model_use(tmp_path) -> None
             release_reasons.append(reason)
             return True
 
-    model = object()
-    tokenizer = object()
+    model = _StubModel()
+    tokenizer = _StubTokenizer()
     manager.models["cortex"].update(
         {
             "model": model,

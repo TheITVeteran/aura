@@ -109,11 +109,31 @@ def test_worker_dispatch_handles_set_expert_adapter():
 # ── client guards ─────────────────────────────────────────────────────────────
 
 class ProcessProbe:
+    """A stand-in for the worker process, with the surface shutdown needs.
+
+    It had `is_alive` and nothing else, so the client's termination proof —
+    kill, join, re-check — hit an AttributeError and reported
+    `mlx_worker_termination_unproven` at teardown of every test using it. The
+    proof was correct; the double could not be killed, which is not a state a
+    real process can be in.
+    """
+
     def __init__(self, alive=True):
         self._alive = alive
+        self.kill_calls = 0
+        self.join_calls = 0
+        self.pid = 4242
 
     def is_alive(self):
         return self._alive
+
+    def kill(self):
+        self.kill_calls += 1
+        self._alive = False
+
+    def join(self, timeout=None):
+        self.join_calls += 1
+        return None
 
 
 @pytest.fixture
