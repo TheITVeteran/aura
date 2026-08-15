@@ -1292,6 +1292,61 @@ class ReActLoop:
             _record_react_degradation(exc, action="skipped episode persistence to episodic memory")
             logger.debug("ReAct: episode recording skipped: %s", exc)
 
+        await self._offer_trace_to_star(trace)
+
+    async def _offer_trace_to_star(self, trace: "ReActTrace") -> None:
+        """Offer a completed ReAct trace to the self-training pipeline.
+
+        The STaR reasoner booted, registered and turned over an empty queue
+        every five minutes because nothing ever called it. This is its
+        producer.
+
+        The grade is ASSERTED, and that is the honest reading: a ReAct
+        observation carries the tool's own report that it worked, which is
+        not a checked postcondition and not an independent verdict. STaR
+        holds a durable training write to POSTCONDITION_VERIFIED, so these
+        traces are counted and refused rather than trained on. That refusal
+        is the point — it makes "Aura produces no training-admissible
+        traces" a number on the status surface instead of an empty file
+        nobody looks at. A lane that does establish a verified outcome
+        passes its own grade and gets through.
+        """
+        try:
+            from core.adaptation.star_reasoner import TraceEvidence
+            from core.container import ServiceContainer
+            from core.runtime.turn_outcome import OutcomeStatus, VerificationGrade
+
+            star = ServiceContainer.get("star_reasoner", default=None)
+            if star is None:
+                return
+
+            reached_an_answer = bool(
+                trace.final_answer
+                and trace.terminated_reason in ("final_answer", "simple_query_bypass")
+            )
+            if reached_an_answer:
+                status = OutcomeStatus.SUCCEEDED
+            elif trace.terminated_reason in ("max_steps", "timeout", "llm_error"):
+                status = OutcomeStatus.RETRYABLE_FAILURE
+            else:
+                status = OutcomeStatus.TERMINAL_FAILURE
+
+            star.record_trace(
+                trace.query,
+                [step.thought.content for step in trace.steps if step.thought],
+                trace.final_answer or trace.terminated_reason or "",
+                TraceEvidence(
+                    status=status,
+                    grade=VerificationGrade.ASSERTED,
+                    verifier=None,
+                    evidence_id=None,
+                ),
+                terminated_reason=trace.terminated_reason,
+                total_steps=trace.total_steps,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_react_degradation(exc, action="did not offer the trace to the STaR pipeline")
+
     async def run(self, query: str, context: dict[str, Any] = None) -> ReActTrace:
         """
         Run the full ReAct reasoning loop for a query.
