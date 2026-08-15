@@ -4271,10 +4271,26 @@ def _process_message_content(messages: list[dict[str, Any]]) -> None:
             message["content"] = ""
 
 
+# The fallback used when a checkpoint declares no window anywhere. It is a
+# guess, and a guess that decides how much prompt the worker will accept has
+# to say so — every path that reaches it records a degradation naming the
+# reason, so "the model told us" and "we assumed" are distinguishable.
+_ASSUMED_CONTEXT_WINDOW = 32768
+
+
 def _load_effective_context_window(model_path: str) -> int:
     path = Path(str(model_path))
     if not path.exists():
-        return 32768
+        _record_mlx_degradation(
+            FileNotFoundError(f"model_path_missing:{model_path}"),
+            action=(
+                "assumed a "
+                f"{_ASSUMED_CONTEXT_WINDOW}-token context window for an "
+                "unreadable checkpoint"
+            ),
+            severity="warning",
+        )
+        return _ASSUMED_CONTEXT_WINDOW
 
     config_path = path / "config.json"
     tokenizer_config_path = path / "tokenizer_config.json"
@@ -4316,7 +4332,17 @@ def _load_effective_context_window(model_path: str) -> int:
         return _bounded(sliding_window)
     if tokenizer_model_max > 0:
         return _bounded(tokenizer_model_max)
-    return 32768
+    _record_mlx_degradation(
+        ValueError(f"context_window_undeclared:{path.name}"),
+        action=(
+            "assumed a "
+            f"{_ASSUMED_CONTEXT_WINDOW}-token context window; the checkpoint "
+            "declares neither max_position_embeddings, sliding_window nor "
+            "model_max_length"
+        ),
+        severity="warning",
+    )
+    return _ASSUMED_CONTEXT_WINDOW
 
 
 @dataclass

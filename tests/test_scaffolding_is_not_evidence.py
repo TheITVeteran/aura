@@ -271,3 +271,50 @@ def test_prose_alone_is_not_structured_output():
 
     assert ok is False
     assert detail == "no_json_value_found"
+
+
+# ─────────────────────────── an assumed window says it is assumed
+
+
+def test_a_declared_window_needs_no_assumption(tmp_path):
+    import json as _json
+
+    (tmp_path / "config.json").write_text(
+        _json.dumps({"max_position_embeddings": 16384})
+    )
+
+    assert worker._load_effective_context_window(str(tmp_path)) == 16384
+
+
+def test_a_sentinel_tokenizer_length_is_bounded(tmp_path):
+    import json as _json
+
+    (tmp_path / "tokenizer_config.json").write_text(
+        _json.dumps({"model_max_length": int(1e30)})
+    )
+
+    window = worker._load_effective_context_window(str(tmp_path))
+
+    assert window == 262144
+
+
+def test_an_unreadable_checkpoint_records_the_assumption(caplog):
+    """A guess that decides how much prompt the worker accepts cannot be
+    silent — "the model told us" and "we assumed" must be distinguishable."""
+    with caplog.at_level("WARNING"):
+        window = worker._load_effective_context_window("/nonexistent/checkpoint")
+
+    assert window == worker._ASSUMED_CONTEXT_WINDOW
+    assert any("model_path_missing" in record.getMessage() for record in caplog.records)
+
+
+def test_a_checkpoint_that_declares_nothing_records_the_assumption(tmp_path, caplog):
+    (tmp_path / "config.json").write_text("{}")
+
+    with caplog.at_level("WARNING"):
+        window = worker._load_effective_context_window(str(tmp_path))
+
+    assert window == worker._ASSUMED_CONTEXT_WINDOW
+    assert any(
+        "context_window_undeclared" in record.getMessage() for record in caplog.records
+    )
