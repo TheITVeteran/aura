@@ -7,20 +7,25 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Final
 
-from core.learning.recurrent_work_memory_tissue import MathematicsMemoryTissue
-from core.learning.recurrent_work_memory_training import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from core.learning.recurrent_work_memory_tissue import (  # noqa: E402
+    MathematicsMemoryTissue,
+)
+from core.learning.recurrent_work_memory_training import (  # noqa: E402
     autonomous_execution_metrics,
     build_mathematics_memory_registry,
     train_mathematics_memory_tissue,
 )
-from core.runtime.atomic_writer import atomic_write_bytes_if_absent
+from core.runtime.atomic_writer import atomic_write_bytes_if_absent  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.mathematics_memory_canary.v1"
-REPO_ROOT: Final = Path(__file__).resolve().parents[1]
 SOURCE_FILES: Final = (
     "core/learning/recurrent_work_memory.py",
     "core/learning/recurrent_work_memory_tissue.py",
