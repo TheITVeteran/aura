@@ -61,6 +61,12 @@ def test_every_frontier_domain_compiles_into_recurrent_process_targets(domain: s
             assert training.prompt == source.public.prompt
             assert training.transition_trace is compiled.program.state_trace
             assert training.transition_program is compiled.program
+            if domain == "mathematics":
+                assert training.work_memory_trace is compiled.work_memory_trace
+                assert training.work_memory_trace is not None
+                assert len(training.work_memory_trace.states) == training.depth + 1
+            else:
+                assert training.work_memory_trace is None
             state_targets = state_targets_from_trace(
                 training.transition_trace,
                 training.depth + 1,

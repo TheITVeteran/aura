@@ -31,12 +31,21 @@ from core.learning.recurrent_literal_grounding import (
 )
 from core.learning.recurrent_opcode_grounding import tokenizer_opcode_contract
 from core.learning.recurrent_state_schema import STATE_CARDINALITY, STATE_SLOT_NAMES
+from core.learning.recurrent_work_memory import (
+    MATHEMATICS_WORK_MEMORY_SCHEMA,
+    MATHEMATICS_WORK_MEMORY_TRACE_SCHEMA,
+    MathematicsWorkMemory,
+    MathematicsWorkMemoryAddress,
+    MathematicsWorkMemoryCell,
+    MathematicsWorkMemoryTrace,
+)
 from core.runtime.atomic_writer import atomic_write_bytes_if_absent
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
 TOKENIZED_DATASET_SCHEMA: Final = "aura.unified_intrinsic.tokenized_dataset.v1"
 TOKENIZED_DATASET_FILENAME: Final = "tokenized_dataset.json"
-SOURCE_DATASET_SCHEMA: Final = "aura.unified_intrinsic_dataset.v1"
+LEGACY_SOURCE_DATASET_SCHEMA: Final = "aura.unified_intrinsic_dataset.v1"
+SOURCE_DATASET_SCHEMA: Final = "aura.unified_intrinsic_dataset.v2"
 SOURCE_DATASET_FILENAME: Final = "dataset.json"
 MAX_FROZEN_DATASET_BYTES: Final = 512 * 1024 * 1024
 
@@ -156,7 +165,8 @@ def load_source_dataset(
         not isinstance(decoded, dict)
         or payload != _canonical_document(decoded)
         or set(decoded) != {"schema", "train", "holdout"}
-        or decoded.get("schema") != SOURCE_DATASET_SCHEMA
+        or decoded.get("schema")
+        not in {LEGACY_SOURCE_DATASET_SCHEMA, SOURCE_DATASET_SCHEMA}
     ):
         raise UnifiedTokenizationContractError("source_dataset_contract_differs")
 
@@ -177,6 +187,96 @@ def load_source_dataset(
             states=tuple(tuple(state) for state in value["states"]),
         )
 
+    dataset_schema = decoded["schema"]
+
+    def restore_work_memory(value: Any) -> MathematicsWorkMemoryTrace | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict) or set(value) != {
+            "states",
+            "configuration_steps",
+            "schema",
+        }:
+            raise UnifiedTokenizationContractError(
+                "source_dataset_work_memory_differs"
+            )
+        if value["schema"] != MATHEMATICS_WORK_MEMORY_TRACE_SCHEMA:
+            raise UnifiedTokenizationContractError(
+                "source_dataset_work_memory_differs"
+            )
+        raw_states = value["states"]
+        if not isinstance(raw_states, list) or not raw_states:
+            raise UnifiedTokenizationContractError(
+                "source_dataset_work_memory_differs"
+            )
+        states: list[MathematicsWorkMemory] = []
+        for raw_state in raw_states:
+            if not isinstance(raw_state, dict) or set(raw_state) != {
+                "choose",
+                "gap",
+                "low",
+                "high",
+                "processed_values",
+                "cells",
+                "capacity",
+                "schema",
+            }:
+                raise UnifiedTokenizationContractError(
+                    "source_dataset_work_memory_state_differs"
+                )
+            if raw_state["schema"] != MATHEMATICS_WORK_MEMORY_SCHEMA:
+                raise UnifiedTokenizationContractError(
+                    "source_dataset_work_memory_state_differs"
+                )
+            raw_cells = raw_state["cells"]
+            if not isinstance(raw_cells, list) or not raw_cells:
+                raise UnifiedTokenizationContractError(
+                    "source_dataset_work_memory_state_differs"
+                )
+            cells: list[MathematicsWorkMemoryCell] = []
+            for raw_cell in raw_cells:
+                if not isinstance(raw_cell, dict) or set(raw_cell) != {
+                    "address",
+                    "multiplicity",
+                    "witness",
+                }:
+                    raise UnifiedTokenizationContractError(
+                        "source_dataset_work_memory_cell_differs"
+                    )
+                raw_address = raw_cell["address"]
+                if not isinstance(raw_address, dict) or set(raw_address) != {
+                    "selected_count",
+                    "last_value",
+                    "total_sum",
+                }:
+                    raise UnifiedTokenizationContractError(
+                        "source_dataset_work_memory_cell_differs"
+                    )
+                cells.append(
+                    MathematicsWorkMemoryCell(
+                        address=MathematicsWorkMemoryAddress(**raw_address),
+                        multiplicity=raw_cell["multiplicity"],
+                        witness=tuple(raw_cell["witness"]),
+                    )
+                )
+            states.append(
+                MathematicsWorkMemory(
+                    choose=raw_state["choose"],
+                    gap=raw_state["gap"],
+                    low=raw_state["low"],
+                    high=raw_state["high"],
+                    processed_values=tuple(raw_state["processed_values"]),
+                    cells=tuple(cells),
+                    capacity=raw_state["capacity"],
+                    schema=raw_state["schema"],
+                )
+            )
+        return MathematicsWorkMemoryTrace(
+            states=tuple(states),
+            configuration_steps=value["configuration_steps"],
+            schema=value["schema"],
+        )
+
     def restore_task(value: Any) -> RecurrenceTrainingTask:
         required = {
             "task_id",
@@ -189,6 +289,8 @@ def load_source_dataset(
             "transition_trace",
             "transition_program",
         }
+        if dataset_schema == SOURCE_DATASET_SCHEMA:
+            required.add("work_memory_trace")
         if not isinstance(value, dict) or set(value) != required:
             raise UnifiedTokenizationContractError("source_dataset_task_differs")
         trace = restore_trace(value["transition_trace"])
@@ -220,16 +322,27 @@ def load_source_dataset(
                 action_field_names=tuple(raw_program["action_field_names"]),
                 actions=tuple(tuple(action) for action in raw_program["actions"]),
             )
-        task = RecurrenceTrainingTask(
-            prompt=value["prompt"],
-            answer=value["answer"],
-            depth=value["depth"],
-            family=value["family"],
-            seed=value["seed"],
-            solution=value["solution"],
-            transition_trace=trace,
-            transition_program=program,
-        )
+        try:
+            work_memory = (
+                restore_work_memory(value["work_memory_trace"])
+                if dataset_schema == SOURCE_DATASET_SCHEMA
+                else None
+            )
+            task = RecurrenceTrainingTask(
+                prompt=value["prompt"],
+                answer=value["answer"],
+                depth=value["depth"],
+                family=value["family"],
+                seed=value["seed"],
+                solution=value["solution"],
+                transition_trace=trace,
+                transition_program=program,
+                work_memory_trace=work_memory,
+            )
+        except (TypeError, ValueError) as exc:
+            raise UnifiedTokenizationContractError(
+                "source_dataset_work_memory_differs"
+            ) from exc
         if task.task_id != value["task_id"]:
             raise UnifiedTokenizationContractError("source_dataset_task_id_differs")
         return task
@@ -503,6 +616,7 @@ def verify_tokenized_dataset(
 
 
 __all__ = [
+    "LEGACY_SOURCE_DATASET_SCHEMA",
     "SOURCE_DATASET_FILENAME",
     "SOURCE_DATASET_SCHEMA",
     "TOKENIZED_DATASET_FILENAME",

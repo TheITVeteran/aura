@@ -120,3 +120,29 @@ checkpoint must not be resumed or migrated into this changed objective.
 Ordered step 3 is now implemented at the contract level. Its empirical closeout
 requires a fresh source-bound canary from a new initialization. Mathematics and
 addressable work memory remain ordered step 4.
+
+## CP515 addendum
+
+CP515 begins ordered step 4 by replacing the disproven fixed-register
+mathematics representation with an exact bounded sparse work memory. Its
+address is `(selected_count, last_value, total_sum)` and each cell retains an
+exact multiplicity plus a canonical witness. The declared registry bound of
+ten input values and selections through width four yields a derived maximum of
+386 live addresses; overflow is an explicit refusal rather than silent
+truncation. A configuration no-op aligns the memory trace with the canonical
+public action program, after which one stationary Markov update consumes each
+sorted public value.
+
+The compiler reads only public objective literals. An independent brute-force
+oracle verifies all registered difficulties in tests, while the verifier answer
+is used only as a compilation consistency check. Private addresses,
+multiplicities, and witnesses survive a create-once dataset freeze through the
+new v2 source schema; v1 artifacts remain loadable without memory supervision.
+Public receipts expose bounded shape and cryptographic commitments but not the
+private cells.
+
+This proves a sufficient, serializable supervision state for the bounded
+mathematics task. It does **not** prove that learned recurrent tissue can write,
+read, or execute that memory autonomously. Mathematics remains excluded from a
+capability claim until learned read/write heads, occupied-cell masks, matched
+lesions, and teacher-free decoded evaluation are implemented and pass.

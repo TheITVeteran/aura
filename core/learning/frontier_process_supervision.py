@@ -29,6 +29,10 @@ from core.learning.recurrence_curriculum import (
     StructuredTransitionProgram,
     StructuredTransitionTrace,
 )
+from core.learning.recurrent_work_memory import (
+    MathematicsWorkMemoryTrace,
+    compile_mathematics_work_memory,
+)
 
 FRONTIER_PROCESS_SCHEMA: Final = "aura.frontier_process_supervision.v1"
 PROCESS_RADIX: Final = 31
@@ -576,6 +580,7 @@ class FrontierProcessSupervision:
     public_prompt: str
     answer: str
     program: StructuredTransitionProgram
+    work_memory_trace: MathematicsWorkMemoryTrace | None = None
 
     @property
     def public_commitment(self) -> dict[str, Any]:
@@ -588,6 +593,11 @@ class FrontierProcessSupervision:
             "state_field_names": list(self.program.state_trace.field_names),
             "action_field_names": list(self.program.action_field_names),
             "program_sha256": self.program.program_sha256,
+            "work_memory": (
+                self.work_memory_trace.public_commitment()
+                if self.work_memory_trace is not None
+                else None
+            ),
             "private_state_action_values_exposed": False,
             "final_answer_exposed": False,
             "runtime_teacher_available": False,
@@ -614,6 +624,7 @@ class FrontierProcessSupervision:
             solution=self.answer,
             transition_trace=self.program.state_trace,
             transition_program=self.program,
+            work_memory_trace=self.work_memory_trace,
         )
 
 
@@ -645,11 +656,33 @@ def compile_frontier_process_supervision(task: FrontierTask) -> FrontierProcessS
     if compiler is None:
         raise ValueError("frontier process domain is unsupported")
     program = compiler(expected, task.public.prompt)
+    work_memory_trace = None
+    if task.domain == "mathematics":
+        match = _MATH_RE.search(task.public.prompt)
+        if match is None:
+            raise RuntimeError("frontier mathematics public objective disappeared")
+        values = _literal(match.group("values"), role="mathematics values")
+        if not isinstance(values, list) or any(type(value) is not int for value in values):
+            raise RuntimeError("frontier mathematics public values changed")
+        work_memory_trace = compile_mathematics_work_memory(
+            choose=int(match.group("choose")),
+            gap=int(match.group("gap")),
+            low=int(match.group("low")),
+            high=int(match.group("high")),
+            values=tuple(values),
+        )
+        memory_count, memory_witness = work_memory_trace.states[-1].result()
+        if (
+            memory_count != expected.get("count")
+            or memory_witness != tuple(expected.get("witness", ()))
+        ):
+            raise RuntimeError("frontier mathematics work memory differs from verifier")
     return FrontierProcessSupervision(
         source_task_id=task.task_id,
         public_prompt=task.public.prompt,
         answer=answer,
         program=program,
+        work_memory_trace=work_memory_trace,
     )
 
 

@@ -18,6 +18,8 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import Any, Never
 
+from core.learning.recurrent_work_memory import MathematicsWorkMemoryTrace
+
 CURRICULUM_SCHEMA = "aura.recurrence_training_curriculum.v1"
 CURRICULUM_VERSION = "2026.08.10.2"
 PROCESS_SUPERVISION_SCHEMA = "aura.recurrence_process_supervision.v1"
@@ -229,6 +231,7 @@ class RecurrenceTrainingTask:
     solution: str = ""
     transition_trace: StructuredTransitionTrace | None = None
     transition_program: StructuredTransitionProgram | None = None
+    work_memory_trace: MathematicsWorkMemoryTrace | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt or self.prompt != self.prompt.strip() or "\x00" in self.prompt:
@@ -254,6 +257,13 @@ class RecurrenceTrainingTask:
             or self.transition_program.state_trace.depth != self.depth
         ):
             raise ValueError("training task transition program is invalid")
+        if self.work_memory_trace is not None and (
+            not isinstance(self.work_memory_trace, MathematicsWorkMemoryTrace)
+            or self.family != "frontier_mathematics"
+            or self.transition_program is None
+            or len(self.work_memory_trace.states) != self.depth + 1
+        ):
+            raise ValueError("training task work-memory trace is invalid")
         if self.solution:
             if (
                 self.solution != self.solution.strip()

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import stat
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
+from core.learning.frontier_process_supervision import frontier_process_task_battery
 from core.learning.recurrence_curriculum import task_battery
 from core.learning.transition_identifiability import public_transition_observations
 from tools.unified_intrinsic_tokenization_contract import (
+    LEGACY_SOURCE_DATASET_SCHEMA,
     SOURCE_DATASET_FILENAME,
     TOKENIZED_DATASET_FILENAME,
     UnifiedTokenizationContractError,
@@ -81,6 +85,95 @@ def test_source_dataset_roundtrips_exact_private_programs(tmp_path: Path) -> Non
     assert public_transition_observations(restored_holdout)
     assert first["partition_overlap"] == 0
     assert stat.S_IMODE(path.stat().st_mode) == 0o400
+
+
+def test_source_dataset_roundtrips_private_mathematics_work_memory(
+    tmp_path: Path,
+) -> None:
+    train = frontier_process_task_battery(("mathematics",), (1, 2), 2, seed=311)
+    holdout = frontier_process_task_battery(
+        ("mathematics",),
+        (3,),
+        1,
+        seed=733,
+        excluded_prompts={task.prompt for task in train},
+    )
+    path = tmp_path / SOURCE_DATASET_FILENAME
+
+    freeze_source_dataset(path, train, holdout)
+    restored_train, restored_holdout = load_source_dataset(path)
+
+    assert restored_train == train
+    assert restored_holdout == holdout
+    for task in (*restored_train, *restored_holdout):
+        assert task.work_memory_trace is not None
+        assert len(task.work_memory_trace.states) == task.depth + 1
+        assert task.work_memory_trace.states[-1].result()[0] >= 0
+
+
+def test_source_dataset_loads_legacy_v1_without_work_memory(tmp_path: Path) -> None:
+    train, holdout = _tasks()
+
+    def rows(tasks: list) -> list[dict]:
+        return [
+            {
+                "task_id": task.task_id,
+                **{
+                    key: value
+                    for key, value in asdict(task).items()
+                    if key != "work_memory_trace"
+                },
+            }
+            for task in tasks
+        ]
+
+    document = {
+        "schema": LEGACY_SOURCE_DATASET_SCHEMA,
+        "train": rows(train),
+        "holdout": rows(holdout),
+    }
+    path = tmp_path / SOURCE_DATASET_FILENAME
+    path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="ascii",
+    )
+    path.chmod(0o400)
+
+    restored_train, restored_holdout = load_source_dataset(path)
+
+    assert restored_train == train
+    assert restored_holdout == holdout
+    assert all(task.work_memory_trace is None for task in restored_train)
+
+
+def test_source_dataset_rejects_malformed_work_memory(tmp_path: Path) -> None:
+    train = frontier_process_task_battery(("mathematics",), (1,), 1, seed=911)
+    holdout = frontier_process_task_battery(
+        ("mathematics",),
+        (2,),
+        1,
+        seed=912,
+        excluded_prompts={task.prompt for task in train},
+    )
+    source = tmp_path / "source" / SOURCE_DATASET_FILENAME
+    source.parent.mkdir()
+    freeze_source_dataset(source, train, holdout)
+    document = json.loads(source.read_text(encoding="ascii"))
+    document["train"][0]["work_memory_trace"]["states"][0]["cells"][0][
+        "witness"
+    ] = None
+    path = tmp_path / SOURCE_DATASET_FILENAME
+    path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="ascii",
+    )
+    path.chmod(0o400)
+
+    with pytest.raises(
+        UnifiedTokenizationContractError,
+        match="work_memory",
+    ):
+        load_source_dataset(path)
 
 
 def test_source_dataset_rejects_writable_or_symlinked_input(tmp_path: Path) -> None:
