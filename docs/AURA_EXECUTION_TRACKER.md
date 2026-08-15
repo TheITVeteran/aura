@@ -50305,3 +50305,25 @@ free-decoded answer or model-capability result. The next gate connects the
 verified terminal state to answer emission and requires fresh semantic answers
 to survive removal of the private trace and evaluator before any resident-32B,
 fusion, frontier or `WOW Signal` claim proceeds.
+
+## Checkpoint 2026-08-15-548: Bind the Full Neural Trajectory to Free Decode
+
+The semantic decode ingress now executes a public objective from an all-zero
+register bank through the CP547 neural machine and authenticates every state and
+transition receipt before constructing language evidence. Coding binds the full
+process trajectory so per-event pressure history is retained; calibration and
+premise audit consume their sufficient terminal registers. Public operand
+parsing exposes only literals already present in the objective.
+
+The model-facing context carries the computed semantic result but no private
+trace, verifier, answer key or reference answer. A source-clean real-checkpoint
+canary defines ordinary, matched-wire, treatment, damaged-coefficient and
+same-family wrong-state arms with task-dependent randomized order. Admission
+requires perfect treatment, at least one converted baseline failure, zero
+regressions and strict superiority over every matched control. Focused ingress,
+execution and canary contracts pass `9/9`.
+
+This checkpoint freezes launch infrastructure, not a measured decode result.
+The next action is the bounded 1.5B five-arm canary. A failure returns to the
+state/readout implementation; a pass authorizes a larger fresh replication but
+still does not establish resident-32B, broad, frontier, fusion or `WOW Signal`.

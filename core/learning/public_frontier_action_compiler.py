@@ -347,6 +347,39 @@ def compile_public_frontier_actions(
     )
 
 
+def public_frontier_operands(public_prompt: str, family: str) -> dict[str, Any]:
+    """Return validated public literals without computing any answer field."""
+
+    # Run the canonical compiler first so this read surface cannot accept a
+    # looser grammar than the recurrent action path.
+    compile_public_frontier_raw_actions(public_prompt, family)
+    if family == "frontier_coding":
+        match = _CODING_RE.search(public_prompt)
+        if match is None:  # pragma: no cover - canonical compilation checked it.
+            raise ValueError("public coding objective disappeared")
+        cases = _literal(match.group("cases"), role="coding cases")
+        names = sorted({event[0] for case in cases for event in case})
+        return {"cases": cases, "names": names}
+    if family == "frontier_calibration":
+        match = _CALIBRATION_RE.search(public_prompt)
+        if match is None:  # pragma: no cover
+            raise ValueError("public calibration objective disappeared")
+        return {
+            "prior": match.group("prior"),
+            "likelihood_h": match.group("likelihood_h"),
+            "likelihood_not_h": match.group("likelihood_not_h"),
+        }
+    if family == "frontier_misleading_premise":
+        match = _PREMISE_RE.search(public_prompt)
+        if match is None:  # pragma: no cover
+            raise ValueError("public premise objective disappeared")
+        return {
+            "rows": _literal(match.group("rows"), role="premise rows"),
+            "claim": match.group("claim"),
+        }
+    raise ValueError("frontier family has no semantic operand surface")
+
+
 def compile_public_frontier_raw_actions(
     public_prompt: str,
     family: str,
@@ -370,4 +403,5 @@ __all__ = [
     "PublicFrontierActionProgram",
     "compile_public_frontier_actions",
     "compile_public_frontier_raw_actions",
+    "public_frontier_operands",
 ]

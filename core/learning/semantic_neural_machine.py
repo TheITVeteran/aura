@@ -202,6 +202,32 @@ class SemanticNeuralMachine:
     def _learned_add(self, left: int, right: int) -> int:
         return self._learned_raw(_LEARNED_ADD, left, right)
 
+    def decode_unsigned_pair(self, low: int, high: int) -> int:
+        """Read one radix pair through the learned arithmetic surface."""
+
+        if not all(type(value) is int and 0 <= value < PROCESS_RADIX for value in (low, high)):
+            raise ValueError("semantic neural radix pair is invalid")
+        return self._learned_add(
+            low,
+            self._learned_raw(_LEARNED_MUL, high, PROCESS_RADIX),
+        )
+
+    def decode_signed_pair(self, low: int, high: int) -> int:
+        """Read one public zigzag-encoded pair after learned radix recovery."""
+
+        return self._signed_decode(self.decode_unsigned_pair(low, high))
+
+    def learned_l1(self, values: tuple[int, ...]) -> int:
+        """Reduce signed values with learned addition and subtraction."""
+
+        if not isinstance(values, tuple) or any(type(value) is not int for value in values):
+            raise ValueError("semantic neural L1 values are invalid")
+        total = 0
+        for value in values:
+            magnitude = value if value >= 0 else self._learned_raw(_LEARNED_SUB, 0, value)
+            total = self._learned_add(total, magnitude)
+        return total
+
     @staticmethod
     def _signed_decode(value: int) -> int:
         return value // 2 if value % 2 == 0 else -((value + 1) // 2)
