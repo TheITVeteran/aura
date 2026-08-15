@@ -50377,3 +50377,27 @@ transfer, broad reasoning gain, fusion, frontier performance or a `WOW Signal`.
 The next gate is a larger fresh-seed 1.5B replication with the same five arms
 and unchanged admission rule. Only a replicated result authorizes the first
 bounded resident-32B canary.
+
+## Checkpoint 2026-08-15-551: Repair State-Grounded Serialization, Not the Bar
+
+The 90-task fresh-seed replication completed `450` real-model decodes in 183.82
+seconds. Treatment scored `89/90`, ordinary and syntax-matched baselines scored
+`0/90`, the same-family wrong-state control scored `0/90`, and the coefficient
+lesion scored `29/90`. With one treatment miss, the unchanged perfect-treatment
+bar correctly returned `not_admitted`. The complete negative matrix is frozen
+at `artifacts/closeout/latent_cortex/cp551_semantic_decode_replication/result.json`.
+
+The failed task's authenticated recurrent state contained the exact expected
+result. The language model instead duplicated and altered one of two coding
+cases while copying that state into JSON. The repair compares a decoded object
+only with its own authenticated semantic state, never the evaluator answer. A
+state-bearing arm whose first serialization differs gets one clean correction
+attempt; treatment, wrong-state and lesioned-state arms receive the identical
+mechanism. A targeted real-checkpoint replay reproduced the first-attempt miss
+and emitted the exact state on attempt two.
+
+The canary now also fsyncs a receipt-chained journal after every model decode,
+so a future futile campaign can stop immediately without losing its failed raw
+response. Focused state, runner and verifier contracts pass `11/11`. The next
+gate repeats the full fresh matrix from this clean source; no resident claim is
+authorized by the targeted repair alone.

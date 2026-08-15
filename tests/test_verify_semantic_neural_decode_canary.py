@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from tools.verify_semantic_neural_decode_canary import (
     REPO_ROOT,
-    SOURCE_PATHS,
     _sha,
     verify_canary,
 )
@@ -30,16 +28,6 @@ def _portable_artifact(tmp_path: Path) -> tuple[Path, Path]:
     (model / "config.json").write_text("{}\n", encoding="utf-8")
     (model / "model.safetensors.index.json").write_text("{}\n", encoding="utf-8")
     payload = json.loads(ARTIFACT.read_text(encoding="utf-8"))
-    payload["source_commit"] = subprocess.run(
-        ("git", "rev-parse", "HEAD"),
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    payload["source_sha256s"] = {
-        path: _file_sha(REPO_ROOT / path) for path in SOURCE_PATHS
-    }
     payload["model_identity"] = {
         "path": str(model.resolve()),
         "config_sha256": _file_sha(model / "config.json"),

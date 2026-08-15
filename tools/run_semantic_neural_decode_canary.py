@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -24,6 +25,8 @@ from core.brain.llm.latent_cortex.semantic_neural_decode_context import (  # noq
     SemanticNeuralDecodeState,
     execute_semantic_neural_decode_state,
     render_semantic_neural_decode_context,
+    render_semantic_neural_decode_correction,
+    semantic_result_matches_response,
 )
 from core.brain.llm.unified_recurrent_transfer_decode import (  # noqa: E402
     decode_base_greedy_tokens,
@@ -36,6 +39,7 @@ from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 CANARY_SCHEMA: Final = "aura.rlc.semantic_neural_decode_canary.v1"
+JOURNAL_SCHEMA: Final = "aura.rlc.semantic_neural_decode_journal.v1"
 CLAIM_BOUNDARY: Final = (
     "bounded teacher-free multi-domain neural-state-to-free-decode transfer on "
     "the model bound in model_identity; not open-domain, resident-32B, broad "
@@ -76,6 +80,25 @@ def _file_sha(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _append_journal_event(
+    path: Path,
+    event: dict[str, Any],
+    *,
+    previous_receipt_sha256: str,
+) -> str:
+    body = {
+        "schema": JOURNAL_SCHEMA,
+        "previous_receipt_sha256": previous_receipt_sha256,
+        **event,
+    }
+    receipt = _sha(body)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**body, "receipt_sha256": receipt}, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return receipt
 
 
 def _git(*args: str) -> str:
@@ -184,6 +207,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--journal", type=Path)
     parser.add_argument("--seed", type=int, default=20_260_815_48)
     parser.add_argument("--tasks-per-difficulty", type=int, default=3)
     parser.add_argument("--max-tokens", type=int, default=384)
@@ -222,6 +246,27 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
     treatment_states = [
         execute_semantic_neural_decode_state(task.prompt, task.family) for task in tasks
     ]
+    journal_path = (
+        args.journal.expanduser().resolve()
+        if args.journal is not None
+        else args.out.with_name(f"{args.out.name}.journal.jsonl")
+    )
+    if journal_path.exists():
+        raise RuntimeError("semantic decode journal already exists")
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.touch(mode=0o600, exist_ok=False)
+    journal_receipt = _append_journal_event(
+        journal_path,
+        {
+            "event": "campaign_started",
+            "source_commit": source_commit,
+            "seed": args.seed,
+            "tasks_per_difficulty": args.tasks_per_difficulty,
+            "task_count": len(tasks),
+            "arm_count": len(ARMS),
+        },
+        previous_receipt_sha256="0" * 64,
+    )
     lesion = _lesion_machine()
     lesion_states: list[SemanticNeuralDecodeState | None] = []
     for task in tasks:
@@ -257,16 +302,48 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
             active_prefill = (
                 () if arm == "ordinary_base" else _wire_prefill(tokenizer, task.family)
             )
-            prompt = _prompt_tokens(tokenizer, task.prompt, context)
-            generated, stopped, latency_ms = decode_base_greedy_tokens(
-                model,
-                prompt,
-                eos_token_id=tokenizer.eos_token_id,
-                max_tokens=args.max_tokens,
-                prefill_tokens=active_prefill,
-                completion_check=lambda values: _complete(tokenizer, values),
-            )
-            text = tokenizer.decode(list(generated), skip_special_tokens=True)
+            attempts: list[dict[str, Any]] = []
+            max_attempts = 2 if selected is not None else 1
+            text = ""
+            stopped = False
+            prompt_tokens = 0
+            generated_tokens = 0
+            latency_ms = 0
+            serialization_verified: bool | None = None
+            for attempt_index in range(max_attempts):
+                active_context = (
+                    context
+                    if attempt_index == 0 or selected is None
+                    else render_semantic_neural_decode_correction(selected)
+                )
+                prompt = _prompt_tokens(tokenizer, task.prompt, active_context)
+                generated, stopped, attempt_latency_ms = decode_base_greedy_tokens(
+                    model,
+                    prompt,
+                    eos_token_id=tokenizer.eos_token_id,
+                    max_tokens=args.max_tokens,
+                    prefill_tokens=active_prefill,
+                    completion_check=lambda values: _complete(tokenizer, values),
+                )
+                text = tokenizer.decode(list(generated), skip_special_tokens=True)
+                prompt_tokens += len(prompt)
+                generated_tokens += len(generated) - len(active_prefill)
+                latency_ms += attempt_latency_ms
+                serialization_verified = (
+                    semantic_result_matches_response(selected, text)
+                    if selected is not None
+                    else None
+                )
+                attempts.append(
+                    {
+                        "attempt": attempt_index + 1,
+                        "response": text,
+                        "response_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                        "serialization_verified": serialization_verified,
+                    }
+                )
+                if selected is None or serialization_verified:
+                    break
             correct, parsed = _grade(task, text)
             row = {
                 "task_id": task.task_id,
@@ -275,17 +352,36 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
                 "arm": arm,
                 "correct": correct,
                 "parsed": parsed,
-                "prompt_tokens": len(prompt),
-                "generated_tokens": len(generated) - len(active_prefill),
+                "prompt_tokens": prompt_tokens,
+                "generated_tokens": generated_tokens,
                 "stopped": stopped,
                 "latency_ms": latency_ms,
+                "decode_attempts": len(attempts),
+                "serialization_verified": serialization_verified,
                 "response_sha256": hashlib.sha256(text.encode()).hexdigest(),
                 "state_receipt_sha256": (
                     "" if selected is None else selected.receipt()["receipt_sha256"]
                 ),
             }
             rows.append(row)
-            raw_outputs.append({"task_id": task.task_id, "arm": arm, "response": text})
+            raw_output = {
+                "task_id": task.task_id,
+                "arm": arm,
+                "response": text,
+                "attempts": attempts,
+            }
+            raw_outputs.append(raw_output)
+            journal_receipt = _append_journal_event(
+                journal_path,
+                {
+                    "event": "decode_committed",
+                    "completed": len(rows),
+                    "total": len(tasks) * len(ARMS),
+                    "row": row,
+                    "raw_output": raw_output,
+                },
+                previous_receipt_sha256=journal_receipt,
+            )
             print(
                 json.dumps(
                     {
@@ -354,10 +450,21 @@ def _run(args: argparse.Namespace, model_path: Path) -> int:
         "admitted": admitted,
         "claim_boundary": CLAIM_BOUNDARY,
         "elapsed_seconds": round(time.time() - started, 3),
+        "journal_path": str(journal_path),
+        "journal_last_decode_receipt_sha256": journal_receipt,
         "raw_outputs": raw_outputs,
     }
     payload["receipt_sha256"] = _sha(payload)
     atomic_write_text(args.out, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    _append_journal_event(
+        journal_path,
+        {
+            "event": "campaign_completed",
+            "admitted": admitted,
+            "report_receipt_sha256": payload["receipt_sha256"],
+        },
+        previous_receipt_sha256=journal_receipt,
+    )
     print(json.dumps({"event": "canary_complete", "admitted": admitted}, sort_keys=True))
     return 0 if admitted else 2
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 from tools.run_semantic_neural_decode_canary import (
+    _append_journal_event,
     _arm_order,
     _grade,
     _lane_kwargs,
@@ -82,3 +85,22 @@ def test_semantic_neural_decode_prefill_contains_only_public_syntax():
         rendered = bytes(_wire_prefill(tokenizer, family)).decode("ascii")
         assert rendered == expected
         assert not any(character.isdigit() for character in rendered)
+
+
+def test_semantic_decode_journal_is_fsynced_and_receipt_chained(tmp_path):
+    path = tmp_path / "journal.jsonl"
+    path.touch()
+    first = _append_journal_event(
+        path,
+        {"event": "first", "value": 1},
+        previous_receipt_sha256="0" * 64,
+    )
+    second = _append_journal_event(
+        path,
+        {"event": "second", "value": 2},
+        previous_receipt_sha256=first,
+    )
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["receipt_sha256"] == first
+    assert rows[1]["previous_receipt_sha256"] == first
+    assert rows[1]["receipt_sha256"] == second

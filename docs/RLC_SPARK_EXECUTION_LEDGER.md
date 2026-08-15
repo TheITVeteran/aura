@@ -5926,3 +5926,13 @@ This closes a bounded 1.5B state-to-language gate, not SPARK-069 through
 SPARK-072. A larger fresh-seed replication remains required before resident-32B
 transfer, and broad replicated gains remain required before fusion, frontier or
 `WOW Signal` claims.
+
+### 2026-08-15 - CP551 replication localizes one state-serialization error
+
+The larger fresh 1.5B matrix rejected treatment at `89/90` under the unchanged
+perfect bar; all 90 ordinary, syntax-matched and wrong-state controls failed.
+The one miss had an exact authenticated recurrent state but a corrupted JSON
+copy. State-grounded correction repaired that exact task on a second real-model
+decode without consulting its evaluator answer. Per-row receipt-chained
+journaling now preserves raw evidence before terminal adjudication. The full
+fresh matrix must be rerun before resident transfer can proceed.

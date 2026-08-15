@@ -5,6 +5,8 @@ import json
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (
     execute_semantic_neural_decode_state,
     render_semantic_neural_decode_context,
+    render_semantic_neural_decode_correction,
+    semantic_result_matches_response,
 )
 from core.learning.frontier_process_supervision import frontier_process_task_battery
 
@@ -35,3 +37,14 @@ def test_semantic_neural_decode_state_is_replayable():
     second = execute_semantic_neural_decode_state(task.prompt, task.family)
     assert first == second
     assert first.receipt() == second.receipt()
+
+
+def test_semantic_neural_decode_serialization_check_uses_state_not_task_oracle():
+    task = frontier_process_task_battery(("calibration",), (1,), 1, seed=915)[0]
+    state = execute_semantic_neural_decode_state(task.prompt, task.family)
+    encoded = json.dumps(state.semantic_result, sort_keys=True, separators=(",", ":"))
+    assert semantic_result_matches_response(state, f"FINAL_ANSWER: {encoded}") is True
+    assert semantic_result_matches_response(state, "FINAL_ANSWER: {}") is False
+    correction = render_semantic_neural_decode_correction(state)
+    assert encoded in correction
+    assert "preceding serialization" in correction

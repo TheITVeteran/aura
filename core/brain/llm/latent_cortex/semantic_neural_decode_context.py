@@ -7,6 +7,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 
+from core.brain.llm.latent_cortex.frontier_tasks import (
+    FrontierTaskError,
+    parse_final_answer,
+)
 from core.learning.public_frontier_action_compiler import (
     compile_public_frontier_actions,
     public_frontier_operands,
@@ -231,10 +235,38 @@ def render_semantic_neural_decode_context(
     )
 
 
+def semantic_result_matches_response(
+    state: SemanticNeuralDecodeState,
+    response: str,
+) -> bool:
+    """Check serialization against authenticated state, never an answer key."""
+
+    if not isinstance(state, SemanticNeuralDecodeState) or not isinstance(response, str):
+        return False
+    try:
+        return parse_final_answer(response) == state.semantic_result
+    except FrontierTaskError:
+        return False
+
+
+def render_semantic_neural_decode_correction(
+    state: SemanticNeuralDecodeState,
+) -> str:
+    """Request one clean reserialization without anchoring on failed text."""
+
+    return (
+        render_semantic_neural_decode_context(state)
+        + "\nThe preceding serialization did not equal this authenticated object. "
+        "Discard that serialization completely and copy semantic_result again."
+    )
+
+
 __all__ = [
     "SEMANTIC_NEURAL_DECODE_CONTEXT_SCHEMA",
     "SEMANTIC_NEURAL_DECODE_STATE_SCHEMA",
     "SemanticNeuralDecodeState",
     "execute_semantic_neural_decode_state",
     "render_semantic_neural_decode_context",
+    "render_semantic_neural_decode_correction",
+    "semantic_result_matches_response",
 ]
