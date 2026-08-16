@@ -368,7 +368,7 @@ def test_initial_live_status_generation_gets_concrete_signal_guidance():
     assert messages[0]["content"] == "live mind context stays here"
 
 
-def test_initial_live_surface_generation_requires_one_final_answer():
+def test_initial_non_status_surface_is_not_prompt_shaped():
     messages = [{"role": "system", "content": "live mind context stays here"}]
 
     guided, prompt = _with_initial_user_surface_guidance(
@@ -380,9 +380,7 @@ def test_initial_live_surface_generation_requires_one_final_answer():
         },
     )
 
-    assert guided is not messages
-    assert "one coherent final answer only" in guided[0]["content"]
-    assert "concrete observable runtime or sensory signal" not in guided[0]["content"]
+    assert guided is messages
     assert prompt == "fallback"
 
 
@@ -416,9 +414,7 @@ def test_self_condition_turn_does_not_request_host_telemetry_guidance():
     messages = [{"role": "system", "content": "live mind context stays here"}]
     guided, prompt = _with_initial_user_surface_guidance(messages, "fallback", job)
 
-    assert guided is not messages
-    assert "one coherent final answer only" in guided[0]["content"]
-    assert "concrete observable runtime or sensory signal" not in guided[0]["content"]
+    assert guided is messages
     assert prompt == "fallback"
 
 

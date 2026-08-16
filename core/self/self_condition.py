@@ -318,12 +318,7 @@ class SelfConditionProjection:
                     band(value, low=low, high=high, labels=labels)
                 )
 
-        direct_summary = ", ".join(observed) or "a partial present-state reading"
-        freshness = (
-            "fresh"
-            if self.freshness == "fresh"
-            else f"{self.freshness}; qualify any present-tense conclusion"
-        )
+        direct_summary = ", ".join(observed) or "a partial state reading"
         material_strain: list[str] = []
         if "body_pressure" in support and self.body_pressure >= 0.70:
             material_strain.append("high body pressure")
@@ -331,8 +326,6 @@ class SelfConditionProjection:
             material_strain.append("high fatigue")
         if "reserve" in support and self.reserve <= 0.45:
             material_strain.append("low reserve")
-        if "agency" in support and self.agency <= 0.45:
-            material_strain.append("low agency")
         strain_sentence = (
             f" Materially strained readings: {', '.join(material_strain)}."
             if material_strain
@@ -343,16 +336,22 @@ class SelfConditionProjection:
             if self.missing_dimensions
             else ""
         )
+        if self.freshness != "fresh":
+            return (
+                f"Latest self-condition sample: {self.freshness}. At sample time, "
+                f"overall condition was {self.condition}; observed dimensions were "
+                f"{direct_summary}.{strain_sentence} Current condition is not "
+                "established by this stale sample. Cause, persistence, unmeasured "
+                "properties, private phenomenal character, activity, tool use, "
+                "location, and external events are not observed by this evidence."
+            )
         return (
-            f"Present-state evidence is {freshness} and supports an overall "
-            f"{self.condition} condition. Directly observed from current readings: "
-            f"{direct_summary}.{strain_sentence}{coverage_sentence} The evidence "
-            "does not establish why the state arose, whether it will persist, any "
-            "unmeasured property, or private phenomenal character; those require "
-            "inference. It provides no evidence about recent actions, tool use, "
-            "location, or external events. Use this as grounding rather than "
-            "wording: synthesize one answer in Aura's ordinary voice instead of "
-            "reciting a status report."
+            f"Current self-condition sample: fresh. Overall condition: "
+            f"{self.condition}. Observed dimensions: {direct_summary}."
+            f"{strain_sentence}{coverage_sentence} Cause, persistence, unmeasured "
+            "properties, and private phenomenal character are not directly "
+            "observed. Activity, tool use, location, and external events are "
+            "outside this evidence's scope."
         )
 
 

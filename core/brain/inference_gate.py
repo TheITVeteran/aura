@@ -8715,18 +8715,24 @@ class InferenceGate:
         return max(self._GROUNDING_FLOOR_CHARS, 2_800 - used)
 
     @staticmethod
-    def _fit_grounding_blocks(blocks: list[str], limit: int) -> str:
-        """Whole blocks in priority order, up to ``limit``.
+    def _fit_grounding_blocks(
+        *,
+        contract_blocks: list[str],
+        task_blocks: list[str],
+        ambient_blocks: list[str],
+        limit: int,
+    ) -> str:
+        """Fit complete evidence blocks using declared semantic priority.
 
-        Priority is the order they were appended: this turn's contract, the
-        clock, the action receipts, the instruments, the felt state. Dropping a
-        whole trailing block beats truncating every block, because half a
-        readout is a readout she may quote wrongly, and the first block is the
-        one that stops confabulation.
+        Call order is not authority. Turn contracts and task-specific evidence
+        precede ambient state even when ambient collectors happen to run first.
+        A trailing block is dropped whole because a partial readout can change
+        the meaning of the evidence it carries.
         """
         kept: list[str] = []
         spent = 0
-        for block in blocks:
+        ordered_blocks = [*contract_blocks, *task_blocks, *ambient_blocks]
+        for block in ordered_blocks:
             text = str(block or "").strip()
             if not text:
                 continue
@@ -11062,6 +11068,13 @@ class InferenceGate:
                 {"role": "user", "content": strict_value_user_prompt},
             ]
         visible_user_prompt = initial_visible_user_prompt
+        from core.utils.injected_blocks import is_stamped_grounding
+
+        live_context_already_grounded = bool(
+            context.get("live_context_already_grounded", False)
+            and isinstance(provided_messages, list)
+            and any(is_stamped_grounding(message) for message in provided_messages)
+        )
         if provided_messages is not None:
             system_prompt = ""
             for msg in provided_messages:
@@ -11074,6 +11087,7 @@ class InferenceGate:
             if (
                 not isolated_generation_contract
                 and not is_background
+                and not live_context_already_grounded
                 and self._origin_is_user_facing(origin)
             ):
                 needs_full_live_context = bool(
@@ -11094,16 +11108,24 @@ class InferenceGate:
                     )
         elif use_compact_foreground_context:
             system_prompt = self._build_compact_system_prompt(brief)
-            living_mind_context = await self._assemble_live_context(
-                visible_user_prompt, origin, full=False
+            living_mind_context = (
+                ""
+                if live_context_already_grounded
+                else await self._assemble_live_context(
+                    visible_user_prompt, origin, full=False
+                )
             )
         else:
             system_prompt = self._build_system_prompt(brief)
             # [STABILITY v50] The 20+ consciousness subsystems queried here can
             # individually hang on lock contention or slow I/O. One deadline
             # covers the full assembly AND the compact fallback.
-            living_mind_context = await self._assemble_live_context(
-                visible_user_prompt, origin, full=True
+            living_mind_context = (
+                ""
+                if live_context_already_grounded
+                else await self._assemble_live_context(
+                    visible_user_prompt, origin, full=True
+                )
             )
         prompt_contract_block = self._prompt_contract_block(context)
 
@@ -11121,7 +11143,9 @@ class InferenceGate:
         # Delivered last, divergence lands after the history instead of before
         # it, so a long conversation stops re-prefilling itself from token zero.
         # The content is unchanged — only its position.
-        volatile_grounding_blocks: list[str] = []
+        contract_grounding_blocks: list[str] = []
+        task_grounding_blocks: list[str] = []
+        ambient_grounding_blocks: list[str] = []
         # The response contract describes THIS turn — its reason label and the
         # current local date both change per turn — so it belongs beside the
         # turn, not in the persistent system prompt. Measured live: it landed at
@@ -11129,21 +11153,21 @@ class InferenceGate:
         # compound_prompt\n- Current local date: ...", stranding 3,884 tokens of
         # conversation behind it (3% reused).
         if prompt_contract_block and not isolated_generation_contract:
-            volatile_grounding_blocks.append(prompt_contract_block)
+            contract_grounding_blocks.append(prompt_contract_block)
         # Current mind state changes independently of identity and policy. It
         # belongs with this turn's evidence, never inside the stable system
         # prefix. The old path inserted it above and then inserted it a second
         # time into prebuilt messages below. Besides presenting one source twice,
         # that made every affect tick invalidate the conversation's KV prefix.
         if living_mind_context and not isolated_generation_contract:
-            volatile_grounding_blocks.append(living_mind_context)
+            ambient_grounding_blocks.append(living_mind_context)
         if not isolated_generation_contract:
             try:
                 from core.brain.present_moment import present_moment_block
 
                 _present = present_moment_block()
                 if _present:
-                    volatile_grounding_blocks.append(_present)
+                    ambient_grounding_blocks.append(_present)
 
                 # Suppressing the web search is only half the fix; without the
                 # readings she still has to invent them, which is how "I
@@ -11152,7 +11176,7 @@ class InferenceGate:
 
                 _actions = recent_actions_block()
                 if _actions:
-                    volatile_grounding_blocks.append(_actions)
+                    ambient_grounding_blocks.append(_actions)
 
                 # The WIDER predicate here on purpose. This path only ADDS her
                 # instrument reading, so a false positive costs a few lines of
@@ -11168,7 +11192,7 @@ class InferenceGate:
 
                     _instruments = runtime_self_report()
                     if _instruments:
-                        volatile_grounding_blocks.append(_instruments)
+                        ambient_grounding_blocks.append(_instruments)
             except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 record_degradation(
                     "inference_gate",
@@ -11188,7 +11212,7 @@ class InferenceGate:
                 if _soma_narrative:
                     # Felt state changes on every tick; it travels with the rest
                     # of the volatile grounding, after the conversation.
-                    volatile_grounding_blocks.append(
+                    ambient_grounding_blocks.append(
                         f"## SOMATIC STATE\n{_soma_narrative}"
                     )
             except _INFERENCE_RECOVERABLE_ERRORS as _exc:
@@ -11234,7 +11258,7 @@ class InferenceGate:
                         # with turn-local grounding. Putting it in the stable
                         # system prefix invalidates cached conversation tokens
                         # when the next question is about another subsystem.
-                        volatile_grounding_blocks.append(str(arch_excerpt))
+                        task_grounding_blocks.append(str(arch_excerpt))
             except _INFERENCE_RECOVERABLE_ERRORS as _ae:
                 record_degradation(
                     "inference_gate",
@@ -11243,7 +11267,7 @@ class InferenceGate:
                     action="continued without architecture self-awareness excerpt",
                 )
                 logger.debug("ArchIndex injection skipped: %s", _ae)
-            volatile_grounding_blocks.append(
+            contract_grounding_blocks.append(
                 conversation_reliability_system_block(visible_user_prompt)
             )
         history = context.get("history", [])
@@ -11366,7 +11390,12 @@ class InferenceGate:
         # it is given, and this block must not be trimmed away — it is the
         # read-not-inferred ground truth (clock, receipts, felt state) that
         # stops her narrating a present she was never given.
-        if volatile_grounding_blocks and isinstance(messages, list) and messages:
+        has_volatile_grounding = bool(
+            contract_grounding_blocks
+            or task_grounding_blocks
+            or ambient_grounding_blocks
+        )
+        if has_volatile_grounding and isinstance(messages, list) and messages:
             # BEFORE the final user turn, not after it.
             #
             # Riding dead last put a multi-thousand-character block of self-state
@@ -11394,8 +11423,10 @@ class InferenceGate:
             grounding_message = {
                 "role": "system",
                 "content": self._fit_grounding_blocks(
-                    volatile_grounding_blocks,
-                    self._grounding_char_budget(context, messages),
+                    contract_blocks=contract_grounding_blocks,
+                    task_blocks=task_grounding_blocks,
+                    ambient_blocks=ambient_grounding_blocks,
+                    limit=self._grounding_char_budget(context, messages),
                 ),
             }
             final_user_index = next(
@@ -11415,11 +11446,16 @@ class InferenceGate:
                     grounding_message,
                     *messages[final_user_index:],
                 ]
-        elif volatile_grounding_blocks:
+        elif has_volatile_grounding:
             # No message list to ride behind (single-prompt lanes): keep the old
             # behaviour rather than dropping the grounding entirely.
             system_prompt = "\n\n".join(
-                [str(system_prompt or ""), *volatile_grounding_blocks]
+                [
+                    str(system_prompt or ""),
+                    *contract_grounding_blocks,
+                    *task_grounding_blocks,
+                    *ambient_grounding_blocks,
+                ]
             ).strip()
         # Cache policy is not a caller preference.
         #

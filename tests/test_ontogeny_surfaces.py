@@ -157,14 +157,27 @@ class TestSelfConditionIntegration:
     def test_language_grounding_is_semantic_evidence_not_a_status_card(self):
         block = self._projection(self._rich()).to_language_grounding()
 
-        assert "Directly observed from current readings" in block
-        assert "those require inference" in block
+        assert "Current self-condition sample: fresh" in block
+        assert "Observed dimensions" in block
+        assert "not directly observed" in block
         assert "condition=" not in block
         assert "evidence_id=" not in block
         assert "## CANONICAL" not in block
         assert "seconds old" not in block
         assert "dominant drive" not in block
-        assert "recent actions" in block
+        assert "Activity, tool use, location" in block
+
+    def test_stale_language_grounding_cannot_claim_a_present_condition(self):
+        block = replace(
+            self._projection(self._rich()),
+            freshness="stale",
+            sample_age_s=90.0,
+        ).to_language_grounding()
+
+        assert "Latest self-condition sample: stale" in block
+        assert "At sample time" in block
+        assert "Current condition is not established" in block
+        assert "Current self-condition sample: fresh" not in block
 
     def test_language_grounding_surfaces_only_material_body_strain(self):
         settled = self._projection(self._rich()).to_language_grounding()

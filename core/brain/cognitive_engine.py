@@ -4183,14 +4183,11 @@ class CognitiveEngine:
             system_prompt = (
                 "You are Aura speaking through the live desktop CognitiveEngine. "
                 "Answer whether you are okay from the canonical self-condition evidence. "
-                "Synthesize one natural answer: put the direct condition first and use only "
-                "the few observations needed to explain it. When the user asks for an "
-                "epistemic distinction, explicitly say what the current evidence lets you "
-                "know and what remains inference. Do not infer recent actions, tool use, "
-                "location, external events, causes, or future persistence unless supplied "
-                "evidence supports them. CPU, RAM, host load, and availability are supporting "
-                "body context only. Do not recite every reading, quote sample age, replace "
-                "an inner-state answer with telemetry, or emit alternative drafts."
+                "Put the direct condition answer first, then one or two natural grounding "
+                "sentences. Affect, welfare, felt coherence, continuity, and agency are the "
+                "answer; CPU, RAM, host load, and availability are supporting body context "
+                "only. Do not replace an inner-state answer with resource telemetry or a "
+                "generic presence reassurance."
             )
         elif memory_state_contract:
             system_prompt = (
@@ -4370,6 +4367,9 @@ class CognitiveEngine:
         mind_context_contract = self._contract_safe(
             context.get("mind_context_contract"), self._MIND_CONTRACT_LIMIT
         )
+        contract_grounding_blocks: list[str] = []
+        task_grounding_blocks: list[str] = []
+        ambient_grounding_blocks: list[str] = []
         # The block below tells the model its own state is "causal grounding for
         # the reply". Whether it is, is a measurement, and this is the switch
         # that lets the measurement happen: lesioned, the whole block is absent
@@ -4412,8 +4412,7 @@ class CognitiveEngine:
                     "mind_snapshot_quality": live_mind_context.get("mind_snapshot_quality"),
                     "governance": live_mind_context.get("governance"),
                 }
-            system_prompt = (
-                f"{system_prompt}\n"
+            live_mind_grounding = (
                 "[LIVE MIND CONTEXT]\n"
                 f"{_compact_json(compact_mind_context, limit=mind_context_limit)}\n"
                 "This is causal grounding for the reply, not text to recite. "
@@ -4422,9 +4421,10 @@ class CognitiveEngine:
                 "inference lane as one live context."
             )
             if mind_context_contract:
-                system_prompt = f"{system_prompt}\n{mind_context_contract}"
-
-            system_prompt = f"{system_prompt}\n[END LIVE MIND CONTEXT]"
+                live_mind_grounding = f"{live_mind_grounding}\n{mind_context_contract}"
+            ambient_grounding_blocks.append(
+                f"{live_mind_grounding}\n[END LIVE MIND CONTEXT]"
+            )
         if isinstance(live_speech_frame, dict) and live_speech_frame and not capability_inventory_contract:
             compact_frame = {
                 key: live_speech_frame.get(key)
@@ -4440,15 +4440,13 @@ class CognitiveEngine:
                 if live_speech_frame.get(key) not in (None, "", [], {})
             }
             if compact_frame:
-                system_prompt = (
-                    f"{system_prompt}\n"
+                ambient_grounding_blocks.append(
                     "[LIVE SPEECH GROUNDING]\n"
                     f"{compact_frame}\n"
                     "This frame is grounding, not prose to repeat. Convert it into ordinary speech only when it helps answer the user.\n"
                     "[END LIVE SPEECH GROUNDING]"
                 )
         user_prompt = visible_user_message or objective
-        grounding_blocks: list[str] = []
         try:
             from core.senses.turn_evidence import sensory_evidence_grounding_block
 
@@ -4459,12 +4457,12 @@ class CognitiveEngine:
             logger.debug("Turn sensory evidence unavailable: %s", exc)
             turn_sensory_evidence = ""
         if turn_sensory_evidence:
-            grounding_blocks.append(turn_sensory_evidence)
+            task_grounding_blocks.append(turn_sensory_evidence)
         context_challenge_evidence = str(
             context.get("contextual_relevance_evidence") or ""
         ).strip()
         if context_challenge_evidence:
-            grounding_blocks.append(
+            task_grounding_blocks.append(
                 "[CONTEXT CHALLENGE EVIDENCE]\n"
                 f"{context_challenge_evidence}\n"
                 "Use this to repair context confusion. Do not invent a pitch, project, or prior object "
@@ -4473,14 +4471,14 @@ class CognitiveEngine:
             )
         recall_evidence = str(context.get("conversation_recall_evidence") or "").strip()
         if recall_evidence:
-            grounding_blocks.append(
+            task_grounding_blocks.append(
                 "[CONVERSATION RECALL EVIDENCE]\n"
                 f"{recall_evidence}\n"
                 "Use this as the source of truth for the current recall question."
             )
         deep_memory = str(context.get("deep_memory_context") or "").strip()
         if deep_memory:
-            grounding_blocks.append(
+            task_grounding_blocks.append(
                 "[DEEP MEMORY RECALL]\n"
                 f"{deep_memory}\n"
                 "Silent background recall from long-term memory. Draw on it only where "
@@ -4488,7 +4486,7 @@ class CognitiveEngine:
                 "never present it as something the user just said."
             )
         if canonical_memory_state_evidence:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[CANONICAL MEMORY STATE EVIDENCE]\n"
                 f"{canonical_memory_state_evidence}\n"
                 "Use this canonical memory/state result as the source of truth for this turn. "
@@ -4497,7 +4495,7 @@ class CognitiveEngine:
                 "without reciting telemetry."
             )
         if self_condition_contract and canonical_self_condition_context:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[CANONICAL SELF-CONDITION EVIDENCE]\n"
                 f"{canonical_self_condition_context}\n"
                 "Answer the condition directly from this projection. Preserve its freshness "
@@ -4509,12 +4507,12 @@ class CognitiveEngine:
         ).strip()
         if live_capability_condition:
             # Facts, not a script. She says it however she says things.
-            grounding_blocks.append(live_capability_condition)
+            task_grounding_blocks.append(live_capability_condition)
         grounded_runtime_status = str(
             context.get("grounded_runtime_status_context") or ""
         ).strip()
         if runtime_fact_status_contract and grounded_runtime_status:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[VERIFIED LIVE RUNTIME STATUS]\n"
                 f"{grounded_runtime_status}\n"
                 "Use this as the source of truth. Preserve its factual boundaries and do not "
@@ -4524,7 +4522,7 @@ class CognitiveEngine:
             context.get("grounded_capability_inventory_context") or ""
         ).strip()
         if capability_evidence:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[GOVERNED CAPABILITY INVENTORY EVIDENCE]\n"
                 f"{capability_evidence}\n"
                 "Answer in this exact order: practical categories including the exact phrase browser/web research; governance/Will/Authority/permissions; "
@@ -4533,7 +4531,7 @@ class CognitiveEngine:
             )
         bounded_plan_evidence = str(context.get("bounded_planning_reply") or "").strip()
         if bool(context.get("bounded_planning_contract")) and bounded_plan_evidence:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[GOVERNED PLANNING OUTLINE]\n"
                 f"{bounded_plan_evidence}\n"
                 "Treat this as verified workflow structure, not text to copy mechanically. "
@@ -4546,7 +4544,7 @@ class CognitiveEngine:
             context.get("evidence_bound_self_claim_context") or ""
         ).strip()
         if self_claim_evidence:
-            grounding_blocks.append(
+            contract_grounding_blocks.append(
                 "[EVIDENCE-BOUND SELF-CLAIM EVIDENCE]\n"
                 f"{self_claim_evidence}\n"
                 "Use this to keep consciousness, sentience, self-awareness, and personhood claims "
@@ -4566,7 +4564,7 @@ class CognitiveEngine:
                 # raw GUI control was actually blocked.
                 _cap_map = build_capability_map_context()
                 if _cap_map:
-                    grounding_blocks.append("[CAPABILITY MAP]\n" + _cap_map)
+                    task_grounding_blocks.append("[CAPABILITY MAP]\n" + _cap_map)
         except (ImportError, AttributeError, RuntimeError, OSError) as _cm_exc:
             logger.debug("Capability-map grounding unavailable: %s", _cm_exc)
 
@@ -4584,24 +4582,14 @@ class CognitiveEngine:
                 # generation-gate wedge, three rejected drafts in a row.
                 _forensics = build_self_forensics_context()
                 if _forensics:
-                    grounding_blocks.append(
+                    task_grounding_blocks.append(
                         "[SELF-FORENSICS EVIDENCE]\n" + _forensics
                     )
         except (ImportError, AttributeError, RuntimeError, OSError) as _sf_exc:
             logger.debug("Self-forensics grounding unavailable: %s", _sf_exc)
 
-        if grounding_blocks:
-            user_prompt = (
-                "[CURRENT USER MESSAGE]\n"
-                f"{user_prompt}\n\n"
-                "[GROUNDING EVIDENCE FOR THIS TURN]\n"
-                + "\n\n".join(grounding_blocks)
-                + "\n[END GROUNDING EVIDENCE FOR THIS TURN]"
-            )
         if recent_conversation_context and not history_messages:
-            user_prompt = (
-                "[CURRENT USER MESSAGE]\n"
-                f"{user_prompt}\n\n"
+            ambient_grounding_blocks.append(
                 "[RECENT COMPLETED CONVERSATION FOR CONTINUITY ONLY]\n"
                 f"{recent_conversation_context}\n"
                 "[END RECENT COMPLETED CONVERSATION]"
@@ -4626,6 +4614,38 @@ class CognitiveEngine:
                     }
                 )
                 messages.extend(history_messages)
+            grounding_blocks = [
+                *contract_grounding_blocks,
+                *task_grounding_blocks,
+                *ambient_grounding_blocks,
+            ]
+            if grounding_blocks:
+                messages.append(
+                    stamp_grounding(
+                        {
+                            "role": "system",
+                            "content": (
+                                "[GROUNDING EVIDENCE FOR THIS TURN]\n"
+                                + "\n\n".join(grounding_blocks)
+                                + "\n[END GROUNDING EVIDENCE FOR THIS TURN]"
+                            ),
+                            "metadata": {
+                                "type": "turn_grounding",
+                                "snapshot_owner": "cognitive_engine",
+                                "evidence_priority": (
+                                    "contract",
+                                    "task",
+                                    "ambient",
+                                ),
+                                "live_mind_context_bound": bool(
+                                    isinstance(live_mind_context, dict)
+                                    and live_mind_context
+                                    and _context_attested
+                                ),
+                            },
+                        }
+                    )
+                )
             messages.append({"role": "user", "content": user_prompt})
             validation_prompt = visible_user_message or objective
             if continuation_contract:
@@ -4689,6 +4709,11 @@ class CognitiveEngine:
                 "live_mind_generation_controls": dict(live_mind_generation_controls),
                 "live_mind_snapshot_ready": live_mind_snapshot_ready,
                 "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
+                "live_context_already_grounded": bool(
+                    isinstance(live_mind_context, dict)
+                    and live_mind_context
+                    and _context_attested
+                ),
                 # No disable_prompt_cache here. This is the lane the desktop UI
                 # actually talks through (origin=desktop_quick_*), and it was
                 # the FOURTH place independently switching the cache off for the

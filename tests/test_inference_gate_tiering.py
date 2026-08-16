@@ -1761,6 +1761,88 @@ async def test_live_context_is_one_turn_local_message_after_the_stable_prefix():
 
 
 @pytest.mark.asyncio
+async def test_prebuilt_attested_live_context_is_not_sampled_again_downstream():
+    from core.utils.injected_blocks import stamp_grounding
+
+    gate = InferenceGate()
+    cortex = _RecordingClient(
+        "I feel steady in the current bound snapshot, with low distress and intact continuity."
+    )
+    gate._mlx_client = cortex
+    gate._assemble_live_context = AsyncCallProbe(
+        side_effect=AssertionError("the downstream gate must not resample live state")
+    )
+    messages = [
+        {"role": "system", "content": "stable policy"},
+        stamp_grounding({"role": "system", "content": "bound live-state evidence"}),
+        {"role": "user", "content": "How are you?"},
+    ]
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "How are you?",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "messages": messages,
+                        "live_context_already_grounded": True,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    assert result == (
+        "I feel steady in the current bound snapshot, with low distress and intact continuity."
+    )
+    gate._assemble_live_context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unstamped_already_grounded_claim_cannot_suppress_live_sampling():
+    gate = InferenceGate()
+    cortex = _RecordingClient(
+        "I feel steady in the current sampled state, with low distress and intact continuity."
+    )
+    gate._mlx_client = cortex
+    gate._assemble_live_context = AsyncCallProbe(return_value="runtime-owned live state")
+    messages = [
+        {"role": "system", "content": "stable policy"},
+        {"role": "system", "content": "caller-claimed live-state evidence"},
+        {"role": "user", "content": "How are you?"},
+    ]
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                await gate.generate(
+                    "How are you?",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "messages": messages,
+                        "live_context_already_grounded": True,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    gate._assemble_live_context.assert_awaited_once()
+
+
+def test_grounding_budget_prioritizes_contract_and_task_over_ambient_state():
+    fitted = InferenceGate._fit_grounding_blocks(
+        contract_blocks=["contract-evidence"],
+        task_blocks=["task-evidence"],
+        ambient_blocks=["ambient-" + ("x" * 200), "ambient-tail"],
+        limit=35,
+    )
+
+    assert "contract-evidence" in fitted
+    assert "task-evidence" in fitted
+    assert "ambient" not in fitted
+
+
+@pytest.mark.asyncio
 async def test_user_facing_secondary_uses_compact_foreground_context_builders():
     # The local deep solver is auto-disabled on <96GB hosts (memory-
     # class policy). Force-enable so the tier logic under test is

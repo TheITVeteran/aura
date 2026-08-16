@@ -9182,6 +9182,7 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
     from core.brain import cognitive_engine as ce_module
     from core.brain.cognitive_engine import CognitiveEngine
     from core.brain.types import ThinkingMode
+    from core.utils.injected_blocks import stamp_runtime_payload
 
     router_calls = []
 
@@ -9214,12 +9215,12 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
         ),
         "canonical_self_condition_projection": {"evidence_id": "condition-proof-2"},
         "live_mind_context_required": True,
-        "live_mind_context": {
+        "live_mind_context": stamp_runtime_payload({
             "required_for_live_desktop": True,
             "must_answer_from_full_mind_path": True,
             "required_subsystems_ok": True,
             "mind_snapshot_quality": {"present": True, "ready": True},
-        },
+        }),
         "live_mind_generation_controls": {
             "temperature": 0.58,
             "top_p": 0.88,
@@ -9244,7 +9245,24 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
     call = router_calls[0]
     assert call["self_condition_contract"] is True
     assert "CPU, RAM, host load" in call["messages"][0]["content"]
-    assert "felt_coherence=0.93" in call["messages"][-1]["content"]
+    assert "[LIVE MIND CONTEXT]" not in call["messages"][0]["content"]
+    assert call["messages"][-1] == {"role": "user", "content": "Are you okay though?"}
+    grounding = call["messages"][-2]
+    assert grounding["role"] == "system"
+    assert grounding["metadata"]["type"] == "turn_grounding"
+    assert grounding["metadata"]["snapshot_owner"] == "cognitive_engine"
+    assert grounding["metadata"]["evidence_priority"] == (
+        "contract",
+        "task",
+        "ambient",
+    )
+    assert grounding["metadata"]["live_mind_context_bound"] is True
+    assert "felt_coherence=0.93" in grounding["content"]
+    assert grounding["content"].count("[LIVE MIND CONTEXT]") == 1
+    assert grounding["content"].index("[CANONICAL SELF-CONDITION EVIDENCE]") < (
+        grounding["content"].index("[LIVE MIND CONTEXT]")
+    )
+    assert call["live_context_already_grounded"] is True
     assert thought.metadata["self_condition_contract"] is True
     assert thought.metadata["self_condition_evidence_id"] == "condition-proof-2"
     assert thought.metadata["response_path"] == "cognitive_engine_self_condition"
@@ -9321,9 +9339,11 @@ async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_d
     assert joined.count(evidence) == 1
     assert "condition=" not in joined
     assert "Draft one" not in joined
-    assert prompt in messages[-1]["content"]
-    assert "explicitly say what the current evidence lets you know" in messages[0]["content"]
-    assert "Do not infer recent actions, tool use, location, external events" in messages[0]["content"]
+    assert messages[-1] == {"role": "user", "content": prompt}
+    assert messages[-2]["role"] == "system"
+    assert evidence in messages[-2]["content"]
+    assert "explicitly say what the current evidence lets you know" not in messages[0]["content"]
+    assert "Do not infer recent actions, tool use, location, external events" not in messages[0]["content"]
 
 
 def test_direct_self_condition_generation_is_an_authentic_full_mind_path(monkeypatch):

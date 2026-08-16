@@ -1623,13 +1623,6 @@ _SELF_CONDITION_SIGNAL_INSTRUCTION = (
     "evidence. CPU, RAM, host load, and availability are supporting body context "
     "only and must not replace the condition answer."
 )
-_ONE_FINAL_ANSWER_INSTRUCTION = (
-    "Resolve competing internal candidates before writing. Return one coherent "
-    "final answer only; do not expose an abandoned draft, retract an earlier "
-    "paragraph, or make the user choose among revisions."
-)
-
-
 def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
     if not bool(job.get("clean_user_surface_contract", False)):
         return False
@@ -1676,14 +1669,11 @@ def _with_initial_user_surface_guidance(
     # instructions and made a healthy resident lane fail boot deterministically.
     # Keep control-plane measurements clamped, but never prompt-shape them as
     # user prose.
-    if not bool(job.get("clean_user_surface_contract", False)) or bool(
-        job.get("health_probe", False)
+    if bool(job.get("health_probe", False)) or not _job_needs_concrete_status_signal_guidance(
+        job
     ):
         return messages, prompt
-    instructions = [_ONE_FINAL_ANSWER_INSTRUCTION]
-    if _job_needs_concrete_status_signal_guidance(job):
-        instructions.append(_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION)
-    guidance = "\n".join(instructions)
+    guidance = _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION
     if isinstance(messages, list):
         guided_messages = copy.deepcopy(messages)
         for message in guided_messages:
@@ -1813,10 +1803,6 @@ _SURFACE_RETRY_INSTRUCTIONS: dict[str, str] = {
     "question_back_non_answer": (
         "Answer first, in your own words. A question back does not substitute for "
         "the answer."
-    ),
-    "exposed_competing_draft": (
-        "Resolve the alternatives before writing. Return one coherent final answer "
-        "without showing or retracting an abandoned version."
     ),
     "low_signal_acknowledgement_placeholder": (
         "An acknowledgement is not an answer. Say the substance."
