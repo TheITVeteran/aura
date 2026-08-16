@@ -37,6 +37,9 @@ from __future__ import annotations
 
 import pytest
 
+from core.conversation.requested_reply_shape import (
+    is_reply_shape_constraint_segment,
+)
 from core.phases.dialogue_policy import (
     _unanswered_question_parts,
     validate_dialogue_response,
@@ -62,6 +65,27 @@ class _Contract:
     def __init__(self, shape):
         self.requires_single_reply_coverage = shape.requires_single_reply_coverage
         self.question_segments = shape.question_segments
+
+
+def test_reply_shape_segment_is_not_a_second_semantic_ask():
+    user = (
+        "Answer in exactly two numbered sentences. Explain why reliable "
+        "desktop tool use matters for a local AI assistant."
+    )
+    reply = (
+        "1. Reliable desktop tool use turns user intent into governed actions.\n"
+        "2. It provides evidence that apps and files changed for real."
+    )
+    shape = analyze_prompt_shape(user)
+
+    assert is_reply_shape_constraint_segment(shape.question_segments[0])
+    assert not _unanswered_question_parts(reply, _Contract(shape))
+
+
+def test_content_request_that_names_a_paragraph_is_not_only_reply_shape():
+    assert not is_reply_shape_constraint_segment(
+        "Write a paragraph about yourself in your own words."
+    )
 
 
 def test_a_one_line_compound_message_is_detected_as_compound():

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["reply_scope_text"]
+__all__ = ["is_reply_shape_constraint_segment", "reply_scope_text"]
 
 
 #: An explicit instruction about what the REPLY should contain: "reply with
@@ -52,6 +52,27 @@ _REPLY_SHAPE_WANTS_QUANTITY_RE = re.compile(
     r"value|result|answer|probability|fraction|percentage|average|how\s+many)\b",
     re.IGNORECASE,
 )
+
+_REPLY_SHAPE_SEGMENT_RE = re.compile(
+    r"^\s*(?:answer|reply|respond|return|report|present)\b.{0,32}"
+    r"\b(?:in|with|using|as)\b.{0,80}"
+    r"\b(?:sentence|sentences|paragraph|paragraphs|bullet|bullets|item|items|"
+    r"word|words|line|lines|json|table|list|format)\b[^?]*[.!]?\s*$"
+    r"|^\s*(?:use|write)\s+(?:exactly\s+)?(?:\w+\s+){0,3}"
+    r"(?:sentence|sentences|paragraph|paragraphs|bullet|bullets|item|items|"
+    r"word|words|line|lines)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_reply_shape_constraint_segment(segment: Any) -> bool:
+    """Whether a whole clause constrains presentation instead of content.
+
+    ``Write a paragraph about yourself`` remains a content request. ``Answer
+    in exactly two numbered sentences`` belongs to the output contract checker.
+    """
+
+    return bool(_REPLY_SHAPE_SEGMENT_RE.fullmatch(str(segment or "").strip()))
 
 
 def reply_scope_text(user_message: Any) -> str:
@@ -99,4 +120,3 @@ def reply_scope_text(user_message: Any) -> str:
     # Otherwise the person has said the reply is something that is not a
     # quantity, and that outranks any number appearing elsewhere in the turn.
     return shape
-

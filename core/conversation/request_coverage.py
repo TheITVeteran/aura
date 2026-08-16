@@ -11,6 +11,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.conversation.requested_reply_shape import (
+    is_reply_shape_constraint_segment,
+)
+
 _COVERAGE_STOPWORDS = frozenset(
     {
         "about",
@@ -215,6 +219,8 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
     answered = coverage_tokens(body)
     missed: list[str] = []
     for segment in segments:
+        if is_reply_shape_constraint_segment(segment):
+            continue
         relation_covered = _relation_sides_are_covered(segment, answered)
         if relation_covered is False:
             missed.append(str(segment))

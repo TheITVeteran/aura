@@ -4502,6 +4502,32 @@ class CognitiveEngine:
                 "and uncertainty boundary. Host resource telemetry may only support, never "
                 "replace, the answer."
             )
+        declared_interlocutor = context.get("declared_interlocutor")
+        if isinstance(declared_interlocutor, dict) and declared_interlocutor:
+            # Typed turn data, separate from the utterance. The declaration is
+            # retained in the transcript, while the final user role contains
+            # only the text Aura must answer.
+            contract_grounding_blocks.append(
+                "[TURN INTERLOCUTOR]\n"
+                + json.dumps(
+                    {
+                        "display_name": str(
+                            declared_interlocutor.get("display_name") or ""
+                        )[:80],
+                        "speaking_role": "user",
+                        "source": str(
+                            declared_interlocutor.get("source") or ""
+                        )[:80],
+                        "authenticated": bool(
+                            declared_interlocutor.get("authenticated", False)
+                        ),
+                    },
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n[END TURN INTERLOCUTOR]"
+            )
         live_capability_condition = str(
             context.get("live_capability_condition") or ""
         ).strip()

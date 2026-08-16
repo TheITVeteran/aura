@@ -2208,6 +2208,10 @@ async def _complete_logged_exchange(
             }
             _conversation_log.append(target)
 
+        # A pending exchange was opened with the wire-visible user text. Do not
+        # replace it with the semantic utterance used for intent and generation
+        # when the exchange completes.
+        recorded_user = str(target.get("user") or recorded_user)
         target["user"] = recorded_user
         target["aura"] = final_response
         target["status"] = "complete"
@@ -10123,6 +10127,8 @@ async def _run_cognitive_engine_chat_turn(
     effective_user_message: str,
     *,
     visible_user_message: str | None = None,
+    raw_user_message: str | None = None,
+    declared_interlocutor: dict[str, Any] | None = None,
     preflight_context_message: str | None = None,
     turn_sensory_evidence: Any = None,
     session_id: str = "",
@@ -10153,6 +10159,12 @@ async def _run_cognitive_engine_chat_turn(
     - Strict fail-closed support for CognitiveEngine-required callers
     """
     visible = str(visible_user_message or effective_user_message or "")
+    raw_visible = str(raw_user_message or visible)
+    interlocutor_evidence = (
+        dict(declared_interlocutor)
+        if isinstance(declared_interlocutor, dict) and declared_interlocutor
+        else {}
+    )
     if turn_trace is not None:
         turn_trace.update(
             {
@@ -10696,6 +10708,8 @@ async def _run_cognitive_engine_chat_turn(
         "route": "desktop_chat",
         "source": source,
         "visible_user_message": visible[:1000],
+        "raw_user_message": raw_visible[:1000],
+        "declared_interlocutor": interlocutor_evidence,
         "foreground_request": True,
         "user_facing": True,
         "preflight_context_message": preflight_context[:8000],
@@ -25141,6 +25155,13 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     #    by prepending the resume preface so the user sees what came back.
     _chat_session_id: str = "default"
     _original_user_message: str = body.message
+    from core.conversation.interlocutor_identity import (
+        parse_interlocutor_introduction,
+    )
+
+    _interlocutor_turn = parse_interlocutor_introduction(_original_user_message)
+    _semantic_user_message = _interlocutor_turn.utterance
+    _declared_interlocutor = _interlocutor_turn.evidence()
     _resume_prefix_for_response: str = ""
     _grounded_recall_context: str = ""
     _relational_memory_control = getattr(
@@ -25166,13 +25187,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     _preflight = await _run_chat_preflight(
         body,
         request,
-        _original_user_message,
+        _semantic_user_message,
         _profile_user_id,
         conversation_only_surface,
         is_benchmark,
         _chat_session_id=_chat_session_id,
         _grounded_recall_context=_grounded_recall_context,
         _resume_prefix_for_response=_resume_prefix_for_response,
+        raw_user_message=_original_user_message,
     )
     if _preflight.early_response is not None:
         return _preflight.early_response
@@ -25215,7 +25237,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
 
-    _semantic_user_message = _original_user_message
     if not is_benchmark and _looks_like_desktop_objective(_semantic_user_message):
         # A consequential desktop request always needs the same CognitiveEngine
         # planning lane as the desktop UI, even when it arrives through the
@@ -25240,7 +25261,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         _conscience_decision = get_conscience().evaluate(
             action="user_chat",
             domain="external_communication",
-            intent=body.message[:240],
+            intent=_semantic_user_message[:240],
             context={"source": "chat_api"},
         )
         if _conscience_decision.verdict == Verdict.REFUSE:
@@ -25819,7 +25840,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 pending_exchange_id = None
             else:
                 await _log_exchange(
-                    _semantic_user_message, recovered, record_experience=True, session_id=_chat_session_id
+                    _original_user_message, recovered, record_experience=True, session_id=_chat_session_id
                 )
             _record_recent_response(recovered, _semantic_user_message)
             await _emit_chat_output_receipt(
@@ -26003,7 +26024,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 pending_exchange_id = None
             else:
                 await _log_exchange(
-                    _semantic_user_message,
+                    _original_user_message,
                     failure_reply,
                     record_experience=False,
                     session_id=_chat_session_id,
@@ -26343,7 +26364,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 pending_exchange_id = None
             else:
                 await _log_exchange(
-                    _semantic_user_message,
+                    _original_user_message,
                     final_text,
                     session_id=_chat_session_id,
                 )
@@ -27184,7 +27205,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)
             pending_exchange_id = await _begin_logged_exchange(
-                _semantic_user_message,
+                _original_user_message,
                 session_id=_chat_session_id,
             )
         except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -27212,6 +27233,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 reply_text = await _run_cognitive_engine_chat_turn(
                     effective_user_message,
                     visible_user_message=_semantic_user_message,
+                    raw_user_message=_original_user_message,
+                    declared_interlocutor=_declared_interlocutor,
                     preflight_context_message=preflight_context_message,
                     turn_sensory_evidence=_turn_sensory_evidence,
                     session_id=_chat_session_id,
@@ -28168,7 +28191,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     pending_exchange_id = None
                 else:
                     await _log_exchange(
-                        _semantic_user_message,
+                        _original_user_message,
                         empty_reply,
                         record_experience=False,
                         session_id=_chat_session_id,
@@ -28216,7 +28239,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     pending_exchange_id = None
                 else:
                     await _log_exchange(
-                        _semantic_user_message,
+                        _original_user_message,
                         failed_reply,
                         record_experience=False,
                         session_id=_chat_session_id,
@@ -28261,7 +28284,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 pending_exchange_id = None
             else:
                 await _log_exchange(
-                    _semantic_user_message,
+                    _original_user_message,
                     final_benchmark_text,
                     record_experience=False,
                     session_id=_chat_session_id,
@@ -28309,7 +28332,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 pending_exchange_id = None
             else:
                 await _log_exchange(
-                    _semantic_user_message,
+                    _original_user_message,
                     failure_reply,
                     record_experience=False,
                     session_id=_chat_session_id,
@@ -29283,7 +29306,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             pending_exchange_id = None
         else:
             await _log_exchange(
-                _semantic_user_message,
+                _original_user_message,
                 _final_reply or "…",
                 session_id=_chat_session_id,
             )
@@ -29655,6 +29678,7 @@ async def _run_chat_preflight(
     _chat_session_id: Any,
     _grounded_recall_context: Any,
     _resume_prefix_for_response: Any,
+    raw_user_message: Any = None,
 ) -> _ChatPreflight:
     """Session identity, file references, resume prefix, grounded recall,
     directive composition, affordance menu and context clamp.
@@ -29668,6 +29692,7 @@ async def _run_chat_preflight(
     _shown = _UNSET
     status = _UNSET
     _turn_sensory_evidence = None
+    _wire_user_message = str(raw_user_message or _original_user_message or "")
     try:
         from core.conversation.chat_preflight import (
             build_file_context_block,
@@ -29710,7 +29735,7 @@ async def _run_chat_preflight(
             if scoped_reply is not None:
                 reply, status = scoped_reply
                 await _log_exchange(
-                    _original_user_message,
+                    _wire_user_message,
                     reply,
                     record_experience=False,
                     session_id=_chat_session_id,

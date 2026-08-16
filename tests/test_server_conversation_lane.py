@@ -1920,6 +1920,21 @@ async def test_complete_logged_exchange_updates_pending_entry_in_place():
 
 
 @pytest.mark.asyncio
+async def test_completed_exchange_preserves_wire_text_when_generation_used_semantic_utterance():
+    from interface.routes import chat as chat_routes
+
+    raw = "ChatGPT here. Hey Aura, how are you doing?"
+    semantic = "Hey Aura, how are you doing?"
+    exchange_id = await chat_routes._begin_logged_exchange(raw)
+    await chat_routes._complete_logged_exchange(exchange_id, semantic, "I'm steady.")
+
+    async with chat_routes._conversation_log_lock:
+        entry = chat_routes._conversation_log[0]
+        assert entry["user"] == raw
+        assert entry["aura"] == "I'm steady."
+
+
+@pytest.mark.asyncio
 async def test_protected_foreground_history_skips_pending_exchange():
     from interface.routes import chat as chat_routes
 
@@ -9147,15 +9162,23 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
         lambda **_kwargs: (True, "test_same_worker_ready"),
     )
 
-    prompt = (
+    raw_prompt = (
         "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
         "from your current state, and distinguish what you know from what you "
         "can only infer."
     )
+    prompt = raw_prompt.removeprefix("ChatGPT here. ")
     trace = {}
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         prompt,
         visible_user_message=prompt,
+        raw_user_message=raw_prompt,
+        declared_interlocutor={
+            "display_name": "ChatGPT",
+            "speaking_role": "user",
+            "source": "message_prefix_self_declaration",
+            "authenticated": False,
+        },
         origin="user",
         timeout_s=60.0,
         lane={"conversation_ready": True, "state": "ready"},
@@ -9169,6 +9192,10 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
     assert trace["response_path"] == "cognitive_engine_repair_retry"
     assert trace["repair_retry_attempt_count"] == 1
     assert trace["foreground_model_generation_count"] == 2
+    assert calls[0]["objective"] == prompt
+    assert calls[0]["context"]["visible_user_message"] == prompt
+    assert calls[0]["context"]["raw_user_message"] == raw_prompt
+    assert calls[0]["context"]["declared_interlocutor"]["display_name"] == "ChatGPT"
     assert any(
         item.get("authorship_effect") == "replaced_by_model"
         for item in trace["text_mutations"]
@@ -9310,10 +9337,11 @@ async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_d
         "Aura has a fresh self-condition sample. The direct runtime evidence "
         "supports a steady condition. Future persistence is an inference."
     )
-    prompt = (
+    raw_prompt = (
         "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
         "from your current state, and distinguish what you know from what you can only infer."
     )
+    prompt = raw_prompt.removeprefix("ChatGPT here. ")
     context = {
         "desktop_quick_reply_contract": True,
         "desktop_cognitive_engine_required": True,
@@ -9322,6 +9350,13 @@ async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_d
         "canonical_self_condition_context": evidence,
         "canonical_self_condition_projection": {"evidence_id": "condition-proof-3"},
         "visible_user_message": prompt,
+        "raw_user_message": raw_prompt,
+        "declared_interlocutor": {
+            "display_name": "ChatGPT",
+            "speaking_role": "user",
+            "source": "message_prefix_self_declaration",
+            "authenticated": False,
+        },
         "recent_completed_exchanges": [{"runtime-stamped": True}],
     }
 
@@ -9342,6 +9377,8 @@ async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_d
     assert messages[-1] == {"role": "user", "content": prompt}
     assert messages[-2]["role"] == "system"
     assert evidence in messages[-2]["content"]
+    assert '"display_name":"ChatGPT"' in messages[-2]["content"]
+    assert "ChatGPT here" not in messages[-1]["content"]
     assert "explicitly say what the current evidence lets you know" not in messages[0]["content"]
     assert "Do not infer recent actions, tool use, location, external events" not in messages[0]["content"]
 
