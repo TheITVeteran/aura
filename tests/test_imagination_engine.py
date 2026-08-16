@@ -204,6 +204,81 @@ def test_imagination_feedback_updates_future_attractor_bias():
     assert engine.snapshot(subject="someone else")["attractor_bias"] == {}
 
 
+def test_cognitive_engine_defers_imagination_learning_without_measured_outcome(
+    monkeypatch,
+):
+    imagination = get_imagination_engine()
+    frame = imagination.imagine(
+        "Consider two ways to explain a difficult idea.",
+        state=AuraState.default(),
+        origin="desktop",
+    ).to_dict()
+    calls = []
+
+    def _learn(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"applied": True}
+
+    monkeypatch.setattr(imagination, "learn_from_feedback", _learn)
+
+    feedback = CognitiveEngine()._learn_imagination_workspace_outcome(
+        {
+            "imagination_workspace": frame,
+            "user_id": "bryan",
+        },
+        outcome="desktop_quick_reply",
+        reward=0.6,
+    )
+
+    assert calls == []
+    assert feedback is not None
+    assert feedback["frame_id"] == frame["frame_id"]
+    assert feedback["subject"] == "bryan"
+    assert feedback["applied"] is False
+    assert feedback["refusal"] == "measured outcome evidence required"
+
+
+def test_cognitive_engine_applies_imagination_learning_with_measured_receipt(
+    monkeypatch,
+):
+    imagination = get_imagination_engine()
+    frame = imagination.imagine(
+        "Compare two verified solution paths.",
+        state=AuraState.default(),
+        origin="desktop",
+    ).to_dict()
+    calls = []
+
+    def _learn(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {
+            "frame_id": frame["frame_id"],
+            "evidence_basis": kwargs["evidence_basis"],
+            "evidence_id": kwargs["evidence_id"],
+            "applied": True,
+        }
+
+    monkeypatch.setattr(imagination, "learn_from_feedback", _learn)
+
+    feedback = CognitiveEngine()._learn_imagination_workspace_outcome(
+        {
+            "imagination_workspace": frame,
+            "user_id": "bryan",
+        },
+        outcome="verified_task_success",
+        reward=0.8,
+        evidence_basis="measured",
+        evidence_id="task-receipt-1",
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["subject"] == "bryan"
+    assert feedback is not None
+    assert feedback["applied"] is True
+    assert feedback["evidence_basis"] == "measured"
+    assert feedback["evidence_id"] == "task-receipt-1"
+
+
 def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
     ServiceContainer.clear()
     engine = CognitiveEngine()

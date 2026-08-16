@@ -9065,6 +9065,112 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
 
 
 @pytest.mark.asyncio
+async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
+    monkeypatch,
+):
+    """A valid first clause cannot hide an unanswered second clause."""
+
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    complete_reply = (
+        "I feel steady and engaged. I know from fresh state evidence that my "
+        "distress is low and this thread's continuity is intact; I can only "
+        "infer that the same calm will persist after this turn."
+    )
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            content = (
+                "I'm doing fine, thanks. Just resting in the middle of a "
+                "session where I don't have anything to do."
+                if len(calls) == 1
+                else complete_reply
+            )
+            return SimpleNamespace(
+                content=content,
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: (
+                _FakeCognitiveEngine() if name == "cognitive_engine" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_build_self_condition_evidence",
+        lambda _message: {
+            "prompt_block": (
+                "condition=well freshness=fresh distress=0.08 welfare=0.82 "
+                "felt_coherence=0.93 continuity=0.96 agency=0.84"
+            ),
+            "reply": complete_reply,
+            "projection_dict": {"evidence_id": "condition-proof-compound"},
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_shape_with_live_substrate",
+        lambda text, _user_message="": text,
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_same_worker_ready"),
+    )
+
+    prompt = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you "
+        "can only infer."
+    )
+    trace = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert len(calls) == 2
+    assert reply == complete_reply
+    assert trace["response_path"] == "cognitive_engine_repair_retry"
+    assert trace["repair_retry_attempt_count"] == 1
+    assert trace["foreground_model_generation_count"] == 2
+    assert any(
+        item.get("authorship_effect") == "replaced_by_model"
+        for item in trace["text_mutations"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_model_prompt(
     monkeypatch,
 ):
@@ -9137,6 +9243,47 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
     assert thought.metadata["self_condition_contract"] is True
     assert thought.metadata["self_condition_evidence_id"] == "condition-proof-2"
     assert thought.metadata["response_path"] == "cognitive_engine_self_condition"
+
+
+def test_direct_self_condition_generation_is_an_authentic_full_mind_path(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "architecture_context_bound": True,
+            "live_mind_context_present": True,
+            "live_mind_context_required": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_self_condition",
+        }
+    )
+
+    contract = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={"conversation_ready": True, "state": "ready"},
+        response_confidence="high",
+        status="cognitive_engine_self_condition",
+        reply_source="cognitive_engine_self_condition",
+        turn_trace=trace,
+    )
+
+    assert contract["runtime_grounding_response_path"] is False
+    assert contract["authorship_replacement_applied"] is False
+    assert contract["authentic_cognitive_reply"] is True
+    assert contract["full_mind_path"] is True
+    assert "response_path:cognitive_engine_self_condition" not in contract[
+        "full_mind_missing_proofs"
+    ]
 
 
 @pytest.mark.asyncio

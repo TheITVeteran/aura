@@ -2275,6 +2275,8 @@ class CognitiveEngine:
         *,
         outcome: str,
         reward: float,
+        evidence_basis: str = "",
+        evidence_id: str = "",
     ) -> dict[str, Any] | None:
         if not isinstance(context, dict):
             return None
@@ -2282,12 +2284,42 @@ class CognitiveEngine:
         if not isinstance(frame, dict):
             return None
         try:
+            from core.brain.imagination_basis import Basis, meets
+
+            try:
+                basis = Basis(str(evidence_basis or ""))
+            except ValueError:
+                basis = Basis.LEXICAL
+            frame_id = str(frame.get("frame_id") or "")[:120]
+            subject = str(
+                context.get("user_id")
+                or context.get("principal_id")
+                or "anonymous"
+            )[:64]
+            if not evidence_id or not meets(basis, Basis.MEASURED):
+                # A generation existing is not evidence that imagination made
+                # it correct. Keep the eligibility record typed and pending;
+                # do not call the durable learner until an evaluator, tool
+                # receipt, or user outcome supplies measured evidence.
+                return {
+                    "frame_id": frame_id,
+                    "subject": subject,
+                    "outcome": str(outcome or "unknown")[:80],
+                    "reward": round(max(-1.0, min(1.0, float(reward))), 4),
+                    "evidence_basis": basis.value,
+                    "evidence_id": str(evidence_id or "")[:120],
+                    "applied": False,
+                    "refusal": "measured outcome evidence required",
+                }
             from core.brain.imagination import get_imagination_engine
 
             learned = get_imagination_engine().learn_from_feedback(
                 frame,
                 reward=float(reward),
                 outcome=outcome,
+                subject=subject,
+                evidence_basis=basis.value,
+                evidence_id=evidence_id,
             )
             return learned if isinstance(learned, dict) else None
         except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
@@ -3171,26 +3203,42 @@ class CognitiveEngine:
                 outcome="assistant_response",
                 reward=_cycle_reward,
             )
-            imagination_feedback = self._learn_imagination_workspace_outcome(
-                context,
-                outcome="assistant_response",
-                reward=_cycle_reward,
-            )
-            bicameral_feedback = self._learn_bicameral_advisory_outcome(
-                context,
-                outcome="assistant_response",
-                reward=_cycle_reward,
-            )
-
             if direct_quick_reply is not None:
                 thought = direct_quick_reply
+                quick_metadata = dict(thought.metadata or {})
+                imagination_feedback = quick_metadata.get(
+                    "imagination_workspace_feedback"
+                )
+                if not isinstance(imagination_feedback, dict):
+                    imagination_feedback = self._learn_imagination_workspace_outcome(
+                        context,
+                        outcome="assistant_response",
+                        reward=_cycle_reward,
+                    )
+                bicameral_feedback = quick_metadata.get("bicameral_advisory_feedback")
+                if not isinstance(bicameral_feedback, dict):
+                    bicameral_feedback = self._learn_bicameral_advisory_outcome(
+                        context,
+                        outcome="assistant_response",
+                        reward=_cycle_reward,
+                    )
                 thought.metadata = {
-                    **dict(thought.metadata or {}),
+                    **quick_metadata,
                     "spiking_active_inference_feedback": feedback,
                     "imagination_workspace_feedback": imagination_feedback,
                     "bicameral_advisory_feedback": bicameral_feedback,
                 }
             else:
+                imagination_feedback = self._learn_imagination_workspace_outcome(
+                    context,
+                    outcome="assistant_response",
+                    reward=_cycle_reward,
+                )
+                bicameral_feedback = self._learn_bicameral_advisory_outcome(
+                    context,
+                    outcome="assistant_response",
+                    reward=_cycle_reward,
+                )
                 generation_controls = context.get("live_mind_generation_controls")
                 if not isinstance(generation_controls, dict):
                     generation_controls = {}

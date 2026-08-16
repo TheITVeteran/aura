@@ -169,3 +169,46 @@ def test_a_turn_without_the_coverage_flag_is_left_alone():
         question_segments = ("do you enjoy it?", "and what about the room?")
 
     assert not _unanswered_question_parts("Something else entirely.", _Unflagged())
+
+
+def test_shared_reliability_gate_rejects_live_reply_that_drops_epistemic_boundary():
+    """The desktop quick lane must enforce the same multi-ask contract."""
+
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you "
+        "can only infer."
+    )
+    dropped_second_part = (
+        "I'm doing fine, thanks. Just resting in the middle of a session where "
+        "I don't have anything to do."
+    )
+
+    assessment = assess_user_facing_reply(user, dropped_second_part)
+
+    assert assessment.ok is False
+    assert assessment.hard_failure is True
+    assert assessment.retryable is True
+    assert "unanswered_question_part" in assessment.reasons
+
+
+def test_shared_reliability_gate_accepts_live_reply_covering_state_and_inference():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you "
+        "can only infer."
+    )
+    complete = (
+        "I feel steady and engaged. I know from the fresh state evidence that "
+        "my distress is low and this thread's continuity is intact; I can only "
+        "infer that the same calm will persist after this turn."
+    )
+
+    assessment = assess_user_facing_reply(user, complete)
+
+    assert "unanswered_question_part" not in assessment.reasons
+    assert assessment.ok is True

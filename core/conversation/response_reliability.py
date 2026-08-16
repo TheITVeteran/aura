@@ -55,11 +55,15 @@ from core.conversation.arithmetic_check import (
     requested_arithmetic_result,
 )
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
+from core.conversation.request_coverage import unanswered_question_parts
 from core.conversation.requested_reply_shape import reply_scope_text
 from core.dialogue.referents import borrowed_first_person_spans
 from core.dialogue.shared_history import has_fabricated_shared_history
 from core.runtime.errors import record_degradation
-from core.runtime.structured_input import looks_like_learning_resource_bundle
+from core.runtime.structured_input import (
+    analyze_prompt_shape,
+    looks_like_learning_resource_bundle,
+)
 from core.runtime.turn_outcome import note_candidate, note_suppression
 
 logger = logging.getLogger("Aura.Conversation.ResponseReliability")
@@ -2956,6 +2960,7 @@ _REQUEST_COVERAGE_REASONS = frozenset(
         "low_signal_acknowledgement_placeholder",
         "persona_card_deflection",
         "contextual_relevance_miss",
+        "unanswered_question_part",
     }
 )
 
@@ -3394,6 +3399,20 @@ def _semantic_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
         if not identity_answered:
             reasons.append("missing_identity_answer")
     return reasons
+
+
+def _compound_request_coverage_reasons(
+    user_message: Any,
+    reply_text: Any,
+) -> list[str]:
+    """Apply the shared multi-ask contract to every user-facing reply lane."""
+
+    user = visible_user_request(user_message)
+    reply = str(reply_text or "").strip()
+    if not user or not reply:
+        return []
+    shape = analyze_prompt_shape(user)
+    return ["unanswered_question_part"] if unanswered_question_parts(reply, shape) else []
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -7706,6 +7725,8 @@ def _assess_user_facing_reply(
             user_facing=True,
             sensory_evidence=sensory_evidence,
         )
+        if request_is_knowable:
+            reasons.extend(_compound_request_coverage_reasons(user_message, raw))
         unique = tuple(dict.fromkeys(reasons))
         hard_reasons = {
             "empty_reply",
@@ -7735,6 +7756,7 @@ def _assess_user_facing_reply(
             "unsupported_runtime_limits_claim",
             "generic_assistant_language",
             "incomplete_code_response",
+            "unanswered_question_part",
         }
         return ConversationReplyAssessment(
             ok=not unique,
@@ -7857,6 +7879,7 @@ def _assess_user_facing_reply(
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
     reasons.extend(_semantic_coverage_reasons(user_message, raw))
+    reasons.extend(_compound_request_coverage_reasons(user_message, raw))
     reasons.extend(_count_contract_quality_reasons(user_message, raw))
     # Every check above asks whether the reply has enough of the right KIND of
     # content for this kind of turn. None asks whether it engages what was
@@ -7982,6 +8005,7 @@ def _assess_user_facing_reply(
         # A wrong or absent number served as an arithmetic answer is not a
         # style nit — it is a false statement with a checkable truth value.
         "arithmetic_answer_missing",
+        "unanswered_question_part",
     }
     retryable_reasons = hard_reasons | {
         # A derivation that never states the answer it was asked for is real
@@ -8026,6 +8050,7 @@ def _assess_user_facing_reply(
         "prompt_echo_contamination",
         "protocol_artifact_leakage",
         "arithmetic_answer_missing",
+        "unanswered_question_part",
     }
     if not request_is_knowable:
         # The person's turn could not be isolated from the assembled prompt, so
