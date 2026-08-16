@@ -1,16 +1,27 @@
 """core/brain/llm/gemini_adapter.py
 Frontier LLM Adapter for Google Gemini API.
 
-Provides PRIMARY-tier reasoning via Gemini 1.5 Pro/Flash while respecting
-free tier rate limits to prevent charges and 429 errors.
+Provides PRIMARY-tier reasoning via Gemini, with a local daily and
+per-minute call budget and automatic fallback to on-device models when
+that budget is spent.
 
-Free tier limits (as of March 2026):
-    - Gemini Pro:        50 RPD,  2 RPM
-    - Gemini Flash:      1500 RPD, 15 RPM
+**These limits do not prevent charges.** This header used to promise
+"free tier rate limits to prevent charges" and quote 50 RPD for Pro and
+1500 for Flash, while the code shipped 2,000 and 10,000 and labelled them
+paid-tier baselines (CP126 ``74e032d2``). Nothing here checks a billing
+plan, estimates a token price, reads a dollar budget, calls a billing API
+or sets a provider-side quota. What it has is a call counter, and a call
+counter on an account with billing enabled limits requests, not money.
 
-Strategy: Use Flash for streaming chat (250 RPD budget), Pro for deep
-reasoning only when explicitly requested (100 RPD budget). Automatic
-fallback to local models when daily quota is exhausted.
+:data:`DAILY_CALL_BUDGET` is the one number that stands between this
+adapter and an unbounded bill. It is enforced across every model, not per
+model, because the account is billed as one account. Set
+``AURA_GEMINI_DAILY_CALL_BUDGET`` to change it; set it to 0 to refuse
+every cloud call.
+
+Estimated spend is reported from a per-call token estimate and a
+published per-token price. It is an ESTIMATE and says so wherever it
+appears; the provider is the only authority on what was actually charged.
 """
 import asyncio
 import json
@@ -77,9 +88,53 @@ def _clamp_float(value: Any, default: float, low: float, high: float) -> float:
 def _clamp_int(value: Any, default: int, low: int, high: int) -> int:
     try:
         result = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(low, min(high, result))
+
+
+def _env_int(name: str, default: int, *, low: int, high: int, description: str) -> int:
+    """A configured limit, clamped where it is read.
+
+    These were parsed at import with a bare ``int(...)``: a non-numeric
+    value raised during module import and took the whole adapter with it,
+    and a negative or enormous one silently disabled the protection or
+    blocked every call (CP126 ``f30df281``).
+    """
+    return _clamp_int(
+        env_str(name, default=default, description=description, owner=_FLAG_OWNER),
+        default,
+        low,
+        high,
+    )
+
+
+def _env_float(name: str, default: float, *, low: float, high: float, description: str) -> float:
+    return _clamp_float(
+        env_str(name, default=default, description=description, owner=_FLAG_OWNER),
+        default,
+        low,
+        high,
+    )
+
+
+_FLAG_OWNER = "core.brain.llm.gemini_adapter"
+
+#: Calls per day across EVERY Gemini model. The per-model limits below are
+#: throughput shaping; this is the account-level ceiling, and it is the only
+#: thing here that bounds spend at all (CP126 ``74e032d2``).
+DAILY_CALL_BUDGET = _clamp_int(
+    os.environ.get("AURA_GEMINI_DAILY_CALL_BUDGET", 4000), 4000, 0, 1_000_000
+)
+#: Published price per million input+output tokens, for the ESTIMATE only.
+#: The provider is the authority on what was charged.
+ESTIMATED_USD_PER_MTOK = _clamp_float(
+    os.environ.get("AURA_GEMINI_USD_PER_MTOK", 0.30), 0.30, 0.0, 1000.0
+)
+#: Tokens assumed per call when the response carries no usage count.
+ESTIMATED_TOKENS_PER_CALL = _clamp_int(
+    os.environ.get("AURA_GEMINI_TOKENS_PER_CALL", 2000), 2000, 1, 1_000_000
+)
 
 
 GEMINI_RECOVERABLE_ERRORS = (
@@ -93,6 +148,49 @@ GEMINI_RECOVERABLE_ERRORS = (
 )
 
 
+#: Failure kinds that are NOT a safe fallback. A credential failure, a
+#: privacy refusal, a quota exhaustion and a billing surprise all need an
+#: operator and evidence; hard-coding every one of them as SAFE_FALLBACK
+#: with receipt_required=False understated exactly the incidents that
+#: warrant action (CP126 ``7df05293``).
+#: Content that left WITHOUT screening would be a governance bypass. No path
+#: here can produce one: every request is screened or refused. The marker
+#: exists so that if a future path ever does, it is classified as what it is
+#: rather than as a fallback.
+_GOVERNANCE_MARKERS = ("unscreened", "bypassed_egress", "governance_bypass")
+#: Credentials, quota, spend and a refused egress all mean the cloud lane is
+#: gone. Falling back to local is correct AND the operator needs to know,
+#: which is what a receipt is for. Hard-coding every failure as
+#: SAFE_FALLBACK with receipt_required=False understated exactly the
+#: incidents that warrant action (CP126 ``7df05293``).
+_CAPABILITY_LOSS_MARKERS = (
+    "auth",
+    "api_key",
+    "api key",
+    "permission",
+    "credential",
+    "quota",
+    "billing",
+    "budget",
+    "exhaust",
+    "egress",
+    "privacy",
+    "consent",
+)
+
+
+def _classify_gemini_failure(
+    error: BaseException, action: str
+) -> tuple[FallbackClassification, bool]:
+    """Which kind of failure this is, and whether it needs a receipt."""
+    text = f"{type(error).__name__} {error} {action}".lower()
+    if any(marker in text for marker in _GOVERNANCE_MARKERS):
+        return FallbackClassification.GOVERNANCE_BYPASS, True
+    if any(marker in text for marker in _CAPABILITY_LOSS_MARKERS):
+        return FallbackClassification.SILENT_LOSS_OF_CAPABILITY, True
+    return FallbackClassification.SAFE_FALLBACK, False
+
+
 def _record_gemini_degradation(
     error: BaseException,
     *,
@@ -100,15 +198,104 @@ def _record_gemini_degradation(
     severity: Severity = "warning",
     extra: dict[str, Any] | None = None,
 ) -> None:
+    classification, receipt_required = _classify_gemini_failure(error, action)
     record_degradation(
         "gemini_adapter",
         error,
         severity=severity,
         action=action,
-        classification=FallbackClassification.SAFE_FALLBACK,
-        receipt_required=False,
+        classification=classification,
+        receipt_required=receipt_required,
         extra=extra,
     )
+
+
+#: Quota dimensions Google reports that mean "spent for the whole day".
+#: Anything else — a per-minute burst, a concurrency cap, a regional or
+#: token limit — is a wait, not an exhaustion.
+_DAILY_QUOTA_MARKERS = (
+    "perday",
+    "per_day",
+    "per day",
+    "requestsperday",
+    "dailylimit",
+    "daily limit",
+)
+
+
+def _first_reason(error: dict[str, Any]) -> str:
+    details = error.get("details")
+    if isinstance(details, list):
+        for entry in details:
+            if isinstance(entry, dict) and entry.get("reason"):
+                return str(entry["reason"])[:60]
+    return str(error.get("message", ""))[:0] or ""
+
+
+def _is_daily_quota_exhaustion(text: str) -> bool:
+    """Whether a 429 body actually says the DAY's quota is gone.
+
+    Prefers the structured quota metric Google returns; falls back to the
+    documented per-day markers. A bare "quota" is not one of them.
+    """
+    lowered = str(text or "").lower()
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        details = (parsed.get("error") or {}).get("details")
+        if isinstance(details, list):
+            for entry in details:
+                if not isinstance(entry, dict):
+                    continue
+                for violation in entry.get("violations") or []:
+                    if not isinstance(violation, dict):
+                        continue
+                    metric = str(violation.get("quotaId") or violation.get("quotaMetric") or "").lower()
+                    if any(marker in metric for marker in _DAILY_QUOTA_MARKERS):
+                        return True
+                    if metric:
+                        # A named dimension that is NOT daily settles it.
+                        return False
+    return any(marker in lowered for marker in _DAILY_QUOTA_MARKERS)
+
+
+def _sse_text_chunks(line: str) -> list[str]:
+    """Extract generated text from one server-sent-events line.
+
+    ``aiter_lines`` output was yielded verbatim, so a caller expecting model
+    text received ``data: {...}`` protocol frames, keep-alive blanks and the
+    done marker, and had to guess which was which (CP126 ``405d222c``).
+    Blocked or truncated finishes were invisible for the same reason.
+    """
+    raw = str(line or "").strip()
+    if not raw or raw.startswith(":"):
+        return []
+    if raw.startswith("data:"):
+        raw = raw[5:].strip()
+    if not raw or raw == "[DONE]":
+        return []
+    try:
+        event = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(event, dict):
+        return []
+
+    chunks: list[str] = []
+    for candidate in event.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        finish = str(candidate.get("finishReason") or "").upper()
+        if finish and finish not in {"STOP", "MAX_TOKENS"}:
+            # SAFETY, RECITATION and the rest are outcomes the caller has to
+            # be able to see. Yielding nothing made them look like the end.
+            raise GeminiProviderUnavailableError(f"gemini_finish_{finish.lower()}")
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            if isinstance(part, dict) and part.get("text"):
+                chunks.append(str(part["text"]))
+    return chunks
 
 
 class GeminiProviderUnavailableError(RuntimeError):
@@ -126,27 +313,52 @@ class DailyRateLimiter:
     """
     
     DEFAULT_LIMITS = {
-        "gemini-pro": int(env_str("AURA_GEMINI_RPD_PRO", default=2000, description="gemini rpd pro", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.5-flash": int(env_str("AURA_GEMINI_RPD_DEEP", default=2000, description="gemini rpd deep", owner="core.brain.llm.gemini_adapter")),
-        "gemini-flash-latest": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.0-flash": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.5-pro": int(env_str("AURA_GEMINI_RPD_THINKING", default=2000, description="gemini rpd thinking", owner="core.brain.llm.gemini_adapter")),
-        "gemini-3.5-flash": int(env_str("AURA_GEMINI_RPD_FLASH", default=10000, description="gemini rpd flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-3.5-pro": int(env_str("AURA_GEMINI_RPD_THINKING", default=2000, description="gemini rpd thinking", owner="core.brain.llm.gemini_adapter")),
+        "gemini-pro": _env_int("AURA_GEMINI_RPD_PRO", 2000, low=0, high=1_000_000, description="gemini rpd pro"),
+        "gemini-2.5-flash": _env_int("AURA_GEMINI_RPD_DEEP", 2000, low=0, high=1_000_000, description="gemini rpd deep"),
+        "gemini-flash-latest": _env_int("AURA_GEMINI_RPD_FLASH", 10000, low=0, high=1_000_000, description="gemini rpd flash"),
+        "gemini-2.0-flash": _env_int("AURA_GEMINI_RPD_FLASH", 10000, low=0, high=1_000_000, description="gemini rpd flash"),
+        "gemini-2.5-pro": _env_int("AURA_GEMINI_RPD_THINKING", 2000, low=0, high=1_000_000, description="gemini rpd thinking"),
+        "gemini-3.5-flash": _env_int("AURA_GEMINI_RPD_FLASH", 10000, low=0, high=1_000_000, description="gemini rpd flash"),
+        "gemini-3.5-pro": _env_int("AURA_GEMINI_RPD_THINKING", 2000, low=0, high=1_000_000, description="gemini rpd thinking"),
     }
     
     # Per-minute limits (High-performance baseline for paid tiers)
     RPM_LIMITS = {
-        "gemini-pro": int(env_str("AURA_GEMINI_RPM_PRO", default=50, description="gemini rpm pro", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.5-flash": int(env_str("AURA_GEMINI_RPM_DEEP", default=50, description="gemini rpm deep", owner="core.brain.llm.gemini_adapter")),
-        "gemini-flash-latest": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.0-flash": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-2.5-pro": int(env_str("AURA_GEMINI_RPM_THINKING", default=50, description="gemini rpm thinking", owner="core.brain.llm.gemini_adapter")),
-        "gemini-3.5-flash": int(env_str("AURA_GEMINI_RPM_FLASH", default=500, description="gemini rpm flash", owner="core.brain.llm.gemini_adapter")),
-        "gemini-3.5-pro": int(env_str("AURA_GEMINI_RPM_THINKING", default=50, description="gemini rpm thinking", owner="core.brain.llm.gemini_adapter")),
+        "gemini-pro": _env_int("AURA_GEMINI_RPM_PRO", 50, low=0, high=1_000_000, description="gemini rpm pro"),
+        "gemini-2.5-flash": _env_int("AURA_GEMINI_RPM_DEEP", 50, low=0, high=1_000_000, description="gemini rpm deep"),
+        "gemini-flash-latest": _env_int("AURA_GEMINI_RPM_FLASH", 500, low=0, high=1_000_000, description="gemini rpm flash"),
+        "gemini-2.0-flash": _env_int("AURA_GEMINI_RPM_FLASH", 500, low=0, high=1_000_000, description="gemini rpm flash"),
+        "gemini-2.5-pro": _env_int("AURA_GEMINI_RPM_THINKING", 50, low=0, high=1_000_000, description="gemini rpm thinking"),
+        "gemini-3.5-flash": _env_int("AURA_GEMINI_RPM_FLASH", 500, low=0, high=1_000_000, description="gemini rpm flash"),
+        "gemini-3.5-pro": _env_int("AURA_GEMINI_RPM_THINKING", 50, low=0, high=1_000_000, description="gemini rpm thinking"),
     }
     
     def __init__(self, state_path: str | None = None):
+        # Persist by DEFAULT. Disk persistence existed only when a caller
+        # supplied a path, and GeminiAdapter constructed this with none — so
+        # a restart reset the daily counters and could spend the provider's
+        # quota (and the account's money) twice in one day, while the class
+        # docstring said restarts do not lose the count (CP126 ``01b0579a``).
+        if state_path is None:
+            try:
+                from core.runtime.state_ownership import state_root
+
+                from core.runtime.file_write_gateway import get_file_write_gateway
+
+                default_path = state_root() / "data" / "gemini" / "rate_limiter.json"
+                # Through the gateway rather than a raw mkdir: this is a
+                # durable state directory, and the gateway is where those are
+                # governed.
+                get_file_write_gateway().ensure_directory(
+                    default_path.parent, source="brain.llm.gemini_adapter.rate_limiter"
+                )
+                state_path = str(default_path)
+            except (ImportError, AttributeError, OSError, RuntimeError) as exc:
+                _record_gemini_degradation(
+                    exc,
+                    action="ran the Gemini rate limiter in memory only; a restart will reset the daily count",
+                    severity="warning",
+                )
         self._counts: dict[str, int] = defaultdict(int)
         self._reset_date: str = self._today()
         self._state_path = state_path
@@ -180,13 +392,30 @@ class DailyRateLimiter:
             return True
     
     def _today(self) -> str:
-        """Current date in Pacific time (Google's billing day boundary)."""
+        """Current date on Google's billing day boundary.
+
+        A fixed UTC-8 was an approximation that is simply wrong for eight
+        months of the year: under daylight saving the local counter reset
+        an hour away from the provider's boundary, so calls made in that
+        hour were counted against the wrong day (CP126 ``a49001f5``).
+        """
         import datetime as dt
-        # Approximate Pacific time as UTC-8
-        pt = datetime.now(dt.UTC).astimezone(
-            dt.timezone(dt.timedelta(hours=-8))
-        )
-        return pt.strftime("%Y-%m-%d")
+
+        try:
+            from zoneinfo import ZoneInfo
+
+            pacific = datetime.now(dt.UTC).astimezone(ZoneInfo("America/Los_Angeles"))
+        except (ImportError, KeyError, ValueError) as exc:
+            # No tz database on this host. The fixed offset is wrong under
+            # DST, so say so rather than let the approximation pass as the
+            # provider's boundary.
+            _record_gemini_degradation(
+                exc,
+                action="fell back to a fixed UTC-8 billing day; the reset can be an hour off under daylight saving",
+                severity="info",
+            )
+            pacific = datetime.now(dt.UTC).astimezone(dt.timezone(dt.timedelta(hours=-8)))
+        return pacific.strftime("%Y-%m-%d")
     
     def _load_state(self):
         """Load daily counts from disk if available."""
@@ -282,11 +511,36 @@ class DailyRateLimiter:
         """True during the first 90s after boot — protect against startup RPM storms."""
         return (time.monotonic() - self._boot_time) < self.COLD_START_GRACE_S
 
+    def account_calls_today(self) -> int:
+        """Calls across EVERY model today. The account is billed as one."""
+        return sum(self._counts.values())
+
+    def estimated_spend_usd(self) -> float:
+        """An ESTIMATE, from a call count and a published price. Not a bill."""
+        tokens = self.account_calls_today() * ESTIMATED_TOKENS_PER_CALL
+        return round((tokens / 1_000_000.0) * ESTIMATED_USD_PER_MTOK, 4)
+
     def can_call(self, model: str, is_background: bool = False, priority: float = 0.5) -> bool:
         """Check if we have remaining quota for this model.
-        Background calls are prioritized lower to save credits for chat.
+
+        ``priority`` is read. It was accepted, documented as lowering
+        background admission, and never looked at, so an urgent background
+        call and an idle one were admitted identically (CP126
+        ``7fb09702``).
         """
         self._maybe_reset()
+
+        # The account-level ceiling comes first, because per-model limits
+        # shape throughput and this is the only line that bounds spend.
+        if self.account_calls_today() >= DAILY_CALL_BUDGET:
+            logger.warning(
+                "🚫 Gemini: daily account budget of %d calls is spent (est. $%.2f)",
+                DAILY_CALL_BUDGET,
+                self.estimated_spend_usd(),
+            )
+            return False
+
+        priority = _clamp_float(priority, 0.5, 0.0, 1.0)
         
         # Block non-urgent background calls during boot grace window
         if is_background and self.is_cold_start():
@@ -307,20 +561,60 @@ class DailyRateLimiter:
         
         # [Pipeline Hardening] Conservative background limit: Stop using Gemini for background tasks
         # once we hit the preservation threshold (default 30%), preserving 70% for the User.
-        preservation_threshold = float(env_str("AURA_GEMINI_BACKGROUND_THRESHOLD", default=0.3, description="gemini background threshold", owner="core.brain.llm.gemini_adapter"))
-        if is_background and self._counts[model] > (limit * preservation_threshold):
-            logger.debug("📉 Preserving Gemini %s quota: background call diverted (threshold: %.1f).", model, preservation_threshold)
+        # Clamped: a negative threshold blocked every background call and a
+        # value above one disabled the preservation entirely.
+        preservation_threshold = _env_float(
+            "AURA_GEMINI_BACKGROUND_THRESHOLD", 0.3, low=0.0, high=1.0,
+            description="gemini background threshold",
+        )
+        # Priority widens the background reserve for work that says it
+        # matters. At priority 1.0 a background call may use the same share
+        # a foreground one would; at 0.0 it gets the documented floor.
+        effective_threshold = preservation_threshold + (1.0 - preservation_threshold) * priority
+        if is_background and self._counts[model] > (limit * effective_threshold):
+            logger.debug(
+                "📉 Preserving Gemini %s quota: background call diverted "
+                "(threshold %.2f at priority %.2f).",
+                model,
+                effective_threshold,
+                priority,
+            )
             return False
 
         return self._counts[model] < limit
 
-    def reset_manual(self):
-        """Force a reset of all daily counters and backoffs."""
-        self._counts.clear()
-        self._backoff_until.clear()
-        self._reset_date = self._today()
-        self._save_state()
-        logger.info("📊 Gemini rate limits manually RESET.")
+    def reset_manual(self) -> dict[str, Any]:
+        """Clear the LOCAL counters and backoffs. Returns what it could not do.
+
+        It claimed to reset all backoffs and left ``_cluster_backoff_until``
+        untouched, so the local state contradicted itself: daily counts at
+        zero and the whole cluster still refusing (CP126 ``bb409736``).
+
+        It also cannot reconcile with the provider. Clearing a local counter
+        that reached the real quota re-enables calls that will 429, and on a
+        billed account those attempts still cost. The refusal to pretend
+        otherwise is the return value.
+        """
+        with self._lock:
+            self._counts.clear()
+            self._backoff_until.clear()
+            self._cluster_backoff_until = 0.0
+            self._reset_date = self._today()
+            self._save_state()
+        logger.warning(
+            "📊 Gemini rate limits manually RESET locally; the provider's quota "
+            "is unchanged and unknown."
+        )
+        return {
+            "local_counters_cleared": True,
+            "model_backoffs_cleared": True,
+            "cluster_backoff_cleared": True,
+            "provider_quota_reconciled": False,
+            "warning": (
+                "the provider's own quota was not consulted; calls admitted "
+                "after this reset may 429 and still count against the account"
+            ),
+        }
     
     def record_call(self, model: str):
         """Record one API call (attempt) against quota."""
@@ -334,15 +628,28 @@ class DailyRateLimiter:
             self._save_state()
     
     def get_usage(self) -> dict:
-        """Return current usage stats."""
+        """Return current usage stats, per model and per ACCOUNT."""
         self._maybe_reset()
-        return {
+        per_model = {
             model: {
                 "used": self._counts.get(model, 0),
                 "limit": limit,
                 "remaining": limit - self._counts.get(model, 0),
             }
             for model, limit in self.DEFAULT_LIMITS.items()
+        }
+        return {
+            "models": per_model,
+            "account": {
+                "calls_today": self.account_calls_today(),
+                "daily_call_budget": DAILY_CALL_BUDGET,
+                "estimated_spend_usd": self.estimated_spend_usd(),
+                # Said out loud wherever the number appears. Nothing here
+                # reads a billing plan or a billing API.
+                "spend_is_an_estimate": True,
+                "billing_plan_checked": False,
+            },
+            **per_model,
         }
 
 
@@ -374,22 +681,34 @@ class GeminiAdapter:
         # an indistinguishable empty string — the router reads this to tell a
         # failed call apart from a genuinely empty answer.
         self._last_generation_metadata: dict[str, Any] = {}
+        #: Whether the last generate_text_stream_async actually streamed.
+        #: In production it does not: there is no incremental network
+        #: stream, and a caller that needs one has to be able to find out.
+        self._last_stream_was_incremental: bool = False
         logger.info("✨ GeminiAdapter initialized: model=%s", self.model)
+
+    def streams_incrementally(self) -> bool:
+        """Whether the last stream call produced tokens as they arrived."""
+        return self._last_stream_was_incremental
 
     def get_last_generation_metadata(self) -> dict[str, Any]:
         """Telemetry from the most recent call, including {'error': ...} on
         failure. Consulted by the router when a string result is empty."""
         return dict(self._last_generation_metadata)
 
-    def _reserve_quota(self, is_background: bool) -> bool:
+    def _reserve_quota(self, is_background: bool, priority: float = 0.5) -> bool:
         """Atomically admit and count one call. Prefers the limiter's
         race-free ``try_reserve``; falls back to the older
         can_call/record_call pair for limiters that predate it."""
         limiter = self.rate_limiter
         reserve = getattr(limiter, "try_reserve", None)
         if callable(reserve):
-            return bool(reserve(self.model, is_background=is_background))
-        if not limiter.can_call(self.model, is_background=is_background):
+            return bool(
+                reserve(self.model, is_background=is_background, priority=priority)
+            )
+        if not limiter.can_call(
+            self.model, is_background=is_background, priority=priority
+        ):
             return False
         limiter.record_call(self.model)
         return True
@@ -413,6 +732,73 @@ class GeminiAdapter:
         """Optional test/diagnostic client seam; production uses NetworkGateway."""
         return None
 
+    def _screen_payload_for_egress(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Inspect every text part before it crosses to Google, or send none.
+
+        Prompt, system instruction, message history, arbitrary parts and
+        inlineData were posted to the external endpoint with no sensitivity
+        classification, no redaction and no per-request cloud opt-in (CP126
+        ``6343148b``). The request goes through NetworkGateway, which
+        inspects a body it can parse — but the decision to send a person's
+        turn to a third party is not a transport decision, and it was made
+        nowhere.
+
+        Returns None to mean "do not send this", which the callers already
+        treat as a failed cloud leg and answer locally.
+
+        `inlineData` is refused rather than screened. It is base64 media, a
+        redaction pass cannot read it, and passing it through would mean the
+        boundary inspected the text and waved the image.
+        """
+        try:
+            from core.security.egress_privacy import filter_model_prompt
+        except (ImportError, AttributeError) as exc:
+            _record_gemini_degradation(
+                exc,
+                action="refused the Gemini request rather than send an unscreened prompt",
+                severity="warning",
+            )
+            return None
+
+        screened = json.loads(json.dumps(payload))
+        blocks: list[str] = []
+
+        def _screen_parts(parts: Any) -> bool:
+            if not isinstance(parts, list):
+                return True
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("inlineData"):
+                    blocks.append("inline_media_cannot_be_screened")
+                    return False
+                text = part.get("text")
+                if not text:
+                    continue
+                result = filter_model_prompt(str(text), provider="gemini")
+                if not getattr(result, "allowed", False):
+                    blocks.append(str(getattr(result, "reason", "refused")))
+                    return False
+                part["text"] = getattr(result, "text", text)
+            return True
+
+        for content in screened.get("contents") or []:
+            if isinstance(content, dict) and not _screen_parts(content.get("parts")):
+                break
+        instruction = screened.get("systemInstruction")
+        if not blocks and isinstance(instruction, dict):
+            _screen_parts(instruction.get("parts"))
+
+        if blocks:
+            _record_gemini_degradation(
+                PermissionError(f"egress refused: {blocks[0]}"),
+                action="answered locally rather than send content the boundary refused",
+                severity="warning",
+                extra={"model": self.model},
+            )
+            return None
+        return screened
+
     def _auth_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         """API key travels in the x-goog-api-key HEADER, never the URL.
 
@@ -426,7 +812,26 @@ class GeminiAdapter:
         return headers
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any], str]:
-        response = await asyncio.to_thread(
+        """POST to the provider. Effectful, bounded, and cancellable-ish.
+
+        ``read_only=True`` was a misclassification with teeth: this request
+        transmits the person's private content to a third party, consumes
+        quota, may incur a charge, and creates provider-side logs and
+        retention. Marking it read-only let it past the effect governance
+        and audit policy that exists for writes (CP126 ``36da4662``).
+
+        The work runs in a worker thread, so cancelling this coroutine does
+        NOT stop the HTTP request: the bytes still go, the quota is still
+        spent, and the provider still logs it (CP126 ``4d0e2c27``). A thread
+        cannot be killed in Python, so instead of pretending, cancellation
+        is recorded — a caller that failed over needs to know a paid request
+        is still in flight behind it.
+        """
+        screened = self._screen_payload_for_egress(payload)
+        if screened is None:
+            return 0, {}, "egress_refused"
+        payload = screened
+        request = asyncio.to_thread(
             get_network_gateway().request,
             "POST",
             url,
@@ -434,8 +839,21 @@ class GeminiAdapter:
             data=json.dumps(payload),
             timeout=self.timeout,
             source=f"llm_provider:gemini:{self.model}",
-            read_only=True,
+            read_only=False,
         )
+        try:
+            response = await request
+        except asyncio.CancelledError:
+            _record_gemini_degradation(
+                RuntimeError("gemini request cancelled while in flight"),
+                action=(
+                    "the worker thread cannot be stopped, so the request completes "
+                    "and still counts against quota and spend"
+                ),
+                severity="warning",
+                extra={"model": self.model},
+            )
+            raise
         body = response.get("content") or b""
         text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
         data: dict[str, Any] = {}
@@ -453,6 +871,30 @@ class GeminiAdapter:
         error_body = await response.aread()
         await self._handle_error_payload(response.status_code, error_body)
 
+    @staticmethod
+    def _safe_error_summary(text: str) -> str:
+        """What may be logged from a provider error body.
+
+        Up to 500 characters of the raw body reached the logs and the
+        exception text, and compatibility paths propagated it. Those bodies
+        carry account identifiers, project numbers, quota dimensions, safety
+        verdicts and — on a content error — the submitted content itself
+        (CP126 ``70dea45b``). The structured fields are what an operator
+        needs; the prose is what leaks.
+        """
+        try:
+            parsed = json.loads(text)
+            error = parsed.get("error") if isinstance(parsed, dict) else None
+            if isinstance(error, dict):
+                return (
+                    f"status={error.get('status', '')} "
+                    f"code={error.get('code', '')} "
+                    f"reason={_first_reason(error)}"
+                ).strip()
+        except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+            pass
+        return f"unparsed_provider_error:{len(text)}_chars"
+
     async def _handle_error_payload(self, status_code: int, error_body: bytes | str):
         """Standardized error handling for Gemini API gateway responses."""
         if isinstance(error_body, str):
@@ -462,8 +904,12 @@ class GeminiAdapter:
         
         if status_code == 429:
             retry_after = self._parse_retry_after(error_body)
-            # Permanent Quota exhaustion detection
-            if "quota" in text.lower():
+            # A 429 whose body mentions "quota" anywhere used to set the
+            # local daily counter to its maximum, disabling the model for
+            # the rest of the day. Per-minute, per-region, per-token,
+            # concurrency and per-project limits all say "quota" and none of
+            # them is daily exhaustion (CP126 ``e4b432c5``).
+            if _is_daily_quota_exhaustion(text):
                 logger.error("🚫 Gemini %s: DAILY QUOTA EXHAUSTED", self.model)
                 self.rate_limiter._counts[self.model] = self.rate_limiter.DEFAULT_LIMITS.get(self.model, 80)
                 self.rate_limiter._save_state()
@@ -484,7 +930,10 @@ class GeminiAdapter:
             logger.warning("%s", reason)
             raise GeminiProviderUnavailable(reason)
         else:
-            msg = f"Gemini API error {status_code}: {text[:500]}"
+            # Structured fields only. 500 characters of raw body reached the
+            # log AND the exception text that compatibility paths propagate,
+            # and a content error carries the submitted content.
+            msg = f"Gemini API error {status_code}: {self._safe_error_summary(text)}"
             logger.warning(msg)
             raise GeminiProviderUnavailable(msg)
 
@@ -545,10 +994,17 @@ class GeminiAdapter:
                         async for line in response.aiter_lines():
                             if cancel_event and cancel_event.is_set():
                                 return
-                            if line:
-                                yield line
+                            for chunk in _sse_text_chunks(line):
+                                yield chunk
                     # Already counted at reserve time; do not double-count.
+                    self._last_stream_was_incremental = True
                     return
+            # No incremental network stream exists on this path. `call` runs
+            # to completion and one full string is yielded, so there are no
+            # early tokens and cancelling mid-answer stops nothing (CP126
+            # ``fc2f4358``). The interface is kept because the router's
+            # race_think_stream needs it; the claim is not.
+            self._last_stream_was_incremental = False
             ok, text, metadata = await self.call(prompt, system_prompt=system_prompt, **kwargs)
             if not ok:
                 raise GeminiProviderUnavailable(str(metadata.get("error") or "gemini_stream_call_failed"))
@@ -638,9 +1094,13 @@ class GeminiAdapter:
             if prompt and prompt.strip():
                 parts = [{"text": prompt}]
             elif sys_prompt:
-                # Move system_prompt to user content so Gemini has valid data
-                parts = [{"text": sys_prompt}]
-                system_instruction = None  # Don't double-send
+                # The system prompt used to be MOVED into a user part and
+                # systemInstruction cleared, so governance text arrived with
+                # the same authority as anything the person typed and became
+                # contestable by it (CP126 ``f3fe949e``). It keeps its place;
+                # the user turn gets a minimal placeholder so the request is
+                # valid.
+                parts = [{"text": "Respond according to your instructions."}]
             else:
                 return False, "", {"error": "No content to send to Gemini"}
         

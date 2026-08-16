@@ -3585,6 +3585,14 @@
       "scope": "<module>.IdentityService.save"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/gemini_adapter.py",
+      "scope": "<module>.DailyRateLimiter.__init__"
+    },
+    {
       "callee": "<file_write_gateway>.append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15962,6 +15970,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "9b3138fd1699111460f007fe9753c05b0394bc241775d91be18a76fd5cc4f092",
+  "inventory_sha256": "145719ba2a4b126614554a5f61c4e121346d00c5501020125d941077dba4141d",
   "schema_version": 1
 }

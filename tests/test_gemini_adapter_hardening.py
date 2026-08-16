@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import pytest
 
+import pathlib
+import tempfile
+
 from core.brain.llm.gemini_adapter import (
     DailyRateLimiter,
     GeminiAdapter,
@@ -17,8 +20,18 @@ from core.brain.llm.gemini_adapter import (
 # ── secret is never in the URL ─────────────────────────────────────────────
 
 
+def _isolated_limiter() -> DailyRateLimiter:
+    """A limiter with its own state file.
+
+    The limiter persists by default now (CP126 ``01b0579a``), so a bare
+    ``DailyRateLimiter()`` reads whatever the host — or an earlier test in
+    the same process — left behind.
+    """
+    return DailyRateLimiter(state_path=str(pathlib.Path(tempfile.mkdtemp()) / "usage.json"))
+
+
 def test_api_key_travels_in_the_header_not_the_url():
-    adapter = GeminiAdapter(api_key="SECRET_KEY", rate_limiter=DailyRateLimiter())
+    adapter = GeminiAdapter(api_key="SECRET_KEY", rate_limiter=_isolated_limiter())
     headers = adapter._auth_headers()
     assert headers["x-goog-api-key"] == "SECRET_KEY"
 
@@ -27,7 +40,7 @@ def test_api_key_travels_in_the_header_not_the_url():
 
 
 def test_try_reserve_is_atomic_and_counts_attempts():
-    limiter = DailyRateLimiter()
+    limiter = _isolated_limiter()
     limiter.DEFAULT_LIMITS = {"m": 3}
     reserved = [limiter.try_reserve("m") for _ in range(5)]
     # Exactly the limit is admitted; the rest are refused — no overrun.
@@ -36,8 +49,11 @@ def test_try_reserve_is_atomic_and_counts_attempts():
         limiter._counts["m"] == 3
 
 
-def test_reserve_counts_before_the_network_so_failures_are_not_free():
-    limiter = DailyRateLimiter()
+def test_reserve_counts_before_the_network_so_failures_are_not_free(tmp_path):
+    # Its own state file. The limiter persists by default now (CP126
+    # 01b0579a), so a bare _isolated_limiter() reads whatever the host — or
+    # an earlier test in the same run — left behind.
+    limiter = DailyRateLimiter(state_path=str(tmp_path / "usage.json"))
     limiter.DEFAULT_LIMITS = {"m": 10}
     limiter.try_reserve("m")
     assert limiter._counts["m"] == 1  # counted at reserve, not after success
@@ -67,7 +83,7 @@ def test_clamp_int(value, expected):
 
 @pytest.mark.asyncio
 async def test_failed_call_is_discoverable_through_last_metadata(monkeypatch):
-    adapter = GeminiAdapter(api_key="k", rate_limiter=DailyRateLimiter())
+    adapter = GeminiAdapter(api_key="k", rate_limiter=_isolated_limiter())
 
     async def _fake_call(_prompt, **_kwargs):
         return False, "", {"error": "provider_exploded"}
@@ -84,7 +100,7 @@ async def test_failed_call_is_discoverable_through_last_metadata(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_successful_call_records_ok_metadata(monkeypatch):
-    adapter = GeminiAdapter(api_key="k", rate_limiter=DailyRateLimiter())
+    adapter = GeminiAdapter(api_key="k", rate_limiter=_isolated_limiter())
 
     async def _fake_call(_prompt, **_kwargs):
         return True, "the answer", {}
@@ -100,7 +116,7 @@ async def test_successful_call_records_ok_metadata(monkeypatch):
 @pytest.mark.asyncio
 async def test_per_call_model_argument_is_honored(monkeypatch):
     adapter = GeminiAdapter(api_key="k", model="base-model",
-                            rate_limiter=DailyRateLimiter())
+                            rate_limiter=_isolated_limiter())
     seen: list[str] = []
 
     async def _fake_call(_prompt, **_kwargs):
