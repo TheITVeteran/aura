@@ -1,9 +1,42 @@
 import http.server
+import pathlib
 import socket
 import threading
 from pathlib import Path
 
 import pytest
+
+# The fixture is an http server on 127.0.0.1, which the browser's SSRF
+# policy refuses by default and should. The opt-in is an environment
+# flag the process owner sets, it covers LOOPBACK only — not the rest
+# of the local network — and every use is recorded (CP126 8bf8d32e).
+@pytest.fixture(autouse=True)
+def _allow_loopback_fixture(monkeypatch):
+    monkeypatch.setenv("AURA_BROWSER_ALLOW_LOOPBACK", "1")
+
+
+def _playwright_browser_installed() -> bool:
+    """Whether a browser binary Playwright can launch is actually here."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+    try:
+        with sync_playwright() as engine:
+            return bool(pathlib.Path(engine.chromium.executable_path).exists())
+    except Exception:  # noqa: BLE001 - any launch-path failure means "not installed"
+        return False
+
+
+#: This drives a real browser. Without `playwright install` there is no
+#: binary to launch, and the test failed with an executable-not-found error
+#: that reads as a capability regression. It is a missing dependency, and
+#: the skip says so — the same treatment this suite gives a model that is
+#: not on the host.
+pytestmark = pytest.mark.skipif(
+    not _playwright_browser_installed(),
+    reason="playwright browser binary is not installed; run `playwright install chromium`",
+)
 
 from tools.agi.run_dynamic_browsing_task import run_browsing_task
 

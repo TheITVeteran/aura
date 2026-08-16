@@ -12,6 +12,12 @@ import logging
 import sys
 from typing import Any
 
+from core.capabilities.browser_authority import (
+    BrowserAction,
+    issue_browser_lease,
+    origin_of,
+    revoke_browser_lease,
+)
 from core.capabilities.phantom_browser import PhantomBrowser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -32,10 +38,23 @@ async def run_browsing_task(
     target_link_text: str | None = None,
     expected_content_keywords: list[str] | None = None,
     click_selector: str | None = None,
+    *,
+    principal: str = "browsing_task",
 ) -> dict[str, Any]:
-    """Execute a dynamic browsing session using the live PhantomBrowser."""
+    """Execute a dynamic browsing session using the live PhantomBrowser.
+
+    Names a principal and takes an interaction lease. Every browser method
+    now requires both — a click can buy something, and this harness used
+    to drive one anonymously (CP126 ``a66d2e59``).
+    """
     logger.info("Starting dynamic browsing task for URL: %s", start_url)
     browser = PhantomBrowser(visible=False)
+    lease = issue_browser_lease(
+        principal=principal,
+        origin=origin_of(start_url if start_url.lower().startswith("http") else f"https://{start_url}"),
+        actions={BrowserAction.CLICK, BrowserAction.TYPE},
+        purpose="dynamic browsing task",
+    )
     
     try:
         # Initialize browser
@@ -50,7 +69,7 @@ async def run_browsing_task(
             }
         
         # 1. Browse start URL
-        success = await browser.browse(start_url)
+        success = await browser.browse(start_url, principal=principal)
         if not success:
             return {"ok": False, "error": f"Failed to navigate to {start_url}"}
         
@@ -61,14 +80,14 @@ async def run_browsing_task(
         # 3. Handle optional dynamic interactions
         if target_link_text:
             logger.info("Attempting to click link with text: '%s'", target_link_text)
-            clicked = await browser.click(text_match=target_link_text)
+            clicked = await browser.click(text_match=target_link_text, principal=principal, lease_id=lease.lease_id)
             if not clicked:
                 logger.warning("Failed to click link using text match. Attempting link traversal via extraction.")
-                links = await browser.get_links()
+                links = await browser.get_links(principal=principal)
                 for link in links:
                     if target_link_text.lower() in link.get("text", "").lower():
                         logger.info("Found matching link URL: %s. Direct traversing.", link["url"])
-                        await browser.browse(link["url"])
+                        await browser.browse(link["url"], principal=principal)
                         clicked = True
                         break
             if not clicked:
@@ -76,7 +95,7 @@ async def run_browsing_task(
                 
         elif click_selector:
             logger.info("Attempting to click selector: '%s'", click_selector)
-            clicked = await browser.click(selector=click_selector)
+            clicked = await browser.click(selector=click_selector, principal=principal, lease_id=lease.lease_id)
             if not clicked:
                 return {"ok": False, "error": f"Could not click selector: '{click_selector}'"}
 
@@ -106,6 +125,7 @@ async def run_browsing_task(
         logger.exception("An error occurred during dynamic browsing: %s", e)
         return {"ok": False, "error": str(e)}
     finally:
+        revoke_browser_lease(lease.lease_id)
         await browser.close()
         logger.info("Phantom Browser closed.")
 
