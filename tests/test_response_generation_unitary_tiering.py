@@ -537,6 +537,7 @@ async def test_desktop_descriptive_context_bounds_foreground_generation(monkeypa
     assert kwargs["deep_handoff"] is False
     assert kwargs["max_tokens"] == 768
     assert kwargs["num_predict"] == 768
+    assert kwargs["user_surface_completion_floor"] == 768
     assert kwargs["skip_runtime_payload"] is True
     assert kwargs["disable_prompt_cache"] is True
     assert kwargs["clear_prompt_cache"] is True

@@ -5849,15 +5849,15 @@
       "scope": "<module>._record_sync"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "callee": "<file_write_gateway>.ensure_directory_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.__init__"
+      "scope": "<module>.ManifestToDeviceSkill.execute"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
+      "callee": "<file_write_gateway>.write_bytes_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -6593,7 +6593,7 @@
       "scope": "<module>.InterAgentCommSkill.execute"
     },
     {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
       "canonical_owner": false,
       "category": "network_gateway",
       "count": 1,
@@ -11961,6 +11961,22 @@
       "scope": "<module>.FileWriteGateway.copy_path_async._copy"
     },
     {
+      "callee": "os.rename",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
+    },
+    {
       "callee": "shutil.rmtree",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -13969,6 +13985,14 @@
       "scope": "<module>.NetworkGateway.request"
     },
     {
+      "callee": "urllib.request.build_opener",
+      "canonical_owner": true,
+      "category": "raw_network",
+      "count": 1,
+      "path": "core/runtime/network_gateway.py",
+      "scope": "<module>._build_public_pinned_opener"
+    },
+    {
       "callee": "socket.create_connection",
       "canonical_owner": false,
       "category": "raw_network",
@@ -15946,6 +15970,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e9cdabb8eba6d9f0ae4535bf935425e852c67bea8c7e1020b1e4dbe93457cd54",
+  "inventory_sha256": "5c51972dca5546db9b7019bfe3cbc33ed93e8fcd649288f1ac47245a43129f43",
   "schema_version": 1
 }

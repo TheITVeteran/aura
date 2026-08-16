@@ -1587,6 +1587,30 @@ async def test_event_bus_optional_redis_skips_concurrent_remote_publish_when_bus
 
 
 @pytest.mark.asyncio
+async def test_event_bus_local_only_publish_never_waits_on_foreign_owner_loop():
+    from core.event_bus import AuraEventBus
+
+    class BusyForeignLoop:
+        def is_running(self):
+            return True
+
+    bus = AuraEventBus()
+    bus._use_redis = False
+    bus._loop = BusyForeignLoop()
+    queue = asyncio.PriorityQueue()
+    bus._subscribers["runtime/test"].add((queue, asyncio.get_running_loop()))
+
+    await asyncio.wait_for(
+        bus.publish("runtime/test", {"ok": True}), timeout=0.1
+    )
+    await asyncio.sleep(0)
+
+    _priority, _sequence, event = queue.get_nowait()
+    assert event["topic"] == "runtime/test"
+    assert event["data"]["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_event_bus_shutdown_skips_remote_publish_without_false_degradation():
     from core.event_bus import AuraEventBus
 

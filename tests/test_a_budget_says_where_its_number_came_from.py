@@ -10,8 +10,11 @@ structural constraint block.
 """
 from __future__ import annotations
 
+import asyncio
 import ast
+import contextlib
 from pathlib import Path
+import queue
 
 import pytest
 
@@ -95,4 +98,83 @@ def test_the_worker_reports_what_it_already_tokenized():
     module = (ROOT / "core" / "brain" / "llm" / "token_budget_evidence.py").read_text("utf-8")
 
     assert "observe_prompt_tokenization" in worker
+    assert '"prompt_tokenization"' in worker
     assert "tokenizer" not in module.split('"""', 2)[2], "the evidence module tokenizes"
+
+
+def test_terminal_worker_measurements_cross_into_the_parent_budget() -> None:
+    from core.brain.llm.mlx_client import _observe_worker_prompt_tokenization
+
+    for index in range(tbe.MIN_OBSERVATIONS):
+        assert _observe_worker_prompt_tokenization(
+            {
+                "id": f"request-{index}",
+                "status": "ok",
+                "action": "generate",
+                "prompt_tokenization": {"chars": 300, "tokens": 100},
+            }
+        )
+
+    ratio = tbe.chars_per_token()
+    assert ratio.source is tbe.RatioSource.MEASURED
+    assert ratio.observations == tbe.MIN_OBSERVATIONS
+    assert ratio.ratio == pytest.approx(3.0)
+
+
+def test_nonterminal_or_implausible_worker_measurements_are_not_admitted() -> None:
+    from core.brain.llm.mlx_client import _observe_worker_prompt_tokenization
+
+    assert not _observe_worker_prompt_tokenization(
+        {
+            "id": "heartbeat",
+            "status": "heartbeat",
+            "action": "generate",
+            "prompt_tokenization": {"chars": 300, "tokens": 100},
+        }
+    )
+    assert not _observe_worker_prompt_tokenization(
+        {
+            "id": "malformed",
+            "status": "ok",
+            "action": "generate",
+            "prompt_tokenization": {"chars": 100_000, "tokens": 3},
+        }
+    )
+    assert tbe.chars_per_token().observations == 0
+
+
+@pytest.mark.asyncio
+async def test_the_parent_listener_consumes_correlated_worker_measurements() -> None:
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient(model_path="/tmp/aura-token-evidence-test-model")
+    response_queue: queue.Queue[dict[str, object]] = queue.Queue()
+    client._res_q = response_queue
+    client._response_queue_generation = 17
+    request_id = "token-evidence-listener"
+    future = asyncio.get_running_loop().create_future()
+    client._pending_generations[request_id] = future
+    client._current_request_id = request_id
+    client._current_gen_future = future
+
+    listener = asyncio.create_task(
+        client._response_listener_loop(response_queue, 17)
+    )
+    try:
+        response_queue.put(
+            {
+                "id": request_id,
+                "status": "ok",
+                "action": "generate",
+                "text": "done",
+                "prompt_tokenization": {"chars": 330, "tokens": 100},
+            }
+        )
+        result = await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
+    finally:
+        listener.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await listener
+
+    assert result["text"] == "done"
+    assert tbe.chars_per_token().observations == 1

@@ -425,6 +425,31 @@ def _bounded_progress_value(value: Any) -> Any:
     return f"<unsupported:{type(value).__name__}>"
 
 
+def _observe_worker_prompt_tokenization(response: Mapping[str, Any]) -> bool:
+    """Admit one exact tokenizer measurement from a terminal worker frame."""
+
+    if response.get("status") != "ok" or response.get("action") not in {
+        "generate",
+        "generate_batch",
+        "stream_done",
+    }:
+        return False
+    evidence = response.get("prompt_tokenization")
+    if not isinstance(evidence, Mapping):
+        return False
+    try:
+        from core.brain.llm.token_budget_evidence import observe_prompt_tokenization
+
+        return bool(
+            observe_prompt_tokenization(
+                evidence.get("chars"),
+                evidence.get("tokens"),
+            )
+        )
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return False
+
+
 #: A servable MLX artifact carries a model config, a tokenizer, and weights.
 #: Anything missing means the worker will fail at load time — after the healthy
 #: one has already been torn down.
@@ -10868,6 +10893,18 @@ class MLXLocalClient:
                 status = res.get("status")
                 action = res.get("action")
                 req_id = res.get("id")
+
+                # Only a terminal frame correlated to work this parent owns
+                # may shape its budget evidence. A stale/unknown worker frame
+                # is dropped below and must not bias every later prompt.
+                if (
+                    req_id
+                    and (
+                        req_id in self._pending_generations
+                        or req_id == self._current_request_id
+                    )
+                ):
+                    _observe_worker_prompt_tokenization(res)
 
                 # 1. Update SubsystemAudit Heartbeat
                 if status == "heartbeat":

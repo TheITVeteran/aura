@@ -619,8 +619,19 @@ class AuraEventBus:
         except RuntimeError:
             current_loop = None
 
-        # Delegate to the main loop if we are called on a secondary loop
-        if current_loop and self._loop and self._loop is not current_loop and self._loop.is_running():
+        # Redis clients are loop-bound, so their path must return to the owner
+        # loop. Local delivery is not: _publish_local snapshots subscribers
+        # under a thread-safe lock and schedules each queue on its own loop.
+        # Delegating a local-only publish anyway made MindTick wait five seconds
+        # on an unrelated busy loop and report a false EventBus stall even with
+        # Redis disabled.
+        if (
+            self._use_redis
+            and current_loop
+            and self._loop
+            and self._loop is not current_loop
+            and self._loop.is_running()
+        ):
             fut = asyncio.run_coroutine_threadsafe(
                 self.publish(topic, data, priority), self._loop
             )

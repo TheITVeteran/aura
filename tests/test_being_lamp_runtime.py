@@ -419,9 +419,9 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
     from core.executive.authority_gateway import AuthorityGateway
 
     continuity_context = AuthorityGateway._memory_write_context(
-        "conversation_continuity",
-        "user",
-        {"provenance_source": "user", "explicit_memory_request": True},
+        "interaction_commit",
+        "memory_facade",
+        {"request_origin": "user", "conversation_exchange_id": "lisbon-1"},
         "my flight to Lisbon is on October 14th at 6:40am",
     )
     continuity_policy = runtime.action_policy(
@@ -453,6 +453,14 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
     assert unattested_policy["outcome"] == "defer"
     assert generic_memory_policy["outcome"] == "defer"
     assert high_risk_policy["outcome"] == "defer"
+
+    replay_policy = runtime.action_policy(
+        now,
+        domain="memory_write",
+        priority=0.5,
+        context=continuity_context,
+    )
+    assert replay_policy["outcome"] == "defer"
 
 
 def test_introspection_verifier_rejects_unsupported_overclaim() -> None:

@@ -911,9 +911,11 @@ class SteeringVectorLibrary:
                     # result may be (hidden_states,) or just hidden_states
                     h = res[0] if isinstance(res, tuple) else res
                     if h is not None:
-                        # Capture last token (detach via numpy copy)
+                        # Keep this in MLX until evaluation completes. NumPy
+                        # cannot consume an MLX bfloat16 PEP 3118 buffer, so
+                        # float32 is the stable host boundary for CAA statistics.
                         # Hidden shape: [batch, sequence, d_model]
-                        captured[0] = np.array(h[0, -1, :])  # [d_model]
+                        captured[0] = h[0, -1, :].astype(mx.float32)  # [d_model]
                     return res
 
             # 3. Swap Class (Dynamic Subclassing Patch)
@@ -927,7 +929,10 @@ class SteeringVectorLibrary:
                     input_ids = tokens
                 input_tensor = mx.array([input_ids])
                 _ = model(input_tensor)
-                mx.eval(_)  # Force evaluation (MLX is lazy)
+                if captured[0] is None:
+                    mx.eval(_)
+                else:
+                    mx.eval(_, captured[0])
             except (RuntimeError, AttributeError, TypeError) as inner_e:
                 _emit_affective_fault(
                     inner_e,
@@ -940,7 +945,9 @@ class SteeringVectorLibrary:
                 # 4. Restore Original Class
                 target_block.__class__ = original_class
 
-            return captured[0]
+            if captured[0] is None:
+                return None
+            return np.array(captured[0], dtype=np.float32, copy=True)
 
         # Collect positive activations
         for p in positive_prompts:

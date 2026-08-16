@@ -5839,6 +5839,11 @@ class UnitaryResponsePhase(Phase):
                 capped_tokens = max(64, min(foreground_cap, 2048))
                 llm_kwargs["max_tokens"] = capped_tokens
                 llm_kwargs["num_predict"] = capped_tokens
+                # Memory-pressure shaping must not silently undo the answer
+                # budget selected for the foreground turn. The MLX worker
+                # otherwise reduced a 1,536-token code explanation to 344
+                # characters and stopped in the middle of a sentence.
+                llm_kwargs["user_surface_completion_floor"] = capped_tokens
             if runtime_context.get("skip_runtime_payload"):
                 llm_kwargs["skip_runtime_payload"] = True
             if runtime_context.get("disable_prompt_cache"):

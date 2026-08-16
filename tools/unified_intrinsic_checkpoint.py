@@ -8,6 +8,8 @@ import json
 import os
 import re
 import stat
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -25,6 +27,12 @@ _STAGING_ID: Final = re.compile(r"\.checkpoint-stage-[0-9a-f]{32}")
 MAX_GENERATION_ENTRIES: Final = 10_000
 SOURCE_MIGRATION_SCHEMA: Final = (
     "aura.unified_intrinsic.checkpoint_source_migration.v2"
+)
+CHECKPOINT_RETENTION_SCHEMA: Final = (
+    "aura.unified_intrinsic.checkpoint_retention.v1"
+)
+_POINTER_FILENAME: Final = re.compile(
+    r"(checkpoint_[a-z][a-z0-9_]{0,63})_pointer\.json"
 )
 
 
@@ -126,6 +134,28 @@ class ResolvedUnifiedCheckpoint:
     weights_path: Path
     generation_dir: Path
     pointer: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointRetentionCandidate:
+    name: str
+    stem: str
+    step: int
+    size_bytes: int
+    device: int
+    inode: int
+    mtime_ns: int
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointRetentionPlan:
+    output_dir: Path
+    generation_root: Path
+    rollback_generations_per_stem: int
+    protected_generations: tuple[str, ...]
+    rollback_generations: tuple[str, ...]
+    staged_generations: tuple[str, ...]
+    candidates: tuple[CheckpointRetentionCandidate, ...]
 
 
 def _stable_bytes(path: Path, *, max_bytes: int) -> bytes:
@@ -390,6 +420,422 @@ def resolve_checkpoint_generation(
         generation_dir=generation_dir,
         pointer=pointer,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _RetentionGeneration:
+    candidate: CheckpointRetentionCandidate
+    receipt: dict[str, Any]
+    receipt_raw: bytes
+
+
+def _retention_generation(path: Path) -> _RetentionGeneration:
+    """Validate enough immutable structure to decide whether deletion is safe.
+
+    This deliberately does not hash the tensor payload. Hashing every obsolete
+    gigabyte on every checkpoint publication would turn retention into the
+    dominant training cost. Pointer targets still bind the canonical receipt;
+    unpointed candidates must have an intact signed receipt, exact file shape,
+    owner custody, a read-only tensor and the declared byte count.
+    """
+
+    metadata = _directory_identity(path, modes=frozenset({0o500}))
+    try:
+        entries = tuple(path.iterdir())
+    except OSError as exc:
+        raise UnifiedCheckpointError(
+            "unified checkpoint generation is unreadable"
+        ) from exc
+    if any(entry.is_symlink() for entry in entries):
+        raise UnifiedCheckpointError("unified checkpoint generation is a symlink")
+
+    receipt, receipt_raw = _canonical_json(
+        path / "complete.json",
+        max_bytes=256 * 1024 * 1024,
+    )
+    try:
+        complete = (path / "complete.json").lstat()
+    except OSError as exc:
+        raise UnifiedCheckpointError(
+            "unified checkpoint generation receipt is unavailable"
+        ) from exc
+    stem = receipt.get("stem")
+    step = receipt.get("step")
+    identity = receipt.get("identity")
+    weights_name = receipt.get("checkpoint_file")
+    receipt_body = {
+        key: value for key, value in receipt.items() if key != "receipt_sha256"
+    }
+    if (
+        receipt.get("schema") != TRAINING_SCHEMA
+        or receipt.get("checkpoint_generation_schema")
+        != CHECKPOINT_GENERATION_SCHEMA
+        or receipt.get("checkpoint_id") != path.name
+        or not isinstance(stem, str)
+        or _validate_stem(stem) != stem
+        or type(step) is not int
+        or step < 0
+        or path.name
+        != f"{stem}-step-{step:08d}-{path.name.rsplit('-', 1)[-1]}"
+        or not isinstance(identity, dict)
+        or not isinstance(identity.get("identity_sha256"), str)
+        or len(identity["identity_sha256"]) != 64
+        or not isinstance(weights_name, str)
+        or Path(weights_name).name != weights_name
+        or receipt.get("receipt_sha256") != canonical_sha256(receipt_body)
+    ):
+        raise UnifiedCheckpointError("unified checkpoint generation differs")
+
+    weights_path = path / weights_name
+    try:
+        weights = weights_path.lstat()
+    except OSError as exc:
+        raise UnifiedCheckpointError(
+            "unified checkpoint generation weights are unavailable"
+        ) from exc
+    expected_entries = {"complete.json", weights_name}
+    if (
+        {entry.name for entry in entries} != expected_entries
+        or not stat.S_ISREG(complete.st_mode)
+        or complete.st_uid != os.geteuid()
+        or stat.S_IMODE(complete.st_mode) != 0o400
+        or not stat.S_ISREG(weights.st_mode)
+        or weights.st_uid != os.geteuid()
+        or stat.S_IMODE(weights.st_mode) != 0o400
+        or type(receipt.get("checkpoint_size_bytes")) is not int
+        or weights.st_size != receipt.get("checkpoint_size_bytes")
+        or not isinstance(receipt.get("checkpoint_sha256"), str)
+        or len(receipt["checkpoint_sha256"]) != 64
+    ):
+        raise UnifiedCheckpointError("unified checkpoint generation weights differ")
+
+    return _RetentionGeneration(
+        candidate=CheckpointRetentionCandidate(
+            name=path.name,
+            stem=stem,
+            step=step,
+            size_bytes=int(weights.st_size + len(receipt_raw)),
+            device=int(metadata.st_dev),
+            inode=int(metadata.st_ino),
+            mtime_ns=int(metadata.st_mtime_ns),
+        ),
+        receipt=receipt,
+        receipt_raw=receipt_raw,
+    )
+
+
+def checkpoint_retention_plan(
+    output_dir: Path,
+    *,
+    rollback_generations_per_stem: int = 2,
+) -> CheckpointRetentionPlan:
+    """Plan deletion only from complete generations no pointer can reach.
+
+    Every pointer target is protected, irrespective of stem. Two additional
+    complete generations per stem are retained by default for rollback. A
+    staged generation is left alone. A symlink, unknown name, malformed
+    pointer, incomplete generation, or custody mismatch refuses the whole plan
+    before a single path becomes eligible.
+    """
+
+    if (
+        isinstance(rollback_generations_per_stem, bool)
+        or not isinstance(rollback_generations_per_stem, int)
+        or not 0 <= rollback_generations_per_stem <= 64
+    ):
+        raise ValueError("rollback generation retention must be between 0 and 64")
+    expanded = output_dir.expanduser()
+    if expanded.is_symlink():
+        raise UnifiedCheckpointError("unified checkpoint output is a symlink")
+    output = expanded.resolve(strict=True)
+    _directory_identity(output, modes=frozenset({0o700}))
+    generation_root_path = output / "checkpoint_generations"
+    if generation_root_path.is_symlink():
+        raise UnifiedCheckpointError(
+            "unified recurrence checkpoint generation is a symlink"
+        )
+    if not generation_root_path.exists():
+        return CheckpointRetentionPlan(
+            output_dir=output,
+            generation_root=generation_root_path,
+            rollback_generations_per_stem=rollback_generations_per_stem,
+            protected_generations=(),
+            rollback_generations=(),
+            staged_generations=(),
+            candidates=(),
+        )
+    generation_root = generation_root_path.resolve(strict=True)
+    _directory_identity(generation_root, modes=frozenset({0o700}))
+
+    generations: dict[str, _RetentionGeneration] = {}
+    staged: list[str] = []
+    try:
+        generation_entries = sorted(generation_root.iterdir(), key=lambda item: item.name)
+    except OSError as exc:
+        raise UnifiedCheckpointError(
+            "unified checkpoint generation inventory is unreadable"
+        ) from exc
+    if len(generation_entries) > MAX_GENERATION_ENTRIES:
+        raise UnifiedCheckpointError(
+            "unified checkpoint generation inventory is unbounded"
+        )
+    for candidate in generation_entries:
+        if candidate.is_symlink():
+            raise UnifiedCheckpointError("unified checkpoint generation is a symlink")
+        if _STAGING_ID.fullmatch(candidate.name):
+            _directory_identity(candidate, modes=frozenset({0o500, 0o700}))
+            staged.append(candidate.name)
+            continue
+        if _CHECKPOINT_ID.fullmatch(candidate.name) is None:
+            raise UnifiedCheckpointError("unified checkpoint generation name differs")
+        generations[candidate.name] = _retention_generation(candidate)
+
+    protected: set[str] = set()
+    pointer_count = 0
+    for pointer_path in sorted(output.glob("checkpoint_*_pointer.json")):
+        pointer_count += 1
+        if pointer_count > 256:
+            raise UnifiedCheckpointError("unified checkpoint pointer inventory is unbounded")
+        match = _POINTER_FILENAME.fullmatch(pointer_path.name)
+        if match is None or pointer_path.is_symlink():
+            raise UnifiedCheckpointError("unified recurrence checkpoint pointer differs")
+        stem = _validate_stem(match.group(1))
+        pointer, _pointer_raw = _canonical_json(pointer_path, max_bytes=64 * 1024)
+        relative = pointer.get("checkpoint")
+        if (
+            set(pointer)
+            != {
+                "schema",
+                "checkpoint",
+                "complete_sha256",
+                "identity_sha256",
+                "step",
+                "stem",
+            }
+            or pointer.get("schema") != CHECKPOINT_POINTER_SCHEMA
+            or pointer.get("stem") != stem
+            or type(pointer.get("step")) is not int
+            or not isinstance(relative, str)
+        ):
+            raise UnifiedCheckpointError("unified recurrence checkpoint pointer differs")
+        relative_path = Path(relative)
+        if (
+            relative_path.is_absolute()
+            or relative_path.parts[:1] != ("checkpoint_generations",)
+            or len(relative_path.parts) != 2
+            or _CHECKPOINT_ID.fullmatch(relative_path.parts[1]) is None
+        ):
+            raise UnifiedCheckpointError(
+                "unified recurrence checkpoint pointer path is invalid"
+            )
+        target = generations.get(relative_path.parts[1])
+        if target is None:
+            raise UnifiedCheckpointError(
+                "unified recurrence checkpoint generation is unavailable"
+            )
+        receipt = target.receipt
+        if (
+            hashlib.sha256(target.receipt_raw).hexdigest()
+            != pointer.get("complete_sha256")
+            or receipt.get("stem") != stem
+            or receipt.get("step") != pointer.get("step")
+            or receipt.get("identity", {}).get("identity_sha256")
+            != pointer.get("identity_sha256")
+        ):
+            raise UnifiedCheckpointError(
+                "unified recurrence checkpoint generation differs"
+            )
+        protected.add(target.candidate.name)
+
+    unpointed_by_stem: dict[str, list[CheckpointRetentionCandidate]] = {}
+    for generation in generations.values():
+        candidate = generation.candidate
+        if candidate.name not in protected:
+            unpointed_by_stem.setdefault(candidate.stem, []).append(candidate)
+
+    rollback: set[str] = set()
+    removable: list[CheckpointRetentionCandidate] = []
+    for candidates in unpointed_by_stem.values():
+        ordered = sorted(
+            candidates,
+            key=lambda candidate: (candidate.step, candidate.name),
+            reverse=True,
+        )
+        rollback.update(
+            candidate.name
+            for candidate in ordered[:rollback_generations_per_stem]
+        )
+        removable.extend(ordered[rollback_generations_per_stem:])
+    removable.sort(key=lambda candidate: (candidate.stem, candidate.step, candidate.name))
+
+    return CheckpointRetentionPlan(
+        output_dir=output,
+        generation_root=generation_root,
+        rollback_generations_per_stem=rollback_generations_per_stem,
+        protected_generations=tuple(sorted(protected)),
+        rollback_generations=tuple(sorted(rollback)),
+        staged_generations=tuple(sorted(staged)),
+        candidates=tuple(removable),
+    )
+
+
+def _retention_plan_material(plan: CheckpointRetentionPlan) -> dict[str, Any]:
+    return {
+        "output_dir": str(plan.output_dir),
+        "rollback_generations_per_stem": plan.rollback_generations_per_stem,
+        "protected_generations": list(plan.protected_generations),
+        "rollback_generations": list(plan.rollback_generations),
+        "staged_generations": list(plan.staged_generations),
+        "candidates": [
+            {
+                "name": candidate.name,
+                "stem": candidate.stem,
+                "step": candidate.step,
+                "size_bytes": candidate.size_bytes,
+                "device": candidate.device,
+                "inode": candidate.inode,
+                "mtime_ns": candidate.mtime_ns,
+            }
+            for candidate in plan.candidates
+        ],
+    }
+
+
+def _write_retention_receipt(
+    path: Path,
+    *,
+    receipt_id: str,
+    plan: CheckpointRetentionPlan,
+    state: str,
+    deleted: tuple[str, ...],
+    error: str = "",
+) -> dict[str, Any]:
+    material = _retention_plan_material(plan)
+    body = {
+        "schema": CHECKPOINT_RETENTION_SCHEMA,
+        "receipt_id": receipt_id,
+        "state": state,
+        "created_unix_ns": time.time_ns(),
+        "plan_sha256": canonical_sha256(material),
+        **material,
+        "candidate_count": len(plan.candidates),
+        "candidate_bytes": sum(candidate.size_bytes for candidate in plan.candidates),
+        "deleted_generations": list(deleted),
+        "error": error,
+    }
+    receipt = {**body, "receipt_sha256": canonical_sha256(body)}
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    get_file_write_gateway().write_text(
+        path,
+        (canonical_bytes(receipt) + b"\n").decode("ascii"),
+        encoding="ascii",
+        source="training.unified_checkpoint_retention",
+    )
+    return receipt
+
+
+def prune_checkpoint_generations(
+    output_dir: Path,
+    *,
+    rollback_generations_per_stem: int = 2,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Remove pointer-unreachable generations and return an auditable receipt."""
+
+    plan = checkpoint_retention_plan(
+        output_dir,
+        rollback_generations_per_stem=rollback_generations_per_stem,
+    )
+    material = _retention_plan_material(plan)
+    if dry_run or not plan.candidates:
+        body = {
+            "schema": CHECKPOINT_RETENTION_SCHEMA,
+            "state": "dry_run" if dry_run else "noop",
+            "plan_sha256": canonical_sha256(material),
+            **material,
+            "candidate_count": len(plan.candidates),
+            "candidate_bytes": sum(
+                candidate.size_bytes for candidate in plan.candidates
+            ),
+            "deleted_generations": [],
+        }
+        return {**body, "receipt_sha256": canonical_sha256(body)}
+
+    # Validate every inode immediately before the first deletion so a changed
+    # tree refuses as a whole instead of leaving a half-applied retention set.
+    for candidate in plan.candidates:
+        path = plan.generation_root / candidate.name
+        observed = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISDIR(observed.st_mode)
+            or observed.st_uid != os.geteuid()
+            or (
+                observed.st_dev,
+                observed.st_ino,
+                observed.st_mtime_ns,
+            )
+            != (candidate.device, candidate.inode, candidate.mtime_ns)
+        ):
+            raise UnifiedCheckpointError(
+                "unified checkpoint generation changed before retention"
+            )
+
+    from core.runtime.atomic_writer import ensure_private_directory
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    receipt_id = uuid.uuid4().hex
+    receipt_directory = ensure_private_directory(
+        plan.output_dir / "checkpoint_retention_receipts"
+    )
+    quarantine_directory = ensure_private_directory(
+        plan.output_dir / "checkpoint_retention_quarantine"
+    )
+    receipt_path = receipt_directory / f"retention-{receipt_id}.json"
+    _write_retention_receipt(
+        receipt_path,
+        receipt_id=receipt_id,
+        plan=plan,
+        state="planned",
+        deleted=(),
+    )
+
+    deleted: list[str] = []
+    try:
+        gateway = get_file_write_gateway()
+        for candidate in plan.candidates:
+            removed = gateway.delete_owned_readonly_tree(
+                plan.generation_root / candidate.name,
+                source="training.unified_checkpoint_retention",
+                expected_device=candidate.device,
+                expected_inode=candidate.inode,
+                expected_mtime_ns=candidate.mtime_ns,
+                quarantine_directory=quarantine_directory,
+            )
+            if not removed:
+                raise UnifiedCheckpointError(
+                    "unified checkpoint retention candidate disappeared"
+                )
+            deleted.append(candidate.name)
+    except (OSError, RuntimeError) as exc:
+        _write_retention_receipt(
+            receipt_path,
+            receipt_id=receipt_id,
+            plan=plan,
+            state="failed",
+            deleted=tuple(deleted),
+            error=f"{type(exc).__name__}:{exc}",
+        )
+        raise
+    receipt = _write_retention_receipt(
+        receipt_path,
+        receipt_id=receipt_id,
+        plan=plan,
+        state="complete",
+        deleted=tuple(deleted),
+    )
+    return {**receipt, "receipt_path": str(receipt_path)}
 
 
 def adopt_source_migration_identity(

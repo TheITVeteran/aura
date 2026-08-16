@@ -18,11 +18,40 @@ and is therefore unaffected.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.unit
 
 MONITORED = "interface/routes/chat.py"
+
+
+def test_current_revision_resolves_symbolic_ref_from_worktree_commondir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from core.security import integrity_guardian as ig_mod
+
+    checkout = tmp_path / "checkout"
+    worktree_git = tmp_path / "repo" / ".git" / "worktrees" / "checkout"
+    common_git = tmp_path / "repo" / ".git"
+    checkout.mkdir(parents=True)
+    worktree_git.mkdir(parents=True)
+    (common_git / "refs" / "heads" / "codex").mkdir(parents=True)
+    (checkout / ".git").write_text(
+        f"gitdir: {worktree_git}\n", encoding="utf-8"
+    )
+    (worktree_git / "HEAD").write_text(
+        "ref: refs/heads/codex/wow\n", encoding="utf-8"
+    )
+    (worktree_git / "commondir").write_text("../..\n", encoding="utf-8")
+    revision = "a" * 40
+    (common_git / "refs" / "heads" / "codex" / "wow").write_text(
+        revision + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(ig_mod, "_BASE_DIR", checkout)
+
+    assert ig_mod.IntegrityGuardian._current_source_revision() == revision
 
 
 @pytest.fixture()

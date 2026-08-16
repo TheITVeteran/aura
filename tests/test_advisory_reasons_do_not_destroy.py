@@ -85,9 +85,11 @@ class TestWordingFailuresKeepTheRecord:
     def test_wording_objections_are_continuity_safe(self) -> None:
         from core.conversation.surface_disposition import CONTINUITY_SAFE_REASONS
 
-        assert {"pseudo_internal_jargon", "function_word_starvation"} <= (
-            CONTINUITY_SAFE_REASONS
-        )
+        assert {
+            "borrowed_owner_first_person_speech",
+            "pseudo_internal_jargon",
+            "function_word_starvation",
+        } <= CONTINUITY_SAFE_REASONS
 
     def test_a_grounding_failure_is_not_continuity_safe(self) -> None:
         """A wrong claim about her own state must not be stored as what she said."""

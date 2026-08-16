@@ -10,6 +10,10 @@ from core.governance.recovery_authority import (
     is_internal_recovery_context,
     is_restorative_consolidation,
 )
+from core.governance_context import (
+    get_active_governance,
+    normalize_governance_domain,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.numeric_safety import validated_unit
 
@@ -88,7 +92,15 @@ def is_consequential_domain(domain_name: str) -> bool:
     return name not in NON_CONSEQUENTIAL_ACTION_DOMAINS
 
 
-def attested_context_flag(context: dict, flag: str, *, domain: str, action: str) -> bool:
+def attested_context_flag(
+    context: dict,
+    flag: str,
+    *,
+    domain: str,
+    action: str,
+    consume: bool = False,
+    child_receipt: str = "",
+) -> bool:
     """A context flag that is only true when a capability token backs it.
 
     CP126 3b1a9177 / 310a67ee: the foreground-desktop exception and the
@@ -113,7 +125,17 @@ def attested_context_flag(context: dict, flag: str, *, domain: str, action: str)
     try:
         from core.agency.capability_token import get_token_store
 
-        get_token_store().validate(token_str, domain=domain, action=action)
+        store = get_token_store()
+        if consume:
+            store.validate_and_consume(
+                token_str,
+                domain=domain,
+                action=action,
+                child_receipt=child_receipt or f"being_runtime:{flag}",
+                side_effects=[f"context_flag:{flag}"],
+            )
+        else:
+            store.validate(token_str, domain=domain, action=action)
     except (PermissionError, ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
             "being_runtime",
@@ -123,6 +145,39 @@ def attested_context_flag(context: dict, flag: str, *, domain: str, action: str)
         )
         return False
     return True
+
+
+def active_governance_attests_private_maintenance(
+    context: dict[str, Any],
+    *,
+    domain: str,
+) -> bool:
+    """Verify one private maintenance flag against the live local lease.
+
+    Internal capture housekeeping already executes inside a short-lived local
+    governance scope. Reusing that exact lease is stronger than minting a
+    second bearer token: the attestation cannot survive the scope, move to a
+    different task, or silently change operation.
+    """
+
+    if not context.get("internal_runtime_maintenance"):
+        return False
+    active = get_active_governance()
+    if active is None or not active.authorizes:
+        return False
+    constraints = dict(active.constraints or ())
+    return bool(
+        normalize_governance_domain(active.domain)
+        == normalize_governance_domain(domain)
+        and active.receipt_id
+        == str(context.get("capability_token_id") or "").strip()
+        and active.source
+        == str(context.get("authority_origin") or "").strip()
+        and constraints.get("governance_origin") == "local_internal"
+        and constraints.get("runtime_generated") is True
+        and str(constraints.get("op") or "").strip().lower()
+        == str(context.get("maintenance_operation") or "").strip().lower()
+    )
 
 
 class BeingRuntime:
@@ -523,16 +578,27 @@ class BeingRuntime:
         # CP126 310a67ee: these converted qualifying writes from defer to
         # constrain on the strength of caller-supplied booleans alone. The
         # flags now require a capability token bound to this domain+action.
+        memory_binding = str(context.get("memory_write_binding") or "").strip()
+        continuity_action = (
+            f"continuity_memory_write:{memory_binding}" if memory_binding else ""
+        )
         continuity_memory_write = bool(
             domain_name == "memory_write"
+            and continuity_action
             and (
                 attested_context_flag(
                     context, "conversation_continuity",
-                    domain=domain_name, action="continuity_memory_write",
+                    domain=domain_name,
+                    action=continuity_action,
+                    consume=True,
+                    child_receipt=f"being_runtime:{memory_binding}",
                 )
                 or attested_context_flag(
                     context, "explicit_observational_memory_write",
-                    domain=domain_name, action="continuity_memory_write",
+                    domain=domain_name,
+                    action=continuity_action,
+                    consume=True,
+                    child_receipt=f"being_runtime:{memory_binding}",
                 )
             )
             and not context.get("high_risk_memory_write")
@@ -542,6 +608,15 @@ class BeingRuntime:
             and attested_context_flag(
                 context, "foreground_continuity_state",
                 domain=domain_name, action="foreground_continuity_state",
+            )
+        )
+        internal_runtime_maintenance = bool(
+            domain_name == "file_write"
+            and context.get("effect_scope") == "private_runtime_maintenance"
+            and context.get("no_external_effects") is True
+            and active_governance_attests_private_maintenance(
+                context,
+                domain=domain_name,
             )
         )
         explicit_foreground_desktop_tool = bool(
@@ -578,8 +653,10 @@ class BeingRuntime:
             constraints.append(
                 f"unknown_action_domain_treated_as_consequential: {domain_name!r}"
             )
-        repair_lane = domain_name in {"stabilization", "reflection"} or (
-            is_internal_recovery_context(domain_name, context)
+        repair_lane = (
+            domain_name in {"stabilization", "reflection"}
+            or is_internal_recovery_context(domain_name, context)
+            or internal_runtime_maintenance
         )
 
         body_pressure = float(now.body.total_pressure)

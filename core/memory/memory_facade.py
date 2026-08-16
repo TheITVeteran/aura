@@ -1025,9 +1025,17 @@ class MemoryFacade:
                 await get_constitutional_core(self._orchestrator).approve_memory_write(
                     memory_type="interaction_commit",
                     content=f"{context[:160]} -> {action[:80]} -> {outcome[:160]}",
-                    source=resolved_source,
+                    # The authority source names the code producer, while the
+                    # original user-facing ingress remains evidence in the
+                    # bound metadata. A caller-controlled origin string must
+                    # not be able to impersonate the continuity producer.
+                    source="memory_facade",
                     importance=max(0.0, min(1.0, float(importance or 0.0))),
-                    metadata={"success": bool(success), **dict(metadata or {})},
+                    metadata={
+                        **dict(metadata or {}),
+                        "success": bool(success),
+                        "request_origin": resolved_source,
+                    },
                     return_decision=True,
                 )
             )

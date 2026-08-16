@@ -7,6 +7,8 @@ readings of success that used to be conflated.
 """
 from __future__ import annotations
 
+import contextvars
+
 import pytest
 
 from core.runtime.turn_outcome import (
@@ -15,7 +17,10 @@ from core.runtime.turn_outcome import (
     TurnOutcome,
     UserVisibleState,
     VerificationGrade,
+    bind_turn,
+    current_turn,
     finalize_turn,
+    note_candidate,
     outcome_from_candidates,
 )
 
@@ -173,6 +178,21 @@ def test_finalize_turn_helper_tolerates_a_second_call():
     first = finalize_turn(outcome)
     second = finalize_turn(outcome)
     assert first is second, "the finally-block helper must not raise over bookkeeping"
+
+
+def test_a_child_context_cannot_reopen_a_finalized_turn():
+    """Late background work inherits context, not authority over closed history."""
+    outcome = TurnOutcome(origin="user_chat")
+    with bind_turn(outcome):
+        inherited = contextvars.copy_context()
+        assert inherited.run(current_turn) is outcome
+
+    outcome.mark_served("done")
+    outcome.finalize()
+
+    assert inherited.run(current_turn) is None
+    assert inherited.run(note_candidate, "late", source="background") is None
+    assert outcome.candidates() == ()
 
 
 def test_the_ledger_is_bounded_and_keeps_the_newest():

@@ -541,7 +541,16 @@ register_contract(
             "transition cause when it happens."
         ),
         reads=("cognition.working_memory", "cognition.last_response"),
-        writes=("cognition.modifiers", "transition_cause"),
+        writes=(
+            "cognition.coherence_score",
+            "cognition.fragmentation_score",
+            "cognition.long_term_memory",
+            "cognition.modifiers",
+            "cognition.working_memory",
+            "health",
+            "response_modifiers",
+            "transition_cause",
+        ),
         preconditions=("state carries a cognition block",),
         branches=(
             BranchSpec(
@@ -558,8 +567,8 @@ register_contract(
         side_effects=("writes to the durable memory store",),
         calibration_source=(
             "writes measured by tools/observe_phase_writes.py on the no-model "
-            "path; consolidation itself lands outside AuraState, which is why "
-            "the declared write set is one field"
+            "path and expanded from live provenance receipts for the cleanup, "
+            "strict-proof, loop-removal, retention, and derived-health branches"
             "; reads reach state through this phase's delegate rather than "
             "appearing in this module, so they are declared from the "
             "delegate's behaviour, not by scanning this file"

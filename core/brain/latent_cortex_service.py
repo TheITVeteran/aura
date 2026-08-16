@@ -736,7 +736,15 @@ class LatentCortexService:
                     "prefix_stability_seed": 104_729,
                     "prefix_stability_calibrator": None,
                     "input_context_max_chars": 9000,
-                    "allow_vanilla_fallback": False,
+                    # The live cortex is an optional improvement over the
+                    # resident model's ordinary answer. Admission already
+                    # reserves a clean prefill+decode for this path, so a
+                    # numerically invalid recurrent phase must spend that
+                    # reserve instead of turning healthy chat into a total
+                    # failure. Scientific and lesion callers still provide
+                    # ``allow_vanilla_fallback=False`` explicitly; only this
+                    # interactive product profile is recovery-capable.
+                    "allow_vanilla_fallback": True,
                 }
             )
             if owner_timeout_s is not None:

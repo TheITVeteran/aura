@@ -268,3 +268,4 @@ class TestTheCheckNotJustTheLabel:
             recent_user_messages=self.BRYAN,
         )
         assert verdict.hard_failure is False
+        assert verdict.ok is True

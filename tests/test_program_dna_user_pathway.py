@@ -499,6 +499,44 @@ def test_web_interlocutor_ignores_caller_identity_before_unrelated_action():
     )
 
 
+@pytest.mark.parametrize(
+    "message",
+    (
+        "I'm just bored. Making ramen downstairs while ChatGPT runs tests on ya.",
+        "ChatGPT is running tests on Aura while I make dinner.",
+        "Claude tested the build and told me it passed.",
+        "The ChatGPT conversation was interesting, but I am done with it now.",
+    ),
+)
+def test_web_interlocutor_does_not_turn_reports_into_browser_actions(message):
+    from interface.routes import chat as chat_routes
+
+    assert not chat_routes._looks_like_web_interlocutor_execution_request(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "Open ChatGPT and ask it what it thinks about the test results.",
+        "Can you talk to Claude about this run and report back?",
+        "Please start a conversation with Gemini about the failing test.",
+    ),
+)
+def test_web_interlocutor_keeps_explicit_ai_conversation_requests(message):
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._looks_like_web_interlocutor_execution_request(message)
+
+
+def test_colloquial_correction_is_not_reinterpreted_as_a_new_action():
+    from core.conversation.request_mood import RequestMood, assess_request_mood
+
+    assessment = assess_request_mood("Didnt want you to do that, pal")
+
+    assert assessment.mood is RequestMood.MENTION
+    assert "refusal_to_act" in assessment.reasons
+
+
 def test_web_interlocutor_keeps_explicit_target_after_caller_identity():
     from interface.routes import chat as chat_routes
 

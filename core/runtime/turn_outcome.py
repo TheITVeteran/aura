@@ -1031,8 +1031,17 @@ def current_turn() -> TurnOutcome | None:
 
     None is normal and never an error: background work, tests and tools run
     with no turn, and every recording helper degrades to a no-op there.
+
+    A child task can inherit this ContextVar before the HTTP owner closes the
+    turn, then wake after delivery.  The copied context still points at the
+    same object, but a finalized outcome is no longer a *current* turn.  Do
+    not let late background reliability work mistake stale context for an
+    open ledger and manufacture an AlreadyFinalized runtime fault.
     """
-    return _CURRENT_TURN.get()
+    outcome = _CURRENT_TURN.get()
+    if outcome is not None and outcome.is_finalized:
+        return None
+    return outcome
 
 
 @contextlib.contextmanager

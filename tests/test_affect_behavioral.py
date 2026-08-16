@@ -328,6 +328,37 @@ class TestExpandedAffectiveDrivers:
 class TestQualiaCache:
     """Meta-qualia should cache per tick."""
 
+    def test_anti_correlation_stays_inside_the_public_unit_interval(
+        self, qualia_synth
+    ):
+        import numpy as np
+
+        for index in range(8):
+            vector = (
+                np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+                if index % 2 == 0
+                else np.array([1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
+            )
+            qualia_synth._history.append(
+                QualiaSnapshot(
+                    q_vector=vector,
+                    q_norm=float(np.linalg.norm(vector)),
+                    pri=0.5,
+                    ual_profile={},
+                    is_attractor=False,
+                    dominant_dimension="visual",
+                    timestamp=time.time(),
+                )
+            )
+
+        qualia_synth._tick = 42
+        meta = qualia_synth.compute_meta_qualia()
+
+        assert all(0.0 <= float(value) <= 1.0 for value in meta.values())
+        assert meta["coherence"] < 0.5
+        assert meta["dissonance"] > 0.0
+        assert meta["dissonance"] <= 1.0
+
     def test_meta_qualia_caches_per_tick(self, qualia_synth):
         """Calling compute_meta_qualia multiple times on same tick should return cached dict."""
         import numpy as np

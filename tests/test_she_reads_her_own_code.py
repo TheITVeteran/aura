@@ -382,24 +382,20 @@ def test_a_clipped_reply_is_completed_before_the_gate_judges_it():
     assert completed == "I think the tide turns at eleven."
 
 
-def test_the_chat_path_runs_the_completion():
+def test_the_chat_path_runs_bounded_model_authored_completion():
     source = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
     code = "\n".join(
         line for line in source.splitlines() if not line.strip().startswith("#")
     )
 
-    assert "_complete_reply_tail" in code
-
-    # And it must run BEFORE the reliability gate that judged the reply, not
-    # before some other assessment earlier in the file — there are several.
-    completion_at = code.index("_complete_reply_tail")
-    gate_at = code.index("assessment = assess_user_facing_reply", completion_at)
-    between = code[completion_at:gate_at]
-
-    assert gate_at > completion_at
-    # Nothing may return out of the function between the two, or the
-    # completion would not reach the gate that rejected the turn.
-    assert "\n        return" not in between
+    # Chat must preserve the draft and let the resident model finish it. A
+    # punctuation trimmer can make a fragment look syntactically complete by
+    # throwing away the answer the user asked for.
+    assert "_MAX_USER_SURFACE_CONTINUATIONS = 3" in code
+    assert "async def _attempt_repair_retry" in code
+    assert "completion_attempt=completion_attempt + 1" in code
+    assert "made_progress" in code
+    assert "_complete_reply_tail" not in code
 
 
 class TestAnExcerptArrivesByteForByte:
@@ -644,6 +640,10 @@ class TestSheReadsThePhrasingNotTheQuestion:
         "write me a python function that sorts a list",
         "show me the actual code for numpy",
         "how does pandas implement groupby internally",
+        "BOO",
+        "Did I scare you",
+        "Didnt want you to do that, pal",
+        "Was that... Was that humor?",
     )
 
     def _lane(self, text: str) -> bool:
@@ -656,14 +656,25 @@ class TestSheReadsThePhrasingNotTheQuestion:
         assert not missed, f"phrasings that never reached the tree: {missed}"
 
     def test_provenance_questions_reach_the_lane(self):
+        from core.self.source_excerpt import (
+            forget_shown_excerpt,
+            remember_shown_excerpt,
+        )
         from interface.routes.chat import _turn_asks_where_that_came_from
 
-        missed = [
-            ask
-            for ask in self.LIVE_PROVENANCE + self.UNSEEN_PROVENANCE
-            if not (_turn_asks_where_that_came_from(ask) and self._lane(ask))
-        ]
-        assert not missed, f"provenance questions with no path to the record: {missed}"
+        forget_shown_excerpt()
+        remember_shown_excerpt("I read this from core/mycelium.py:88 just now.")
+        try:
+            missed = [
+                ask
+                for ask in self.LIVE_PROVENANCE + self.UNSEEN_PROVENANCE
+                if not (_turn_asks_where_that_came_from(ask) and self._lane(ask))
+            ]
+            assert not missed, (
+                f"provenance questions with no path to the record: {missed}"
+            )
+        finally:
+            forget_shown_excerpt()
 
     def test_unrelated_turns_do_not_pull_her_source(self):
         pulled = [ask for ask in self.NOT_HER_SOURCE if self._lane(ask)]
@@ -730,6 +741,11 @@ class TestSheReadsThePhrasingNotTheQuestion:
         remember_shown_excerpt(
             "```python\ndef invented_thing(self):\n    return 1\n```"
         )
+        assert last_shown_excerpt() == {}
+
+        remember_shown_excerpt("I read this from core/mycelium.py:88 just now.")
+        assert last_shown_excerpt().get("relative_path") == "core/mycelium.py"
+        remember_shown_excerpt("That was dry humor, yes.")
         assert last_shown_excerpt() == {}
         forget_shown_excerpt()
 

@@ -763,18 +763,36 @@ class IntegrityGuardian:
                 marker = git_dir.read_text(encoding="utf-8", errors="replace").strip()
                 if marker.startswith("gitdir:"):
                     git_dir = (_BASE_DIR / marker.split(":", 1)[1].strip()).resolve()
+
+            # Linked worktrees keep HEAD and the index in their private gitdir,
+            # while branch refs and packed-refs live in the repository's common
+            # directory. Looking only beside HEAD makes every symbolic worktree
+            # revision appear blank, which makes a stale signed manifest look
+            # current and triggers one git-show "restore" per source file.
+            common_dir = git_dir
+            commondir_path = git_dir / "commondir"
+            if commondir_path.is_file():
+                relative_common = commondir_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
+                if relative_common:
+                    common_dir = (git_dir / relative_common).resolve()
+
             head_path = git_dir / "HEAD"
             head = head_path.read_text(encoding="utf-8", errors="replace").strip()
             if not head.startswith("ref:"):
                 return head
 
             ref_name = head.split(":", 1)[1].strip()
-            ref_path = git_dir / ref_name
-            if ref_path.exists():
-                return ref_path.read_text(encoding="utf-8", errors="replace").strip()
+            for ref_root in (git_dir, common_dir):
+                ref_path = ref_root / ref_name
+                if ref_path.is_file():
+                    return ref_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).strip()
 
-            packed_refs = git_dir / "packed-refs"
-            if packed_refs.exists():
+            packed_refs = common_dir / "packed-refs"
+            if packed_refs.is_file():
                 for line in packed_refs.read_text(encoding="utf-8", errors="replace").splitlines():
                     if line.startswith("#") or not line.strip():
                         continue

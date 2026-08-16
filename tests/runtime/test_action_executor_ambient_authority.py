@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,7 +69,7 @@ def test_governed_scope_authorizes_only_its_own_domain() -> None:
     assert context["ambient_scope_domain_mismatch"] == "network_call"
 
 
-def test_matching_scope_supplies_scoped_authority() -> None:
+def test_matching_scope_is_provenance_not_blanket_authority() -> None:
     from core.governance.will import ActionDomain
     from core.governance_context import local_internal_governed_scope
 
@@ -79,9 +80,125 @@ def test_matching_scope_supplies_scoped_authority() -> None:
     ):
         context = _authority_context(ActionDomain.FILE_WRITE)
 
-    assert context["scoped_authority"] == "governed_scope:file_write"
+    assert "scoped_authority" not in context
     assert context["authority_origin"] == "host_automation.screenshot_directory"
-    assert context["capability_token_id"]
+    assert "capability_token_id" not in context
+
+
+def test_private_maintenance_attestation_is_exact_and_state_root_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.governance.will import ActionDomain
+    from core.governance_context import local_internal_governed_scope
+    from core.runtime import action_executor
+
+    monkeypatch.setattr(action_executor, "state_root", lambda: tmp_path)
+    target = tmp_path / "data" / "screenshots"
+    params = {"path": str(target), "op": "ensure_directory"}
+    with local_internal_governed_scope(
+        "host_automation.screenshot_directory",
+        domain=ActionDomain.FILE_WRITE.value,
+        constraints=params,
+    ):
+        admitted = action_executor._ambient_authority_context(
+            ActionDomain.FILE_WRITE,
+            source="host_automation.screenshot_directory",
+            action_name="host_automation.ensure_screenshot_directory",
+            params=params,
+        )
+        mismatched = action_executor._ambient_authority_context(
+            ActionDomain.FILE_WRITE,
+            source="host_automation.screenshot_directory",
+            action_name="host_automation.ensure_screenshot_directory",
+            params={"path": str(tmp_path / "outside"), "op": "ensure_directory"},
+        )
+
+    assert admitted["internal_runtime_maintenance"] is True
+    assert admitted["scoped_authority"] == "exact_private_runtime_maintenance"
+    assert admitted["effect_scope"] == "private_runtime_maintenance"
+    assert admitted["capability_token_id"]
+    assert "capability_token" not in admitted
+    assert "internal_runtime_maintenance" not in mismatched
+    assert "capability_token" not in mismatched
+
+
+def test_private_maintenance_survives_only_soft_internal_state_defers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aura's own capture prerequisite must not deadlock on Aura's strain."""
+    from core.being.runtime import BeingRuntime
+    from core.governance.will import ActionDomain
+    from core.governance_context import local_internal_governed_scope
+    from core.runtime import action_executor
+
+    monkeypatch.setattr(action_executor, "state_root", lambda: tmp_path)
+    target = tmp_path / "data" / "screenshots"
+    params = {"path": str(target), "op": "ensure_directory"}
+    runtime = BeingRuntime.__new__(BeingRuntime)
+    runtime._last_welfare = SimpleNamespace(
+        action_inhibition=0.72,
+        recovery_drive=0.84,
+        integrity_guard=0.2,
+        self_report_confidence=0.9,
+        welfare_score=0.4,
+        truth_protection=0.5,
+        distress=0.2,
+        should_protect_integrity=lambda: False,
+        should_verify_before_claiming=lambda: False,
+    )
+    runtime._last_body_snapshot = SimpleNamespace(fatigue=0.4)
+    runtime._last_unified_felt = SimpleNamespace(coherent=False, coherence=0.59)
+    runtime.body_service = SimpleNamespace(
+        estimate_cost=lambda *_a, **_k: {"compute": 0.01}
+    )
+    runtime._refresh_causal_self_vector = lambda *_a, **_k: None
+    now = SimpleNamespace(
+        body=SimpleNamespace(total_pressure=0.5),
+        affect=SimpleNamespace(distress=0.2, dominant_drive="coherence"),
+        prediction=SimpleNamespace(controllability=0.7, free_energy=1.0),
+        workspace=SimpleNamespace(
+            ignition_strength=0.7,
+            broadcast_targets=("executive",),
+            winner="body_pressure",
+        ),
+        ownership=SimpleNamespace(agency_confidence=0.82),
+        state_hash="private-maintenance-test",
+        tick=581,
+    )
+
+    with local_internal_governed_scope(
+        "host_automation.screenshot_directory",
+        domain=ActionDomain.FILE_WRITE.value,
+        constraints=params,
+    ):
+        context = action_executor._ambient_authority_context(
+            ActionDomain.FILE_WRITE,
+            source="host_automation.screenshot_directory",
+            action_name="host_automation.ensure_screenshot_directory",
+            params=params,
+        )
+        admitted = runtime.action_policy(
+            now,
+            domain="file_write",
+            priority=0.5,
+            context=context,
+        )
+    forged = runtime.action_policy(
+        now,
+        domain="file_write",
+        priority=0.5,
+        context={
+            "internal_runtime_maintenance": True,
+            "effect_scope": "private_runtime_maintenance",
+            "no_external_effects": True,
+        },
+    )
+    assert admitted["outcome"] != "defer"
+    assert admitted["defers"] == []
+    assert "welfare_recovery_required_before_action" in forged["defers"]
+    assert "felt_state_incoherent_resolve_before_action" in forged["defers"]
 
 
 def test_expired_scope_does_not_authorize(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,13 +252,19 @@ def test_screenshot_directory_is_refused_without_a_scope(tmp_path: Path) -> None
 
 
 @pytest.mark.usefixtures("strict_will")
-def test_screenshot_directory_is_admitted_inside_its_scope(tmp_path: Path) -> None:
+def test_screenshot_directory_is_admitted_inside_its_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Screen perception's directory step must survive strict default-deny."""
     from core.governance.will import ActionDomain
     from core.governance_context import local_internal_governed_scope
-    from core.runtime.action_executor import ActionExecutor
+    from core.runtime import action_executor
 
-    target = tmp_path / "shots"
+    monkeypatch.setattr(action_executor, "state_root", lambda: tmp_path)
+    ActionExecutor = action_executor.ActionExecutor
+
+    target = tmp_path / "data" / "screenshots"
 
     async def _run() -> dict:
         with local_internal_governed_scope(

@@ -50,6 +50,7 @@ from core.runtime.skill_contract import (
     apply_action_expectation_payload,
     semantic_predicate_from_mapping,
 )
+from core.runtime.state_ownership import state_root
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.state.state_gateway import get_state_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -88,6 +89,20 @@ _SENSITIVE_PARAM_MARKERS = (
     "token",
 )
 _ACTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
+_PRIVATE_MAINTENANCE_ACTIONS = {
+    (
+        ActionDomain.FILE_WRITE.value,
+        "host_automation.screenshot_directory",
+        "host_automation.ensure_screenshot_directory",
+        "ensure_directory",
+    ),
+    (
+        ActionDomain.FILE_WRITE.value,
+        "host_automation.screenshot_retention",
+        "host_automation.screenshot_retention_delete",
+        "delete",
+    ),
+}
 EffectHandler = Callable[
     [Mapping[str, Any]],
     Mapping[str, Any] | Awaitable[Mapping[str, Any]],
@@ -113,6 +128,8 @@ def _ambient_authority_context(
     domain: ActionDomain,
     *,
     source: str = "unknown",
+    action_name: str = "",
+    params: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Authority provenance from the governed scope this call already runs in.
 
@@ -130,22 +147,20 @@ def _ambient_authority_context(
     reaching this class was therefore refused *as a matter of structure*:
     the gate was wired so that passing it was impossible.
 
-    The authority that was missing already existed one frame up. Callers
-    doing governed internal work run inside ``local_internal_governed_scope``,
-    which installs a receipt in a contextvar — the same token
-    ``require_governance`` (used elsewhere in this very module) already
-    treats as proof. This reads that token and lets the Will see it.
+    A governed scope is provenance, not automatically action authority. This
+    exposes a strict-mode grant only for the two exact, runtime-owned private
+    maintenance contracts below. Other matching-domain scopes remain visible
+    for diagnostics but cannot turn a domain label into blanket permission.
 
     It is deliberately NOT a bypass:
 
     * The token comes from a contextvar installed by governance code, never
       from caller-supplied params, so it is not forgeable the way a payload
       key is (see ``_FORGEABLE_AUTHORITY_KEYS`` in agency_orchestrator).
-    * ``get_active_governance`` returns None for an expired token, so a scope
-      cannot outlive its TTL.
-    * The scope authorizes ONLY its own declared domain. A scope opened for
-      ``state_mutation`` does not authorize a ``network_call``; ungoverned
-      code still gets nothing and is still refused.
+    * ``get_active_governance`` checks the shared lexical lease registry, so a
+      copied child-task ContextVar becomes inert when the owner exits.
+    * The operation, source and resolved private path must all equal the
+      constraints installed by the runtime-owned scope.
     """
     token = get_active_governance()
     if token is None:
@@ -158,12 +173,76 @@ def _ambient_authority_context(
             "ambient_governed_scope": token_domain or "unknown",
             "ambient_scope_domain_mismatch": domain.value,
         }
-    return {
-        "scoped_authority": f"governed_scope:{token_domain}",
+    context = {
         "authority_origin": str(getattr(token, "source", "") or source)[:240],
-        "capability_token_id": str(getattr(token, "receipt_id", "") or "")[:120],
         "ambient_governed_scope": token_domain,
     }
+    maintenance_attested = _private_maintenance_attested(
+        token,
+        domain=domain,
+        source=source,
+        action_name=action_name,
+        params=params,
+    )
+    if maintenance_attested:
+        context.update(
+            {
+                "scoped_authority": "exact_private_runtime_maintenance",
+                "capability_token_id": str(
+                    getattr(token, "receipt_id", "") or ""
+                )[:120],
+                "internal_runtime_maintenance": True,
+                "effect_scope": "private_runtime_maintenance",
+                "no_external_effects": True,
+                "maintenance_operation": str((params or {}).get("op") or ""),
+            }
+        )
+    return context
+
+
+def _private_maintenance_attested(
+    token: Any,
+    *,
+    domain: ActionDomain,
+    source: str,
+    action_name: str,
+    params: Mapping[str, Any] | None,
+) -> bool:
+    """Attest one private runtime prerequisite without widening file authority."""
+
+    constraints = dict(getattr(token, "constraints", ()) or ())
+    requested = dict(params or {})
+    operation = str(requested.get("op") or "").strip().lower()
+    source_name = str(source or "").strip()
+    declared_source = str(getattr(token, "source", "") or "").strip()
+    contract = (domain.value, source_name, str(action_name or "").strip(), operation)
+    if contract not in _PRIVATE_MAINTENANCE_ACTIONS:
+        return False
+    if declared_source != source_name:
+        return False
+    if constraints.get("governance_origin") != "local_internal":
+        return False
+    if constraints.get("runtime_generated") is not True:
+        return False
+    if str(constraints.get("op") or "").strip().lower() != operation:
+        return False
+
+    declared_path = Path(str(constraints.get("path") or "")).expanduser().resolve()
+    requested_path = Path(str(requested.get("path") or "")).expanduser().resolve()
+    if declared_path != requested_path:
+        return False
+    capture_roots = {
+        (state_root() / "data" / "screenshots").resolve(),
+        (state_root() / "data" / "ephemeral").resolve(),
+    }
+    if operation == "ensure_directory":
+        path_allowed = requested_path in capture_roots
+    else:
+        path_allowed = (
+            requested_path.parent in capture_roots
+            and requested_path.suffix.casefold() == ".png"
+        )
+    return path_allowed
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,9 +288,13 @@ class ActionExecutor:
             raise ValueError("action priority must be finite and between 0 and 1")
         authority = get_will()
         decision_context = dict(context or {})
-        decision_context.update(
-            _ambient_authority_context(resolved_domain, source=source)
+        ambient_context = _ambient_authority_context(
+            resolved_domain,
+            source=source,
+            action_name=resolved_name,
+            params=resolved_params,
         )
+        decision_context.update(ambient_context)
         decision = authority.decide(
             content=_safe_action_summary(resolved_name, resolved_params),
             source=str(source or "unknown")[:240],

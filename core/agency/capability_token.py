@@ -17,6 +17,7 @@ shutdown.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -28,6 +29,14 @@ logger = logging.getLogger("Aura.CapabilityToken")
 
 
 _PROCESS_GEN = f"{os.getpid()}-{int(time.time())}"
+
+
+def _current_task_id() -> int | None:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        return None
+    return id(task) if task is not None else None
 
 
 @dataclass
@@ -43,6 +52,7 @@ class CapabilityToken:
     issued_at: float = field(default_factory=time.time)
     process_gen: str = _PROCESS_GEN
     thread_id: int = field(default_factory=lambda: threading.get_ident())
+    task_id: int | None = field(default_factory=_current_task_id)
     revoked: bool = False
     revoked_reason: str | None = None
     consumed_at: float | None = None
@@ -112,10 +122,36 @@ class CapabilityTokenStore:
                 raise PermissionError("capability_token_post_shutdown")
             if tok.thread_id != threading.get_ident():
                 raise PermissionError("capability_token_cross_thread")
+            current_task_id = _current_task_id()
+            if tok.task_id is not None and tok.task_id != current_task_id:
+                raise PermissionError("capability_token_cross_task")
             if tok.domain != domain:
                 raise PermissionError(f"capability_token_wrong_domain:{tok.domain}!={domain}")
             if tok.requested_action != action:
                 raise PermissionError(f"capability_token_wrong_action:{tok.requested_action}!={action}")
+            return tok
+
+    def validate_and_consume(
+        self,
+        token_str: str,
+        *,
+        domain: str,
+        action: str,
+        child_receipt: str,
+        side_effects: list[str] | None = None,
+    ) -> CapabilityToken:
+        """Atomically validate and spend a single-use capability.
+
+        A separate ``validate`` followed by ``consume`` leaves a race where
+        two callers can both validate before either records consumption.
+        """
+
+        with self._lock:
+            tok = self.validate(token_str, domain=domain, action=action)
+            tok.consumed_at = time.time()
+            tok.child_execution_receipt = child_receipt
+            if side_effects:
+                tok.side_effects.extend(side_effects)
             return tok
 
     def consume(self, token_str: str, *, child_receipt: str, side_effects: list[str] | None = None) -> CapabilityToken:

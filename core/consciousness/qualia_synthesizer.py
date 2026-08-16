@@ -451,7 +451,12 @@ class QualiaSynthesizer:
                     corr_matrix = np.corrcoef(filtered.T)
                 corr_matrix = np.nan_to_num(corr_matrix, nan=0.5)
                 upper = corr_matrix[np.triu_indices_from(corr_matrix, k=1)]
-                coherence = float(np.mean(upper)) if len(upper) > 0 else 0.5
+                raw_coherence = float(np.mean(upper)) if len(upper) > 0 else 0.0
+                # Correlation is signed; the public meta-qualia contract is a
+                # unit interval. Anti-correlation means low coherence, not a
+                # negative activation. Leaving the scales mixed produced live
+                # values such as coherence=-0.98 and dissonance=1.28.
+                coherence = float(np.clip((raw_coherence + 1.0) / 2.0, 0.0, 1.0))
             else:
                 # All dimensions are static — coherence is trivially perfect
                 coherence = 1.0
@@ -465,8 +470,10 @@ class QualiaSynthesizer:
 
         # Dissonance: are some dimensions contradicting expected covariance?
         # (e.g. high coherence + low energy is unusual → dissonant)
-        expected_covariance = 0.3  # moderate positive covariance is "normal"
-        dissonance = max(0.0, expected_covariance - coherence)
+        # Coherence is now raw correlation remapped from [-1, 1] to [0, 1].
+        # Preserve the old raw-correlation threshold: (0.3 + 1) / 2.
+        expected_covariance = 0.65
+        dissonance = float(np.clip(expected_covariance - coherence, 0.0, 1.0))
 
         # Level 3: Meta-meta — confidence about the meta-qualia itself
         # Based on history depth (more data = more confident meta-assessment)

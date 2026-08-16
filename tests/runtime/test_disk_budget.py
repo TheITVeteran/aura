@@ -244,3 +244,84 @@ def test_the_sync_delete_reports_an_absent_path_rather_than_raising(tmp_path):
     assert (
         get_file_write_gateway().delete_path(tmp_path / "nope", source="test") is False
     )
+
+
+def test_owned_readonly_tree_delete_handles_immutable_artifacts(tmp_path):
+    import os
+
+    from core.runtime.file_write_gateway import get_file_write_gateway
+
+    generation = tmp_path / "generation"
+    generation.mkdir(mode=0o700)
+    weights = generation / "bundle.safetensors"
+    weights.write_bytes(b"weights")
+    os.chmod(weights, 0o400)
+    os.chmod(generation, 0o500)
+
+    assert get_file_write_gateway().delete_owned_readonly_tree(
+        generation,
+        source="test.checkpoint_retention",
+    )
+    assert not generation.exists()
+
+
+def test_owned_readonly_tree_delete_rejects_symlinks(tmp_path):
+    import os
+
+    from core.runtime.file_write_gateway import (
+        FileWriteTransactionError,
+        get_file_write_gateway,
+    )
+
+    generation = tmp_path / "generation"
+    generation.mkdir(mode=0o700)
+    outside = tmp_path / "outside"
+    outside.write_text("keep", encoding="utf-8")
+    (generation / "linked").symlink_to(outside)
+    os.chmod(generation, 0o500)
+
+    with pytest.raises(FileWriteTransactionError, match="custody differs"):
+        get_file_write_gateway().delete_owned_readonly_tree(
+            generation,
+            source="test.checkpoint_retention",
+        )
+
+    assert outside.read_text(encoding="utf-8") == "keep"
+    assert generation.exists()
+    os.chmod(generation, 0o700)
+    (generation / "linked").unlink()
+
+
+def test_owned_readonly_tree_delete_refuses_a_replaced_planned_inode(tmp_path):
+    import os
+
+    from core.runtime.file_write_gateway import (
+        FileWriteTransactionError,
+        get_file_write_gateway,
+    )
+
+    generation = tmp_path / "generation"
+    generation.mkdir(mode=0o700)
+    (generation / "old").write_bytes(b"old")
+    os.chmod(generation / "old", 0o400)
+    os.chmod(generation, 0o500)
+    planned = generation.lstat()
+
+    original = tmp_path / "original"
+    generation.rename(original)
+    generation.mkdir(mode=0o700)
+    (generation / "replacement").write_bytes(b"keep")
+    os.chmod(generation / "replacement", 0o400)
+    os.chmod(generation, 0o500)
+
+    with pytest.raises(FileWriteTransactionError, match="changed before quarantine"):
+        get_file_write_gateway().delete_owned_readonly_tree(
+            generation,
+            source="test.checkpoint_retention",
+            expected_device=planned.st_dev,
+            expected_inode=planned.st_ino,
+            expected_mtime_ns=planned.st_mtime_ns,
+        )
+
+    assert (generation / "replacement").read_bytes() == b"keep"
+    assert (original / "old").read_bytes() == b"old"

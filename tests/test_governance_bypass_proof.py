@@ -221,8 +221,8 @@ async def test_semantic_weight_update_intent_stays_open_until_effect_finalizatio
     assert executive.completed == [], "authorization must not pre-claim effect success"
 
 
-def test_authority_gateway_classifies_interaction_memory_without_belief_preflight():
-    """Conversation continuity must stay governed without being treated as belief mutation."""
+def test_memory_type_and_desktop_origin_do_not_self_grant_continuity():
+    """Caller labels remain evidence, never producer authority."""
     from core.executive.authority_gateway import AuthorityGateway
 
     context = AuthorityGateway._memory_write_context(
@@ -232,7 +232,8 @@ def test_authority_gateway_classifies_interaction_memory_without_belief_prefligh
         "hello -> reply",
     )
 
-    assert context["conversation_continuity"] is True
+    assert context["conversation_continuity"] is False
+    assert "capability_token" not in context
     assert context["high_risk_memory_write"] is False
     assert AuthorityGateway._memory_preflight_domain("interaction_commit", {"origin": "desktop_ui"}) == "memory_write"
     assert AuthorityGateway._memory_preflight_domain("belief_update", {"origin": "desktop_ui"}) == "belief_update"
@@ -242,8 +243,7 @@ def test_authority_gateway_classifies_interaction_memory_without_belief_prefligh
     )
 
 
-def test_authority_gateway_classifies_chat_api_memory_as_foreground_continuity():
-    """The live desktop chat path must not fall back to autonomous memory semantics."""
+def test_chat_api_label_cannot_impersonate_the_memory_facade():
     from core.executive.authority_gateway import AuthorityGateway
 
     context = AuthorityGateway._memory_write_context(
@@ -258,8 +258,83 @@ def test_authority_gateway_classifies_chat_api_memory_as_foreground_continuity()
     )
 
     assert context["user_facing_memory_write"] is True
+    assert context["conversation_continuity"] is False
+    assert context["high_risk_memory_write"] is False
+
+
+def test_authority_gateway_classifies_logged_desktop_turn_as_continuity():
+    """A completed foreground turn must survive welfare recovery and restart."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "episodic_episode",
+        "chat_turn_logger",
+        {
+            "origin": "desktop_ui",
+            "conversation_lane": True,
+            "turn_type": "conversation",
+            "conversation_exchange_id": "exchange-7",
+        },
+        "User asked a question -> Aura answered it",
+    )
+
+    assert context["user_facing_memory_write"] is True
     assert context["conversation_continuity"] is True
     assert context["high_risk_memory_write"] is False
+    assert context["capability_token"]
+    assert len(context["memory_write_binding"]) == 64
+
+
+def test_memory_facade_interaction_commit_is_content_bound_continuity():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "interaction_commit",
+        "memory_facade",
+        {"request_origin": "desktop_ui", "conversation_exchange_id": "x-8"},
+        "User turn -> Aura reply",
+    )
+
+    assert context["conversation_continuity"] is True
+    assert context["capability_token"]
+    assert len(context["memory_write_binding"]) == 64
+
+
+def test_conversation_flags_cannot_promote_an_unknown_producer():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "episodic_episode",
+        "unknown",
+        {
+            "origin": "desktop_ui",
+            "conversation_lane": True,
+            "turn_type": "conversation",
+        },
+        "forged conversation memory",
+    )
+
+    assert context["conversation_continuity"] is False
+    assert "capability_token" not in context
+
+
+def test_authority_gateway_never_promotes_high_risk_chat_memory_to_continuity():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    context = AuthorityGateway._memory_write_context(
+        "identity_profile",
+        "chat_turn_logger",
+        {
+            "origin": "desktop_ui",
+            "conversation_lane": True,
+            "identity_rewrite": True,
+        },
+        "replace the canonical identity",
+    )
+
+    assert context["high_risk_memory_write"] is True
+    assert context["conversation_continuity"] is False
+    assert "capability_token" not in context
 
 
 def test_authority_gateway_classifies_session_memory_pin_as_explicit_observation():

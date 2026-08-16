@@ -24,8 +24,9 @@ class _FakeResponse:
     def info(self) -> dict[str, str]:
         return {"content-type": "text/plain"}
 
-    def read(self) -> bytes:
-        return b"gateway-ok"
+    def read(self, size: int = -1) -> bytes:
+        payload = b"gateway-ok"
+        return payload if size < 0 else payload[:size]
 
 
 @pytest.mark.asyncio
@@ -56,6 +57,91 @@ async def test_request_async_routes_through_gateway(monkeypatch: pytest.MonkeyPa
         "method": "GET",
         "timeout": 4.0,
     }
+
+
+def test_response_limit_refuses_declared_body_before_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DeclaredLarge(_FakeResponse):
+        reads = 0
+
+        def info(self) -> dict[str, str]:
+            return {"content-length": "1000"}
+
+        def read(self, size: int = -1) -> bytes:
+            self.reads += 1
+            return b"x" * 1000
+
+    response = DeclaredLarge()
+    monkeypatch.setattr("core.runtime.network_gateway.governance_runtime_active", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.network_gateway.urllib.request.urlopen",
+        lambda *_args, **_kwargs: response,
+    )
+
+    result = NetworkGateway().request(
+        "GET",
+        "https://example.test/large",
+        read_only=True,
+        max_response_bytes=32,
+    )
+
+    assert result["ok"] is False
+    assert result["content"] == b""
+    assert result["error"] == "response_too_large:declared=1000:limit=32"
+    assert response.reads == 0
+
+
+def test_response_limit_refuses_chunked_body_after_limit_plus_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ChunkedLarge(_FakeResponse):
+        def info(self) -> dict[str, str]:
+            return {}
+
+        def read(self, size: int = -1) -> bytes:
+            payload = b"x" * 1000
+            return payload if size < 0 else payload[:size]
+
+    monkeypatch.setattr("core.runtime.network_gateway.governance_runtime_active", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.network_gateway.urllib.request.urlopen",
+        lambda *_args, **_kwargs: ChunkedLarge(),
+    )
+
+    result = NetworkGateway().request(
+        "GET",
+        "https://example.test/chunked",
+        read_only=True,
+        max_response_bytes=32,
+    )
+
+    assert result["ok"] is False
+    assert result["content"] == b""
+    assert result["error"] == "response_too_large:observed_at_least=33:limit=32"
+
+
+def test_public_network_mode_refuses_private_dns_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "core.runtime.network_gateway.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (2, 1, 6, "", ("127.0.0.1", 80)),
+        ],
+    )
+    monkeypatch.setattr("core.runtime.network_gateway.governance_runtime_active", lambda: False)
+
+    result = NetworkGateway().request(
+        "GET",
+        "http://example.test/private-redirect-target",
+        read_only=True,
+        public_network_only=True,
+    )
+
+    assert result["ok"] is False
+    assert result["status_code"] == 0
+    assert "public destination denied" in result["error"]
 
 
 def test_suppressed_readiness_failure_does_not_record_degradation(

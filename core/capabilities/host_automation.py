@@ -609,7 +609,10 @@ class HostAutomationProvider:
         script = '''
             tell application "System Events"
                 set frontApp to name of first application process whose frontmost is true
-                set winTitle to name of front window of process frontApp
+                set winTitle to ""
+                try
+                    set winTitle to name of front window of process frontApp
+                end try
             end tell
             return frontApp & "|" & winTitle
         '''

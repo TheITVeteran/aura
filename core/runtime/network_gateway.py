@@ -5,6 +5,7 @@ All outbound network requests should flow through this module to ensure correct 
 from __future__ import annotations
 
 import asyncio
+import http.client
 import ipaddress
 import logging
 import re
@@ -177,6 +178,8 @@ class NetworkGateway:
         read_only: bool = False,
         operational_telemetry: bool = False,
         suppress_degradation: bool = False,
+        max_response_bytes: int | None = None,
+        public_network_only: bool = False,
     ) -> dict[str, Any]:
         """Perform a synchronous HTTP request."""
         method_text = _coerce_method(method)
@@ -185,6 +188,17 @@ class NetworkGateway:
         request_headers = _coerce_headers(headers)
         request_data = _coerce_data(data)
         request_proxies = _coerce_proxies(proxies)
+        response_limit = (
+            None
+            if max_response_bytes is None
+            else _coerce_positive_int(
+                max_response_bytes,
+                name="max_response_bytes",
+                maximum=2_147_483_648,
+            )
+        )
+        if type(public_network_only) is not bool:
+            raise TypeError("public_network_only must be boolean")
 
         try:
             from core.security.defensive_runtime import validate_outbound_network
@@ -271,11 +285,16 @@ class NetworkGateway:
             method=method_text,
         )
         try:
-            opener = (
-                urllib.request.build_opener(urllib.request.ProxyHandler(request_proxies))
-                if request_proxies
-                else None
-            )
+            if public_network_only:
+                if request_proxies:
+                    raise ValueError("public-pinned requests do not accept caller proxies")
+                opener = _build_public_pinned_opener()
+            else:
+                opener = (
+                    urllib.request.build_opener(urllib.request.ProxyHandler(request_proxies))
+                    if request_proxies
+                    else None
+                )
             open_request = opener.open if opener is not None else urllib.request.urlopen
             with open_request(req, timeout=timeout_s) as response:
                 # The turn has now read text somebody else wrote — possibly
@@ -285,21 +304,41 @@ class NetworkGateway:
                 # it makes untrusted text persuade something trusted to act,
                 # and the persuaded party looks entirely legitimate at the gate.
                 _record_web_provenance(response.url or url_text)
-                return {
+                response_headers = dict(response.info())
+                content, limit_error = _read_bounded_http_body(
+                    response,
+                    headers=response_headers,
+                    max_response_bytes=response_limit,
+                )
+                result = {
                     "status_code": response.status,
-                    "headers": dict(response.info()),
-                    "content": response.read(),
+                    "headers": response_headers,
+                    "content": content,
                     "url": response.url,
-                    "ok": True,
+                    "ok": limit_error is None,
                 }
+                if response_limit is not None:
+                    result["response_limit_bytes"] = response_limit
+                if limit_error is not None:
+                    result["error"] = limit_error
+                return result
         except urllib.error.HTTPError as exc:
-            return {
+            response_headers = dict(exc.headers or {})
+            content, limit_error = _read_bounded_http_body(
+                exc,
+                headers=response_headers,
+                max_response_bytes=response_limit,
+            )
+            result = {
                 "status_code": exc.code,
-                "headers": dict(exc.headers or {}),
-                "content": exc.read(),
+                "headers": response_headers,
+                "content": content,
                 "ok": False,
-                "error": str(exc),
+                "error": limit_error or str(exc),
             }
+            if response_limit is not None:
+                result["response_limit_bytes"] = response_limit
+            return result
         except _NETWORK_RECOVERABLE_ERRORS as exc:
             if suppress_degradation:
                 logger.debug(
@@ -336,6 +375,8 @@ class NetworkGateway:
         read_only: bool = False,
         operational_telemetry: bool = False,
         suppress_degradation: bool = False,
+        max_response_bytes: int | None = None,
+        public_network_only: bool = False,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
             self.request,
@@ -349,6 +390,8 @@ class NetworkGateway:
             read_only=read_only,
             operational_telemetry=operational_telemetry,
             suppress_degradation=suppress_degradation,
+            max_response_bytes=max_response_bytes,
+            public_network_only=public_network_only,
         )
 
     async def connect_websocket(
@@ -738,6 +781,152 @@ def _coerce_positive_int(value: int, *, name: str, maximum: int) -> int:
     if normalized <= 0 or normalized > maximum:
         raise ValueError(f"{name} must be between 1 and {maximum}")
     return normalized
+
+
+def _read_bounded_http_body(
+    response: Any,
+    *,
+    headers: dict[str, Any],
+    max_response_bytes: int | None,
+) -> tuple[bytes, str | None]:
+    """Read one HTTP body without allocating beyond a caller-owned bound."""
+
+    if max_response_bytes is None:
+        return bytes(response.read()), None
+
+    declared = ""
+    for key, value in headers.items():
+        if str(key).casefold() == "content-length":
+            declared = str(value or "").strip()
+            break
+    if declared:
+        try:
+            declared_bytes = int(declared)
+        except ValueError:
+            declared_bytes = -1
+        if declared_bytes > max_response_bytes:
+            return (
+                b"",
+                "response_too_large:"
+                f"declared={declared_bytes}:limit={max_response_bytes}",
+            )
+
+    content = bytes(response.read(max_response_bytes + 1))
+    if len(content) > max_response_bytes:
+        return (
+            b"",
+            "response_too_large:"
+            f"observed_at_least={len(content)}:limit={max_response_bytes}",
+        )
+    return content, None
+
+
+def _resolve_public_http_address(url: str) -> str:
+    """Resolve one HTTP hop and refuse every non-public candidate address."""
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.username is not None or parsed.password is not None:
+        raise urllib.error.URLError("public_network_only rejects URL credentials")
+    host = parsed.hostname
+    if not host:
+        raise urllib.error.URLError("public_network_only requires a destination host")
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            port,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+        addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos if info[4]))
+        approved = _approve_network_addresses(
+            addresses,
+            allow_private_target=False,
+            error_prefix="http",
+        )
+    except (NetworkEffectDenied, OSError, ValueError) as exc:
+        raise urllib.error.URLError(f"public destination denied: {exc}") from exc
+    if not approved:
+        raise urllib.error.URLError("public destination resolved to no addresses")
+    return approved[0]
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection whose DNS result cannot change between check and connect."""
+
+    def __init__(self, host: str, *, pinned_address: str, **kwargs: Any) -> None:
+        self._pinned_address = pinned_address
+        super().__init__(host, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = self._create_connection(
+            (self._pinned_address, self.port),
+            self.timeout,
+            self.source_address,
+        )
+        if self._tunnel_host:
+            self._tunnel()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """TLS connection pinned to an address but authenticated as the URL host."""
+
+    def __init__(self, host: str, *, pinned_address: str, **kwargs: Any) -> None:
+        self._pinned_address = pinned_address
+        super().__init__(host, **kwargs)
+
+    def connect(self) -> None:
+        self.sock = self._create_connection(
+            (self._pinned_address, self.port),
+            self.timeout,
+            self.source_address,
+        )
+        server_hostname = self.host
+        if self._tunnel_host:
+            self._tunnel()
+            server_hostname = self._tunnel_host
+        self.sock = self._context.wrap_socket(
+            self.sock,
+            server_hostname=server_hostname,
+        )
+
+
+class _PublicPinnedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, request: urllib.request.Request):
+        pinned = _resolve_public_http_address(request.full_url)
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPConnection(
+                host,
+                pinned_address=pinned,
+                **kwargs,
+            ),
+            request,
+        )
+
+
+class _PublicPinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request: urllib.request.Request):
+        pinned = _resolve_public_http_address(request.full_url)
+        return self.do_open(
+            lambda host, **kwargs: _PinnedHTTPSConnection(
+                host,
+                pinned_address=pinned,
+                **kwargs,
+            ),
+            request,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
+
+
+def _build_public_pinned_opener() -> urllib.request.OpenerDirector:
+    """Build a redirect-aware opener that pins and validates every HTTP hop."""
+
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _PublicPinnedHTTPHandler(),
+        _PublicPinnedHTTPSHandler(context=ssl.create_default_context()),
+    )
 
 
 async def _resolve_websocket_addresses(host: str, port: int, *, timeout_s: float) -> tuple[str, ...]:

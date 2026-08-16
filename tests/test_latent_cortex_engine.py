@@ -27,6 +27,7 @@ from core.brain.llm.latent_cortex.causal_receipt import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.engine import (  # noqa: E402
     LatentCortexEngine,
+    NonFiniteLogitsError,
     _contract_admitted_branch_score,
     _logits_digest,
 )
@@ -974,6 +975,55 @@ def test_float16_nucleus_sampling_never_manufactures_non_finite_logits(monkeypat
 
     assert sampled == {0}
     assert "nucleus_sampling" in observed
+
+
+def test_decode_identifies_a_non_finite_incumbent_before_first_token(tiny_model):
+    engine = LatentCortexEngine(tiny_model, config=_config())
+    budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    cache = engine._fresh_cache()
+    _embeddings, initial_logits = engine._prefill(PROMPT_TOKENS, cache, budget)
+    broken = mx.full(initial_logits.shape, float("nan"), dtype=mx.float32)
+
+    with pytest.raises(NonFiniteLogitsError, match="decode_initial_logits"):
+        engine._decode(
+            cache,
+            budget,
+            broken,
+            max_tokens=2,
+            temperature=0.0,
+        )
+
+
+def test_decode_identifies_the_first_non_finite_autoregressive_step(
+    tiny_model,
+    monkeypatch,
+):
+    engine = LatentCortexEngine(tiny_model, config=_config())
+    budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    cache = engine._fresh_cache()
+    _embeddings, initial_logits = engine._prefill(PROMPT_TOKENS, cache, budget)
+    monkeypatch.setattr(engine, "_eos_ids", lambda: set())
+    monkeypatch.setattr(
+        engine,
+        "_logits",
+        lambda h: mx.full(
+            (int(h.shape[0]), int(h.shape[1]), 128),
+            float("nan"),
+            dtype=mx.float32,
+        ),
+    )
+
+    with pytest.raises(
+        NonFiniteLogitsError,
+        match=r"decode_autoregressive_logits:step=1",
+    ):
+        engine._decode(
+            cache,
+            budget,
+            initial_logits,
+            max_tokens=2,
+            temperature=0.0,
+        )
 
 
 def test_latent_computation_is_causal_on_answer(tiny_model):

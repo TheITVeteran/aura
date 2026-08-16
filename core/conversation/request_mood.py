@@ -180,6 +180,11 @@ _MENTION_FRAMES = (
     (rf"\b(?:don'?t|do not|no need to|you don'?t have to|not asking you to|"
      rf"i\s+do not\s+want\s+you\s+to|i\s+don'?t\s+want\s+you\s+to|without)\s+"
      rf"(?:{_ACTION_VERBS})\b", "refusal_to_act"),
+    # Conversational corrections commonly drop the subject and use generic
+    # "do" rather than repeating the prior action: "Didn't want you to do
+    # that, pal." It is still an explicit refusal, not an ambiguous fresh turn.
+    (r"(?:^|\b)(?:i\s+)?(?:didn'?t|did\s+not|don'?t|do\s+not)\s+want\s+you\s+to\s+"
+     r"(?:do\b|act\b|keep\b|continue\b|repeat\b)", "refusal_to_act"),
     (r"\b(?:if\s+you\s+(?:were\s+to|had\s+to|could)|if\s+(?:i|we)\s+"
      r"(?:asked|told|requested)\s+you\s+to|hypothetically|in\s+theory|"
      r"suppose\s+you|imagine\s+you|what\s+would\s+happen\s+if\s+you)\b",

@@ -141,6 +141,21 @@ def test_coverage_report_is_derived_from_the_pipeline() -> None:
     assert report["contracted_count"] == len(report["contracted"])
 
 
+def test_memory_consolidation_declares_every_live_state_write() -> None:
+    contract = contract_for("MemoryConsolidationPhase")
+    assert contract is not None
+    assert {
+        "cognition.coherence_score",
+        "cognition.fragmentation_score",
+        "cognition.long_term_memory",
+        "cognition.modifiers",
+        "cognition.working_memory",
+        "health",
+        "response_modifiers",
+        "transition_cause",
+    } <= set(contract.writes)
+
+
 # ── Thresholds are the live constants, not copies ──────────────────────────
 
 

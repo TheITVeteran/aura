@@ -64,6 +64,23 @@ def test_nothing_is_attached_to_turns_that_are_not_about_her_code():
         assert not _turn_may_concern_own_source(unrelated), unrelated
 
 
+def test_provenance_language_cannot_invent_a_missing_antecedent():
+    from core.self.source_excerpt import forget_shown_excerpt
+    from interface.routes.chat import (
+        _turn_asks_where_that_came_from,
+        _turn_may_concern_own_source,
+    )
+
+    forget_shown_excerpt()
+    for unrelated in (
+        "Did you make that up?",
+        "Where did that come from?",
+        "Was that... Was that humor?",
+    ):
+        assert not _turn_asks_where_that_came_from(unrelated), unrelated
+        assert not _turn_may_concern_own_source(unrelated), unrelated
+
+
 def test_asking_where_code_lives_counts_as_asking_about_her_source():
     """The follow-up that exposed the invention."""
     from interface.routes.chat import _turn_may_concern_own_source

@@ -1679,19 +1679,22 @@ class LatentCortexEngine:
         *,
         budget: ComputeBudget | None = None,
         random_key: Any | None = None,
+        operation: str = "decode_sampling",
     ) -> int:
         import mlx.core as mx
 
+        if not isinstance(operation, str) or not operation.strip():
+            raise ValueError("sampling operation must be non-empty text")
         if budget is not None:
             vocab = int(logits.shape[-1])
             multiplier = 8 if temperature > 0.0 and top_p < 1.0 else 3
             budget.charge_tensor_work(
-                "decode_sampling",
+                operation,
                 element_reads=vocab,
                 element_writes=vocab if temperature > 0.0 else 1,
                 host_scalar_ops=vocab * multiplier,
             )
-        self._require_finite_logits(logits, "decode_sampling")
+        self._require_finite_logits(logits, operation)
         if temperature and temperature > 0:
             scaled = logits / temperature
             if top_p < 1.0:
@@ -1871,7 +1874,7 @@ class LatentCortexEngine:
                 return float(mx.log(mx.maximum(selected / normalizer, 1e-30)))
             return float(scaled[int(token)] - mx.logsumexp(scaled))
 
-        def sample_disciplined(logits):
+        def sample_disciplined(logits, *, operation: str):
             """Sample under the newline-run discipline.
 
             A run of more than _MAX_NEWLINE_RUN pure-newline tokens is decode
@@ -1903,6 +1906,7 @@ class LatentCortexEngine:
                 nucleus,
                 budget=budget,
                 random_key=random_key,
+                operation=operation,
             )
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token, sample_logprob(logits, token)
@@ -1926,6 +1930,7 @@ class LatentCortexEngine:
                 nucleus,
                 budget=budget,
                 random_key=random_key,
+                operation=f"{operation}:newline_resample",
             )
             if self._is_pure_newline_token(token):
                 # Every newline token is at the finite suppression floor, so
@@ -1953,7 +1958,10 @@ class LatentCortexEngine:
                 return None
             return contract_decode_disposition(text)
 
-        token, token_logprob = sample_disciplined(initial_logits)
+        token, token_logprob = sample_disciplined(
+            initial_logits,
+            operation="decode_initial_logits",
+        )
         sample_trace.update(_sample_decision_bytes(token, token_logprob))
         if newline_discipline_exhausted:
             self._last_decode_newline_suppressions = suppressions
@@ -2057,7 +2065,10 @@ class LatentCortexEngine:
                 logits = self._logits(h)[0, -1]
             else:
                 logits = external_step_logits(token)
-            token, token_logprob = sample_disciplined(logits)
+            token, token_logprob = sample_disciplined(
+                logits,
+                operation=f"decode_autoregressive_logits:step={index + 1}",
+            )
             sample_trace.update(_sample_decision_bytes(token, token_logprob))
             if newline_discipline_exhausted:
                 termination = "newline_discipline_exhausted"
@@ -3783,6 +3794,14 @@ class LatentCortexEngine:
             )
 
         embeddings, prompt_tail_logits = self._prefill(tokens, cache, budget)
+        # Keep the ordinary incumbent as a materialized, gradient-free
+        # float32 value before any recurrent adapter or temporary synapse can
+        # touch the resident function. The prompt cache is restored later;
+        # the logits must have the same independent lifetime.
+        prompt_tail_logits = mx.stop_gradient(
+            mx.array(prompt_tail_logits, dtype=mx.float32)
+        )
+        mx.eval(prompt_tail_logits)
         receipt.decode_incumbent_prompt_logits_sha256 = _logits_digest(prompt_tail_logits)
         from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
 
@@ -8217,6 +8236,19 @@ class LatentCortexEngine:
                     if fast_weight_learning_state is not None:
                         fast_weight_learning_state["disposition"] = (
                             "accepted_probe_not_output_under_incumbent_policy"
+                        )
+                if fast_weights is not None:
+                    # Base decode must never inherit a wrapper merely because
+                    # an earlier rejection path forgot to classify it as the
+                    # active candidate. Detach is idempotent and also releases
+                    # an acquired lease when no handles remain.
+                    fast_weights.detach()
+                    lifecycle = fast_weights.lifecycle
+                    if fast_weights.handles or (
+                        lifecycle.lease_acquired and not lifecycle.lease_released
+                    ):
+                        raise _FastWeightCleanupError(
+                            "fast weights remained attached before incumbent decode"
                         )
                 kv_state_tree.restore_boundary(cache, kv_state_tree.root_sha256)
                 if incumbent_artifact is not None:

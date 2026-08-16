@@ -741,12 +741,14 @@ class AmbientPresence:
         if not getattr(receipt, "success", False):
             return None
         raw = str(getattr(receipt, "result", "") or "")
-        app, _, title = raw.partition("|")
-        if not title:
+        app, separator, title = raw.partition("|")
+        if not separator:
             # A legacy injected provider may still return only the title. It is
             # usable for freshness, but app-based privacy must remain unknown.
             title = app
             app = ""
+        if not app.strip() and not title.strip():
+            return None
         return ScreenContext(
             app=app.strip(),
             title=title.strip(),

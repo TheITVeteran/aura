@@ -3045,7 +3045,7 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
     assert cfg["verifier_probe_max_tokens"] == 24
     assert cfg["verifier_accept_non_regression"] is True
     assert cfg["input_context_max_chars"] == 9000
-    assert cfg["allow_vanilla_fallback"] is False
+    assert cfg["allow_vanilla_fallback"] is True
     assert budget["wall_clock_s"] <= 120.0
     assert (
         svc.get_status()["last_allocation"]["allocation_profile"]
@@ -3108,7 +3108,7 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     assert captured["config"]["verifier_probe_max_tokens"] == 24
     assert captured["config"]["verifier_accept_non_regression"] is True
     assert captured["config"]["input_context_max_chars"] == 9000
-    assert captured["config"]["allow_vanilla_fallback"] is False
+    assert captured["config"]["allow_vanilla_fallback"] is True
     assert captured["config"]["max_steps"] == 3
     assert captured["config"]["exchange_interval"] == 1
     assert captured["budget"]["wall_clock_s"] <= 120.0

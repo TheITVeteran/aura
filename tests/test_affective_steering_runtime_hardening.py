@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from core.consciousness import affective_steering
 from core.consciousness.affective_steering import (
@@ -130,3 +131,42 @@ def test_calibration_import_failure_returns_structured_unavailable(monkeypatch):
     assert "MLX unavailable" in result["error"]
     assert engine._alpha == 2.0
     assert recorded == [("affective_steering", "ImportError")]
+
+
+def test_caa_capture_converts_real_mlx_bfloat16_before_numpy(tmp_path):
+    mx = pytest.importorskip("mlx.core")
+
+    class _Tokenizer:
+        @staticmethod
+        def encode(text: str) -> list[int]:
+            return [1, 2, 7] if "positive" in text else [1, 2, 3]
+
+    class _Block:
+        def __call__(self, hidden, *_args, **_kwargs):
+            return hidden.astype(mx.bfloat16)
+
+    class _Model:
+        def __init__(self) -> None:
+            self.model = SimpleNamespace(layers=[_Block()])
+
+        def __call__(self, tokens):
+            width = 8
+            hidden = mx.broadcast_to(
+                tokens[..., None].astype(mx.float32),
+                (*tokens.shape, width),
+            )
+            return self.model.layers[0](hidden)
+
+    vector = SteeringVectorLibrary(cache_dir=tmp_path)._derive_caa(
+        _Model(),
+        _Tokenizer(),
+        ["positive sample"],
+        ["negative sample"],
+        target_layer=0,
+        d_model=8,
+    )
+
+    assert vector.dtype == np.float32
+    assert vector.shape == (8,)
+    assert np.all(np.isfinite(vector))
+    assert np.all(vector > 0.0)

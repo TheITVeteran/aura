@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import secrets
 import threading
@@ -95,6 +97,13 @@ _CONVERSATION_MEMORY_PRODUCERS = frozenset(
         "memory_facade",
     }
 )
+_CONVERSATION_MEMORY_PRODUCER_TYPES = {
+    "chat_turn_logger": frozenset({"episodic_episode"}),
+    "conversation_logger": frozenset({"chat_turn", "conversation"}),
+    "interaction_logger": frozenset({"interaction_commit"}),
+    "memory_facade": frozenset({"interaction_commit"}),
+}
+_EXPLICIT_MEMORY_PRODUCERS = frozenset({"session_memory_pin"})
 _HIGH_RISK_MEMORY_MARKERS = (
     "belief",
     "identity",
@@ -448,6 +457,33 @@ class AuthorityGateway:
         return cls._memory_source_is_user_facing(origin_l)
 
     @classmethod
+    def _memory_write_binding(
+        cls,
+        memory_type: str,
+        source: str,
+        payload: dict[str, Any],
+        content: str,
+    ) -> str:
+        """Bind a continuity lease to the exact proposed write."""
+
+        material = {
+            "memory_type": memory_type,
+            "source": source,
+            "metadata": payload,
+            "content": str(content or ""),
+        }
+        encoded = json.dumps(
+            material,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            default=lambda value: {
+                "type": f"{type(value).__module__}.{type(value).__qualname__}"
+            },
+        ).encode("ascii")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @classmethod
     def _memory_write_context(
         cls,
         memory_type: str,
@@ -463,9 +499,17 @@ class AuthorityGateway:
             or cls._memory_payload_origin_is_user_facing(payload)
         )
         high_risk = cls._memory_write_is_high_risk(memory_type_l, payload)
-        continuity_write = memory_type_l == "interaction_commit" and user_facing and not high_risk
+        producer_is_conversation = bool(
+            source_l in _CONVERSATION_MEMORY_PRODUCERS
+            and memory_type_l
+            in _CONVERSATION_MEMORY_PRODUCER_TYPES.get(source_l, frozenset())
+        )
+        continuity_write = bool(
+            producer_is_conversation and user_facing and not high_risk
+        )
         explicit_observational_write = bool(
-            user_facing
+            source_l in _EXPLICIT_MEMORY_PRODUCERS
+            and user_facing
             and not high_risk
             and (
                 payload.get("explicit_memory_request")
@@ -499,9 +543,20 @@ class AuthorityGateway:
         # gateway mints one, short-lived and scoped to this write. The flag
         # still cannot be self-granted by a caller — only the gateway can issue.
         if continuity_write or explicit_observational_write:
-            token = cls._issue_continuity_capability(memory_type_l, source_l)
+            binding = cls._memory_write_binding(
+                memory_type_l,
+                source_l,
+                payload,
+                content,
+            )
+            token = cls._issue_continuity_capability(
+                memory_type_l,
+                source_l,
+                binding,
+            )
             if token:
                 context["capability_token"] = token
+                context["memory_write_binding"] = binding
         return context
 
     #: A continuity token covers one write, not a session.
@@ -540,12 +595,17 @@ class AuthorityGateway:
             return ""
 
     @classmethod
-    def _issue_continuity_capability(cls, memory_type: str, source: str) -> str:
+    def _issue_continuity_capability(
+        cls,
+        memory_type: str,
+        source: str,
+        binding: str,
+    ) -> str:
         """Mint the token that backs a gateway-approved continuity write."""
         return cls._issue_gateway_capability(
             domain="memory_write",
-            action="continuity_memory_write",
-            scope=f"memory_write:{memory_type}:{source}",
+            action=f"continuity_memory_write:{binding}",
+            scope=f"memory_write:{memory_type}:{source}:{binding}",
             unattested_action="continuity memory write proceeds unattested (falls back to defer)",
         )
 

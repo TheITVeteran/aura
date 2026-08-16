@@ -155,6 +155,33 @@ def test_production_context_read_preserves_atomic_app_title_and_receipt(
     assert context.duration_ms == 3.5
 
 
+def test_production_context_preserves_app_when_frontmost_window_has_no_title(
+    presence, monkeypatch
+):
+    from core.capabilities import host_automation
+    from core.capabilities.host_automation import AutomationReceipt
+
+    class _Host:
+        async def get_frontmost_window_context(self):
+            return AutomationReceipt(
+                action="get_frontmost_window_context",
+                target="frontmost_window",
+                adapter="applescript",
+                success=True,
+                result="Finder|",
+                receipt_id="titleless-context",
+            )
+
+    monkeypatch.setattr(host_automation, "get_host_automation", lambda: _Host())
+
+    context = asyncio.run(presence._current_context())
+
+    assert context is not None
+    assert context.app == "Finder"
+    assert context.title == ""
+    assert context.receipt_id == "titleless-context"
+
+
 def test_app_only_private_surface_is_blocked_on_the_production_context_path(
     presence, monkeypatch
 ):

@@ -42,6 +42,7 @@ import contextvars
 import functools
 import logging
 import os
+import secrets
 import threading as _threading
 import time
 from collections.abc import Callable, Mapping
@@ -75,6 +76,10 @@ class GovernanceToken:
     mono_timestamp: float = field(default_factory=time.monotonic)
     constraints: list = field(default_factory=list)
     ttl: float = 30.0  # tokens expire after 30 seconds
+    # A receipt can legitimately be reused for more than one lexical scope.
+    # The lease id identifies this exact installation so a copied ContextVar
+    # cannot remain authoritative after the creating scope exits.
+    lease_id: str = field(default_factory=lambda: secrets.token_urlsafe(18))
 
     @property
     def expired(self) -> bool:
@@ -123,6 +128,47 @@ class GovernanceToken:
 #: a grant of it. Named once so `authorizes` and every gate agree.
 _NON_AUTHORITY_DOMAINS = frozenset({"degraded", "ungoverned"})
 _NON_AUTHORITY_RECEIPTS = frozenset({"degraded_mode", "VIOLATION"})
+
+
+@dataclass(frozen=True, slots=True)
+class _GovernanceLease:
+    token_identity: int
+    installed_thread_id: int
+
+
+_governance_leases: dict[str, _GovernanceLease] = {}
+_governance_leases_lock = _threading.RLock()
+
+
+def _register_governance_lease(token: GovernanceToken) -> None:
+    with _governance_leases_lock:
+        _governance_leases[token.lease_id] = _GovernanceLease(
+            token_identity=id(token),
+            installed_thread_id=_threading.get_ident(),
+        )
+
+
+def _revoke_governance_lease(token: GovernanceToken) -> None:
+    with _governance_leases_lock:
+        lease = _governance_leases.get(token.lease_id)
+        if lease is not None and lease.token_identity == id(token):
+            _governance_leases.pop(token.lease_id, None)
+
+
+def governance_token_is_live(token: GovernanceToken | None) -> bool:
+    """Return whether this exact lexical lease is still installed.
+
+    Context variables are copied into child asyncio tasks. Resetting the
+    parent's ContextVar therefore does not revoke the copied value. The shared
+    registry is the revocation authority every sink checks, so a child that
+    wakes after scope exit sees an inert receipt rather than a lingering grant.
+    """
+
+    if token is None or not token.valid:
+        return False
+    with _governance_leases_lock:
+        lease = _governance_leases.get(token.lease_id)
+        return bool(lease is not None and lease.token_identity == id(token))
 
 
 @dataclass(frozen=True)
@@ -368,11 +414,15 @@ async def governed_scope(decision: Any, *, ttl: float | None = None):
         constraints=list(_decision_constraints(decision).items()),
         **_ttl_kwargs(ttl),
     )
+    _register_governance_lease(token)
     reset_token = _active_receipt.set(token)
     try:
         yield token
     finally:
-        _active_receipt.reset(reset_token)
+        try:
+            _active_receipt.reset(reset_token)
+        finally:
+            _revoke_governance_lease(token)
 
 
 def _ttl_kwargs(ttl: float | None) -> dict[str, float]:
@@ -400,11 +450,15 @@ def governed_scope_sync(decision: Any, *, ttl: float | None = None):
         constraints=list(_decision_constraints(decision).items()),
         **_ttl_kwargs(ttl),
     )
+    _register_governance_lease(token)
     reset_token = _active_receipt.set(token)
     try:
         yield token
     finally:
-        _active_receipt.reset(reset_token)
+        try:
+            _active_receipt.reset(reset_token)
+        finally:
+            _revoke_governance_lease(token)
 
 
 @contextmanager
@@ -434,7 +488,7 @@ def local_internal_governed_scope(
 def get_active_governance() -> GovernanceToken | None:
     """Get the current governance token, or None if ungoverned."""
     token = _active_receipt.get()
-    if token and token.valid:
+    if governance_token_is_live(token):
         return token
     return None
 
@@ -561,9 +615,11 @@ def get_violations(n: int = 20) -> list:
 
 def get_governance_status() -> dict:
     """Return governance system status."""
+    context_token = _active_receipt.get()
     return {
         "currently_governed": is_governed(),
-        "active_token": _active_receipt.get() is not None,
+        "active_token": governance_token_is_live(context_token),
+        "context_token_present": context_token is not None,
         "total_violations": len(_violations),
         "recent_violations": get_violations(5),
     }

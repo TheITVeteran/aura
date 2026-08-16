@@ -859,8 +859,7 @@ def remember_shown_excerpt(reply: Any) -> dict[str, Any] | None:
         # with a genuine file that has nothing to do with what she showed.
         # A true sentence about the wrong code is still a wrong answer, and
         # it is the most convincing kind.
-        if code_blocks_in(body):
-            _LAST_SHOWN.clear()
+        _LAST_SHOWN.clear()
         return None
     relative, line = match.group(1), int(match.group(2))
     symbol = ""

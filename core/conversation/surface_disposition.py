@@ -348,6 +348,7 @@ class SurfaceDisposition(Enum):
 #: disagree: response_reliability imports this one.
 ADVISORY_ONLY_REASONS: frozenset[str] = frozenset(
     {
+        "borrowed_owner_first_person_speech",
         "reply_abandons_thread",
     }
 )
@@ -369,6 +370,7 @@ ADVISORY_ONLY_REASONS: frozenset[str] = frozenset(
 #: of it would be retrieved as evidence about that state.
 CONTINUITY_SAFE_REASONS: frozenset[str] = frozenset(
     {
+        "borrowed_owner_first_person_speech",
         "reply_abandons_thread",
         "pseudo_internal_jargon",
         "function_word_starvation",

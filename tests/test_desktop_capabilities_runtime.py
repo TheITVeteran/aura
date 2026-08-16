@@ -131,6 +131,7 @@ async def test_frontmost_window_context_is_one_atomic_read_only_receipt(monkeypa
     assert call["source"] == "host_automation.frontmost_window_context"
     script = str(call["script"])
     assert "frontApp" in script and "winTitle" in script
+    assert "try" in script, "an app with no ordinary window must still identify itself"
     assert script.count("tell application \"System Events\"") == 1
 
 

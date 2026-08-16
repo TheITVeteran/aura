@@ -11263,11 +11263,17 @@ async def test_truncated_completion_replacement_cannot_become_authoritative(monk
         async def think(self, *_args, **_kwargs):
             self.calls += 1
             metadata = first_metadata if self.calls == 1 else second_metadata
-            return SimpleNamespace(
-                content=(
+            fragments = {
+                1: (
                     "The function updates each balance and removes names whose "
                     "balance reaches zero from the"
                 ),
+                2: " dictionary, then records each",
+                3: " position where active balances reach the",
+                4: " peak but still has no final result",
+            }
+            return SimpleNamespace(
+                content=fragments[self.calls],
                 metadata=metadata,
             )
 
@@ -11298,6 +11304,7 @@ async def test_truncated_completion_replacement_cannot_become_authoritative(monk
         ),
     )
 
+    trace = {}
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         "Explain this code fully.",
         visible_user_message="Explain this code fully.",
@@ -11306,11 +11313,120 @@ async def test_truncated_completion_replacement_cannot_become_authoritative(monk
         lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
         source="desktop_ui",
         require_engine=True,
-        turn_trace={},
+        turn_trace=trace,
     )
 
     assert reply is None
-    assert engine.calls == 2
+    assert engine.calls == 4
+    assert trace["completion_retry_count"] == 3
+    assert trace["foreground_model_generation_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_completion_can_finish_across_multiple_same_worker_continuations(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    incomplete = _bound_live_mind_controls_metadata()
+    incomplete.update(
+        {
+            "reply_generation_incomplete": True,
+            "reply_generation_stop_reason": "max_tokens",
+            "reply_generation_failure_reasons": ["truncated_tail"],
+        }
+    )
+    incomplete["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_reasons": ["truncated_tail"],
+            "generation_stop_reason": "max_tokens",
+        }
+    )
+    complete = _bound_live_mind_controls_metadata()
+    complete.update(
+        {
+            "reply_generation_incomplete": False,
+            "reply_generation_stop_reason": "eos_or_stop_sequence",
+            "reply_generation_failure_reasons": [],
+        }
+    )
+    complete["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_reasons": [],
+            "generation_stop_reason": "eos_or_stop_sequence",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, objective, context=None, **_kwargs):
+            self.calls.append((objective, dict(context or {})))
+            if len(self.calls) == 1:
+                return SimpleNamespace(
+                    content="The function updates balances and removes zero entries from the",
+                    metadata=incomplete,
+                )
+            if len(self.calls) == 2:
+                return SimpleNamespace(
+                    content=" dictionary, then records every position where the",
+                    metadata=incomplete,
+                )
+            return SimpleNamespace(
+                content=(
+                    " number of active entries equals the maximum. It returns all "
+                    "positions tied for that peak."
+                ),
+                metadata=complete,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    trace = {}
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "completion_retry_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Explain this code fully.",
+        visible_user_message="Explain this code fully.",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply is not None
+    assert reply.endswith("peak.")
+    assert len(engine.calls) == 3
+    assert engine.calls[2][1]["user_surface_continuation_partial"].endswith("where the")
+    assert trace["completion_retry_count"] == 2
+    assert trace["foreground_model_generation_count"] == 3
 
 
 @pytest.mark.asyncio

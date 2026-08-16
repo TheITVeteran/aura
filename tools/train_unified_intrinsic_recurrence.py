@@ -120,6 +120,7 @@ from tools.unified_intrinsic_checkpoint import (  # noqa: E402
     UnifiedCheckpointError,
     adopt_source_migration_identity,
     bootstrap_topology_mismatches,
+    prune_checkpoint_generations,
     resolve_checkpoint_generation,
 )
 from tools.unified_intrinsic_preload_barrier import verify_release  # noqa: E402
@@ -3433,6 +3434,14 @@ def _publish_latest_checkpoint_generation(
         out_dir / f"{stem}.json",
         {**legacy_body, "receipt_sha256": _canonical_sha256(legacy_body)},
     )
+    # Publication is complete before retention starts. If retention cannot
+    # prove a generation is pointer-unreachable, it raises with this checkpoint
+    # already resumable rather than letting an unattended campaign consume the
+    # volume indefinitely.
+    prune_checkpoint_generations(
+        out_dir,
+        rollback_generations_per_stem=2,
+    )
     return complete
 
 
@@ -3577,9 +3586,14 @@ def _restore_checkpoint(
 ) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
     with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
         loaded = _load_latest_checkpoint(out_dir, required=required)
-    if loaded is None:
-        return 0, [], {}
-    receipt, weights_path = loaded
+        if loaded is None:
+            return 0, [], {}
+        receipt, weights_path = loaded
+        tensors = mx.load(str(weights_path))
+        # MLX loads lazily. Evaluate every tensor while retention is excluded;
+        # releasing the lock after merely resolving a pathname lets a publisher
+        # rotate and delete the generation while the reader is still mapping it.
+        mx.eval(tuple(tensors.values()))
     body = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     stored_identity = receipt.get("identity")
     if not isinstance(stored_identity, dict):
@@ -3591,7 +3605,6 @@ def _restore_checkpoint(
         receipt.get("receipt_sha256") != _canonical_sha256(body)
         or _canonical_sha256(stored_identity) != _canonical_sha256(identity)
         or stored_identity.get("identity_sha256") != _canonical_sha256(stored_identity_body)
-        or receipt.get("checkpoint_sha256") != hashlib.sha256(weights_path.read_bytes()).hexdigest()
     ):
         raise RuntimeError("unified recurrence checkpoint identity differs")
     expected_phase = _optimization_phase(
@@ -3602,7 +3615,6 @@ def _restore_checkpoint(
     )
     if receipt.get("optimization_phase") != expected_phase:
         raise RuntimeError("unified recurrence checkpoint phase differs")
-    tensors = mx.load(str(weights_path))
     bundle_values = {
         name.removeprefix("bundle."): value
         for name, value in tensors.items()
@@ -3640,17 +3652,21 @@ def _bootstrap_bundle_from_checkpoint(
     """Initialize new-campaign tissue from a verified parent, never its optimizer."""
 
     try:
-        resolved = resolve_checkpoint_generation(output_dir, stem=stem, required=True)
+        with interprocess_file_lock(output_dir / ".unified_checkpoint.lock"):
+            resolved = resolve_checkpoint_generation(output_dir, stem=stem, required=True)
+            if resolved is None:  # pragma: no cover - required=True is authoritative
+                raise RuntimeError(
+                    "unified recurrence bootstrap checkpoint is unavailable"
+                )
+            receipt = resolved.receipt
+            tensors = mx.load(str(resolved.weights_path))
+            mx.eval(tuple(tensors.values()))
     except (OSError, UnifiedCheckpointError, ValueError) as exc:
         raise RuntimeError("unified recurrence bootstrap checkpoint is invalid") from exc
-    if resolved is None:  # pragma: no cover - required=True is authoritative
-        raise RuntimeError("unified recurrence bootstrap checkpoint is unavailable")
-    receipt = resolved.receipt
     parent_identity = receipt.get("identity")
     if not isinstance(parent_identity, dict):
         raise RuntimeError("unified recurrence bootstrap identity is unavailable")
     mismatches = list(bootstrap_topology_mismatches(parent_identity, expected_identity))
-    tensors = mx.load(str(resolved.weights_path))
     bundle_values = {
         name.removeprefix("bundle."): value
         for name, value in tensors.items()
@@ -7287,9 +7303,10 @@ def main() -> int:
         )
         with interprocess_file_lock(out_dir / ".unified_checkpoint.lock"):
             latest_checkpoint = _load_latest_checkpoint(out_dir, required=True)
-        if latest_checkpoint is None:
-            raise RuntimeError("unified recurrence final checkpoint is unavailable")
-        checkpoint_receipt, checkpoint_weights_path = latest_checkpoint
+            if latest_checkpoint is None:
+                raise RuntimeError("unified recurrence final checkpoint is unavailable")
+            checkpoint_receipt, checkpoint_weights_path = latest_checkpoint
+            checkpoint_size_bytes = checkpoint_weights_path.stat().st_size
         body = {
             "schema": TRAINING_SCHEMA,
             "identity": identity,
@@ -7314,7 +7331,7 @@ def main() -> int:
                 "step": checkpoint_receipt["step"],
                 "optimization_phase": checkpoint_receipt["optimization_phase"],
                 "checkpoint_sha256": checkpoint_receipt["checkpoint_sha256"],
-                "checkpoint_size_bytes": checkpoint_weights_path.stat().st_size,
+                "checkpoint_size_bytes": checkpoint_size_bytes,
                 "receipt_sha256": checkpoint_receipt["receipt_sha256"],
             },
             "elapsed_minutes": round((time.time() - started) / 60.0, 3),

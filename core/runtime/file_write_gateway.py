@@ -1513,6 +1513,222 @@ class FileWriteGateway:
         target.unlink()
         return True
 
+    def delete_owned_readonly_tree(
+        self,
+        path: PathLike,
+        *,
+        source: str = "unknown",
+        expected_device: int | None = None,
+        expected_inode: int | None = None,
+        expected_mtime_ns: int | None = None,
+        quarantine_directory: PathLike | None = None,
+    ) -> bool:
+        """Remove one owner-private read-only artifact tree under governance.
+
+        Immutable training generations deliberately use ``0500`` directories
+        and ``0400`` files. A normal recursive delete cannot unlink children
+        from those directories. This operation is intentionally narrower than
+        ``delete_path``: every entry must be owned by this user, no symlink may
+        occur anywhere in the tree, and no group/other permission bit may be
+        set. Only then are directory write bits restored for removal.
+        """
+
+        target = _coerce_path_allow_dir(path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.delete_owned_readonly_tree:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        if not os.path.lexists(target):
+            return False
+        initial = target.lstat()
+        if stat.S_ISLNK(initial.st_mode) or not stat.S_ISDIR(initial.st_mode):
+            raise FileWriteTransactionError(
+                "owned read-only tree target must be a real directory"
+            )
+
+        expected_identity = (
+            int(initial.st_dev) if expected_device is None else int(expected_device),
+            int(initial.st_ino) if expected_inode is None else int(expected_inode),
+            int(initial.st_mtime_ns)
+            if expected_mtime_ns is None
+            else int(expected_mtime_ns),
+        )
+        expected_uid = os.geteuid()
+
+        def _validated_directories(root: Path) -> list[Path]:
+            directories: list[Path] = []
+            for current, child_directories, child_files in os.walk(
+                root,
+                topdown=True,
+                followlinks=False,
+            ):
+                current_path = Path(current)
+                directories.append(current_path)
+                for candidate in (
+                    current_path,
+                    *(current_path / name for name in child_directories),
+                    *(current_path / name for name in child_files),
+                ):
+                    metadata = candidate.lstat()
+                    if (
+                        stat.S_ISLNK(metadata.st_mode)
+                        or metadata.st_uid != expected_uid
+                        or stat.S_IMODE(metadata.st_mode) & 0o077
+                    ):
+                        raise FileWriteTransactionError(
+                            "owned read-only tree custody differs"
+                        )
+            return directories
+
+        # Reject a known-bad tree without moving it. This first traversal is
+        # not the race boundary; the exact root inode is checked and renamed
+        # atomically below, and the quarantined tree is validated again.
+        _validated_directories(target)
+        parent_descriptor = os.open(
+            target.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | _required_no_follow_flag(),
+        )
+        quarantine_descriptor: int | None = None
+        target_descriptor: int | None = None
+        quarantine_moved = False
+        quarantine_path: Path
+        quarantine_name = f".aura-delete-{target.name}-{uuid.uuid4().hex}"
+        try:
+            parent_metadata = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(parent_metadata.st_mode)
+                or parent_metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(parent_metadata.st_mode) & 0o077
+            ):
+                raise FileWriteTransactionError(
+                    "owned read-only tree parent custody differs"
+                )
+            observed = os.stat(
+                target.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(observed.st_mode)
+                or observed.st_uid != os.geteuid()
+                or (observed.st_dev, observed.st_ino, observed.st_mtime_ns)
+                != expected_identity
+            ):
+                raise FileWriteTransactionError(
+                    "owned read-only tree changed before quarantine"
+                )
+            target_descriptor = os.open(
+                target.name,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_CLOEXEC
+                | _required_no_follow_flag(),
+                dir_fd=parent_descriptor,
+            )
+            opened = os.fstat(target_descriptor)
+            if (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_mtime_ns,
+            ) != expected_identity:
+                raise FileWriteTransactionError(
+                    "owned read-only tree changed before quarantine"
+                )
+            # Darwin refuses to rename a 0500 directory even when its parent is
+            # writable. Change permissions through the verified descriptor,
+            # then recheck the pathname before the atomic namespace move.
+            os.fchmod(target_descriptor, 0o700)
+
+            if quarantine_directory is None:
+                quarantine_descriptor = os.dup(parent_descriptor)
+                quarantine_path = target.parent / quarantine_name
+            else:
+                quarantine_root = _coerce_path_allow_dir(quarantine_directory)
+                quarantine_descriptor = os.open(
+                    quarantine_root,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_CLOEXEC
+                    | _required_no_follow_flag(),
+                )
+                quarantine_metadata = os.fstat(quarantine_descriptor)
+                if (
+                    not stat.S_ISDIR(quarantine_metadata.st_mode)
+                    or quarantine_metadata.st_uid != os.geteuid()
+                    or stat.S_IMODE(quarantine_metadata.st_mode) != 0o700
+                    or quarantine_metadata.st_dev != observed.st_dev
+                ):
+                    raise FileWriteTransactionError(
+                        "owned read-only tree quarantine custody differs"
+                    )
+                quarantine_path = quarantine_root / quarantine_name
+
+            os.rename(
+                target.name,
+                quarantine_name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=quarantine_descriptor,
+            )
+            quarantine_moved = True
+            quarantined_metadata = os.stat(
+                quarantine_name,
+                dir_fd=quarantine_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                quarantined_metadata.st_dev,
+                quarantined_metadata.st_ino,
+                quarantined_metadata.st_mtime_ns,
+            ) != expected_identity:
+                raise FileWriteTransactionError(
+                    "owned read-only tree quarantine identity differs"
+                )
+            os.fsync(parent_descriptor)
+            if quarantine_descriptor != parent_descriptor:
+                os.fsync(quarantine_descriptor)
+        finally:
+            if target_descriptor is not None:
+                if not quarantine_moved:
+                    try:
+                        os.fchmod(target_descriptor, stat.S_IMODE(initial.st_mode))
+                    except OSError:
+                        pass
+                os.close(target_descriptor)
+            os.close(parent_descriptor)
+            if quarantine_descriptor is not None:
+                os.close(quarantine_descriptor)
+
+        directories = _validated_directories(quarantine_path)
+
+        for directory in directories:
+            descriptor = os.open(
+                directory,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_CLOEXEC
+                | _required_no_follow_flag(),
+            )
+            try:
+                metadata = os.fstat(descriptor)
+                if (
+                    not stat.S_ISDIR(metadata.st_mode)
+                    or metadata.st_uid != expected_uid
+                    or stat.S_IMODE(metadata.st_mode) & 0o077
+                ):
+                    raise FileWriteTransactionError(
+                        "owned read-only tree changed before removal"
+                    )
+                os.fchmod(descriptor, 0o700)
+            finally:
+                os.close(descriptor)
+
+        import shutil
+
+        shutil.rmtree(quarantine_path)
+        return True
+
     async def delete_path_async(
         self, path: PathLike, *, recursive: bool = False, source: str = "unknown"
     ) -> bool:

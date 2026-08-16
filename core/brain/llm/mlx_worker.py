@@ -7620,6 +7620,14 @@ def _mlx_worker_loop(
                         "status": "ok",
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens,
+                        # The parent assembles prompts in characters but the
+                        # tokenizer lives here. Carry the exact final rendered
+                        # prompt measurement across IPC instead of updating a
+                        # process-local evidence singleton nobody else reads.
+                        "prompt_tokenization": {
+                            "chars": len(str(prompt or "")),
+                            "tokens": len(tokens),
+                        },
                         # The parent's OOM footprint probe must not cost an IPC
                         # round trip, so the size rides along with every result.
                         "prompt_cache_bytes": (
@@ -7770,6 +7778,10 @@ def _mlx_worker_loop(
                             "candidates_nonempty": nonempty,
                             "tokens_used": sum(tokens_used_by_candidate),
                             "tokens_used_by_candidate": tokens_used_by_candidate,
+                            "prompt_tokenization": {
+                                "chars": len(batch_prompt),
+                                "tokens": len(token_ids),
+                            },
                         }
                         if batch_status == "error":
                             batch_payload["message"] = (
@@ -8108,6 +8120,10 @@ def _mlx_worker_loop(
                         "aborted": bool(locals().get("sentinel_aborted", False)),
                         "abort_reason": str(locals().get("abort_reason", "") or "")[:200],
                         "tokens_generated": int(locals().get("token_count", 0) or 0),
+                        "prompt_tokenization": {
+                            "chars": len(locals().get("_stream_prompt_text", "") or ""),
+                            "tokens": int(locals().get("_stream_prompt_tokens", 0) or 0),
+                        },
                     })
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(

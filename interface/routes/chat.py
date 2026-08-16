@@ -1793,6 +1793,7 @@ _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     60.0,
     minimum=40.0,
 )
+_MAX_USER_SURFACE_CONTINUATIONS = 3
 _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S",
     96.0,
@@ -8684,8 +8685,8 @@ def _build_live_turn_contract_payload(
             live_mind_generation_required
             and response_path == "cognitive_engine_completion_retry"
             and foreground_model_generation_consumed
-            and foreground_model_generation_count == 2
-            and completion_retry_count == 1
+            and 1 <= completion_retry_count <= _MAX_USER_SURFACE_CONTINUATIONS
+            and foreground_model_generation_count == 1 + completion_retry_count
         )
     )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
@@ -11268,6 +11269,8 @@ async def _run_cognitive_engine_chat_turn(
     async def _attempt_repair_retry(
         rejected_reply: str,
         reasons: tuple[str, ...] | list[str],
+        *,
+        completion_attempt: int = 0,
     ) -> str | None:
         completion_retry_reasons = {
             "truncated_tail",
@@ -11282,6 +11285,13 @@ async def _run_cognitive_engine_chat_turn(
             normalized_reasons
             and normalized_reasons.issubset(completion_retry_reasons)
         )
+        if completion_only_retry and completion_attempt >= _MAX_USER_SURFACE_CONTINUATIONS:
+            logger.warning(
+                "CognitiveEngine exhausted %d bounded continuation attempts; "
+                "withholding the incomplete answer.",
+                _MAX_USER_SURFACE_CONTINUATIONS,
+            )
+            return None
         if require_engine:
             if bool(
                 turn_trace
@@ -11457,7 +11467,32 @@ async def _run_cognitive_engine_chat_turn(
             or retry_stop_reason in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
             or retry_failure_reasons & completion_retry_reasons
         )
+        if completion_only_retry:
+            if turn_trace is not None:
+                turn_trace["completion_retry_count"] = (
+                    int(turn_trace.get("completion_retry_count") or 0) + 1
+                )
+            _adopt_generation_metadata(
+                retry_metadata,
+                source_label="desktop_chat_completion_live_mind_controls",
+                adopt_response_path=False,
+                inherit_turn_context=False,
+            )
         if retry_still_incomplete:
+            made_progress = len(retry_text.rstrip()) > len(str(rejected_reply or "").rstrip())
+            if made_progress and completion_attempt + 1 < _MAX_USER_SURFACE_CONTINUATIONS:
+                next_reasons = tuple(sorted(retry_failure_reasons)) or ("truncated_tail",)
+                logger.warning(
+                    "CognitiveEngine continuation %d/%d made progress but remained "
+                    "incomplete; continuing from the new cutoff.",
+                    completion_attempt + 1,
+                    _MAX_USER_SURFACE_CONTINUATIONS,
+                )
+                return await _attempt_repair_retry(
+                    retry_text,
+                    next_reasons,
+                    completion_attempt=completion_attempt + 1,
+                )
             logger.warning(
                 "CognitiveEngine completion replacement remained incomplete "
                 "(stop=%s reasons=%s); withholding it from the user surface.",
@@ -11473,17 +11508,14 @@ async def _run_cognitive_engine_chat_turn(
             intermediate_mutations: Any = None,
         ) -> str:
             accepted_text = str(final_text or "").strip()
-            _adopt_generation_metadata(
-                retry_metadata,
-                source_label="desktop_chat_repair_live_mind_controls",
-                adopt_response_path=False,
-                inherit_turn_context=False,
-            )
+            if not completion_only_retry:
+                _adopt_generation_metadata(
+                    retry_metadata,
+                    source_label="desktop_chat_repair_live_mind_controls",
+                    adopt_response_path=False,
+                    inherit_turn_context=False,
+                )
             if turn_trace is not None:
-                if completion_only_retry:
-                    turn_trace["completion_retry_count"] = (
-                        int(turn_trace.get("completion_retry_count") or 0) + 1
-                    )
                 _append_turn_text_mutation(
                     turn_trace,
                     stage="chat.cognitive_engine_repair_retry",
@@ -17865,11 +17897,11 @@ def _desktop_secondary_model_repair_allowed(
     default_enabled: bool = True,
     lane_snapshot: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Allow one corrective generation on the already-loaded foreground worker.
+    """Allow bounded corrective generation on the loaded foreground worker.
 
     This does not allocate a second model. It reuses the protected Cortex worker,
-    remains bounded to one correction attempt, and is vetoed by unified-memory
-    pressure. Operators can explicitly disable it for diagnostics.
+    remains bounded by the owning caller, and is vetoed by unified-memory pressure.
+    Operators can explicitly disable it for diagnostics.
     """
 
     force_disabled = str(_FORCE_DISABLE_SECONDARY_REPAIR_FLAG.value() or "").strip().lower()
@@ -20877,6 +20909,33 @@ _ASKS_WHERE_CODE_LIVES_RE = re.compile(
     re.IGNORECASE,
 )
 
+_ASKS_TO_INSPECT_SHOWN_SOURCE_RE = re.compile(
+    r"\b(?:can|could|may|would)\s+i\b[^?]{0,80}"
+    r"\b(?:open|read|inspect|check|verify|find|look\s+up|access)\b[^?]{0,80}"
+    r"\b(?:that|it|this|myself)\b"
+    r"|\b(?:that|it|this)\b[^?]{0,80}"
+    r"\b(?:open|read|inspect|check|verify|find|look\s+up|access)\b",
+    re.IGNORECASE,
+)
+
+# Sentence-embedding similarity is evidence, not an antecedent. The global
+# evidence service deliberately admits short, low-margin provenance questions;
+# this route has a stronger obligation because attaching her source tree alters
+# the model prompt. Live social turns scored as high as 0.046 against OWN_SOURCE
+# while the lowest genuine non-lexical request in the calibrated set scored
+# 0.067, leaving a measured gap for this route-specific boundary.
+_OWN_SOURCE_ROUTE_MARGIN = 0.06
+
+
+def _has_current_shown_source() -> bool:
+    """Whether the immediately preceding reply put a real citation on the table."""
+    try:
+        from core.self.source_excerpt import last_shown_excerpt
+
+        return bool(last_shown_excerpt())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
 
 def _turn_may_concern_own_source(user_message: str) -> bool:
     """Whether this turn is about her own code.
@@ -20897,7 +20956,13 @@ def _turn_may_concern_own_source(user_message: str) -> bool:
                 return True
         except (ImportError, AttributeError, TypeError, ValueError):
             pass
-        return bool(_ASKS_WHERE_CODE_LIVES_RE.search(candidate))
+        return bool(
+            _ASKS_WHERE_CODE_LIVES_RE.search(candidate)
+            or (
+                _has_current_shown_source()
+                and _ASKS_TO_INSPECT_SHOWN_SOURCE_RE.search(candidate)
+            )
+        )
 
     try:
         from core.cognition.evidence_relevance import (
@@ -20906,14 +20971,15 @@ def _turn_may_concern_own_source(user_message: str) -> bool:
             wants_evidence,
         )
 
-        # Asking where something came from is part of this lane, not a
-        # rival to it. Scored on its own, "Where did you get that from?"
-        # sits at 0.22 against her source and 0.76 against provenance, so
-        # the dominance test — which exists to stop a screen question
-        # dragging in a file listing — threw out the very turn the tree
-        # had to be read for. Two readings of one subject, both kept.
-        return wants_evidence(text, OWN_SOURCE, lexical_floor=_lexical) or wants_evidence(
-            text, SOURCE_PROVENANCE, lexical_floor=_lexical
+        if _lexical(text):
+            return True
+        if wants_evidence(text, OWN_SOURCE, margin=_OWN_SOURCE_ROUTE_MARGIN):
+            return True
+        # A provenance score cannot manufacture the object it refers to. It
+        # becomes actionable only while a validated citation from the previous
+        # reply is still current.
+        return _has_current_shown_source() and wants_evidence(
+            text, SOURCE_PROVENANCE
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
@@ -20949,11 +21015,14 @@ def _turn_asks_where_that_came_from(user_message: str) -> bool:
     recorded path went unsaid and the turn fell through to the model.
     """
     text = str(user_message or "").strip()
-    if not text:
+    if not text or not _has_current_shown_source():
         return False
 
     def _lexical(candidate: str) -> bool:
-        return bool(_ASKS_WHERE_CODE_LIVES_RE.search(candidate))
+        return bool(
+            _ASKS_WHERE_CODE_LIVES_RE.search(candidate)
+            or _ASKS_TO_INSPECT_SHOWN_SOURCE_RE.search(candidate)
+        )
 
     try:
         from core.cognition.evidence_relevance import SOURCE_PROVENANCE, wants_evidence
@@ -23067,8 +23136,6 @@ def _looks_like_web_interlocutor_execution_request(user_message: str) -> bool:
         "external ai",
         "web ai",
     )
-    if not any(marker in lowered for marker in target_markers):
-        return False
     action_markers = (
         "open",
         "go to",
@@ -23090,7 +23157,22 @@ def _looks_like_web_interlocutor_execution_request(user_message: str) -> bool:
         "run",
         "test",
     )
-    if not any(marker in lowered for marker in action_markers):
+    # The repository-wide request-mood classifier distinguishes an instruction
+    # from a report about an action. Keep that distinction here too: "ChatGPT
+    # runs tests on Aura" names both a target and an action, but asks Aura to do
+    # nothing. Matching those words across the whole turn used to launch an
+    # unrelated browser conversation.
+    from core.conversation.request_mood import assess_request_mood
+
+    mood = assess_request_mood(lowered)
+    if not mood.asks_for_action:
+        return False
+    actionable_clauses = mood.actionable_clauses or (lowered,)
+    if not any(
+        any(target in clause for target in target_markers)
+        and any(action in clause for action in action_markers)
+        for clause in actionable_clauses
+    ):
         return False
     conceptual_only = (
         lowered.startswith("what is ")

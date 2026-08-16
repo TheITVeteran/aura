@@ -71,6 +71,29 @@ class TestGovernanceContext:
             assert is_governed()
             assert token.receipt_id == "async_receipt"
 
+    @pytest.mark.asyncio
+    async def test_copied_child_context_is_revoked_when_scope_exits(self):
+        """A detached child must not retain a copied lexical grant."""
+
+        decision = SimpleNamespace(
+            receipt_id="child-copy-receipt",
+            domain="state_mutation",
+            source="test",
+            constraints=[],
+        )
+        release = asyncio.Event()
+
+        async def child() -> bool:
+            await release.wait()
+            return is_governed()
+
+        async with governed_scope(decision):
+            task = asyncio.create_task(child())
+            assert is_governed()
+        release.set()
+
+        assert await task is False
+
     def test_token_expiration(self):
         """Expired tokens should not be considered valid."""
         token = GovernanceToken(
