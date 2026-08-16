@@ -3,12 +3,12 @@ import copy
 from types import SimpleNamespace
 
 import pytest
-from core.utils.injected_blocks import stamp_runtime_payload
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.brain.types import ThinkingMode, Thought
 from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
+from core.utils.injected_blocks import stamp_runtime_payload
 
 
 class StateRepositoryFixture:
@@ -678,7 +678,6 @@ async def test_cognitive_engine_capability_inventory_contract_uses_catalog_witho
             "live_mind_context": {
                 "required_for_live_desktop": True,
                 "must_answer_from_full_mind_path": True,
-                "required_subsystems_ok": True,
                 "required_subsystems": {"kernel": True, "memory": True},
                 # Part of the binding contract now: the snapshot carries this
                 # runtime's stamp and declares its required subsystems healthy.
@@ -968,6 +967,7 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
     engine.state_repository = StateRepositoryFixture(state)
     phase_calls = 0
     router_calls = 0
+    degradation_calls = []
 
     class _Phase:
         async def execute(self, *_args, **_kwargs):
@@ -979,7 +979,7 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
         async def think(self, **_kwargs):
             nonlocal router_calls
             router_calls += 1
-            raise TimeoutError("cold Cortex exceeded compact deadline")
+            raise RuntimeError("empty_generation_exhausted")
 
     engine._phases = [_Phase()]
     monkeypatch.setattr(
@@ -987,6 +987,10 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
         lambda: SimpleNamespace(
             get=lambda name, default=None: _Router() if name == "llm_router" else default
         ),
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.record_degradation",
+        lambda *args, **kwargs: degradation_calls.append((args, kwargs)),
     )
 
     thought = await engine._run_thinking_loop(
@@ -1008,6 +1012,9 @@ async def test_cognitive_engine_desktop_quick_failure_does_not_enter_second_mode
     assert thought.metadata["desktop_cognitive_engine_failure"] is True
     assert thought.metadata["model_retry_suppressed"] is True
     assert "won't fabricate" in thought.content
+    assert len(degradation_calls) == 1
+    assert degradation_calls[0][0][0] == "cognitive_engine"
+    assert degradation_calls[0][1]["enforce_failure_policy"] is False
 
 
 def test_desktop_failure_thought_preserves_latent_attempt_receipt():
@@ -1108,6 +1115,53 @@ async def test_cognitive_engine_preserves_worker_quality_rejection_metadata(monk
     receipt = thought.metadata["live_mind_surface_control_receipt"]
     assert receipt["surface_quality_gate_attempts"] == 3
     assert receipt["surface_quality_gate_passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_contains_empty_generation_exhaustion(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    degradation_calls = []
+
+    class _Router:
+        async def think(self, **_kwargs):
+            return None
+
+        @staticmethod
+        def get_last_generation_metadata():
+            return {"error": "empty_generation_exhausted"}
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router()
+            if name == "llm_router"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.record_degradation",
+        lambda *args, **kwargs: degradation_calls.append((args, kwargs)),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Give me a complete live answer.",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+        },
+        is_background=False,
+        timeout_s=30.0,
+    )
+
+    assert thought.metadata["generation_failure_class"] == "empty_generation_exhausted"
+    assert len(degradation_calls) == 1
+    assert degradation_calls[0][1]["enforce_failure_policy"] is False
 
 
 @pytest.mark.asyncio

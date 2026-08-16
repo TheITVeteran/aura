@@ -1192,6 +1192,76 @@ def test_the_sanitizer_does_not_annihilate_replies_over_ordinary_english():
     assert sanitize("value " + "1" * 25) is None, "digit-run check must still fire"
 
 
+def test_live_sanitizer_routes_intact_draft_to_typed_authored_repair():
+    from core.brain.llm.mlx_worker import (
+        _route_telemetry_sanitizer_draft,
+        _surface_quality_failure_reasons,
+        _telemetry_sanitization_failure_reasons,
+    )
+
+    draft = (
+        "I am steady enough to answer directly. ExistenceHash is an internal "
+        "identifier that must not appear in the visible reply."
+    )
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": "Hey Aura, how are you doing right now?",
+    }
+
+    assert _telemetry_sanitization_failure_reasons(draft) == [
+        "backend_symbolic_surface_leak"
+    ]
+    assert _telemetry_sanitization_failure_reasons("value " + "1" * 25) == [
+        "unbounded_numeric_identifier"
+    ]
+    assert _telemetry_sanitization_failure_reasons(
+        "/private/a/b/c /private/d/e/f /private/g/h/i"
+        + " /private/j/k/l" * 8
+    ) == ["telemetry_path_wall"]
+    assert _telemetry_sanitization_failure_reasons("xublcate evocer") == [
+        "corrupted_language"
+    ]
+    routed, reasons = _route_telemetry_sanitizer_draft(
+        draft,
+        is_proof=False,
+        authored_surface_repair_available=True,
+    )
+    assert routed == draft
+    assert reasons == ["backend_symbolic_surface_leak"]
+    assert "backend_symbolic_surface_leak" in _surface_quality_failure_reasons(
+        job,
+        routed,
+    )
+
+
+def test_sanitizer_still_destroys_unspeakable_draft_without_owned_repair_lane():
+    from core.brain.llm.mlx_worker import _route_telemetry_sanitizer_draft
+
+    routed, reasons = _route_telemetry_sanitizer_draft(
+        "PROCEEDING TOOL_ACTION",
+        is_proof=True,
+        authored_surface_repair_available=False,
+    )
+
+    assert routed == ""
+    assert reasons == ["backend_symbolic_surface_leak"]
+
+
+def test_live_surface_quality_retry_preserves_valid_prefill_cache():
+    from pathlib import Path
+
+    source = Path("core/brain/llm/mlx_worker.py").read_text(encoding="utf-8")
+    start = source.index(
+        "if internal_attempt < max_internal_retries and not surface_wall_exceeded:"
+    )
+    end = source.index("continue", start)
+    retry_branch = source[start:end]
+
+    assert "prompt_cache_lru.clear()" not in retry_branch
+    assert "_clear_mlx_cache(mx)" not in retry_branch
+    assert "surface_retry_started = time.monotonic()" in retry_branch
+
+
 def test_volatile_state_context_is_appended_so_the_kv_prefix_stays_cacheable():
     """Volatile grounding LAST, or prompt-cache reuse is worthless.
 

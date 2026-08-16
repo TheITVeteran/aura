@@ -173,3 +173,9 @@ def test_ontology_retry_is_single_and_respects_deadline_and_surface_wall():
     assert second is False
     assert expired is False and deadline_open is False
     assert wall_expired is False and wall_open is False
+
+
+def test_surface_retry_wall_does_not_start_during_initial_decode():
+    from core.brain.llm.mlx_worker import _surface_retry_wall_exceeded
+
+    assert _surface_retry_wall_exceeded(0.0, 20.0) is False

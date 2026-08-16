@@ -4712,6 +4712,7 @@ class CognitiveEngine:
                     "surfaced bounded desktop inference failure without entering "
                     "a second heavyweight model path"
                 ),
+                enforce_failure_policy=False,
             )
             logger.warning("Desktop quick CognitiveEngine generation failed: %s", exc)
             if bool(
@@ -4742,6 +4743,7 @@ class CognitiveEngine:
                             "surfaced bounded desktop inference failure without entering "
                             "a second heavyweight model path"
                         ),
+                        enforce_failure_policy=False,
                     )
                 else:
                     logger.warning(

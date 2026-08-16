@@ -871,6 +871,7 @@ def _surface_generation_control_receipt(
         "surface_quality_gate_passed",
         "surface_quality_gate_attempts",
         "surface_quality_gate_reasons",
+        "telemetry_sanitizer_reasons",
         # The draft the gate rejected, carried rather than destroyed.
         #
         # Blanking it turned "I wrote something a heuristic disliked" into
@@ -954,27 +955,28 @@ def _surface_quality_failure_reasons(
         grounding=grounding,
         sensory_evidence=job.get("user_surface_sensory_evidence"),
     )
-    if assessment.ok and not assessment.retryable and not assessment.hard_failure:
+    sanitizer_reasons = _telemetry_sanitization_failure_reasons(
+        str(response_text or ""),
+        is_proof=False,
+    )
+    if (
+        assessment.ok
+        and not assessment.retryable
+        and not assessment.hard_failure
+        and not sanitizer_reasons
+    ):
         return []
-    reasons = list(assessment.reasons) or ["surface_quality_gate_failed"]
-    # This gate is about INTEGRITY — leaks, corruption, prompt artefacts,
-    # nonsense — which the worker can judge and must never let out. Whether a
-    # derivation reached its conclusion is about COMPLETENESS, and fixing that
-    # needs another generation.
-    #
-    # The worker cannot afford one: the surface-gate retry wall is 20s and a
-    # 32B turn takes longer than that, so "retry" here always resolves to
-    # "salvage", and salvage on this reason resolves to a refusal. Live
-    # 2026-07-26 that turned a correct three-case derivation into "I couldn't
-    # get to an answer I'd stand behind on that one" — strictly worse for the
-    # person than the derivation itself.
-    #
-    # The route keeps the signal and has the budget to act on it.
-    #
-    # Generalised: the worker vetoes on INTEGRITY only — text that must not be
-    # spoken. A draft that merely fell short of what the turn wanted is real
-    # content, and the worker is the one participant with no budget to improve
-    # it. See core/conversation/surface_disposition.py.
+    reasons = list(assessment.reasons)
+    reasons.extend(sanitizer_reasons)
+    reasons = list(dict.fromkeys(reasons))
+    if not reasons:
+        reasons = ["surface_quality_gate_failed"]
+    # This gate is about INTEGRITY — leaks, corruption, prompt artefacts and
+    # text that is not language. Those reasons may suppress a draft, but the
+    # draft remains intact for one bounded authored correction whose wall starts
+    # when correction starts. COMPLETENESS is different: a draft that merely
+    # fell short is real content and remains the floor the route can deliver.
+    # See core/conversation/surface_disposition.py.
     try:
         from core.conversation.surface_disposition import integrity_failures
 
@@ -1741,6 +1743,22 @@ def _repair_live_user_surface_operational_status(
 # token 23" ended it and the person got a refusal. A retry that does not say
 # what to fix is a wasted decode, and wasted decodes are what kill the turn.
 _SURFACE_RETRY_INSTRUCTIONS: dict[str, str] = {
+    "backend_symbolic_surface_leak": (
+        "Restate the same substantive answer in natural language without raw backend "
+        "enum names, internal variable names, or control identifiers."
+    ),
+    "corrupted_language": (
+        "Regenerate the complete answer in clean grammatical language. Do not copy any "
+        "malformed token from the rejected draft."
+    ),
+    "telemetry_path_wall": (
+        "Answer the request without dumping internal telemetry paths. Include a path only "
+        "when the user asked for that specific path and it is necessary to the answer."
+    ),
+    "unbounded_numeric_identifier": (
+        "Do not expose an unexplained internal numeric identifier. Preserve a long exact "
+        "number only when the user requested it or it is necessary to the answer."
+    ),
     "generic_memory_pin_acknowledgement": (
         "The user asked you to remember something AND asked something else in the "
         "same turn. State the exact value you are keeping, then answer the rest of "
@@ -1942,6 +1960,8 @@ def _surface_retry_wall_exceeded(started_monotonic: float, wall_s: float) -> boo
     instead of drafting again for a user who has stopped waiting. Floor of
     10s so a misconfigured env value can never disable first-attempt retries.
     """
+    if started_monotonic <= 0.0:
+        return False
     return (time.monotonic() - started_monotonic) > max(10.0, wall_s)
 
 
@@ -2010,13 +2030,15 @@ def _expand_user_surface_retry_budget(
     return True
 
 
-def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None:
-    """Strip leaked internal telemetry labels and paths that occasionally
-    slip out from the LoRA fine-tune weights during specific topics.
-    Returns None if a fatal hallucination is detected so the caller can retry.
-    """
+def _telemetry_sanitization_failure_reasons(
+    text: str,
+    is_proof: bool = False,
+) -> list[str]:
+    """Identify fatal surface leakage without destroying the authored draft."""
     if not text:
-        return text
+        return []
+
+    reasons: list[str] = []
 
     # 1) Reject telemetry-path walls without blocking legitimate code, regex,
     # filesystem, or proof output. The old slash-count heuristic rejected any
@@ -2031,20 +2053,20 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
             path_like = re.findall(r"(?:/[A-Za-z0-9._-]+){3,}", text)
             path_chars = sum(len(path) for path in path_like)
             if len(path_like) >= 3 or path_chars > max(120, int(len(text) * 0.35)):
-                return None
+                reasons.append("telemetry_path_wall")
 
     # 3) Extreme numeric sequences: in conversational output a 20+ digit run
     # is a hallucination signature. Proof/eval answers are exempt — large
     # integers, hashes, and numeric test vectors are legitimate exact
     # answers there, and correctness is the eval harness's job to score.
     if not is_proof and re.search(r'\d{20,}', text):
-        return None
+        reasons.append("unbounded_numeric_identifier")
 
     # 4) Corrupted lexical output is a model-state failure, not a usable
     # answer — in EVERY mode. A proof answer containing corruption tokens is
     # corrupted evidence, so the proof exemption never applied here.
     if _contains_corrupted_language(text):
-        return None
+        reasons.append("corrupted_language")
     # 5) Backend-symbolic surface markers apply in EVERY mode. The exemption
     # here was justified by a pattern that no longer exists: it claimed the
     # regex matched common English words ("proceeding", "field coherence"),
@@ -2054,9 +2076,35 @@ def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None
     # pattern at all. A proof answer containing a raw backend action code is
     # leaked internals wherever it appears.
     if _BACKEND_SYMBOLIC_SURFACE_MARKERS.search(text):
+        reasons.append("backend_symbolic_surface_leak")
+
+    return list(dict.fromkeys(reasons))
+
+
+def _sanitize_telemetry_leakage(text: str, is_proof: bool = False) -> str | None:
+    """Legacy strict-path adapter for the typed telemetry sanitizer.
+
+    Strict/proof callers still receive ``None`` for an unspeakable draft. Live
+    user surfaces consume the typed reasons through the quality-repair lane so
+    the original draft remains available for bounded authored correction.
+    """
+    if _telemetry_sanitization_failure_reasons(text, is_proof=is_proof):
         return None
 
     return text
+
+
+def _route_telemetry_sanitizer_draft(
+    text: str,
+    *,
+    is_proof: bool,
+    authored_surface_repair_available: bool,
+) -> tuple[str, list[str]]:
+    """Keep an unspeakable live draft only when a bounded repair lane owns it."""
+    reasons = _telemetry_sanitization_failure_reasons(text, is_proof=is_proof)
+    if reasons and not authored_surface_repair_available:
+        return "", reasons
+    return text, reasons
 
 
 _ARTIFACT_REQUEST_RE = re.compile(
@@ -6178,6 +6226,7 @@ def _mlx_worker_loop(
                     surface_control_state["surface_quality_gate_passed"] = not surface_quality_gate_enabled
                     surface_control_state["surface_quality_gate_attempts"] = 0
                     surface_control_state["surface_quality_gate_reasons"] = []
+                    surface_control_state["telemetry_sanitizer_reasons"] = []
                     surface_control_state["instruction_shape_repair_applied"] = False
                     surface_control_state["text_mutations"] = []
                     surface_control_state["generation_max_tokens_applied"] = max_tokens
@@ -6197,14 +6246,12 @@ def _mlx_worker_loop(
                             # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
                             max_internal_retries = 1 if proof_evaluation_contract else 2
 
-                            # Wall-clock budget for the user-surface QUALITY-GATE
-                            # retry path only: under memory-contended decode each
-                            # attempt costs 30-70s, and burning the full retry
-                            # budget is how a single live turn reaches 200s+
-                            # (July 8 soak). Once the wall is hit, exhaustion
-                            # salvage delivers the best honest draft instead of
-                            # drafting again for a user who has stopped waiting.
-                            surface_retry_started = time.monotonic()
+                            # This clock belongs to REPAIR, not drafting. A healthy
+                            # resident-32B first pass takes 30-70s under load; starting
+                            # a 20s repair wall before that pass made the wall expire
+                            # before a rejected draft even existed, so an authored
+                            # correction could never run.
+                            surface_retry_started = 0.0
                             surface_retry_wall_s = _safe_float(
                                 _FLAG_SURFACE_RETRY_WALL_S.value(), 20.0
                             )
@@ -7049,9 +7096,22 @@ def _mlx_worker_loop(
                                             )
 
                                     if strict_answer_contract:
-                                        sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
-                                        if sanitized_text is None:
-                                            logger.warning("🚨 [WORKER] Strict answer draft failed sanitizer.")
+                                        sanitized_text, sanitizer_reasons = (
+                                            _route_telemetry_sanitizer_draft(
+                                                response_text,
+                                                is_proof=True,
+                                                authored_surface_repair_available=False,
+                                            )
+                                        )
+                                        surface_control_state[
+                                            "telemetry_sanitizer_reasons"
+                                        ] = sanitizer_reasons[:8]
+                                        if sanitizer_reasons:
+                                            logger.warning(
+                                                "🚨 [WORKER] Strict answer draft failed sanitizer "
+                                                "reasons=%s.",
+                                                ",".join(sanitizer_reasons[:8]),
+                                            )
                                             response_text = ""
                                             break
                                         response_text = sanitized_text
@@ -7081,9 +7141,22 @@ def _mlx_worker_loop(
                                                 raw_strict_value_text.strip()[:240]
                                             )
                                         if response_text.strip():
-                                            sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=True)
-                                            if sanitized_text is None:
-                                                logger.warning("🚨 [WORKER] Strict value draft failed sanitizer after normalization.")
+                                            sanitized_text, sanitizer_reasons = (
+                                                _route_telemetry_sanitizer_draft(
+                                                    response_text,
+                                                    is_proof=True,
+                                                    authored_surface_repair_available=False,
+                                                )
+                                            )
+                                            surface_control_state[
+                                                "telemetry_sanitizer_reasons"
+                                            ] = sanitizer_reasons[:8]
+                                            if sanitizer_reasons:
+                                                logger.warning(
+                                                    "🚨 [WORKER] Strict value draft failed sanitizer "
+                                                    "after normalization reasons=%s.",
+                                                    ",".join(sanitizer_reasons[:8]),
+                                                )
                                                 response_text = ""
                                                 break
                                             response_text = sanitized_text
@@ -7093,14 +7166,33 @@ def _mlx_worker_loop(
                                                 raw_strict_value_text.strip()[:160],
                                             )
                                     else:
-                                        sanitized_text = _sanitize_telemetry_leakage(response_text, is_proof=proof_evaluation_contract)
-                                        if sanitized_text is None:
-                                            logger.warning("🚨 [WORKER] Hallucination detected by sanitizer. Returning empty text for caller-side recovery.")
-                                            response_text = ""
-                                            break
-                                            # ipc_writer.put({
-
-                                        response_text = sanitized_text
+                                        response_text, sanitizer_reasons = (
+                                            _route_telemetry_sanitizer_draft(
+                                                response_text,
+                                                is_proof=proof_evaluation_contract,
+                                                authored_surface_repair_available=(
+                                                    surface_quality_gate_enabled
+                                                ),
+                                            )
+                                        )
+                                        surface_control_state[
+                                            "telemetry_sanitizer_reasons"
+                                        ] = sanitizer_reasons[:8]
+                                        if sanitizer_reasons:
+                                            if response_text:
+                                                logger.warning(
+                                                    "⚠️ [WORKER] Live draft failed telemetry sanitizer "
+                                                    "reasons=%s; routing the intact draft through "
+                                                    "bounded authored surface repair.",
+                                                    ",".join(sanitizer_reasons[:8]),
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    "🚨 [WORKER] Draft failed telemetry sanitizer "
+                                                    "reasons=%s; strict caller-side recovery required.",
+                                                    ",".join(sanitizer_reasons[:8]),
+                                                )
+                                                break
 
                                     if surface_quality_gate_enabled and response_text.strip():
                                         grounded_surface = _repair_live_user_surface_self_claims(
@@ -7388,10 +7480,8 @@ def _mlx_worker_loop(
                                                     internal_attempt + 1,
                                                 )
                                             if internal_attempt < max_internal_retries and not surface_wall_exceeded:
-                                                if prompt_cache_lru is not None:
-                                                    prompt_cache_lru.clear()
-                                                if mx and device != "cpu":
-                                                    _clear_mlx_cache(mx)
+                                                if surface_retry_started <= 0.0:
+                                                    surface_retry_started = time.monotonic()
                                                 if _expand_user_surface_retry_budget(
                                                     kwargs,
                                                     rejection_reasons,

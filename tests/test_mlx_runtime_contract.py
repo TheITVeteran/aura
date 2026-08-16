@@ -911,6 +911,17 @@ def test_worker_blocks_generation_when_steering_liveness_drops(monkeypatch):
             self.checks += 1
             return self.checks == 1
 
+    class FakeTokenizer:
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            del add_special_tokens
+            return list(range(max(1, len(str(text)) // 4)))
+
+        @staticmethod
+        def decode(tokens, skip_special_tokens=True):
+            del skip_special_tokens
+            return "x" * len(tokens)
+
     steering_engine = FakeSteeringEngine()
     queue_factory = _install_worker_fakes(
         monkeypatch,
@@ -919,7 +930,7 @@ def test_worker_blocks_generation_when_steering_liveness_drops(monkeypatch):
             types.SimpleNamespace(
                 parameters=lambda: {"weight": types.SimpleNamespace(size=1)}
             ),
-            object(),
+            FakeTokenizer(),
         ),
         steering_engine=steering_engine,
     )

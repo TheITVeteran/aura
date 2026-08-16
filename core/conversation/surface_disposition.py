@@ -391,6 +391,8 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         "internal_live_gate_leak",
         "cognitive_engine_failure_envelope",
         "backend_symbolic_surface_leak",
+        "telemetry_path_wall",
+        "unbounded_numeric_identifier",
         "raw_model_identity_leak",
         "corrupted_language",
         "unexpected_cjk_intrusion",
