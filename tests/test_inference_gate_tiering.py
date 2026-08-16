@@ -1731,6 +1731,36 @@ async def test_user_facing_primary_uses_compact_foreground_context_builders():
 
 
 @pytest.mark.asyncio
+async def test_live_context_is_one_turn_local_message_after_the_stable_prefix():
+    gate = InferenceGate()
+    cortex = _RecordingClient("I'm with you and tracking the current thread clearly.")
+    gate._mlx_client = cortex
+    gate._build_compact_system_prompt = CallProbe(return_value="stable-identity-policy")
+    gate._build_compact_living_mind_context = AsyncCallProbe(
+        return_value="turn-local-living-mind"
+    )
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                await gate.generate(
+                    "With me?",
+                    context={"origin": "api", "prefer_tier": "primary", "history": []},
+                )
+
+    messages = cortex.kwargs[0]["messages"]
+    assert messages[0]["role"] == "system"
+    assert "stable-identity-policy" in messages[0]["content"]
+    assert "turn-local-living-mind" not in messages[0]["content"]
+    assert "USER-FACING CONVERSATION RELIABILITY CONTRACT" not in messages[0]["content"]
+    assert messages[-1] == {"role": "user", "content": "With me?"}
+    assert messages[-2]["role"] == "system"
+    grounding = messages[-2]["content"]
+    assert grounding.count("turn-local-living-mind") == 1
+    assert grounding.count("USER-FACING CONVERSATION RELIABILITY CONTRACT") == 1
+
+
+@pytest.mark.asyncio
 async def test_user_facing_secondary_uses_compact_foreground_context_builders():
     # The local deep solver is auto-disabled on <96GB hosts (memory-
     # class policy). Force-enable so the tier logic under test is

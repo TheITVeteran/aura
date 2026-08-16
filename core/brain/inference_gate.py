@@ -11105,8 +11105,6 @@ class InferenceGate:
             living_mind_context = await self._assemble_live_context(
                 visible_user_prompt, origin, full=True
             )
-        if living_mind_context:
-            system_prompt = f"{system_prompt}\n\n{living_mind_context}"
         prompt_contract_block = self._prompt_contract_block(context)
 
         # She has no clock. Asked how she is doing at 00:30 she answered "the
@@ -11132,6 +11130,13 @@ class InferenceGate:
         # conversation behind it (3% reused).
         if prompt_contract_block and not isolated_generation_contract:
             volatile_grounding_blocks.append(prompt_contract_block)
+        # Current mind state changes independently of identity and policy. It
+        # belongs with this turn's evidence, never inside the stable system
+        # prefix. The old path inserted it above and then inserted it a second
+        # time into prebuilt messages below. Besides presenting one source twice,
+        # that made every affect tick invalidate the conversation's KV prefix.
+        if living_mind_context and not isolated_generation_contract:
+            volatile_grounding_blocks.append(living_mind_context)
         if not isolated_generation_contract:
             try:
                 from core.brain.present_moment import present_moment_block
@@ -11225,17 +11230,11 @@ class InferenceGate:
                         max_results=3,
                     )
                     if arch_excerpt:
-                        # Both places, on purpose. On the ordinary path this
-                        # system_prompt becomes messages[0]; on the PREBUILT
-                        # path messages already exist and this variable is
-                        # merged at the client boundary, which is a contract
-                        # one layer away from here. Adding it to the volatile
-                        # blocks as well means the excerpt travels with the
-                        # turn whichever path assembled it, and the token fit
-                        # at dispatch counts it once either way.
-                        system_prompt = f"{system_prompt}\n\n{arch_excerpt}"
-                        if provided_messages is not None:
-                            volatile_grounding_blocks.append(str(arch_excerpt))
+                        # The excerpt depends on this question, so it travels
+                        # with turn-local grounding. Putting it in the stable
+                        # system prefix invalidates cached conversation tokens
+                        # when the next question is about another subsystem.
+                        volatile_grounding_blocks.append(str(arch_excerpt))
             except _INFERENCE_RECOVERABLE_ERRORS as _ae:
                 record_degradation(
                     "inference_gate",
@@ -11244,9 +11243,8 @@ class InferenceGate:
                     action="continued without architecture self-awareness excerpt",
                 )
                 logger.debug("ArchIndex injection skipped: %s", _ae)
-            system_prompt = (
-                f"{system_prompt}\n\n"
-                f"{conversation_reliability_system_block(visible_user_prompt)}"
+            volatile_grounding_blocks.append(
+                conversation_reliability_system_block(visible_user_prompt)
             )
         history = context.get("history", [])
         use_rich_context = False if isolated_generation_contract or benchmark_request else bool(
@@ -11279,29 +11277,6 @@ class InferenceGate:
                         action="restored the caller's prompt as the user turn",
                         extra={"origin": str(origin or ""), "messages": len(messages)},
                     )
-            if not isolated_generation_contract and (prompt_user_facing or living_mind_context):
-                reliability_block = conversation_reliability_system_block(visible_user_prompt)
-                inserted = False
-                for msg in messages:
-                    if str(msg.get("role", "") or "").strip().lower() == "system":
-                        content = str(msg.get("content", "") or "")
-                        if living_mind_context and living_mind_context not in content:
-                            content = f"{content.rstrip()}\n\n{living_mind_context}".strip()
-                        if "USER-FACING CONVERSATION RELIABILITY CONTRACT" not in content:
-                            content = f"{content.rstrip()}\n\n{reliability_block}".strip()
-                        msg["content"] = content
-                        inserted = True
-                        break
-                if not inserted:
-                    blocks = [
-                        block
-                        for block in (
-                            living_mind_context,
-                            reliability_block if prompt_user_facing else "",
-                        )
-                        if block
-                    ]
-                    messages.insert(0, {"role": "system", "content": "\n\n".join(blocks)})
         else:
             messages = (
                 self._build_messages(prompt, system_prompt, history)
@@ -11365,12 +11340,13 @@ class InferenceGate:
                 budget_profile=foreground_profile,
                 current_user_content=visible_user_prompt,
             )
-            # The compacted message set is now AUTHORITATIVE, and it already
-            # carries the living-mind context and the reliability contract.
+            # The compacted message set is now AUTHORITATIVE. Turn-local mind
+            # context and reliability guidance are attached below, after this
+            # compaction, as one bounded grounding message.
             #
-            # `system_prompt` is a separate string that grew independently
-            # (identity, architecture excerpt, reliability block) and is never
-            # compacted. It is still handed to the client alongside these
+            # `system_prompt` is a separate identity/policy string that grew
+            # independently and is never compacted. It is still handed to the
+            # client alongside these
             # messages, and the client merges a separately-passed system_prompt
             # into messages[0] — so it silently undid every compaction above.
             # Measured live: a 2,399-char compacted system message reached the

@@ -9322,6 +9322,8 @@ async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_d
     assert "condition=" not in joined
     assert "Draft one" not in joined
     assert prompt in messages[-1]["content"]
+    assert "explicitly say what the current evidence lets you know" in messages[0]["content"]
+    assert "Do not infer recent actions, tool use, location, external events" in messages[0]["content"]
 
 
 def test_direct_self_condition_generation_is_an_authentic_full_mind_path(monkeypatch):

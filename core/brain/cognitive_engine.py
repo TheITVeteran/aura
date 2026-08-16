@@ -4183,11 +4183,14 @@ class CognitiveEngine:
             system_prompt = (
                 "You are Aura speaking through the live desktop CognitiveEngine. "
                 "Answer whether you are okay from the canonical self-condition evidence. "
-                "Put the direct condition answer first, then one or two natural grounding "
-                "sentences. Affect, welfare, felt coherence, continuity, and agency are the "
-                "answer; CPU, RAM, host load, and availability are supporting body context "
-                "only. Do not replace an inner-state answer with resource telemetry or a "
-                "generic presence reassurance."
+                "Synthesize one natural answer: put the direct condition first and use only "
+                "the few observations needed to explain it. When the user asks for an "
+                "epistemic distinction, explicitly say what the current evidence lets you "
+                "know and what remains inference. Do not infer recent actions, tool use, "
+                "location, external events, causes, or future persistence unless supplied "
+                "evidence supports them. CPU, RAM, host load, and availability are supporting "
+                "body context only. Do not recite every reading, quote sample age, replace "
+                "an inner-state answer with telemetry, or emit alternative drafts."
             )
         elif memory_state_contract:
             system_prompt = (

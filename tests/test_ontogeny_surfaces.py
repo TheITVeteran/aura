@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from core.ontogeny.conclusion import (
@@ -155,11 +157,35 @@ class TestSelfConditionIntegration:
     def test_language_grounding_is_semantic_evidence_not_a_status_card(self):
         block = self._projection(self._rich()).to_language_grounding()
 
-        assert "direct runtime evidence" in block
-        assert "interpretations or inferences" in block
+        assert "Directly observed from current readings" in block
+        assert "those require inference" in block
         assert "condition=" not in block
         assert "evidence_id=" not in block
         assert "## CANONICAL" not in block
+        assert "seconds old" not in block
+        assert "dominant drive" not in block
+        assert "recent actions" in block
+
+    def test_language_grounding_surfaces_only_material_body_strain(self):
+        settled = self._projection(self._rich()).to_language_grounding()
+        strained = replace(
+            self._projection(self._rich()),
+            body_pressure=0.84,
+            fatigue=0.79,
+            reserve=0.31,
+            supported_dimensions=(
+                *self._projection(self._rich()).supported_dimensions,
+                "body_pressure",
+                "fatigue",
+                "reserve",
+            ),
+        ).to_language_grounding()
+
+        assert "body pressure" not in settled
+        assert "fatigue" not in settled
+        assert "high body pressure" in strained
+        assert "high fatigue" in strained
+        assert "low reserve" in strained
 
     def test_history_is_outside_the_evidence_id(self):
         """The id identifies the sample of her state, not her accumulated past."""

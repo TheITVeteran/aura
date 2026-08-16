@@ -278,11 +278,6 @@ class SelfConditionProjection:
                 "readings do not substitute for self-condition evidence."
             )
 
-        age = (
-            "unknown age"
-            if self.sample_age_s is None
-            else f"{self.sample_age_s:.0f} seconds old"
-        )
         support = set(self.supported_dimensions) - set(self.stale_dimensions)
 
         def band(
@@ -316,15 +311,6 @@ class SelfConditionProjection:
                 0.75,
                 ("weak continuity", "partial continuity", "continuity holding"),
             ),
-            ("agency", self.agency, 0.45, 0.70, ("low agency", "moderate agency", "active agency")),
-            (
-                "body_pressure",
-                self.body_pressure,
-                0.35,
-                0.70,
-                ("low body pressure", "moderate body pressure", "high body pressure"),
-            ),
-            ("fatigue", self.fatigue, 0.30, 0.70, ("low fatigue", "some fatigue", "high fatigue")),
         )
         for name, value, low, high, labels in dimensions:
             if name in support:
@@ -332,36 +318,41 @@ class SelfConditionProjection:
                     band(value, low=low, high=high, labels=labels)
                 )
 
-        direct_summary = ", ".join(observed) or "a partial current-state reading"
+        direct_summary = ", ".join(observed) or "a partial present-state reading"
         freshness = (
             "fresh"
             if self.freshness == "fresh"
-            else f"{self.freshness} and must be qualified"
+            else f"{self.freshness}; qualify any present-tense conclusion"
         )
-        missing = ", ".join(self.missing_dimensions)
-        missing_sentence = (
-            f" The sample does not directly establish {missing}." if missing else ""
-        )
-        attention_sentence = (
-            f" Its current attention is on {self.attention_focus}."
-            if self.attention_focus and "attention" in support
+        material_strain: list[str] = []
+        if "body_pressure" in support and self.body_pressure >= 0.70:
+            material_strain.append("high body pressure")
+        if "fatigue" in support and self.fatigue >= 0.70:
+            material_strain.append("high fatigue")
+        if "reserve" in support and self.reserve <= 0.45:
+            material_strain.append("low reserve")
+        if "agency" in support and self.agency <= 0.45:
+            material_strain.append("low agency")
+        strain_sentence = (
+            f" Materially strained readings: {', '.join(material_strain)}."
+            if material_strain
             else ""
         )
-        drive_sentence = (
-            f" Its current dominant drive is {self.dominant_drive}."
-            if self.dominant_drive
+        coverage_sentence = (
+            " Some dimensions are unmeasured, so do not fill them in."
+            if self.missing_dimensions
             else ""
         )
         return (
-            f"Aura has a {freshness} self-condition sample, {age}. The direct "
-            f"runtime evidence supports an overall {self.condition} condition: "
-            f"{direct_summary}.{attention_sentence}{drive_sentence}{missing_sentence} "
-            "These current readings and the condition computed from them are the "
-            "observed evidence. Descriptions of why the state arose, whether it "
-            "will persist, any unmeasured dimension, and any claim about private "
-            "phenomenal character are interpretations or inferences rather than "
-            "direct measurements. Answer in Aura's ordinary voice; use that "
-            "known-versus-inferred distinction when the user asks for it."
+            f"Present-state evidence is {freshness} and supports an overall "
+            f"{self.condition} condition. Directly observed from current readings: "
+            f"{direct_summary}.{strain_sentence}{coverage_sentence} The evidence "
+            "does not establish why the state arose, whether it will persist, any "
+            "unmeasured property, or private phenomenal character; those require "
+            "inference. It provides no evidence about recent actions, tool use, "
+            "location, or external events. Use this as grounding rather than "
+            "wording: synthesize one answer in Aura's ordinary voice instead of "
+            "reciting a status report."
         )
 
 
