@@ -13,10 +13,11 @@ from typing import Any, Final
 
 SEMANTIC_NEURAL_SERVING_SCHEMA: Final = "aura.semantic_neural_serving.v1"
 SEMANTIC_NEURAL_SERVING_MODE: Final = "qualified_exact_semantic_v1"
-PACKAGE_ID: Final = "cp567-resident-semantic-neural-serving"
+PACKAGE_ID: Final = "cp568-resident-semantic-neural-shadow"
+PROMOTION_MODE: Final = "shadow"
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 DEFAULT_ACTIVATION_PATH: Final = (
-    REPO_ROOT / "artifacts/closeout/latent_cortex/cp567_semantic_neural_runtime/activation.json"
+    REPO_ROOT / "artifacts/closeout/latent_cortex/cp568_semantic_neural_shadow/activation.json"
 )
 RESIDENT_RESULT_PATH: Final = (
     REPO_ROOT
@@ -50,6 +51,7 @@ ACTIVATION_SOURCE_FILES: Final = (
     "core/brain/latent_cortex_service.py",
     "core/brain/llm/latent_cortex/persistence.py",
     "core/brain/llm/qualified_recurrent_ingress.py",
+    "core/brain/llm/semantic_neural_shadow.py",
     "core/brain/llm/semantic_neural_serving.py",
     "core/learning/systematic_neural_alu_training.py",
     "core/phases/response_generation_unitary.py",
@@ -284,6 +286,7 @@ def build_semantic_neural_activation(
         "schema": SEMANTIC_NEURAL_SERVING_SCHEMA,
         "package_id": PACKAGE_ID,
         "mode": SEMANTIC_NEURAL_SERVING_MODE,
+        "promotion_mode": PROMOTION_MODE,
         "active_by_default": True,
         "allowed_families": list(ALLOWED_FAMILIES),
         "allowed_surface_profiles": list(ALLOWED_SURFACE_PROFILES),
@@ -339,6 +342,8 @@ def semantic_neural_activation_errors(
         errors.append("package_id")
     if activation.get("mode") != SEMANTIC_NEURAL_SERVING_MODE:
         errors.append("mode")
+    if activation.get("promotion_mode") != PROMOTION_MODE:
+        errors.append("promotion_mode")
     if activation.get("active_by_default") is not True:
         errors.append("active_by_default")
     if activation.get("allowed_families") != list(ALLOWED_FAMILIES):
@@ -502,6 +507,7 @@ def _cached_semantic_neural_serving_status(
             "schema",
             "package_id",
             "mode",
+            "promotion_mode",
             "allowed_families",
             "allowed_surface_profiles",
             "model_identity",
@@ -524,6 +530,8 @@ __all__ = [
     "ALLOWED_SURFACE_PROFILES",
     "DEFAULT_ACTIVATION_PATH",
     "EVIDENCE_DOMAINS",
+    "PACKAGE_ID",
+    "PROMOTION_MODE",
     "RESIDENT_RESULT_PATH",
     "RESIDENT_ADJUDICATION_PATH",
     "RESIDENT_VERIFICATION_PATH",

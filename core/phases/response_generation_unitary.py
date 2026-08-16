@@ -32,7 +32,6 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from core.utils.injected_blocks import stamp_grounding
 from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.reasoning_amplifier_flags import reasoning_amplifier_v2_enabled
 from core.container import ServiceContainer
@@ -65,6 +64,7 @@ from core.runtime.proof_policy import (
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 from core.self.inner_language import say_focus
 from core.state.aura_state import AuraState
+from core.utils.injected_blocks import stamp_grounding
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.prompt_compression import compress_system_prompt
 from core.utils.task_tracker import get_task_tracker
@@ -5926,6 +5926,8 @@ class UnitaryResponsePhase(Phase):
             # on their purpose-built lanes.
             latent_path_committed = False
             latent_evidence: list[str] = []
+            qualified_shadow_text = ""
+            qualified_shadow_receipt: dict[str, Any] = {}
             model_retry_suppressed = False
             raw: Any = None
             try:
@@ -6003,6 +6005,16 @@ class UnitaryResponsePhase(Phase):
                     capability_modifiers=dict(new_state.response_modifiers),
                 )
                 new_state.response_modifiers.update(latent_outcome.trace)
+                if latent_outcome.shadow_text:
+                    qualified_shadow_text = latent_outcome.shadow_text
+                    raw_shadow_receipt = latent_outcome.trace.get(
+                        "qualified_recurrent_receipt"
+                    )
+                    qualified_shadow_receipt = (
+                        dict(raw_shadow_receipt)
+                        if isinstance(raw_shadow_receipt, dict)
+                        else {}
+                    )
                 if latent_outcome.succeeded:
                     raw = latent_outcome.text
                     latent_path_committed = True
@@ -7314,6 +7326,41 @@ class UnitaryResponsePhase(Phase):
                                 )
             except _RESPONSE_RECOVERABLE_ERRORS as g_err:
                 _record_response_degradation(g_err, "UnitaryResponse: action grounding failed: %s")
+
+            if qualified_shadow_text and qualified_shadow_receipt:
+                try:
+                    from core.brain.llm.semantic_neural_shadow import (
+                        record_semantic_shadow_comparison,
+                    )
+
+                    admission_receipt = qualified_shadow_receipt.get("admission")
+                    activation_receipt = qualified_shadow_receipt.get(
+                        "activation_receipt"
+                    )
+                    if not isinstance(admission_receipt, dict) or not isinstance(
+                        activation_receipt, dict
+                    ):
+                        raise RuntimeError("semantic shadow authority receipt is incomplete")
+                    shadow_comparison = await record_semantic_shadow_comparison(
+                        objective=objective,
+                        qualified_text=qualified_shadow_text,
+                        ordinary_text=response_text,
+                        admission_receipt=admission_receipt,
+                        activation_receipt=activation_receipt,
+                    )
+                    new_state.response_modifiers[
+                        "qualified_recurrent_shadow_comparison"
+                    ] = shadow_comparison
+                    new_state.response_modifiers[
+                        "qualified_recurrent_shadow_recorded"
+                    ] = shadow_comparison.get("persisted") is True
+                except _RESPONSE_RECOVERABLE_ERRORS as shadow_exc:
+                    _record_response_degradation(
+                        shadow_exc,
+                        "UnitaryResponse: qualified semantic shadow comparison failed: %s",
+                        action="retained the ordinary foreground response",
+                        severity="warning",
+                    )
 
             return self._commit_response(new_state, response_text, thought=extracted_thought)
 

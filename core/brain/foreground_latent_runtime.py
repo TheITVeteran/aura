@@ -56,6 +56,8 @@ def _base_trace() -> dict[str, Any]:
         "qualified_recurrent_eligible": False,
         "qualified_recurrent_attempted": False,
         "qualified_recurrent_succeeded": False,
+        "qualified_recurrent_shadowed": False,
+        "qualified_recurrent_shadow_recorded": False,
         "qualified_recurrent_reason": "",
         "qualified_recurrent_receipt": {},
     }
@@ -160,6 +162,7 @@ class ForegroundLatentOutcome:
     trace: dict[str, Any]
     fallback_allowed: bool
     evidence: tuple[str, ...] = ()
+    shadow_text: str = ""
 
     @property
     def selected(self) -> bool:
@@ -324,6 +327,7 @@ async def run_foreground_latent_episode(
             )
     if qualified_admission is not None:
         trace["qualified_recurrent_eligible"] = True
+        semantic_admission = str(qualified_admission.family).startswith("frontier_")
         service = _resolve_service()
         runner = getattr(service, "qualified_recurrent_reason", None)
         if callable(runner):
@@ -342,7 +346,9 @@ async def run_foreground_latent_episode(
                     }
                 )
                 return ForegroundLatentOutcome(
-                    text="", trace=trace, fallback_allowed=False
+                    text="",
+                    trace=trace,
+                    fallback_allowed=semantic_admission,
                 )
             if isinstance(qualified, dict):
                 raw_qualified_receipt = qualified.get("receipt")
@@ -376,6 +382,40 @@ async def run_foreground_latent_episode(
                         qualified.get("reason")
                         == "qualified_semantic_neural_completed"
                     )
+                    activation_receipt = qualified_receipt.get("activation_receipt")
+                    promotion_mode = (
+                        str(activation_receipt.get("promotion_mode") or "")
+                        if isinstance(activation_receipt, dict)
+                        else ""
+                    )
+                    if semantic_neural and promotion_mode == "shadow":
+                        trace.update(
+                            {
+                                "latent_cortex_selected": True,
+                                "latent_cortex_attempted": True,
+                                "latent_cortex_succeeded": False,
+                                "latent_cortex_selection_reason": (
+                                    "qualified_semantic_neural_shadow"
+                                ),
+                                "latent_cortex_identity_bound": True,
+                                "latent_cortex_receipt": qualified_receipt,
+                                "qualified_recurrent_shadowed": True,
+                            }
+                        )
+                        return ForegroundLatentOutcome(
+                            text="",
+                            trace=trace,
+                            fallback_allowed=True,
+                            evidence=("qualified_semantic_neural_shadow",),
+                            shadow_text=text,
+                        )
+                    if semantic_neural and promotion_mode != "active":
+                        trace["qualified_recurrent_reason"] = (
+                            "semantic_neural_promotion_mode_invalid"
+                        )
+                        return ForegroundLatentOutcome(
+                            text="", trace=trace, fallback_allowed=True
+                        )
                     trace.update(
                         {
                             "latent_cortex_selected": True,
@@ -412,7 +452,9 @@ async def run_foreground_latent_episode(
                         }
                     )
                     return ForegroundLatentOutcome(
-                        text="", trace=trace, fallback_allowed=False
+                        text="",
+                        trace=trace,
+                        fallback_allowed=semantic_admission,
                     )
 
     selection = select_foreground_episode(

@@ -50769,3 +50769,35 @@ surface. It does not authorize open-domain routing, static fusion or a frontier
 claim. The next gate is controlled live shadow routing with automatic rollback,
 ordinary-response comparison and desktop/runtime evidence before any broader
 promotion.
+
+## Checkpoint 2026-08-15-568: Keep Qualified Neural Output in Shadow
+
+The qualified semantic-neural surface is now shadow-only. A qualifying request
+may produce the CP566-derived candidate, but the sovereign unitary response path
+still runs ordinary resident inference and keeps its result authoritative. The
+qualified candidate cannot become user-visible unless a future content-addressed
+package explicitly changes the promotion mode after separate evidence and review.
+Missing or unknown promotion modes fail back to ordinary inference.
+
+Each shadow episode records a privacy-bounded comparison after final response
+shaping. The durable ledger contains hashes, parser/family authority, activation
+identity and match/gain flags; it retains neither the prompt nor either answer.
+Ledger failure records a degradation without changing, suppressing or delaying
+the ordinary reply. Activation receipt
+`73b55fd3135eb04f8e7728dfb10b536d3b7631e69d5e9508c4e3904730e9cceb`
+binds the package to `promotion_mode=shadow` and rejects source or mode drift.
+
+The bound runtime verifier again executed `120/120` requests exactly, with
+`120/120` family-targeted lesions disrupting execution and the scientific rows
+balanced `10/10/10` across the measured surfaces. Unsupported language remained
+ineligible. Local qualified-path latency was `34.137 ms` mean, `34.686 ms` p50
+and `63.737 ms` maximum. Verification receipt
+`d2c53f1e7039b5580724daa4ecfb0c0fb064f65481e6650567ecce1eae2cbd83`
+binds those measurements. Focused shadow, serving, ingress, adapter and sovereign
+response contracts pass `90/90`; canonical smoke passes `110/110`.
+
+This closes the direct-commit hazard in CP567. It does not promote the surface
+to everyday authority. The next gate is a controlled live resident-32B shadow
+campaign that measures final ordinary-response agreement, bounded gain
+candidates, persistence reliability, runtime latency and regressions before any
+domain-qualified active promotion is considered.

@@ -59,6 +59,7 @@ def test_semantic_activation_rejects_resealed_source_or_evidence_drift():
 def test_semantic_activation_rejects_resealed_authority_broadening():
     activation = _activation()
     activation["allowed_surface_profiles"].append("free_form")
+    activation["promotion_mode"] = "active"
     activation["claim_boundary"] = "general reasoning is authorized"
     _reseal(activation)
 
@@ -67,6 +68,7 @@ def test_semantic_activation_rejects_resealed_authority_broadening():
         verify_live_identity=False,
     )
     assert "allowed_surface_profiles" in errors
+    assert "promotion_mode" in errors
     assert "claim_boundary" in errors
 
 

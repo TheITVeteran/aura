@@ -819,6 +819,113 @@ async def test_unitary_latent_failure_respects_resident_owner_disposition(
 
 
 @pytest.mark.asyncio
+async def test_unitary_semantic_shadow_keeps_ordinary_reply_and_records_comparison(
+    monkeypatch,
+):
+    from core.brain.foreground_latent_runtime import ForegroundLatentOutcome
+
+    objective = "Compute the bounded posterior and return the required JSON."
+    qualified = 'FINAL_ANSWER: {"posterior_denominator":7,"posterior_numerator":3}'
+    ordinary = (
+        "I independently computed the update.\n"
+        'FINAL_ANSWER: {"posterior_denominator":7,"posterior_numerator":3}'
+    )
+    state = AuraState()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = objective
+    llm = SimpleNamespace(think=AsyncCallProbe(return_value=ordinary))
+    phase = UnitaryResponsePhase(SimpleNamespace(organs={}))
+    observed = {}
+
+    async def _run_latent(**_kwargs):
+        return ForegroundLatentOutcome(
+            text="",
+            trace={
+                "latent_cortex_selected": True,
+                "latent_cortex_attempted": True,
+                "latent_cortex_succeeded": False,
+                "qualified_recurrent_shadowed": True,
+                "qualified_recurrent_receipt": {
+                    "admission": {
+                        "family": "frontier_calibration",
+                        "parser_id": "semantic_calibration_canonical.v1",
+                        "receipt_sha256": "a" * 64,
+                    },
+                    "activation_receipt": {
+                        "package_id": "cp568-resident-semantic-neural-shadow",
+                        "promotion_mode": "shadow",
+                        "activation_sha256": "b" * 64,
+                    },
+                },
+            },
+            fallback_allowed=True,
+            evidence=("qualified_semantic_neural_shadow",),
+            shadow_text=qualified,
+        )
+
+    async def _record(**kwargs):
+        observed.update(kwargs)
+        return {
+            "schema": "aura.semantic_neural_shadow.v1",
+            "receipt_sha256": "c" * 64,
+            "answer_match": True,
+            "persisted": True,
+        }
+
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.run_foreground_latent_episode",
+        _run_latent,
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.semantic_neural_shadow.record_semantic_shadow_comparison",
+        _record,
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.ContextAssembler.build_messages",
+        staticmethod(
+            lambda _state, current: [
+                {"role": "system", "content": "bounded context"},
+                {"role": "user", "content": current},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda name, default=None: llm if name == "llm_router" else default),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation_unitary.build_response_contract",
+        lambda _state, _objective, is_user_facing=False: ResponseContract(
+            is_user_facing=is_user_facing,
+            reason="ordinary_dialogue",
+        ),
+    )
+
+    new_state = await phase.execute(
+        state,
+        objective=objective,
+        priority=True,
+        context={
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "visible_user_message": objective,
+        },
+    )
+
+    llm.think.assert_awaited()
+    assert observed["qualified_text"] == qualified
+    assert observed["ordinary_text"] == new_state.cognition.last_response
+    assert new_state.cognition.last_response.startswith("I independently computed")
+    assert new_state.response_modifiers["qualified_recurrent_shadow_recorded"] is True
+    assert (
+        new_state.response_modifiers["qualified_recurrent_shadow_comparison"][
+            "receipt_sha256"
+        ]
+        == "c" * 64
+    )
+
+
+@pytest.mark.asyncio
 async def test_unitary_response_injects_active_grounding_evidence_for_targeted_followup(monkeypatch):
     state = AuraState()
     state.cognition.current_origin = "api"

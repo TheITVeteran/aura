@@ -324,7 +324,11 @@ async def test_qualified_semantic_neural_domain_is_observable_and_canonical(monk
             "ok": True,
             "reason": "qualified_semantic_neural_completed",
             "text": task.answer,
-            "receipt": {"schema": "qualified.test", "receipt_sha256": "a" * 64},
+            "receipt": {
+                "schema": "qualified.test",
+                "receipt_sha256": "a" * 64,
+                "activation_receipt": {"promotion_mode": "active"},
+            },
         }
     )
     monkeypatch.setattr(
@@ -353,6 +357,64 @@ async def test_qualified_semantic_neural_domain_is_observable_and_canonical(monk
         "qualified_semantic_neural_exact_domain"
     )
     assert outcome.evidence == ("qualified_semantic_neural_execution",)
+
+
+@pytest.mark.asyncio
+async def test_qualified_semantic_shadow_preserves_ordinary_authority(monkeypatch):
+    from core.learning.frontier_process_supervision import (
+        frontier_process_task_battery,
+    )
+
+    task = frontier_process_task_battery(
+        ("calibration",),
+        (1,),
+        1,
+        seed=2026081574,
+    )[0]
+    service = _QualifiedService(
+        {
+            "eligible": True,
+            "attempted": True,
+            "ok": True,
+            "reason": "qualified_semantic_neural_completed",
+            "text": task.answer,
+            "receipt": {
+                "schema": "qualified.test",
+                "receipt_sha256": "b" * 64,
+                "activation_receipt": {
+                    "package_id": "cp568-resident-semantic-neural-shadow",
+                    "promotion_mode": "shadow",
+                    "activation_sha256": "c" * 64,
+                },
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service", lambda: service
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": task.prompt}],
+        visible_objective=task.prompt,
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="reactive",
+        request_timeout_s=30.0,
+        strict_output_contract=True,
+        incompatible_contract=True,
+    )
+
+    assert outcome.succeeded is False
+    assert outcome.fallback_allowed is True
+    assert outcome.text == ""
+    assert outcome.shadow_text == task.answer
+    assert outcome.trace["qualified_recurrent_succeeded"] is True
+    assert outcome.trace["qualified_recurrent_shadowed"] is True
+    assert outcome.trace["latent_cortex_selection_reason"] == (
+        "qualified_semantic_neural_shadow"
+    )
+    assert outcome.evidence == ("qualified_semantic_neural_shadow",)
 
 
 @pytest.mark.asyncio
