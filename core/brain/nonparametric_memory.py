@@ -41,6 +41,13 @@ from typing import Any
 
 import numpy as np
 
+from core.brain.nonparametric_identity import (
+    CENTERING_VERSION,
+    EntryProvenance,
+    StoreIdentity,
+    TrustLevel,
+    identity_from_mapping,
+)
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.NonParametricMemory")
@@ -50,19 +57,99 @@ logger = logging.getLogger("Aura.NonParametricMemory")
 PHI_DORMANT = 0.05
 PHI_DELIBERATE = 0.55
 
+#: A principal every caller may read. Facts that belong to the system
+#: rather than to a person.
+_SHARED_PRINCIPAL = "shared"
+
 
 def _flag_on(name: str, default: str = "0") -> bool:
     return str(os.getenv(name, default)).strip().lower() in {"1", "true", "on", "yes", "enabled"}
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
+    """Finite value inside [lo, hi]. NaN goes to the FLOOR, not the ceiling.
+
+    ``max(lo, min(hi, nan))`` returns ``hi``: both comparisons are False, so
+    a NaN lambda clamped to the MAXIMUM interpolation weight and handed the
+    whole distribution to recall (CP126 ``cb95d7d9``). A value nobody can
+    compute is the least trust, not the most.
+    """
+    try:
+        value = float(v)
+    except (TypeError, ValueError):
+        return lo
+    if not math.isfinite(value):
+        return lo
+    return max(lo, min(hi, value))
+
+
+def _finite_probabilities(probs: Any) -> dict[int, float]:
+    """A usable probability map, or empty. Nothing propagates a NaN.
+
+    ``lm_probs`` arrived from a caller and went straight into the blend, so
+    a NaN or a value above one produced negative model mass or spread the
+    NaN across every token.
+    """
+    if not isinstance(probs, dict):
+        return {}
+    clean: dict[int, float] = {}
+    for token, value in probs.items():
+        try:
+            token_id = int(token)
+            p = float(value)
+        except (TypeError, ValueError):
+            continue
+        if token_id < 0 or not math.isfinite(p) or p < 0.0:
+            continue
+        clean[token_id] = min(1.0, p)
+    return clean
 
 
 # Below this, a centered vector has no usable direction: the cosine would be
 # noise divided by ~zero. Queries and keys that degenerate this far are
 # reported as unknown rather than ranked.
 _DEGENERATE_NORM = 1e-9
+
+
+def _provenance_from_mapping(value: Any) -> EntryProvenance:
+    if not isinstance(value, dict):
+        return EntryProvenance(source_id="unattributed")
+    return EntryProvenance(
+        source_id=str(value.get("source_id", "unattributed")),
+        trust=str(value.get("trust", TrustLevel.UNVERIFIED)),
+        verifier=str(value.get("verifier", "")),
+        evidence_id=str(value.get("evidence_id", "")),
+        principal=str(value.get("principal", "anonymous")),
+        content_sha256=str(value.get("content_sha256", "")),
+    )
+
+
+def _streamed_keys_digest(keys: Any, rows_per_block: int = 512) -> str:
+    """Digest of a persisted key matrix without materialising it."""
+    hasher = hashlib.sha256()
+    total = int(keys.shape[0])
+    for start in range(0, total, rows_per_block):
+        block = np.ascontiguousarray(keys[start : start + rows_per_block], dtype=np.float32)
+        hasher.update(memoryview(block).cast("B"))
+    return hasher.hexdigest()
+
+
+def _keys_digest(keys: np.ndarray) -> str:
+    contiguous = np.ascontiguousarray(keys, dtype=np.float32)
+    return hashlib.sha256(memoryview(contiguous).cast("B")).hexdigest()
+
+
+def _fsync_directory(directory: Path) -> None:
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 @dataclass
@@ -83,6 +170,15 @@ class Neighbor:
     # Position of this entry in the store — lets generation loops apply the
     # anti-stutter guard (the same entry may not fire on consecutive steps).
     index: int = -1
+    #: The threshold this similarity was computed against, captured under the
+    #: same lock hold. Reading the gate afterwards let a concurrent mode
+    #: change pair a raw-mode similarity with the centered threshold.
+    gate_threshold: float = 1.0
+    centered: bool = False
+    #: Where the entry came from, so a recall receipt can name it and a
+    #: discredited source can be revoked.
+    source_id: str = ""
+    trust: str = "unverified"
 
 
 class NonParametricMemory:
@@ -99,11 +195,17 @@ class NonParametricMemory:
         base_lambda: float = 0.25,
         max_lambda: float = 0.7,
         dist_scale: float = 1.0,
+        identity: StoreIdentity | None = None,
     ) -> None:
         self._dim = int(dim)
         if self._dim <= 0:
             raise ValueError("non-parametric memory dimension must be positive")
-        default_path = f"~/.aura/data/runtime/nonparametric_memory_{self._dim}"
+        # The store's identity is not its width. Two models of the same
+        # width write vectors that mean different things and token ids from
+        # different vocabularies; sharing a store between them combined both
+        # and reported successful reuse (CP126 ``aba3eb39``).
+        self._identity = identity or StoreIdentity(dim=self._dim)
+        default_path = f"~/.aura/data/runtime/nonparametric_memory_{self._identity.slug()}"
         self._path = Path(path or os.path.expanduser(default_path))
         self._max = max(64, int(max_entries))
         self._base_lambda = float(base_lambda)
@@ -126,6 +228,15 @@ class NonParametricMemory:
         # with the store so the correction survives restarts.
         self._query_mu = np.zeros(self._dim, dtype=np.float32)
         self._query_mu_n = 0
+        #: Per-entry provenance, parallel to the key rows. Nothing could say
+        #: why an entry was admitted or drop every entry from a discredited
+        #: source (CP126 ``ff3a4505``), and no entry named a principal, so
+        #: one person's query searched another's memory (``62309dad``).
+        self._provenance: list[EntryProvenance] = []
+        self._last_receipt: dict[str, Any] = {"reason": "never_called"}
+        #: Content address per entry, so a replay writes the same fact once
+        #: instead of stacking duplicate votes (CP126 ``4354909``).
+        self._content_keys: dict[str, int] = {}
         self._load()
 
     # How many query samples the mean needs before centered similarity is
@@ -143,38 +254,172 @@ class NonParametricMemory:
         return self.MIN_SIM_CENTERED if self.similarity_ready() else self.MIN_SIM_RAW
 
     # ── population ────────────────────────────────────────────────────────────
-    def add(self, key: np.ndarray, token_id: int, token: str = "", *, weight: float = 1.0) -> bool:
+    #: A finite float32 whose square overflows is still finite. ||k||^2 feeds
+    #: every distance in this store, so the magnitude is bounded at admission
+    #: rather than discovered as an inf halfway through a matrix product
+    #: (CP126 ``2979489a``).
+    MAX_KEY_NORM = 1.0e12
+
+    def add(
+        self,
+        key: np.ndarray,
+        token_id: int,
+        token: str = "",
+        *,
+        weight: float = 1.0,
+        provenance: EntryProvenance | None = None,
+    ) -> bool:
+        """Admit one (key -> next token) pair, with its provenance.
+
+        ``provenance`` names the source, the trust level, the verifier and
+        the principal. It defaults to an UNVERIFIED anonymous entry rather
+        than being optional in effect: the module's docstring says the store
+        holds verifier-clean trusted knowledge, and ``add`` used to accept
+        anything from anyone with no way to say otherwise and no way to
+        revoke a source later (CP126 ``ff3a4505``, ``62309dad``).
+        """
         k = np.asarray(key, dtype=np.float32).reshape(-1)
         if k.shape[0] != self._dim or not np.all(np.isfinite(k)):
             return False
+        norm_sq = float(np.dot(k.astype(np.float64), k.astype(np.float64)))
+        if not math.isfinite(norm_sq) or norm_sq > self.MAX_KEY_NORM:
+            self._stats["rejected_magnitude"] = int(self._stats.get("rejected_magnitude", 0)) + 1
+            return False
+        token_id = int(token_id)
+        if not self._token_id_in_vocabulary(token_id):
+            # An id outside the tokenizer's range cannot name a token in this
+            # model. It used to be stored, exported by interpolate(), and then
+            # silently skipped by apply_to_logits AFTER the lambda mass was
+            # reserved (CP126 ``957c060f``).
+            self._stats["rejected_token_id"] = int(self._stats.get("rejected_token_id", 0)) + 1
+            return False
+
+        record = provenance or EntryProvenance(source_id="unattributed")
+        content_key = self._content_key(k, token_id, record.principal)
         with self._lock:
+            existing = self._content_keys.get(content_key)
+            if existing is not None and existing < self._size:
+                # Same fact, same principal, already here. Appending again
+                # gave one fact several independent nearest neighbours whose
+                # kNN votes summed, so a replay amplified a token and ate the
+                # bounded capacity (CP126 ``4354909``).
+                self._weights[existing] = self._clamped_weight(weight)
+                self._ts[existing] = time.time()
+                self._provenance[existing] = record
+                self._stats["deduplicated"] = int(self._stats.get("deduplicated", 0)) + 1
+                self._content_generation += 1
+                self._identity_cache = None
+                return True
             if self._size >= self._max:
                 self._evict_one_for_incoming()
             self._ensure_capacity(self._size + 1)
             self._keys[self._size] = k
-            self._key_norms[self._size] = float(np.dot(k, k))
-            self._token_ids.append(int(token_id))
+            self._key_norms[self._size] = np.float32(norm_sq)
+            self._token_ids.append(token_id)
             self._tokens.append(str(token))
-            # Reject non-finite/negative weights: a NaN weight would poison the
-            # kNN probability mass it later contributes to.
-            try:
-                w = float(weight)
-            except (TypeError, ValueError):
-                w = 1.0
-            self._weights.append(w if math.isfinite(w) and w >= 0.0 else 0.0)
+            self._weights.append(self._clamped_weight(weight))
             self._ts.append(time.time())
+            self._provenance.append(record)
+            self._content_keys[content_key] = self._size
             self._size += 1
             self._stats["added"] += 1
             self._content_generation += 1
             self._identity_cache = None
         return True
 
+    @staticmethod
+    def _clamped_weight(weight: Any) -> float:
+        """A finite, non-negative weight. NaN poisons the mass it joins."""
+        try:
+            w = float(weight)
+        except (TypeError, ValueError):
+            return 1.0
+        return w if math.isfinite(w) and w >= 0.0 else 0.0
+
+    def _token_id_in_vocabulary(self, token_id: int) -> bool:
+        """Whether this id can name a token under the store's tokenizer."""
+        if token_id < 0:
+            return False
+        vocab = int(self._identity.tokenizer_vocab_size or 0)
+        # An unknown vocabulary cannot refuse an id; it can only refuse a
+        # negative one. That is recorded on the identity so a reader knows
+        # the check is weaker than it looks.
+        return vocab <= 0 or token_id < vocab
+
+    def _content_key(self, key: np.ndarray, token_id: int, principal: str) -> str:
+        """Content address for deduplication, quantised so near-identical
+        replays of the same hidden state collapse to one entry."""
+        quantised = np.round(key.astype(np.float64), 4).astype(np.float32)
+        digest = hashlib.sha256(memoryview(quantised).cast("B")).hexdigest()[:32]
+        return f"{principal}:{token_id}:{digest}"
+
+    def revoke_source(self, source_id: str) -> int:
+        """Drop every entry admitted from one source. Returns how many.
+
+        The revocation handle CP126 ``ff3a4505`` says was missing: when a
+        source turns out to be wrong, its entries were indistinguishable
+        from every other and stayed forever.
+        """
+        return self._drop_where(lambda record: record.source_id == str(source_id))
+
+    def forget_principal(self, principal: str) -> int:
+        """Drop every entry belonging to one principal. Returns how many."""
+        return self._drop_where(lambda record: record.principal == str(principal))
+
+    def _drop_where(self, predicate: Any) -> int:
+        with self._lock:
+            keep = [i for i in range(self._size) if not predicate(self._provenance[i])]
+            dropped = self._size - len(keep)
+            if dropped <= 0:
+                return 0
+            if keep:
+                self._keys[: len(keep)] = self._keys[keep]
+                self._key_norms[: len(keep)] = self._key_norms[keep]
+            self._token_ids = [self._token_ids[i] for i in keep]
+            self._tokens = [self._tokens[i] for i in keep]
+            self._weights = [self._weights[i] for i in keep]
+            self._ts = [self._ts[i] for i in keep]
+            self._provenance = [self._provenance[i] for i in keep]
+            self._size = len(keep)
+            self._reindex_content_keys()
+            self._stats["revoked"] = int(self._stats.get("revoked", 0)) + dropped
+            self._content_generation += 1
+            self._identity_cache = None
+        return dropped
+
+    def _reindex_content_keys(self) -> None:
+        """Caller holds the lock. Rebuild the dedup index after a compaction."""
+        self._content_keys = {
+            self._content_key(self._keys[i], self._token_ids[i], self._provenance[i].principal): i
+            for i in range(self._size)
+        }
+
     def __len__(self) -> int:
         with self._lock:
             return self._size
 
     # ── retrieval ─────────────────────────────────────────────────────────────
-    def query(self, key: np.ndarray, k: int = 8) -> list[Neighbor]:
+    def query(
+        self,
+        key: np.ndarray,
+        k: int = 8,
+        *,
+        principal: str = "",
+        update_mean: bool = True,
+    ) -> list[Neighbor]:
+        """Nearest entries VISIBLE TO THIS PRINCIPAL.
+
+        Every query searched the whole process-wide store, so one person
+        could retrieve another's memory (CP126 ``62309dad``). An empty
+        ``principal`` searches everything, which is what the internal
+        maintenance callers need and what a request lane must not use.
+
+        ``update_mean`` exists because every query — unauthorized,
+        unrelated, and eventual fallthroughs alike — mutated the one global
+        running mean that the anisotropy correction is built on, and that
+        mean is persisted. A query mix therefore changed future similarity
+        decisions for everyone (CP126 ``7a4bfedb``).
+        """
         q = np.asarray(key, dtype=np.float32).reshape(-1)
         # Reject a non-finite query outright: searching with NaN/inf produces
         # NaN distances and garbage neighbor selection, and must never poison
@@ -189,11 +434,12 @@ class NonParametricMemory:
             # Every query is a sample of the hidden space: feed the running
             # mean that powers the anisotropy correction (cumulative mean up
             # to 256 samples, then a slow EMA that tracks drift).
-            if self._query_mu_n < 256:
-                self._query_mu_n += 1
-                self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
-            else:
-                self._query_mu += 0.005 * (q - self._query_mu)
+            if update_mean:
+                if self._query_mu_n < 256:
+                    self._query_mu_n += 1
+                    self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
+                else:
+                    self._query_mu += 0.005 * (q - self._query_mu)
             # CP126 d5cc1faf. Candidates used to be selected by raw
             # Euclidean distance while the confidence gate judged them by
             # mean-centered cosine — two metrics that disagree precisely
@@ -216,15 +462,33 @@ class NonParametricMemory:
             # centered cosines for all n — the same asymptotic cost as the
             # distance scan it replaces. Before the mean estimate is ready mu
             # is zero and this reduces exactly to raw cosine.
-            keys = self._keys[:n]
+            # The principal filter runs BEFORE the scan, so an entry the
+            # caller may not see never enters the ranking.
+            if principal:
+                visible = [
+                    i for i in range(n)
+                    if self._provenance[i].principal in (principal, _SHARED_PRINCIPAL)
+                ]
+                if not visible:
+                    return []
+                rows = np.asarray(visible, dtype=np.int64)
+            else:
+                rows = np.arange(n, dtype=np.int64)
+            keys = self._keys[rows]
+            key_norms = self._key_norms[rows]
+            # The mode is captured HERE, under the same lock hold that
+            # computes the similarities. Reading it again after the lock let
+            # a concurrent crossing of MU_READY_N pair raw-mode similarities
+            # with the lower centered threshold (CP126 ``7a4bfedb``).
             centered = self._query_mu_n >= self.MU_READY_N
+            gate_threshold = self.MIN_SIM_CENTERED if centered else self.MIN_SIM_RAW
             mu = self._query_mu if centered else np.zeros_like(q)
             kq = keys @ q
             km = keys @ mu
             qm = float(np.dot(q, mu))
             mm = float(np.dot(mu, mu))
             numerator = kq - km - qm + mm
-            key_centered_sq = np.maximum(self._key_norms[:n] - 2.0 * km + mm, 0.0)
+            key_centered_sq = np.maximum(key_norms - 2.0 * km + mm, 0.0)
             q_centered_norm = math.sqrt(max(float(np.dot(q, q)) - 2.0 * qm + mm, 0.0))
             if q_centered_norm <= _DEGENERATE_NORM:
                 # The query sits on the common direction itself: after
@@ -242,28 +506,31 @@ class NonParametricMemory:
                 numerator / np.maximum(denominator, _DEGENERATE_NORM),
                 -1.0,
             )
-            kk = min(max(1, int(k)), n)
+            kk = min(max(1, int(k)), int(rows.size))
             # Highest similarity first — argpartition on the negated scores.
             idx = np.argpartition(-sims_all, kk - 1)[:kk]
             idx = idx[np.argsort(-sims_all[idx])]
             # Euclidean distance is still REPORTED (callers and telemetry use
             # it), computed only for the k that were selected.
             selected = keys[idx]
-            diff_sq = (
-                self._key_norms[:n][idx] + float(np.dot(q, q)) - 2.0 * (selected @ q)
-            )
+            diff_sq = key_norms[idx] + float(np.dot(q, q)) - 2.0 * (selected @ q)
             dists = np.sqrt(np.maximum(diff_sq, 0.0))
             similarities = sims_all[idx]
+            entries = rows[idx]
             return [
                 Neighbor(
-                    self._token_ids[i],
-                    self._tokens[i],
+                    self._token_ids[int(i)],
+                    self._tokens[int(i)],
                     float(dist),
-                    float(self._weights[i]),
+                    float(self._weights[int(i)]),
                     similarity=float(sim),
                     index=int(i),
+                    gate_threshold=float(gate_threshold),
+                    centered=bool(centered),
+                    source_id=self._provenance[int(i)].source_id,
+                    trust=self._provenance[int(i)].trust,
                 )
-                for i, dist, sim in zip(idx, dists, similarities, strict=True)
+                for i, dist, sim in zip(entries, dists, similarities, strict=True)
             ]
 
     def _similarities_for(self, q: np.ndarray, idx: Any) -> list[float]:
@@ -297,11 +564,15 @@ class NonParametricMemory:
             return {}
         t = max(1e-6, float(temperature)) * self._dist_scale
         logits = np.array([-(nb.distance / t) for nb in neighbors], dtype=np.float64)
+        if not np.all(np.isfinite(logits)):
+            return {}
         logits -= logits.max()
         w = np.array([max(0.0, nb.weight) for nb in neighbors], dtype=np.float64)
         ex = np.exp(logits) * (w if w.sum() > 0 else 1.0)
-        total = ex.sum()
-        if total <= 0:
+        total = float(ex.sum())
+        # `if total <= 0` is False for NaN, so a NaN total used to sail past
+        # the emptiness check and divide every probability into NaN.
+        if not math.isfinite(total) or total <= 0.0:
             return {}
         probs: dict[int, float] = {}
         for nb, p in zip(neighbors, ex / total, strict=True):
@@ -351,6 +622,7 @@ class NonParametricMemory:
         phi: float | None = None,
         free_energy: float | None = None,
         lam_override: float | None = None,
+        principal: str = "",
     ) -> dict[int, float]:
         """Blend the model's next-token probs with kNN recall: p = λ·p_kNN + (1-λ)·p_LM.
 
@@ -372,20 +644,24 @@ class NonParametricMemory:
         second thing while only implementing the first (CP126: "comments
         overstate demonstrated capacity and safety").
         """
+        lm_probs = _finite_probabilities(lm_probs)
         try:
-            neighbors = self.query(query_key, k=k)
+            neighbors = self.query(query_key, k=k, principal=principal)
             # Per-neighbor confidence filter: entries below the gate must not
             # leak probability mass into the kNN distribution. Measured failure
             # (July proof): with the soft filter, digits from OTHER facts at raw
             # cos ~0.93 outvoted the exact-match entry and corrupted recall.
-            min_sim = self.min_similarity()
-            neighbors = [nb for nb in neighbors if nb.similarity >= min_sim]
+            neighbors = [nb for nb in neighbors if nb.similarity >= nb.gate_threshold]
             if not neighbors:
                 with self._lock:
                     self._stats["fallthrough"] += 1
                 return dict(lm_probs)
-            lam = lam_override if lam_override is not None else self.adaptive_lambda(
-                neighbors, phi=phi, free_energy=free_energy
+            # An override was used verbatim, so a caller could pass 4.0 and
+            # create negative model mass, or NaN and propagate it.
+            lam = (
+                _clamp(lam_override, 0.0, self._max_lambda)
+                if lam_override is not None
+                else self.adaptive_lambda(neighbors, phi=phi, free_energy=free_energy)
             )
             if not math.isfinite(lam) or lam <= 1e-6:
                 with self._lock:
@@ -439,14 +715,21 @@ class NonParametricMemory:
         the MLX worker is the remaining, latency-validated step.)
         """
         if not _flag_on("AURA_NONPARAMETRIC_MEMORY"):
+            self._note_recall("flag_off")
             return logits
         try:
             original = np.asarray(logits)
             arr = np.asarray(logits, dtype=np.float64).reshape(-1)
             if arr.size == 0 or not np.all(np.isfinite(arr)):
+                self._note_recall("invalid_logits")
                 return logits
-            neighbors = self.query(query_key, k=int(kw.pop("k", 8)))
+            neighbors = self.query(
+                query_key,
+                k=int(kw.pop("k", 8)),
+                principal=str(kw.pop("principal", "")),
+            )
             if not neighbors:
+                self._note_recall("no_neighbors")
                 return logits
             # SAME CONFIDENCE GATE AS interpolate(). This path fed the raw
             # query result straight into knn_probs, so every neighbor BELOW
@@ -455,11 +738,11 @@ class NonParametricMemory:
             # standards, and the one wired to logits was the permissive one.
             # A single weak neighbour was enough to obtain a nonzero kNN mass
             # and shift the token distribution.
-            min_sim = self.min_similarity()
-            gated = [nb for nb in neighbors if nb.similarity >= min_sim]
+            gated = [nb for nb in neighbors if nb.similarity >= nb.gate_threshold]
             if not gated:
                 with self._lock:
                     self._stats["fallthrough"] += 1
+                self._note_recall("below_confidence_gate", neighbors=neighbors)
                 return logits
             neighbors = gated
             lam = kw.pop("lam_override", None)
@@ -469,33 +752,85 @@ class NonParametricMemory:
                     phi=kw.pop("phi", None),
                     free_energy=kw.pop("free_energy", None),
                 )
-            lam = _clamp(float(lam), 0.0, self._max_lambda)
+            lam = _clamp(lam, 0.0, self._max_lambda)
             if lam <= 1e-6:
+                self._note_recall("lambda_zero", lam=lam, neighbors=neighbors)
                 return logits
             knn = self.knn_probs(
                 neighbors,
                 temperature=float(kw.pop("temperature", 1.0)),
             )
             if not knn:
+                self._note_recall("empty_knn", lam=lam, neighbors=neighbors)
                 return logits
             max_logit = float(np.max(arr))
             log_z = max_logit + math.log(float(np.exp(arr - max_logit).sum()))
             out = (arr - log_z) + math.log1p(-lam)
             log_lam = math.log(lam)
+            changed: list[int] = []
             for token_id, probability in knn.items():
                 if 0 <= int(token_id) < out.size and probability > 0.0:
                     out[int(token_id)] = np.logaddexp(
                         out[int(token_id)],
                         log_lam + math.log(float(probability)),
                     )
+                    changed.append(int(token_id))
+            if not changed:
+                # Every neighbour's id fell outside the logit vector. The
+                # lambda mass was reserved and nothing received it, and this
+                # still counted as an interpolation (CP126 ``957c060f``).
+                self._note_recall("no_token_in_vocabulary", lam=lam, neighbors=neighbors)
+                return logits
             with self._lock:
                 self._stats["interpolated"] += 1
+            self._note_recall(
+                "applied", lam=lam, neighbors=neighbors, changed_tokens=changed
+            )
             return out.reshape(original.shape).astype(
                 original.dtype if hasattr(original, "dtype") else np.float32
             )
         except (ValueError, TypeError, FloatingPointError, OverflowError) as exc:
             record_degradation("nonparametric_memory_logits", exc)
+            self._note_recall(f"error:{type(exc).__name__}")
             return logits
+
+    def last_recall_receipt(self) -> dict[str, Any]:
+        """Why the last apply_to_logits did or did not change anything.
+
+        It returned the same untyped logits for a flag that was off, invalid
+        logits, no neighbours, low confidence, an empty kNN map and a caught
+        failure — six different outcomes with one indistinguishable return,
+        no store identity, no neighbour ids, no lambda and no reason
+        (CP126 ``da1019b0``).
+        """
+        with self._lock:
+            return dict(self._last_receipt)
+
+    def _note_recall(
+        self,
+        reason: str,
+        *,
+        lam: float | None = None,
+        neighbors: list[Neighbor] | None = None,
+        changed_tokens: list[int] | None = None,
+    ) -> None:
+        receipt: dict[str, Any] = {
+            "schema": "aura.nonparametric_memory.recall_receipt.v1",
+            "reason": reason,
+            "at": time.time(),
+            "store": self._identity.slug(),
+            "dim": self._dim,
+            "entries": self._size,
+            "lambda": None if lam is None else round(float(lam), 6),
+            "neighbor_ids": [nb.index for nb in (neighbors or [])][:8],
+            "neighbor_sources": sorted({nb.source_id for nb in (neighbors or []) if nb.source_id})[:8],
+            "gate_mode": "centered" if self.similarity_ready() else "raw",
+            "changed_tokens": list(changed_tokens or [])[:16],
+        }
+        with self._lock:
+            self._last_receipt = receipt
+            key = f"recall_{reason.split(':')[0]}"
+            self._stats[key] = int(self._stats.get(key, 0)) + 1
 
     def stats(self) -> dict[str, Any]:
         with self._lock:
@@ -504,7 +839,19 @@ class NonParametricMemory:
                 "entries": self._size,
                 "dim": self._dim,
                 "max_entries": self._max,
-                "allocated_bytes": int(self._keys.nbytes + self._key_norms.nbytes),
+                # Every array this store holds, not just the two matrices.
+                # The old figure undercounted by the whole metadata side.
+                "allocated_bytes": int(
+                    self._keys.nbytes
+                    + self._key_norms.nbytes
+                    + self._query_mu.nbytes
+                    + sum(len(t) for t in self._tokens)
+                    + 8 * (len(self._token_ids) + len(self._weights) + len(self._ts))
+                ),
+                "identity": self._identity.to_dict(),
+                "store": self._identity.slug(),
+                "last_recall_reason": self._last_receipt.get("reason", "never_called"),
+                "persisted": bool(self._path.with_suffix(".meta.json").exists()),
             }
 
     def identity_receipt_with_work(self) -> tuple[dict[str, Any], int]:
@@ -592,42 +939,117 @@ class NonParametricMemory:
         self._stats["evicted"] += 1
 
     def _load(self) -> None:
+        """Read a persisted generation, or start fresh. Never a hybrid.
+
+        Two findings meet here.
+
+        ``b8b9656b`` — keys and metadata were published with two independent
+        ``os.replace`` calls, so a crash between them, or two writers
+        interleaving, paired vectors from one generation with token metadata
+        from another. There was no generation id, no manifest checksum, no
+        keys fsync and no directory fsync. Both files now carry the same
+        generation id and the metadata carries the keys' digest; a pair that
+        does not agree is refused rather than mixed.
+
+        ``848cf532`` — the loader trusted the files after checking rank,
+        width and list lengths. Everything else is validated now: schema,
+        declared dim, store identity, finite and bounded keys, weights,
+        timestamps, token-id range.
+
+        ``1d1d0bfd`` — ``np.load`` materialised the entire persisted matrix
+        before the entry count was capped, so a stale or replaced file could
+        allocate far past ``max_entries``. It is memory-mapped, sliced, then
+        copied.
+        """
         keys_p, meta_p = self._path.with_suffix(".keys.npy"), self._path.with_suffix(".meta.json")
         if not (keys_p.exists() and meta_p.exists()):
             return
+        keys = None
         try:
-            keys = np.load(keys_p)
             meta = json.loads(meta_p.read_text(encoding="utf-8"))
+            if not isinstance(meta, dict):
+                raise ValueError("non-parametric memory metadata is not an object")
+            if int(meta.get("schema_version", 0) or 0) < 3:
+                # A generation written before the manifest existed cannot be
+                # paired safely with its keys file. Starting fresh loses a
+                # cache; loading it risks pairing across generations.
+                record_degradation(
+                    "nonparametric_memory_load",
+                    ValueError("persisted store predates the generation manifest"),
+                    severity="info",
+                )
+                return
+            if int(meta.get("dim", -1)) != self._dim:
+                raise ValueError("persisted dim does not match this store")
+
+            saved_identity = identity_from_mapping(meta.get("identity"), dim=self._dim)
+            if saved_identity is None:
+                raise ValueError("persisted store carries no readable identity")
+            compatible, why = self._identity.compatible_with(saved_identity)
+            if not compatible:
+                # Same width, different model. Reading it would combine one
+                # model's vectors with another's token ids (CP126 aba3eb39).
+                record_degradation(
+                    "nonparametric_memory_load",
+                    ValueError(f"refusing incompatible store: {why}"),
+                    severity="warning",
+                )
+                return
+
+            # Memory-mapped, so the cap applies before the allocation.
+            keys = np.load(keys_p, mmap_mode="r")
             if keys.ndim != 2 or keys.shape[1] != self._dim:
-                return  # dim changed (e.g. new base model) → start fresh, never mix spaces
+                return
+            digest = str(meta.get("keys_sha256") or "")
             token_ids = list(meta.get("token_ids", []))
             tokens = list(meta.get("tokens", []))
             weights = list(meta.get("weights", []))
             timestamps = list(meta.get("ts", []))
-            count = min(len(keys), len(token_ids), len(tokens), len(weights), len(timestamps))
-            if count <= 0 or len({len(keys), len(token_ids), len(tokens), len(weights), len(timestamps)}) != 1:
+            provenance_rows = list(meta.get("provenance", []))
+            lengths = {
+                len(keys), len(token_ids), len(tokens), len(weights), len(timestamps)
+            }
+            if len(lengths) != 1 or not lengths or next(iter(lengths)) <= 0:
                 raise ValueError("non-parametric memory persistence metadata is inconsistent")
-            count = min(count, self._max)
-            # Build EVERY new array/list into local temporaries first. If any
-            # conversion (a non-numeric weight, malformed timestamp, etc.)
-            # raises, the live object is left untouched — a partial swap
-            # previously desynchronized the parallel keys/tokens/weights arrays
-            # and stranded a stale _size behind a swallowed exception.
+
+            total = next(iter(lengths))
+            if digest and digest != _streamed_keys_digest(keys):
+                # The manifest names a keys file this is not — a torn publish
+                # or a replaced file. Refusing is the whole point of writing
+                # the digest. Streamed from the memory map so verifying it
+                # does not undo the bounded read.
+                raise ValueError("persisted keys do not match the manifest digest")
+            order = self._retention_order(weights, timestamps, total)
+            count = min(total, self._max)
+            keep = order[:count]
+
             capacity = min(max(64, count), self._max)
             new_keys = np.empty((capacity, self._dim), dtype=np.float32)
-            new_norms = np.empty(capacity, dtype=np.float32)
-            new_keys[:count] = keys[-count:].astype(np.float32)
+            new_keys[:count] = np.asarray(keys[keep], dtype=np.float32)
             if not np.all(np.isfinite(new_keys[:count])):
                 raise ValueError("non-parametric memory persisted keys are non-finite")
-            new_norms[:count] = np.einsum("ij,ij->i", new_keys[:count], new_keys[:count])
-            new_token_ids = [int(value) for value in token_ids[-count:]]
-            new_tokens = [str(value) for value in tokens[-count:]]
-            new_weights = [max(0.0, float(value)) for value in weights[-count:]]
-            if not all(math.isfinite(w) for w in new_weights):
-                raise ValueError("non-parametric memory persisted weights are non-finite")
-            new_ts = [float(value) for value in timestamps[-count:]]
-            if not all(math.isfinite(timestamp) for timestamp in new_ts):
-                raise ValueError("non-parametric memory persisted timestamps are non-finite")
+            new_norms = np.empty(capacity, dtype=np.float32)
+            norms = np.einsum("ij,ij->i", new_keys[:count], new_keys[:count])
+            if not np.all(np.isfinite(norms)) or float(np.max(norms, initial=0.0)) > self.MAX_KEY_NORM:
+                raise ValueError("non-parametric memory persisted keys overflow their norms")
+            new_norms[:count] = norms
+
+            new_token_ids = [int(token_ids[i]) for i in keep]
+            if not all(self._token_id_in_vocabulary(t) for t in new_token_ids):
+                raise ValueError("non-parametric memory persisted token ids are out of vocabulary")
+            new_tokens = [str(tokens[i]) for i in keep]
+            new_weights = [self._clamped_weight(weights[i]) for i in keep]
+            new_ts = [float(timestamps[i]) for i in keep]
+            if not all(math.isfinite(t) and t > 0.0 for t in new_ts):
+                raise ValueError("non-parametric memory persisted timestamps are invalid")
+            new_provenance = [
+                _provenance_from_mapping(
+                    provenance_rows[i] if i < len(provenance_rows) else None
+                )
+                for i in keep
+            ]
+
+
             saved_mu = meta.get("query_mu")
             new_mu = None
             new_mu_n = 0
@@ -635,8 +1057,8 @@ class NonParametricMemory:
                 candidate_mu = np.asarray(saved_mu, dtype=np.float32)
                 if np.all(np.isfinite(candidate_mu)):
                     new_mu = candidate_mu
-                    new_mu_n = max(0, int(meta.get("query_mu_n", 0) or 0))
-            # All conversions succeeded — commit atomically under the lock.
+                    new_mu_n = max(0, min(10_000, int(meta.get("query_mu_n", 0) or 0)))
+
             with self._lock:
                 self._capacity = capacity
                 self._keys = new_keys
@@ -645,24 +1067,79 @@ class NonParametricMemory:
                 self._tokens = new_tokens
                 self._weights = new_weights
                 self._ts = new_ts
+                self._provenance = new_provenance
                 self._size = count
                 if new_mu is not None:
                     self._query_mu = new_mu
                     self._query_mu_n = new_mu_n
+                self._reindex_content_keys()
                 self._content_generation += 1
                 self._identity_cache = None
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_memory_load", exc)
+        finally:
+            if keys is not None and hasattr(keys, "_mmap"):
+                try:
+                    keys._mmap.close()
+                except (AttributeError, OSError, ValueError):
+                    pass
+
+    def _retention_order(self, weights: list[Any], timestamps: list[Any], total: int) -> list[int]:
+        """Rows to keep, best first, by the SAME gravity eviction uses.
+
+        Loading an oversized store kept the last N records while live
+        eviction dropped the lowest weight-times-recency, so retention after
+        a restart differed from retention during a run (CP126 ``4d9d6616``).
+        """
+        now = time.time()
+        scored: list[tuple[float, int]] = []
+        for i in range(total):
+            weight = self._clamped_weight(weights[i] if i < len(weights) else 0.0)
+            try:
+                age = now - float(timestamps[i])
+            except (TypeError, ValueError, IndexError):
+                age = float("inf")
+            if not math.isfinite(age) or age < 0.0:
+                # A future or unreadable timestamp cannot be trusted to rank
+                # anything; it goes last rather than winning by accident.
+                age = float("inf")
+            gravity = weight * math.exp(-min(age, 1e9) / (14 * 24 * 3600.0))
+            scored.append((gravity, i))
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        return [index for _gravity, index in scored]
+
+
 
     def persist(self) -> bool:
+        """Publish keys and metadata as ONE generation, or neither.
+
+        The two files were replaced independently, so a crash in between
+        left a keys file from one generation beside metadata from another —
+        vectors paired with the wrong tokens, with nothing to detect it. The
+        metadata now carries the generation id and the keys' digest, both
+        files are fsynced, the directory is fsynced, and the keys land first
+        so a torn publish leaves the OLD metadata pointing at a digest that
+        no longer matches, which the loader refuses.
+        """
+        temporary_keys: Path | None = None
+        temporary_meta: Path | None = None
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._lock:
                 keys = self._keys[: self._size].copy()
+                generation = int(self._content_generation)
                 meta = {
-                    "schema_version": 2, "dim": self._dim, "saved_at": time.time(),
-                    "token_ids": list(self._token_ids), "tokens": list(self._tokens),
-                    "weights": list(self._weights), "ts": list(self._ts),
+                    "schema_version": 3,
+                    "generation": generation,
+                    "dim": self._dim,
+                    "identity": self._identity.to_dict(),
+                    "saved_at": time.time(),
+                    "keys_sha256": _keys_digest(keys),
+                    "token_ids": list(self._token_ids),
+                    "tokens": list(self._tokens),
+                    "weights": list(self._weights),
+                    "ts": list(self._ts),
+                    "provenance": [record.to_dict() for record in self._provenance],
                     "query_mu": [float(v) for v in self._query_mu],
                     "query_mu_n": int(self._query_mu_n),
                 }
@@ -672,6 +1149,8 @@ class NonParametricMemory:
                 dir=self._path.parent, suffix=".npy", delete=False
             ) as handle:
                 np.save(handle, keys)
+                handle.flush()
+                os.fsync(handle.fileno())
                 temporary_keys = Path(handle.name)
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", dir=self._path.parent,
@@ -682,11 +1161,35 @@ class NonParametricMemory:
                 os.fsync(handle.fileno())
                 temporary_meta = Path(handle.name)
             os.replace(temporary_keys, keys_path)
+            temporary_keys = None
             os.replace(temporary_meta, meta_path)
+            temporary_meta = None
+            _fsync_directory(self._path.parent)
             return True
         except self._ERRORS as exc:
             record_degradation("nonparametric_memory_persist", exc)
             return False
+        finally:
+            # A failed write left its temporary file behind every time.
+            for leftover in (temporary_keys, temporary_meta):
+                if leftover is None:
+                    continue
+                try:
+                    # Through the gateway: this is a file this process
+                    # created and must remove, and the gateway is where
+                    # deletions are governed.
+                    from core.runtime.file_write_gateway import get_file_write_gateway
+
+                    get_file_write_gateway().delete_file(
+                        leftover, source="brain.nonparametric_memory.persist_cleanup"
+                    )
+                except (ImportError, OSError, RuntimeError, ValueError) as cleanup_exc:
+                    record_degradation(
+                        "nonparametric_memory_persist",
+                        cleanup_exc,
+                        severity="info",
+                        action="left a temporary persistence file behind",
+                    )
 
 
 #: ONE STORE PER EMBEDDING SPACE, not one store per process.
@@ -702,43 +1205,63 @@ class NonParametricMemory:
 # comparable and averaging them is nonsense. Refusing to HOLD both is the
 # defect. They are two datastores, and the first caller through the door
 # should not decide which one exists.
-_stores: dict[int, NonParametricMemory] = {}
-_active_dim: int = 0
+_stores: dict[str, NonParametricMemory] = {}
+_active_key: str = ""
 _lock = threading.Lock()
 
 
-def get_nonparametric_memory(dim: int = 0) -> NonParametricMemory | None:
-    """The datastore for one embedding space, created on demand.
+def get_nonparametric_memory(
+    dim: int = 0, *, identity: StoreIdentity | None = None
+) -> NonParametricMemory | None:
+    """The datastore for one MODEL IDENTITY, created on demand.
+
+    Keyed by the identity fingerprint, not the hidden width. Two models of
+    the same width write vectors that mean different things and token ids
+    from different vocabularies, and the store combined them and reported
+    successful reuse (CP126 ``aba3eb39``).
 
     ``dim=0`` means "whatever the active model is using" — the space most
-    recently asked for by name — so callers that do not know the width still
-    reach the right store instead of the oldest one.
+    recently asked for by name.
+
+    Every read of the registry, including the active-key lookup, is inside
+    the lifecycle lock. The width check and the singleton read used to sit
+    outside it, so two callers could each build a store for the same path
+    and persist over one another (CP126 ``13a3ce91``).
     """
-    global _active_dim
-    width = int(dim or 0)
-    if width <= 0:
-        with _lock:
-            return _stores.get(_active_dim) if _active_dim else None
+    global _active_key
     with _lock:
-        store = _stores.get(width)
+        width = int(dim or 0)
+        if identity is None and width <= 0:
+            return _stores.get(_active_key) if _active_key else None
+        resolved = identity or StoreIdentity(dim=width)
+        if resolved.dim <= 0:
+            return None
+        key = resolved.slug()
+        store = _stores.get(key)
         if store is None:
-            store = NonParametricMemory(width)
-            _stores[width] = store
+            store = NonParametricMemory(resolved.dim, identity=resolved)
+            _stores[key] = store
             logger.info(
-                "Non-parametric memory: opened the %d-wide space (%d space(s) held).",
-                width,
+                "Non-parametric memory: opened %s (%d store(s) held).",
+                key,
                 len(_stores),
             )
-        _active_dim = width
+        _active_key = key
         return store
 
 
 def reset_nonparametric_memory_for_test() -> None:
-    """Drop every held embedding space."""
-    global _active_dim
+    """Drop every held store.
+
+    Clearing the pointer left every existing caller holding the old object
+    while the next caller built a new one at the same path, so two
+    non-transactional writers published to one file. The stores are dropped
+    under the same lock that hands them out.
+    """
+    global _active_key
     with _lock:
         _stores.clear()
-        _active_dim = 0
+        _active_key = ""
 
 
 def validate_nonparametric_memory_identity(value: Any) -> dict[str, Any]:

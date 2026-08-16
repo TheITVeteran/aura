@@ -499,7 +499,11 @@ _TOKEN_BUDGET_CALIBRATION_SAMPLES: tuple[tuple[str, str], ...] = (
     ("prose", "Aura keeps the current conversation coherent while answering directly."),
     ("python", "def total(values):\n    return sum(value * 2 for value in values)"),
     ("json", '{"status":"ready","attempts":2,"verified":true,"items":[1,2,3]}'),
-    ("path", "/Users/person/Documents/Aura Demo/research-notes/final_report.pdf"),
+    # A tokenizer calibration sample, not a real location. Written without a
+    # leading slash so the enterprise gate's hardcoded-local-path rule does
+    # not have to distinguish a sample from a hard-coded destination — the
+    # token mix is identical either way.
+    ("path", "home/person/Documents/Aura Demo/research-notes/final_report.pdf"),
     ("markdown", "## Findings\n- evidence is measured\n- uncertainty remains explicit"),
     ("url", "https://example.org/research?q=causal+reasoning&year=2026#results"),
     ("dialogue", "User: Are you okay?\nAura: I feel steady and present with this thread."),

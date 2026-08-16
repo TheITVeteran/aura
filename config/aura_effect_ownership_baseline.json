@@ -3713,6 +3713,14 @@
       "scope": "<module>.deactivate_qualified_activation"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/nonparametric_memory.py",
+      "scope": "<module>.NonParametricMemory.persist"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15970,6 +15978,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "145719ba2a4b126614554a5f61c4e121346d00c5501020125d941077dba4141d",
+  "inventory_sha256": "6eb1551799d8bb6982adf1d4da41b0fc50146437a5389dedb7a4aa9055b3856c",
   "schema_version": 1
 }

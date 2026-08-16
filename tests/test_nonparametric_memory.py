@@ -20,7 +20,13 @@ def mem(tmp_path):
 def test_add_and_len(mem):
     assert mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
     assert len(mem) == 1
-    assert mem.stats()["allocated_bytes"] <= (64 * 4 * 4) + (64 * 4)
+    matrices = (64 * 4 * 4) + (64 * 4)
+    reported = mem.stats()["allocated_bytes"]
+    # CP126 da1019b0: the figure counted the two matrices and nothing else,
+    # so the token strings, ids, weights and timestamps this store also
+    # holds were invisible. It must cover them, and still be bounded.
+    assert reported >= matrices
+    assert reported <= matrices * 4
 
 
 def test_identity_receipt_is_stable_cached_and_invalidated_by_content(mem):
@@ -427,9 +433,21 @@ class TestRecallPathsShareTheConfidenceGate:
         assert not np.allclose(out, 0.0), "above-gate recall must still apply"
 
     def test_gate_is_the_same_function_both_paths_use(self, tmp_path, monkeypatch):
+        """Both paths gate on the threshold the similarity was computed with.
+
+        They used to call ``self.min_similarity()`` separately, AFTER the
+        lock was released. A concurrent crossing of MU_READY_N could then
+        pair a raw-mode similarity with the lower centered threshold (CP126
+        ``7a4bfedb``). The threshold is captured under the same lock hold
+        and travels on the neighbour, so the two paths cannot diverge and
+        neither can race the mode.
+        """
         store = self._store(tmp_path, monkeypatch)
         source = open("core/brain/nonparametric_memory.py", encoding="utf-8").read()
-        body = source.split("def apply_to_logits", 1)[1][:2000]
-        assert "self.min_similarity()" in body
-        assert "nb.similarity >= min_sim" in body
+        for name in ("def apply_to_logits", "def interpolate"):
+            body = source.split(name, 1)[1][:3000]
+            assert "nb.similarity >= nb.gate_threshold" in body, (
+                f"{name} does not gate on the threshold its similarity was "
+                "computed against"
+            )
         assert isinstance(store.min_similarity(), float)
