@@ -50801,3 +50801,29 @@ to everyday authority. The next gate is a controlled live resident-32B shadow
 campaign that measures final ordinary-response agreement, bounded gain
 candidates, persistence reliability, runtime latency and regressions before any
 domain-qualified active promotion is considered.
+
+## Checkpoint 2026-08-15-569: Seal the Live Shadow Evidence Protocol
+
+The next resident run now has a bounded external driver and a separate
+independent verifier. The driver sends fresh balanced coding, calibration,
+premise-audit and scientific-surface tasks through the same `/api/chat` route as
+the desktop UI. It accepts a turn only when the packaged runtime proves the
+sovereign CognitiveEngine invoked ordinary inference, accepted that reply with
+high confidence and used neither a bounded contract nor a legacy fallback. A
+qualified candidate remains private and shadow-only throughout.
+
+Every final user-visible response is independently graded against its regenerated
+task and reconciled with exactly one new shadow-ledger row. The verifier reopens
+the private transcript, regenerates task identity and wording, regrades each
+answer, recomputes each shadow receipt and aggregate, and requires verified
+signed-app/source launch provenance. It does not trust the producer's booleans.
+Publishable summaries contain content hashes and receipts but no prompts,
+answers or boot-health details; the raw transcript is owner-only evidence with
+exclusive creation, ancestor-symlink rejection, complete-write handling and
+durable directory sync.
+
+Focused serving, shadow, ingress, adapter, sovereign response and campaign
+contracts pass `97/97`; canonical smoke passes `110/110`. No model was loaded to
+build or validate this protocol. The next step is its canary and powered live
+run on the packaged resident 32B. The 1.5B remains outside that gate unless a
+bounded mechanism diagnostic becomes necessary.
