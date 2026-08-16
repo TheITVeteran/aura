@@ -16,6 +16,7 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     PRODUCER_ATTESTATION_SCHEMA,
     SCHEMA,
     TASK_COMMITMENT_ATTESTATION_SCHEMA,
+    _expected_arm_identifier,
     _task_manifest_sha256,
     canonical_sha256,
     evidence_payload_sha256,
@@ -153,6 +154,19 @@ def _trial_accounting(task_payload_sha256: str) -> tuple[dict, dict]:
     return ledger.to_receipt(), information
 
 
+# An external taxonomy the preregistration pins by digest. Breadth is counted
+# in capability classes, so three domains that all reduce to arithmetic would
+# not clear it however differently they are spelled.
+_DOMAIN_TAXONOMY = {
+    "ontology_id": "aura-frontier-capability-ontology-v1",
+    "domains": {
+        "math": {"capability_class": "formal_quantitative_reasoning"},
+        "coding": {"capability_class": "program_synthesis_and_repair"},
+        "science": {"capability_class": "empirical_explanation"},
+    },
+}
+
+
 def _trust_config() -> dict:
     return {
         "schema": TRUST_CONFIG_SCHEMA,
@@ -161,6 +175,34 @@ def _trust_config() -> dict:
         "task_issuers": _TRUSTED_TASK_ISSUERS,
         "verifiers": _TRUSTED_VERIFIERS,
     }
+
+
+def _rebind_trial_identifiers(trial: dict, *, worker_boot_id: str = "b" * 32) -> None:
+    """Re-derive an arm's identifiers after its task or output digests change.
+
+    Episode and request ids are derived from the trial's own record, so a
+    caller that rewrites the task payload or the outputs — the raw-artifact
+    package builder does exactly that — has to re-derive them. The runtime
+    integrity proof binds the episode id, so it is rebound too.
+    """
+    treatment = trial["treatment_receipt"]
+    treatment["episode_id"] = _expected_arm_identifier(
+        trial, "treatment", worker_boot_id
+    )
+    treatment["input_tokens_sha256"] = trial["task_payload_sha256"]
+    worker_identity = treatment["worker_identity"]
+    treatment["fast_weight_learning"] = accepted_fast_weight_learning(
+        episode_id=treatment["episode_id"],
+        input_tokens_sha256=trial["task_payload_sha256"],
+    )
+    attach_bound_runtime_integrity(treatment, worker_identity=worker_identity)
+    control = trial["control_receipt"]
+    control["request_id"] = _expected_arm_identifier(trial, "control", worker_boot_id)
+    if "runtime_integrity" in control:
+        control["input_tokens_sha256"] = trial["task_payload_sha256"]
+        attach_bound_runtime_integrity(
+            control, worker_identity=control["worker_identity"]
+        )
 
 
 def _set_outcome(trial: dict, *, treatment: bool, control: bool) -> None:
@@ -379,6 +421,7 @@ def _bundle(
         # is the weakest sampling this claim may be made on; the fixture's
         # stride-7 canary covers 19 of 128 leaves.
         "min_parameter_canary_tensor_coverage": 0.125,
+        "domain_taxonomy_sha256": canonical_sha256(_DOMAIN_TAXONOMY),
         "treatment_checkpoint_fingerprint": checkpoint,
         "frozen_at": 1000.0,
         "domains": ["math", "coding", "science"],
@@ -433,6 +476,24 @@ def _bundle(
             )
             control_resource, control_information = _trial_accounting(
                 task_payload_sha256
+            )
+            # Identifiers DERIVED from the trial's own record, using the
+            # production function so the two cannot drift. A free string
+            # could be swapped between trials or minted afterwards to make a
+            # lineage look clean, and global uniqueness would still hold.
+            identity_source = {
+                "trial_id": trial_id,
+                "task_id": f"heldout-{trial_id}",
+                "task_payload_sha256": task_payload_sha256,
+                "treatment_output_sha256": canonical_sha256(["treatment", trial_id]),
+                "control_output_sha256": canonical_sha256(["control", trial_id]),
+                "evaluation_started_at": 1201.0 + index,
+            }
+            treatment_episode_id = _expected_arm_identifier(
+                identity_source, "treatment", "b" * 32
+            )
+            control_request_id = _expected_arm_identifier(
+                identity_source, "control", "b" * 32
             )
             trials.append(
                 {
@@ -504,7 +565,7 @@ def _bundle(
                         "resource_accounting": control_resource,
                     },
                     "treatment_receipt": {
-                        "episode_id": f"episode-{trial_id}",
+                        "episode_id": treatment_episode_id,
                         "checkpoint_fingerprint": checkpoint,
                         "checkpoint_fingerprint_method": "sha256",
                         "checkpoint_file_count": 8,
@@ -554,7 +615,7 @@ def _bundle(
                     },
                     "control_receipt": (
                         {
-                            "request_id": f"control-{trial_id}",
+                            "request_id": control_request_id,
                             "model_id": "frontier-model-x",
                             "model_build_fingerprint": "build-2026-06",
                             "provider": "openai",
@@ -564,7 +625,7 @@ def _bundle(
                         }
                         if external
                         else {
-                            "request_id": f"control-{trial_id}",
+                            "request_id": control_request_id,
                             "mode": "vanilla",
                             "latent_cortex_enabled": False,
                             "params_unchanged": True,
@@ -652,6 +713,7 @@ def _bundle(
             "compute_profile": dict(_RESIDENT_PROFILE_RECEIPT),
         },
         "raw_artifact_manifest_sha256": "9" * 64,
+        "domain_taxonomy": _DOMAIN_TAXONOMY,
         "release_readiness": {
             "previous_release": {
                 "certificate_sha256": "c" * 64,
@@ -714,6 +776,7 @@ def _bundle(
 
 
 __all__ = [
+    "_DOMAIN_TAXONOMY",
     "_PRODUCER_ID",
     "_RESIDENT_PROFILE",
     "_SECOND_VERIFIER_ID",
@@ -731,6 +794,7 @@ __all__ = [
     "_certify",
     "_raw_artifact_receipt",
     "_refresh_attestation",
+    "_rebind_trial_identifiers",
     "_refresh_producer_attestation",
     "_refresh_task_commitment",
     "_trust_config",

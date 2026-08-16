@@ -351,6 +351,67 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
     return prereg
 
 
+#: A general frontier claim needs breadth, and breadth is not a string count.
+#: Two labels that happen to differ can name the same capability, so the
+#: preregistration pins a taxonomy and the domains have to land in distinct
+#: capability classes within it.
+MINIMUM_CAPABILITY_CLASSES = 3
+
+
+def _validate_domain_taxonomy(
+    bundle: dict[str, Any], prereg: dict[str, Any], reasons: list[str]
+) -> list[str]:
+    """CP126 eb6bed71: "two unique non-empty strings" was the breadth test.
+
+    ``["math", "maths"]`` satisfied it. So did ``["gsm8k", "gsm8k-hard"]``.
+    A claim about general frontier capability was resting on whether two
+    labels happened to differ as text.
+
+    The bundle now carries a taxonomy the preregistration pinned by digest,
+    every preregistered domain must appear in it, and the domains must land
+    in distinct capability classes — the unit breadth is actually about.
+    """
+    taxonomy = bundle.get("domain_taxonomy")
+    if not isinstance(taxonomy, dict):
+        reasons.append("domain_taxonomy_missing")
+        return []
+    expected = str(prereg.get("domain_taxonomy_sha256") or "")
+    try:
+        digest = canonical_sha256(taxonomy)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        reasons.append("domain_taxonomy_not_canonical_json")
+        return []
+    if not expected:
+        reasons.append("missing_domain_taxonomy_sha256")
+    elif digest != expected:
+        reasons.append("domain_taxonomy_not_preregistered")
+    if not str(taxonomy.get("ontology_id") or "").strip():
+        reasons.append("domain_taxonomy_unattributed")
+    entries = taxonomy.get("domains")
+    if not isinstance(entries, dict) or not entries:
+        reasons.append("domain_taxonomy_empty")
+        return []
+    classes: list[str] = []
+    declared = prereg.get("domains")
+    # A malformed preregistration already has its own reason; it must not
+    # take this check down on the way past.
+    declared = declared if isinstance(declared, list) else []
+    for domain in declared:
+        entry = entries.get(domain) if isinstance(domain, str) else None
+        if not isinstance(entry, dict):
+            reasons.append(f"{domain}:domain_outside_taxonomy")
+            continue
+        capability_class = str(entry.get("capability_class") or "").strip()
+        if not capability_class:
+            reasons.append(f"{domain}:domain_capability_class_missing")
+            continue
+        classes.append(capability_class)
+    distinct = sorted(set(classes))
+    if len(distinct) < MINIMUM_CAPABILITY_CLASSES:
+        reasons.append("domain_coverage_too_narrow")
+    return distinct
+
+
 def _validate_contamination_receipt(
     trial: dict[str, Any], trial_id: str, trial_reasons: list[str]
 ) -> str:
@@ -550,7 +611,9 @@ def _trial_information(
     trial: dict[str, Any],
     arm: str,
     reasons: list[str],
+    prereg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    prereg = prereg if isinstance(prereg, Mapping) else {}
     trial_id = str(trial.get("trial_id") or "unknown")
     try:
         receipt = validate_information_receipt(trial.get(f"{arm}_information"))
@@ -569,7 +632,53 @@ def _trial_information(
     if trial.get(f"{arm}_information_sha256") != receipt["receipt_sha256"]:
         reasons.append(f"{trial_id}:{arm}_information_receipt_mismatch")
         return None
+    # CP126 a70d12ad: the two arms' information receipts had to MATCH EACH
+    # OTHER and nothing tied either to the preregistration. Both arms could
+    # therefore be given the same undeclared retrieval context, decoded under
+    # the same undeclared policy, and the parity check would pass while the
+    # experiment ran under conditions nobody committed to in advance.
+    policies = receipt.get("policies")
+    policies = policies if isinstance(policies, Mapping) else {}
+    for policy_name, prereg_key in (
+        ("decode", "decode_policy_sha256"),
+        ("tool", "tool_policy_sha256"),
+        ("verifier", "scorer_implementation_sha256"),
+    ):
+        expected = str(prereg.get(prereg_key) or "")
+        if not expected:
+            continue
+        if str(policies.get(policy_name) or "") != expected:
+            reasons.append(
+                f"{trial_id}:{arm}_{policy_name}_policy_not_preregistered"
+            )
     return receipt
+
+
+def _expected_arm_identifier(
+    trial: Mapping[str, Any], arm: str, worker_boot_id: str
+) -> str:
+    """The identifier a trial's arm is entitled to, derived from its own record.
+
+    CP126 2cbeadca: ``episode_id`` and ``request_id`` only had to be non-empty
+    and globally unique. They were free strings, unrelated to the task they
+    ran, the output they produced, or the worker that served them — so two
+    trials could swap identifiers, or an identifier could be minted after the
+    fact to make a lineage look clean, and uniqueness would still hold.
+
+    Deriving the identifier from the canonical record makes it a checkable
+    consequence of the work instead of a label attached to it.
+    """
+    return canonical_sha256(
+        {
+            "arm": arm,
+            "trial_id": trial.get("trial_id"),
+            "task_id": trial.get("task_id"),
+            "task_payload_sha256": trial.get("task_payload_sha256"),
+            "output_sha256": trial.get(f"{arm}_output_sha256"),
+            "worker_boot_id": worker_boot_id,
+            "evaluation_started_at": trial.get("evaluation_started_at"),
+        }
+    )
 
 
 def _validate_treatment_receipt(
@@ -1673,6 +1782,7 @@ def verify_frontier_gain_bundle(
     #: the instrument after seeing the reading.
     contamination_scanners: set[str] = set()
     task_families, task_diversity_sha256 = _validate_task_diversity(bundle, reasons)
+    capability_classes = _validate_domain_taxonomy(bundle, prereg, reasons)
     #: Order accounting over ADMITTED trials, per domain. The global count
     #: previously included rejected trials, so a producer could balance the
     #: run with trials that never reached the grader.
@@ -1776,11 +1886,13 @@ def verify_frontier_gain_bundle(
             trial,
             "treatment",
             trial_reasons,
+            prereg,
         )
         control_information = _trial_information(
             trial,
             "control",
             trial_reasons,
+            prereg,
         )
         if (
             treatment_information is None
@@ -1898,6 +2010,8 @@ def verify_frontier_gain_bundle(
         if episode_id in seen_episode_ids:
             trial_reasons.append(f"{trial_id}:duplicate_treatment_episode")
         seen_episode_ids.add(episode_id)
+        if episode_id != _expected_arm_identifier(trial, "treatment", worker_boot_id):
+            trial_reasons.append(f"{trial_id}:treatment_episode_id_unbound")
         control_request_id = _validate_control_receipt(
             trial,
             prereg,
@@ -1908,6 +2022,10 @@ def verify_frontier_gain_bundle(
         if control_request_id in seen_control_request_ids:
             trial_reasons.append(f"{trial_id}:duplicate_control_request")
         seen_control_request_ids.add(control_request_id)
+        if control_request_id != _expected_arm_identifier(
+            trial, "control", worker_boot_id
+        ):
+            trial_reasons.append(f"{trial_id}:control_request_id_unbound")
         # `params_unchanged` is proven by hashing a fixed-stride SAMPLE of the
         # parameter tree before and after. How much of the tree that sample
         # touches decides what the claim is worth: a mutation living entirely
@@ -2346,6 +2464,10 @@ def verify_frontier_gain_bundle(
         "preregistration_sha256": expected_prereg_hash,
         "trial_count": len(trials),
         "domain_counts": {domain: len(items) for domain, items in paired.items()},
+        # CP126 eb6bed71: breadth measured in capability classes rather than
+        # in how many distinct strings the producer typed.
+        "capability_classes": capability_classes,
+        "required_capability_classes": MINIMUM_CAPABILITY_CLASSES,
         # CP126 596c9811 + 9e810491: what the surviving sample could actually
         # detect, and whether order is a rival explanation for the gain.
         "achieved_power_by_domain": achieved_power,

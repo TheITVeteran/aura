@@ -33,6 +33,7 @@ from tests.fixtures.latent_frontier import (
     _VERIFIER_KEY,
     _VERIFIER_PUBLIC_KEY,
     _bundle,
+    _rebind_trial_identifiers,
     _refresh_attestation,
     _refresh_producer_attestation,
     _refresh_task_commitment,
@@ -123,6 +124,9 @@ def _build_package(
         trial["treatment_output_sha256"] = hashlib.sha256(treatment).hexdigest()
         trial["control_output_sha256"] = hashlib.sha256(control).hexdigest()
         trial["scorer_config_sha256"] = hashlib.sha256(scorer).hexdigest()
+        # The task payload and both outputs just changed, and the arm
+        # identifiers are derived from them.
+        _rebind_trial_identifiers(trial)
         verifier_receipt = {
             "schema": TRIAL_VERIFIER_RECEIPT_SCHEMA,
             "trial_id": trial_id,
