@@ -281,7 +281,7 @@ class FunctionCallingAdapter:
                 skill = self.registry.load_skill(tool_name)
                 if not skill:
                     return f"Error: {tool_name} not found"
-                coro = skill.execute(call_args, call_ctx)
+                coro = skill.safe_execute(call_args, call_ctx)
 
             # A hung tool can no longer stall the calling turn indefinitely
             # (297f2287).

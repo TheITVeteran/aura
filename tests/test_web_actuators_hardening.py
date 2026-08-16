@@ -150,7 +150,10 @@ def test_fetch_forwards_capability_context(monkeypatch):
     captured = {}
 
     class _FakeSkill:
-        async def execute(self, params, context):
+        # `safe_execute`, because that is the door the actuator uses now. A
+        # double that only offers `execute` stands in for a skill entered
+        # around its own governance check, which is the defect being closed.
+        async def safe_execute(self, params, context):
             captured.update(context)
             return {"ok": True, "message": "fetched"}
 

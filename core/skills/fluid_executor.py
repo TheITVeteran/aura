@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
@@ -91,6 +92,24 @@ class ExecutionReceipt:
         }
 
 
+def _read_decision(decision: Any) -> tuple[bool, str]:
+    """Read an approval verdict in either of the two shapes gateways return.
+
+    `bool(getattr(decision, "allowed", decision))` handled the attribute shape
+    and silently inverted the mapping one: `core/security/conscience.py`
+    returns `{"allowed": False, "reason": ...}`, and a non-empty dict is
+    truthy, so a refusal from it read as approval. A mapping is checked for the
+    key before the object is fallen back to.
+    """
+    if isinstance(decision, Mapping):
+        allowed = bool(decision.get("allowed", False))
+        return allowed, str(decision.get("reason", "") or "")
+    allowed_attr = getattr(decision, "allowed", None)
+    if allowed_attr is not None:
+        return bool(allowed_attr), str(getattr(decision, "reason", "") or "")
+    return bool(decision), str(getattr(decision, "reason", "") or "")
+
+
 class FluidExecutor:
     """Run governed, verified, self-recovering action sequences."""
 
@@ -136,18 +155,46 @@ class FluidExecutor:
             record_degradation("fluid_executor", exc)
             return False, f"verification error: {exc}"
 
-    async def _approved(self, step: Step) -> tuple[bool, str]:
-        if self._gateway is None:
-            return True, ""
+    async def _resolve_gateway(self) -> Any | None:
+        """The injected gateway, or the canonical one, or None.
+
+        `gateway=None` used to mean "allowed", and `DesktopPlanner` builds this
+        executor without passing one — so the default construction of the
+        desktop lane approved every step it was asked about. A default that
+        means "no opinion" has to resolve the real gateway before concluding
+        anything, which is what this does.
+        """
+        if self._gateway is not None:
+            return self._gateway
         try:
-            decision = self._gateway.approve(step.name)
-            allowed = bool(getattr(decision, "allowed", decision))
-            return allowed, str(getattr(decision, "reason", "") or "")
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            from core.skills.action_gateway import get_action_gateway
+
+            self._gateway = get_action_gateway()
+        except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("fluid_executor", exc)
-            return True, ""  # governance failure-open is unsafe; but a gateway error
-            # must not silently block — surface it and proceed (governance has its own
-            # hard gates elsewhere).
+            return None
+        return self._gateway
+
+    async def _approved(self, step: Step) -> tuple[bool, str]:
+        gateway = await self._resolve_gateway()
+        if gateway is None:
+            # No gateway anywhere. Refuse: an action lane whose governance is
+            # missing is not an ungoverned lane that may proceed, it is a lane
+            # that cannot say whether the step is allowed.
+            return False, "no action gateway available to approve this step"
+        try:
+            decision = gateway.approve(step.name)
+            return _read_decision(decision)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            # A gateway that raised did not approve. Returning True here read
+            # "governance has its own hard gates elsewhere", which is the
+            # assumption this whole lane exists to stop relying on.
+            record_degradation(
+                "fluid_executor",
+                exc,
+                action="refused a step because the action gateway raised",
+            )
+            return False, f"action gateway error: {exc}"
 
     async def run_step(self, step: Step) -> StepResult:
         """Govern → act → verify → (recover+retry). Returns the step outcome."""

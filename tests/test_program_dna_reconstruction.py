@@ -169,7 +169,9 @@ async def test_program_dna_engine_builds_clean_room_blueprint_and_scaffold(tmp_p
 @pytest.mark.asyncio
 async def test_program_dna_collects_real_research_as_auditable_evidence(tmp_path, monkeypatch):
     class FakeSearch:
-        async def execute(self, params, context):
+        # `safe_execute` is the entry point program_dna uses now; a double
+        # exposing only `execute` would silently exercise the raw door.
+        async def safe_execute(self, params, context):
             return {
                 "ok": True,
                 "provenance": "test_web",

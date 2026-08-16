@@ -1770,7 +1770,7 @@ def reconstructed(case):
 
         for idx, query in enumerate(queries, start=1):
             try:
-                result = await search_skill.execute(
+                result = await search_skill.safe_execute(
                     {
                         "query": query,
                         "num_results": max_results,

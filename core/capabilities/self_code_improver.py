@@ -828,7 +828,7 @@ async def _research(goal: str, max_notes: int = 4) -> list[str]:
     try:
         from core.skills.web_search import EnhancedWebSearchSkill
 
-        res = await EnhancedWebSearchSkill().execute(
+        res = await EnhancedWebSearchSkill().safe_execute(
             {"query": goal, "max_results": 2},
             {"origin": "self_code_improver"},
         )

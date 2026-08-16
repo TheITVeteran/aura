@@ -1,0 +1,5 @@
+{
+  "call_sites": {},
+  "description": "Call sites entering a skill through raw execute() instead of safe_execute. Only shrinks.",
+  "schema_version": 1
+}

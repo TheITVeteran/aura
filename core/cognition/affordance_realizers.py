@@ -25,7 +25,7 @@ async def realize_show_sketch(args: dict[str, str], context: dict[str, Any]) -> 
         from core.skills.sovereign_imagination import SovereignImaginationSkill
 
         skill = SovereignImaginationSkill()
-        result = await skill.execute({"prompt": prompt}, context)
+        result = await skill.safe_execute({"prompt": prompt}, context)
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.debug("show_sketch unavailable: %s", exc)
         return {
