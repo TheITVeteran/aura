@@ -3969,8 +3969,6 @@ def _load_unified_recurrent_qualified_activation(
             reason="not_configured",
             activation=None,
         )
-    if loaded_shadow is None or shadow_status.get("loaded") is not True:
-        raise RuntimeError("qualified_activation_configured_without_shadow_tissue")
     try:
         activation = read_qualified_activation(activation_path)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -3978,6 +3976,18 @@ def _load_unified_recurrent_qualified_activation(
             f"configured_unified_recurrent_qualified_activation_invalid:"
             f"{activation_path}:{exc}"
         ) from exc
+    if loaded_shadow is None or shadow_status.get("loaded") is not True:
+        # Authority fails closed, but the ordinary model worker does not.
+        # This activation cannot authorize chat or arbitrary reasoning and
+        # cannot execute without its exact shadow tissue.  Keeping it loaded
+        # as *inactive evidence* makes that refusal explicit without letting
+        # a stale optional package crash unrelated base inference.
+        return None, seal_qualified_activation_load_receipt(
+            configured=True,
+            loaded=False,
+            reason="qualified_activation_shadow_unavailable",
+            activation=activation,
+        )
     if not activation_matches_shadow_receipt(activation, shadow_status):
         raise RuntimeError("qualified_activation_shadow_identity_differs")
     if activation.get("mode") == "qualified_typed_pending":

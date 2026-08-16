@@ -50827,3 +50827,28 @@ contracts pass `97/97`; canonical smoke passes `110/110`. No model was loaded to
 build or validate this protocol. The next step is its canary and powered live
 run on the packaged resident 32B. The 1.5B remains outside that gate unless a
 bounded mechanism diagnostic becomes necessary.
+
+## Checkpoint 2026-08-15-570: Keep Optional Tissue Outside Base-Worker Fate
+
+The first packaged CP569 boot exposed two independent admission defects before
+the live campaign consumed a turn. `SovereignWebAugmentor` implemented the old
+prompt-enrichment interface but not CognitiveEngine's admitted
+`get_augmentation` contract, so boot refused it. It now returns one coherent,
+bounded cached snapshot whose content and trust boundary are explicit; network
+refresh remains outside the foreground response deadline.
+
+The same boot correctly rejected a CP366 qualified recurrent package whose
+mechanics/resident binding no longer matched, then incorrectly let that
+optional typed-only authority crash the ordinary 32B worker. A validated
+activation whose exact tissue is unavailable now remains configured but
+inactive with `serving_authority=false`; qualified decode still fails closed,
+while unrelated ordinary inference can initialize. Invalid activation custody
+or content remains worker-fatal. The stale CP366 activation and pointer were
+retired through the compare-and-swap lifecycle tool under their exact hashes,
+preserving immutable private retirement receipts rather than deleting evidence.
+
+Focused augmentor, worker-activation, authority and boot contracts pass
+`85/85`; canonical smoke passes `110/110`; compile and Ruff pass. No model was
+loaded for this repair. The next step remains the rebuilt signed-app boot and
+CP569 live shadow canary on the resident 32B; the 1.5B remains unnecessary
+unless live evidence isolates a bounded mechanism defect.

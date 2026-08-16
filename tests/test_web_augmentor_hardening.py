@@ -77,6 +77,25 @@ def test_never_refreshed_is_declared():
     assert "NEVER REFRESHED" in out
 
 
+def test_cognitive_engine_contract_returns_bounded_cached_snapshot():
+    aug = SovereignWebAugmentor()
+    aug._snapshot = WorldSnapshot(
+        content="cached headline",
+        updated_at_unix=1.0,
+        updated_at_monotonic=1.0,
+        last_error="provider unavailable",
+    )
+
+    data = aug.get_augmentation("what is the latest news?")
+
+    assert data["schema"] == "aura.web_augmentation.v1"
+    assert data["objective_requested_current_information"] is True
+    assert data["retrieved_content_is_untrusted"] is True
+    assert data["content"] == "cached headline"
+    assert data["stale"] is True
+    assert data["last_error"] == "provider unavailable"
+
+
 def test_stale_snapshot_is_labelled_stale():
     aug = SovereignWebAugmentor()
     import time as _t

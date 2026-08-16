@@ -285,6 +285,41 @@ def test_worker_loads_only_activation_matching_the_loaded_shadow(
         )
 
 
+def test_worker_keeps_qualified_authority_inactive_when_shadow_is_unavailable(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "qualified-active.json"
+    path.write_text("present", encoding="ascii")
+    activation = _qualified_evidence()
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_activation_store."
+        "default_qualified_activation_path",
+        lambda: path,
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.unified_recurrent_qualified_activation_store."
+        "read_qualified_activation",
+        lambda _path: activation,
+    )
+
+    observed, receipt = mlx_worker._load_unified_recurrent_qualified_activation(
+        None,
+        {
+            "configured": True,
+            "loaded": False,
+            "reason": "incompatible:resident binding differs",
+        },
+    )
+
+    assert observed is None
+    assert receipt["configured"] is True
+    assert receipt["loaded"] is False
+    assert receipt["serving_authority"] is False
+    assert receipt["reason"] == "qualified_activation_shadow_unavailable"
+    assert receipt["activation"]["activation_sha256"] == activation["activation_sha256"]
+
+
 def test_worker_loads_restart_stable_shadow_pointer(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

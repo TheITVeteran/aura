@@ -120,6 +120,29 @@ class SovereignWebAugmentor(AbstractCognitiveAugmentor):
             self._maybe_schedule_refresh()
         return context
 
+    def get_augmentation(self, objective: str) -> dict[str, Any]:
+        """Return one coherent, explicitly untrusted world-state snapshot.
+
+        CognitiveEngine's admitted augmentor contract is intentionally
+        synchronous and deadline-bounded.  Returning the already-cached
+        snapshot keeps this path non-blocking; retrieval remains an owned
+        background operation rather than turning every foreground response
+        into a web request.
+        """
+        snap = self._snapshot
+        age = snap.age_seconds()
+        return {
+            "schema": "aura.web_augmentation.v1",
+            "objective_requested_current_information": bool(
+                _CURRENCY_RE.search(str(objective or ""))
+            ),
+            "retrieved_content_is_untrusted": True,
+            "content": snap.content,
+            "age_seconds": round(age, 3) if age is not None else None,
+            "stale": snap.is_stale(),
+            "last_error": snap.last_error or None,
+        }
+
     def _maybe_schedule_refresh(self) -> bool:
         """Single-flight reactive scheduling: consult the in-flight guard too,
         so a burst of current-info turns cannot stack refreshes (e6265b91)."""

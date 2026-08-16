@@ -387,14 +387,23 @@ def qualified_activation_load_receipt_errors(value: Any) -> list[str]:
             errors.append("loaded_qualified_activation_lacks_authority")
     elif configured:
         activation_errors = qualified_activation_errors(activation)
-        if (
-            activation_errors
-            or not isinstance(activation, Mapping)
-            or activation.get("mode") != "qualified_typed_pending"
-            or activation.get("serving_authority") is not False
-            or value.get("serving_authority") is not False
-            or value.get("reason") != "qualified_activation_pending_canary"
-        ):
+        pending = (
+            isinstance(activation, Mapping)
+            and activation.get("mode") == "qualified_typed_pending"
+            and activation.get("serving_authority") is False
+            and value.get("reason") == "qualified_activation_pending_canary"
+        )
+        unavailable = (
+            isinstance(activation, Mapping)
+            and activation.get("mode") in {
+                "qualified_typed_pending",
+                "qualified_typed_only",
+            }
+            and value.get("reason") == "qualified_activation_shadow_unavailable"
+        )
+        if activation_errors or not (pending or unavailable) or value.get(
+            "serving_authority"
+        ) is not False:
             errors.append("pending_qualified_activation_state_invalid")
     elif (
         activation is not None
