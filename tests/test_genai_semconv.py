@@ -320,3 +320,48 @@ def test_nested_spans_share_a_trace():
 
     assert inner.trace_id == outer.trace_id
     assert inner.parent_span_id == outer.span_id
+
+def test_a_completed_generation_emits_its_token_usage():
+    """genai_semconv defined the histograms and nothing ever fed them."""
+    from core.brain.llm.measured_admission import record_generation
+    from core.observability import genai_semconv
+
+    seen = []
+    original = genai_semconv.histograms.record
+    genai_semconv.histograms.record = lambda name, value: seen.append((name, value))
+    try:
+        record_generation(
+            model="cortex",
+            prompt_tokens=1200,
+            generated_tokens=340,
+            prefill_seconds=0.4,
+            decode_seconds=2.0,
+        )
+    finally:
+        genai_semconv.histograms.record = original
+
+    recorded = dict(seen)
+    assert recorded[genai_semconv.TOKEN_USAGE_INPUT_METRIC] == 1200.0
+    assert recorded[genai_semconv.TOKEN_USAGE_OUTPUT_METRIC] == 340.0
+
+
+def test_a_broken_metric_sink_does_not_break_the_response_path():
+    from core.brain.llm.measured_admission import record_generation
+    from core.observability import genai_semconv
+
+    original = genai_semconv.histograms.record
+
+    def explode(_name, _value):
+        raise ValueError("sink is broken")
+
+    genai_semconv.histograms.record = explode
+    try:
+        record_generation(
+            model="cortex",
+            prompt_tokens=10,
+            generated_tokens=5,
+            prefill_seconds=0.1,
+            decode_seconds=0.1,
+        )
+    finally:
+        genai_semconv.histograms.record = original

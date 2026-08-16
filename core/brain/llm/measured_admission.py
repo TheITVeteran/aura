@@ -378,6 +378,30 @@ def record_generation(
             action="dropped one throughput sample; admission falls back to a wider interval",
         )
 
+    # The same counts, on the standard OpenTelemetry GenAI histograms.
+    #
+    # `core/observability/genai_semconv.py` defined gen_ai.client.token.usage
+    # and a recorder for it, and nothing ever called that recorder — so the
+    # only place in the process that knew a real token count was this
+    # function, and it kept the number for admission and told no one. That is
+    # the same half-wired shape as a writer with no reader, inverted: a reader
+    # with no writer.
+    #
+    # Recorded here rather than at the model adapters because every lane that
+    # completes a generation already reports it here, so one call site covers
+    # them all and none can be forgotten.
+    try:
+        from core.observability.genai_semconv import record_token_usage
+
+        record_token_usage(input_tokens=prompt_tokens, output_tokens=generated_tokens)
+    except (ArithmeticError, AttributeError, ImportError, TypeError, ValueError) as exc:
+        record_degradation(
+            "measured_admission",
+            exc,
+            severity="debug",
+            action="completed the generation without emitting its token-usage metric",
+        )
+
 
 def admit(
     *,
