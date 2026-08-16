@@ -540,7 +540,7 @@ class ThoughtInteroceptionEngine:
         CP126 594d43b7: this used to publish on every accepted thought, with
         the stated purpose of joining the system-Φ stream "as a real
         subsystem" — and Φ measures precisely how much the subsystems cause
-        one another. Publishing in order to be counted inflates
+        one another. Publishing to be counted inflates
         cross-subsystem influence and subsystem diversity with the
         measurement's own publication.
 

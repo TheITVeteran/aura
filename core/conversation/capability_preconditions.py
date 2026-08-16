@@ -53,7 +53,7 @@ __all__ = [
 
 #: How long a probe result stands. Long enough that a burst of turns costs one
 #: probe; short enough that unplugging the network is noticed within a turn or
-#: two, which is the whole point.
+#: two.
 _CACHE_TTL_SECONDS = 12.0
 
 #: A probe must never be the reason a reply is slow.

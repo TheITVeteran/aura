@@ -1554,7 +1554,7 @@ class StreamOfBeing:
     def _build_grounded_opening(
         self, moment: NowMoment | None, context_hint: str
     ) -> str:
-        """Opening with situational anchor — slightly less pure, more readable."""
+        """Opening with situational anchor: trades a little purity for readability."""
         interior = self._build_interior_opening(moment, "")
         
         if moment:

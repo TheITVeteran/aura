@@ -226,7 +226,7 @@ class AffectBridge:
         """
         [CF-4] FIX: Instead of mutating vault._current directly, we inject
         a percept into the live kernel.state. The AffectUpdatePhase will
-        process this on the next tick, ensuring the mutation is persisted.
+        process this on the next tick. That tick is what persists the mutation.
         """
         state = self.kernel.state
         if not state:

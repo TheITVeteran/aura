@@ -286,7 +286,7 @@ class AGIIntegrationLayer:
         expansion = ServiceContainer.get("dimensional_expansion", default=None)
         if expansion and self.tick_count % 30 == 0:  # Every 30 ticks (30s)
             try:
-                # Clean up under-utilized dimensions
+                # Clean up under-used dimensions
                 retired_axes = expansion.evaluate_contraction()
                 if retired_axes:
                     logger.info("Dimensional expansion retired axes: %s", retired_axes)

@@ -186,7 +186,7 @@ class SleepTimeConsolidator:
             # failing deploy" to "is easily frustrated" — no step unreasonable,
             # nobody deciding. Returned before the summarizer is consulted so
             # the model is never even asked; the block would refuse the write
-            # regardless, but paying for a call in order to be refused is a
+            # regardless, but paying for a call to be refused is a
             # standing cost for nothing.
             return ConsolidationResult(
                 label=label, outcome=SKIPPED_DERIVED,

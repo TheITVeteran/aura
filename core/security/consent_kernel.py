@@ -16,7 +16,7 @@ logger = logging.getLogger("Security.ConsentKernel")
 
 
 class ConsentKernel:
-    """Canonical security manager auditing actions prior to execution."""
+    """Canonical security manager auditing actions before execution."""
 
     def __init__(self):
         self.secret_guard = SecretGuard()

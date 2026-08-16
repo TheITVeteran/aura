@@ -614,8 +614,8 @@ class StrangeLoop:
     def _get_level_actual(self, level: int, state_vec: np.ndarray) -> np.ndarray:
         """Compute the "ground truth" target for a given recursion level.
 
-        Each level sees a different transformation of the raw state,
-        reflecting what that level is trying to predict:
+        Each level sees a different transformation of the raw state. The
+        transformation is whatever that level is trying to predict:
 
         Level 0 (external input):
             The raw state vector.  This level predicts what the system's

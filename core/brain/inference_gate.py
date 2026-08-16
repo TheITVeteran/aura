@@ -8156,7 +8156,7 @@ class InferenceGate:
         length of that forgery and nothing else.
 
         Every interpolated value now goes through ``_contract_safe``, which
-        flattens the structure a value would need in order to impersonate
+        flattens the structure a value would need to impersonate
         one. This is not a claim to have solved prompt injection: a value
         can still say persuasive things. It can no longer say them *as a
         system constraint*, which is the specific escalation here.

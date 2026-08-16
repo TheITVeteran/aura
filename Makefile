@@ -163,6 +163,8 @@ assumptions:
 writing:
 	@echo "✍️  Checking prose against docs/WRITING_RULES.md..."
 	@$(PYTHON) tools/lint_ai_writing.py
+	@echo "✍️  Checking docstrings and comments..."
+	@$(PYTHON) tools/lint_ai_writing.py --code --quiet
 
 seams:
 	@echo "🪚 Listing the safe extraction seams in every oversized function..."

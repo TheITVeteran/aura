@@ -8,8 +8,12 @@ that now read as machine-generated, and the repository is checked against them:
 ```bash
 make writing            # the front-facing docs, ratcheted
 python tools/lint_ai_writing.py --all      # every guide
+python tools/lint_ai_writing.py --code     # docstrings and comments
 python tools/lint_ai_writing.py FILE       # one file
 ```
+
+Docstrings and comments are checked from the same rulebook. They are read more
+often than the guides are, and until August 2026 nothing checked them at all.
 
 `tools/lint_ai_writing.py` is the executable half of this page. **Adding a
 pattern here without adding it there leaves the rule unenforced**, which is how
@@ -87,6 +91,73 @@ reviewed-and-kept ranges sit in the baseline.
 
 Stop typing.
 
+### 10. "Not just X — it's Y"
+
+> The "I" is not just a data structure, but a lived reality.
+
+Rule 1 with a comma instead of a full stop, and the form every guide to
+spotting machine prose names first. `not only X but also Y` and
+`not X, but rather Y` are the same move. Say the second half.
+
+### 11. The participle that restates the sentence
+
+> The system retries twice, ensuring reliability.
+> Latency fell by half, underscoring the win.
+
+The clause after the comma adds nothing the clause before it did not already
+say. End the sentence. If the consequence is worth stating, give it its own.
+
+### 12. Hedging before the fact
+
+> It is important to note that the gate is advisory.
+
+Say *the gate is advisory*. A fact introduced as important arrives weaker
+than a fact stated.
+
+### 13. Who says so
+
+> Studies show naive repetition is unstable.
+> Many argue that recurrence damages reasoning.
+
+Name the source or cut the sentence. This repo registers claims against the
+tests that validate them, so an unsourced claim here is two defects: prose
+nobody wrote and a claim nobody can check.
+
+### 14. Asking yourself a question
+
+> The result? Nothing rendered at all.
+> Why does this matter?
+
+Answer it without asking it first.
+
+### 15. Nobody is here with you
+
+> Let's dive into the scheduler.
+
+Say what the scheduler does.
+
+### 16. The stock opening
+
+> In today's fast-paced world…
+> In the ever-evolving landscape of…
+
+Start at the first sentence that carries information.
+
+### 17. The long word where the short one was exact
+
+> We utilize the gateway in order to write state prior to the flush.
+
+*We use the gateway to write state before the flush.* Latinate inflation is
+the oldest tell there is, and it survives every round of models learning not
+to use em dashes.
+
+### 18. A chat reply pasted in unread
+
+> As a large language model, I cannot verify that.
+> Hope this helps! Let me know if you would like more.
+
+Delete the line. Nothing else in this file matters if these ship.
+
 ---
 
 ## The four principles underneath
@@ -113,15 +184,48 @@ a record, not improving prose. The linter excludes them by path; see
 [DOC_STATUS.md](DOC_STATUS.md) for which documents are which.
 
 Quoted material keeps its original wording, including when the original
-commits one of the nine.
+commits one of the eighteen. The linter blanks backticked spans and quoted
+spans before the rules run, so a docstring that names the phrase it detects
+is not read as having written it.
+
+**The scope disclaimer stays.** Rule 1 targets a negation that exists to make
+the second half sound earned. A negation that rules out a reading somebody
+would otherwise make is doing work:
+
+> This is not a configuration file. It is Aura's foundational identity.
+> That is not a tuning delta. It is the same model, the same checkpoint.
+
+Both name a category the reader was about to assign and take it away. Deleting
+the first half loses the correction. Eleven of these sit in the code baseline;
+they were read one at a time before they went there.
+
+## Where the rules came from
+
+The 2026 crop of "how to spot AI writing" guides agrees on more than it
+disagrees on, and rules 10 through 18 are the overlap: negative parallelism,
+the trailing participle, the disclaimer, the unsourced claim, the rhetorical
+question, the false "let's", the stock opening, Latinate inflation.
+
+One dissent shaped the design more than the agreement did. Writing in defense
+of the patterns everyone bans, [Robots Ate My
+Homework](https://robotsatemyhomework.substack.com/p/ai-writing-patterns)
+argues the tricolon and the binary contrast are ordinary rhetoric, and that
+"the pattern is fine; autopilot is the problem." That is why the triad rule
+fires only on evaluative words. This codebase enumerates three real states
+constantly — `warming, recovering, handshaking` — and a linter that called
+those a tell would be ignored inside a week, correctly.
 
 ## Extending this
 
-Add a pattern the moment you catch one in a draft. Two edits:
+Add a pattern the moment you catch one in a draft. Three edits:
 
 1. A section here, with the example that caught it.
 2. A rule in `RULES` in `tools/lint_ai_writing.py`, with a regex and the
    one-line fix shown to whoever trips it.
+3. A line in `POSITIVES` in `tests/test_ai_writing_rules.py`. That suite
+   fails if any rule has no worked example, because a rule that cannot match
+   reports green forever. Rule 7 shipped that way and nobody noticed until
+   somebody counted the rules on each side.
 
 Then run `python tools/lint_ai_writing.py --all --baseline` to record where the
 tree sits. The file gets better every time somebody notices something.

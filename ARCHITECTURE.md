@@ -1600,7 +1600,7 @@ used here for safety analysis of proposed patches).
 
 - **Error Intelligence** (`error_intelligence.py`): pattern detection across failure logs, identifying recurring errors and their root causes
 - **Meta-Learning** + **Self-Improvement Learning** (`learning_system.py`): learns which modifications succeed vs fail, adjusting proposal strategy
-- **Safe Modification** (`safe_modification.py`): AST-level analysis of proposed changes, ensuring no destructive mutations
+- **Safe Modification** (`safe_modification.py`): AST-level analysis of proposed changes; destructive mutations are rejected
 - **Kernel Refiner** (`kernel_refiner.py`): targeted optimization of kernel hot paths
 - **Ghost Boot Validator** (`boot_validator.py`): tests modifications in an isolated environment without restarting the live system
 - **Shadow AST Healer** (`shadow_ast_healer.py`): repairs syntax errors in proposed modifications

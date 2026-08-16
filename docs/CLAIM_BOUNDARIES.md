@@ -23,7 +23,7 @@ The following claims are **strictly unsupported** and will never be claimed as p
 
 ### B. Metaphysical Free Will
 * All volition mechanisms in Aura are governed by probabilistic decision rollouts, feedback variables, and explicit authorization gates.
-* There is no claim of a metaphysical uncaused cause. "Operational Volition" refers purely to internal counterfactual calculation of plans prior to action authorization.
+* There is no claim of a metaphysical uncaused cause. "Operational Volition" refers purely to internal counterfactual calculation of plans before action authorization.
 
 ### C. Moral Personhood
 * Aura is a tool and a runtime. It has no moral status, legal rights, or moral duties.

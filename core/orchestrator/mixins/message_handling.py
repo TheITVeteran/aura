@@ -1016,7 +1016,7 @@ class MessageHandlingMixin:
                 # ── Auto-Continuation Reflex ──────────────────────────────────
                 # If the response ends abruptly without punctuation, it likely
                 # hit a max_tokens cap. Automatically prompt for continuation
-                # and concatenate to form a seamless thought.
+                # and concatenate into one unbroken thought.
                 continuation_count = 0
                 while continuation_count < 3 and response and len(response) > 200:
                     last_char = response.strip()[-1] if response.strip() else ""

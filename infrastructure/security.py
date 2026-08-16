@@ -24,7 +24,7 @@ class OpSec:
 
     @staticmethod
     async def safe_delay(seconds: float):
-        """Alias for random_sleep with zero variance, ensuring non-blocking."""
+        """Alias for random_sleep with zero variance. Awaits, never blocks."""
         import asyncio
         await asyncio.sleep(seconds)
 

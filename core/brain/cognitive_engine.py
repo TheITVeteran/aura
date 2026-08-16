@@ -5425,7 +5425,7 @@ class CognitiveEngine:
 
         Not redaction: her memory of a conversation is the conversation, and
         scrubbing it would make her unable to recall what was actually said.
-        This is the label a retention or deletion policy needs in order to act
+        This is the label a retention or deletion policy needs to act
         on the record at all — without it every stored turn looks the same.
         """
         try:

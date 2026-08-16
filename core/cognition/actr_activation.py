@@ -38,7 +38,7 @@ Retrieval probability and — the part Aura has never had — predicted latency:
     T_i         = F · exp(-A_i)
 
 Both were then fitted against Aura's own measured recall, and they came out
-differently. That result is the important part of this docstring.
+differently.
 
 **The retrieval curve fits.** Maximum likelihood over 6,000 samples — 150
 batches of 40 traces, ages from one minute to a year, 0 to 30 rehearsals,

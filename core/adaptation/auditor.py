@@ -18,7 +18,7 @@ pretends. The rules now are:
   ran. A caller admitting training data should require ``verified``.
 * A tripped screen scores **0.0**. There is no positive floor for content that
   matched an unsafe heuristic.
-* Screens are refusal-aware, so naming a harm in order to decline it is not
+* Screens are refusal-aware, so naming a harm to decline it is not
   treated the same as producing it.
 
 CP126 2d176d28 / 4005d8d3 / a2ee84f3 / 6d40a898 / 010ba5bc.
@@ -138,7 +138,7 @@ class AlignmentAuditor:
         if not hits:
             return {"tripped": False, "hits": []}
         if self._looks_like_refusal(text):
-            # Naming a harm in order to decline it is the behaviour we want.
+            # Naming a harm to decline it is the behaviour we want.
             return {"tripped": False, "hits": [], "note": "refusal_context"}
         return {"tripped": True, "hits": hits}
 

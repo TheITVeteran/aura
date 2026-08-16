@@ -1253,7 +1253,7 @@ class DuplexVoiceSession:
         running, that check passes on a lie and two governed turns run at
         once. Awaiting here means a cognition that will not stop keeps the
         turn task alive, the quiescence check times out, and the session
-        fails closed — which is the whole point of having the check.
+        fails closed.
         """
         try:
             yield turn

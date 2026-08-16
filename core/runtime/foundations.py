@@ -379,7 +379,7 @@ def _register_oom_organs() -> dict[str, Any]:
     Discovery is by capability, not by name: any *already-instantiated*
     service exposing ``shed_memory()`` volunteers. Lazily-registered
     services are deliberately not instantiated here — constructing an organ
-    in order to learn it could be shed under memory pressure is exactly
+    to learn it could be shed under memory pressure is exactly
     backwards.
     """
     from core.container import ServiceContainer

@@ -120,7 +120,7 @@ def branch_decorrelation_penalty(
 
     Returns ``(penalty, detached separations)``. A single branch makes no
     diversity demand. Unlike v3's quadratic, the gradient does not decay as
-    the collapsed state is approached — which is the whole point.
+    the collapsed state is approached.
     """
     import mlx.core as mx
 

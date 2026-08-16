@@ -162,7 +162,7 @@ class UnifiedTranscript:
         """The last user request and the last thing Aura said, in that order.
 
         This is what a message like "Can you do it now?" or "From the grant
-        research funds manager" needs in order to mean anything. Both were said
+        research funds manager" needs to mean anything. Both were said
         to Aura live on 2026-08-03 and both were answered as though the
         conversation had just started, because every router reads one message
         at a time.

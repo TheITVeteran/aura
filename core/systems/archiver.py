@@ -1,7 +1,7 @@
 """Archive Engine — Vital-Log Preservation
 
 Compresses designated log files into timestamped ZIP archives
-*before* Metabolism purges them, ensuring a permanent history.
+*before* Metabolism purges them. The archive is the permanent history.
 Runs as the very first step in the Dreamer sleep cycle.
 """
 from core.runtime.errors import record_degradation

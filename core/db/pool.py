@@ -66,7 +66,7 @@ class ConnectionPool:
 
 
 async def execute_write_with_backoff(conn: aiosqlite.Connection | sqlite3.Connection, query: str, params: tuple = (), max_retries: int = 5):
-    """Executes atomic state changes utilizing a randomized exponential backoff loop to resolve race contentions."""
+    """Executes atomic state changes using a randomized exponential backoff loop to resolve race contentions."""
     base_delay = 0.05
     for attempt in range(max_retries):
         try:

@@ -102,7 +102,7 @@ Gates run per checkpoint: `make compile`, `make smoke`, `make governance-lint`
 - **MuJoCo backend** (e9d7b741): DONE — SimulatorInterface drop-in +
   blueprint→MJCF compilation (mujoco 3.10.0 installed, owner-approved).
 - **Landmark lip tracking** (da4d82fb): DONE — mediapipe FaceMesh
-  geometry, signed-derivative band-pass, seamless fallback.
+  geometry, signed-derivative band-pass, automatic fallback.
 - **Practice → learning loop** (d9b7561e): DONE — ledger feeds
   PracticeDirector (domain embodied.<kind>).
 - **Bounded-vocabulary lip reading**: DONE — viseme classifier +

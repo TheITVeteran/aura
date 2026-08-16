@@ -15,7 +15,7 @@ from core.skills.base_skill import BaseSkill
 logger = logging.getLogger("Skills.InterAgent")
 
 class InterAgentCommSkill(BaseSkill):
-    """Skill to facilitate communication with external agents (e.g., Gemini, ChatGPT).
+    """Skill for communication with external agents (e.g., Gemini, ChatGPT).
     v3.4 Patch: Uses mock 'conversation_loop' if needed.
     """
     

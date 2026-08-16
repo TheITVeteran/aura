@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Real live autonomy longevity soak runner for Aura.
 
-Executes actual runtime processes, model queries, memory writes, and tool executions,
-ensuring that all actions are governed, transacted, and receipted.
+Executes actual runtime processes, model queries, memory writes, and tool
+executions. Every action is governed, transacted, and receipted.
 """
 
 from __future__ import annotations

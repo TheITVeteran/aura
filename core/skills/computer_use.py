@@ -1791,7 +1791,7 @@ end tell
     def _list_directory(self, target: str) -> dict[str, Any]:
         """Names and count of the files in a directory she may read.
 
-        The count is a MEASUREMENT, which is the whole point: asked how many
+        The count is a MEASUREMENT: asked how many
         .py files were in a directory, she answered 3 for a directory holding
         9, listed three filenames that do not exist, and reported writing a
         file that was never created. Nothing had looked.

@@ -467,7 +467,7 @@ def _neutral_baseline_for_language(language: str) -> float | None:
     """Measure the local model's language-specific neutral offset once.
 
     Apple's English model on current macOS releases can assign a sizeable
-    negative prior to neutral technical prose. Subtracting a measured neutral
+    negative before neutral technical prose. Subtracting a measured neutral
     anchor prevents that backend prior from masquerading as output valence.
     Unknown languages remain uncalibrated and are handled conservatively.
     """

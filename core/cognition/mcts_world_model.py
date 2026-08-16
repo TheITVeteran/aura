@@ -1,6 +1,6 @@
 """core/cognition/mcts_world_model.py -- MCTS over Learned VRNN Dynamics
 ========================================================================
-Implements Monte Carlo Tree Search (MCTS) utilizing the learned latent
+Implements Monte Carlo Tree Search (MCTS) using the learned latent
 dynamics (VRNN) from `learned_world_model.py`.
 
 Unlike heuristic search, this planner:

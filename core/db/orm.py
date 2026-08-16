@@ -13,7 +13,7 @@ logger = logging.getLogger("Aura.ORM")
 Base = declarative_base()
 
 class SkillExecutionLog(Base):
-    """Logs for every skill execution, ensuring no audit trail is lost."""
+    """Logs for every skill execution; the audit trail lives here."""
     __tablename__ = "skill_execution_logs"
     
     id = Column(Integer, primary_key=True)

@@ -61,13 +61,21 @@ replies — is checked against [docs/WRITING_RULES.md](docs/WRITING_RULES.md).
   loses the fourth; put it back.
 - Use **ASD-STE100** for procedures, runbooks, gates, and API docs. Do not use
   it for anything with a voice — it flattens.
-- The nine forbidden patterns, short version: no "That's not X, that's Y"; no
-  stapled one-word sentences; no twin images without advice; **no clapping for
-  your own point**; no analogy that assumes the reader knows both referents; no
-  warming up before the sentence that matters; no reflexive triads; no ranges
-  where a measurement belongs; no ending that recaps what was just read.
-- `make writing` is the gate. The baseline in
-  `config/ai_writing_baseline.json` only goes down.
+- The eighteen forbidden patterns, short version: no "That's not X, that's Y"
+  (or its comma-spliced twin, "not just X, it's Y"); no stapled one-word
+  sentences; no twin images without advice; **no clapping for your own point**;
+  no analogy that assumes the reader knows both referents; no warming up before
+  the sentence that matters; no reflexive triads; no ranges where a measurement
+  belongs; no ending that recaps what was just read; no participle that
+  restates its own sentence; no hedging before a fact; no unsourced "studies
+  show"; no rhetorical question you then answer; no "let's dive in"; no stock
+  opening; no long word where the short one was exact.
+- `make writing` is the gate, and it covers docstrings and comments as well as
+  the guides. The baselines in `config/ai_writing_baseline.json` only go down.
+- A new rule needs three edits: the section in WRITING_RULES.md, the regex in
+  `tools/lint_ai_writing.py`, and a worked example in
+  `tests/test_ai_writing_rules.py`. That suite fails if any rule has no
+  example, because a rule that cannot match reports green forever.
 - **Append-only records are exempt and must not be restyled** — the execution
   tracker, the RLC ledger, `docs/evidence/`, dated verdicts. Editing those is
   falsifying a record.

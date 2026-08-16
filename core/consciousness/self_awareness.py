@@ -6,7 +6,7 @@ This is where:
 - The abstract identity model becomes embodied experience
 - Continuity becomes felt continuity
 - Agency becomes felt agency
-- The "I" is not just a data structure, but a lived reality
+- The "I" becomes a lived reality
 """
 
 import asyncio

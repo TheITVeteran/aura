@@ -1,5 +1,5 @@
 """skills/network_ops.py
-Real Network Operations utilizing OS commands.
+Real Network Operations using OS commands.
 """
 import asyncio
 import logging

@@ -395,8 +395,8 @@ class CognitiveIntegrationLayer:
         """Inner implementation of process_turn (wrapped by _processing_turn guard).
 
         The substrate voice engine compiles a SpeechProfile at entry and
-        shapes the final response at exit — same as Phase 5, ensuring
-        ONE voice regardless of which path generates the response.
+        shapes the final response at exit — same as Phase 5. ONE voice,
+        regardless of which path generates the response.
         """
         # ── SUBSTRATE VOICE: Compile speech profile ──────────────────
         _sve = None

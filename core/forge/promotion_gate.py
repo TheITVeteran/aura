@@ -8,7 +8,8 @@ logger = logging.getLogger("Aura.PromotionGate")
 
 
 class PromotionGate:
-    """Governs the rolling upgrade of patches, ensuring human approval and rollback readiness."""
+    """Governs the rolling upgrade of patches. A patch ships only with human
+    approval and a rollback path."""
 
     @staticmethod
     def check_gate(eval_report: Dict[str, Any], requires_approval: bool = False) -> bool:

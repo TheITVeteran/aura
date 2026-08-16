@@ -220,7 +220,7 @@ class SystemIntegration:
         ):
             return self._cached
         raw_events = self._recent_events()
-        # CP126 594d43b7: an event published in order to appear here is not
+        # CP126 594d43b7: an event published to appear here is not
         # evidence of causal integration. Φ measures how much the organs
         # actually cause one another; counting a measurement's own
         # publication is the instrument reading its own reflection.

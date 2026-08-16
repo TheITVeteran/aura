@@ -1,7 +1,7 @@
 """core/factory/patch_planner.py — Patch Planning Engine.
 
-Coordinates change plans from objectives and repo maps,
-ensuring minimal edits with clear rationale.
+Coordinates change plans from objectives and repo maps. Every plan is a
+minimal edit carrying its own rationale.
 """
 from __future__ import annotations
 

@@ -521,7 +521,7 @@ class StateMachine:
             while attempt <= max_retries:
                 try:
                     # Hard cap: keep system prompt under ~7000 tokens (~28K chars)
-                    # to utilize more of the 32K token buffer on M5 hardware.
+                    # to use more of the 32K token buffer on M5 hardware.
                     max_prompt_chars = 28000
                     if len(system_prompt) > max_prompt_chars:
                         # Trim from the middle (keep identity at top + recent context at bottom)

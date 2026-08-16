@@ -111,8 +111,7 @@ def write_gates(
     The gate is driven by how much the candidate DISAGREES with what is
     already stored: a candidate that merely restates memory should not
     consume a write. ``gate_bias`` is negative so the default is to
-    preserve -- writing is the exception, which is the whole point of a
-    protected lane.
+    preserve -- writing is the exception in a protected lane.
     """
     import mlx.core as mx
 

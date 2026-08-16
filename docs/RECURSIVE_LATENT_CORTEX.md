@@ -193,7 +193,8 @@ generated token attends to them. Ablating a slot (Experiment 3) measurably
 changes the answer — that is the causality contract.
 
 ### Controlled recurrence (not naive looping)
-2026 frozen-loop studies show naive repetition is unstable. Controls:
+The [frozen-loop literature](RLC_SPARK_LITERATURE.md) reports naive repetition
+is unstable. Controls:
 - **RMSMatch**: per-position RMS rescaling toward the immutable post-prelude anchor,
   ratio-clamped — keeps Z on the activation manifold the next layers expect.
 - **α-interpolation** with configurable schedule (constant / cosine decay).

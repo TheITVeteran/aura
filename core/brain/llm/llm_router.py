@@ -718,7 +718,7 @@ class StaticReflexClient:
         if mood_desc:
             text += f"\n\n*Current State: {mood_desc}*"
 
-        # OpenAI format response for seamless integration. degraded/fallback
+        # OpenAI format response so existing consumers parse it unchanged. degraded/fallback
         # markers let structured consumers distinguish this from a real answer.
         return True, text, {
             "model": "static-reflex-v1",

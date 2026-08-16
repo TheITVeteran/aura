@@ -1,8 +1,8 @@
 """core/morphogenesis/state_migrator.py — Version Registry and State Migrator Proxy
 
-Manages dynamically reloaded or mutated morphogenetic cell components, ensuring that
-active object state payloads are marshalled cleanly onto mutated schemas to prevent 
-in-flight type mismatch drift during AST hot-reloading.
+Manages dynamically reloaded or mutated morphogenetic cell components. Active
+object state payloads are marshalled cleanly onto mutated schemas, which is what
+prevents in-flight type mismatch drift during AST hot-reloading.
 """
 import logging
 from typing import Dict, Any, Type, Optional

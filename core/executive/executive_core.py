@@ -324,7 +324,7 @@ IDENTITY_SENSITIVE_TOOLS = {
     "auto_refactor", "train_self",
 }
 
-# Tools that are allowed to bypass lockdown to facilitate recovery
+# Tools that are allowed to bypass lockdown for recovery
 RECOVERY_AND_EVOLUTION_TOOLS = {
     "web_search", "sovereign_browser", "self_repair", "auto_refactor",
     "self_evolution", "train_self", "memory_ops", "query_beliefs",

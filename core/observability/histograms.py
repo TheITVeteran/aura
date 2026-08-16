@@ -12,7 +12,7 @@ which is correct but unbounded in memory and loses history. Bucketed
 histograms are O(1) memory per metric, keep every observation's shape, and
 are cheap enough to leave on everywhere.
 
-The part worth copying beyond the data structure:
+What to copy beyond the data structure:
 
 * **Declaration with an owner and an expiry.** Chromium will not accept a
   histogram without both. The expiry is the good idea: metrics rot,

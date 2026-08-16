@@ -7697,7 +7697,7 @@ def _mlx_worker_loop(
                     })
                 finally:
                     # [STABILITY v52] Guarantee VRAM gets purged after standard generation
-                    # completes or fails, ensuring pure state for next request.
+                    # completes or fails. The next request starts from clean state.
                     if mx and device != "cpu":
                         _clear_mlx_cache(mx)
 
@@ -8140,7 +8140,7 @@ def _mlx_worker_loop(
                     })
                 finally:
                     # [STABILITY v52] Guarantee VRAM gets purged after streaming
-                    # completes or fails, ensuring pure state for next request.
+                    # completes or fails. The next request starts from clean state.
                     if mx and device != "cpu":
                         _clear_mlx_cache(mx)
 

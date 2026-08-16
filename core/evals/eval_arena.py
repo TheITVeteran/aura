@@ -272,7 +272,7 @@ class EvalArena:
             ),
             # No check: answering this needs the cortex, which a daily offline
             # arena has no honest way to run. It is reported unmeasured rather
-            # than assumed, which is the whole point of this file.
+            # than assumed.
             "tc_research": EvalTestCase(
                 "tc_research",
                 "research",

@@ -31,7 +31,7 @@ This module is that single place. It is deliberately:
   killing is NOT justified. An expensive irreversible action must not be taken
   on absent information.
 
-The graded response, which is the whole point:
+The graded response:
 
   GENERATING  → never kill. Cancel the *request* if the caller left.
   IDLE        → never kill for staleness. Recycle gracefully if you must.

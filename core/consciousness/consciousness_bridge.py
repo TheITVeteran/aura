@@ -361,7 +361,7 @@ class ConsciousnessBridge:
         """The continuous cross-wiring loop.
 
         This is the heartbeat of the bridge — it moves data between
-        all subsystems every tick, ensuring tight causal coupling.
+        all subsystems every tick. The coupling is only as tight as this loop.
         """
         interval = 1.0 / self._INTEGRATION_HZ
 

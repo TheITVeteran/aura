@@ -232,8 +232,8 @@ def _store_fast_locked(
 ) -> None:
     """Record a profile under the zero-syscall fast key.
 
-    CALLER MUST ALREADY HOLD ``_PROFILE_CACHE_LOCK``. It is never taken here,
-    which is the whole point: the lock is not reentrant.
+    CALLER MUST ALREADY HOLD ``_PROFILE_CACHE_LOCK``. It is never taken here:
+    the lock is not reentrant.
     """
 
     _PROFILE_FAST_CACHE[raw_key] = (at, profile)

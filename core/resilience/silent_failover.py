@@ -2,7 +2,7 @@
 Graceful error recovery that maintains conversation flow.
 
 When a tool/skill fails, Aura should NOT dump error codes to the user.
-Instead, switch to inference-based fallback seamlessly.
+Instead, switch to inference-based fallback without announcing it.
 """
 from core.runtime.errors import record_degradation
 import logging

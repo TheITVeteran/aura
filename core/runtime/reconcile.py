@@ -621,7 +621,7 @@ async def run_finalizers(
     """Run pending finalizers; returns True when the object may really go.
 
     A finalizer that fails keeps the object alive and the deletion
-    pending, which is the whole point: cleanup that silently failed is
+    pending: cleanup that silently failed is
     indistinguishable from cleanup that never ran.
     """
     if not meta.deleting:
