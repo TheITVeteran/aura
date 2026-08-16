@@ -25,7 +25,10 @@ ALLOWED_TOP_LEVEL = frozenset({
     # contract-pinned package shims (tests/test_forensic_audit_regressions.py
     # requires these exact top-level re-export files; each is <25 lines and
     # only forwards to its package — they are doors, not residents)
-    "goals", "orchestrator_boot",
+    # orchestrator_boot removed: the shim is GONE, and
+    # test_forensic_audit_regressions now asserts it must not come back.
+    # Leaving it here would silently re-permit its return.
+    "goals",
     # spine
     "container", "config", "service_names", "exceptions", "runtime",
     "event_bus", "will", "governance_context", "constitution",
@@ -43,7 +46,8 @@ ALLOWED_TOP_LEVEL = frozenset({
     "local_chat_brain", "global_workspace",
     # legacy shims shadowed by or redirecting to packaged implementations —
     # queued for the kill-shim pass; do NOT add new shims
-    "agency_bus", "circuit_breaker", "drives", "dual_memory",
+    # drives removed: the shim no longer exists at core/ top level.
+    "agency_bus", "circuit_breaker", "dual_memory",
     "long_term_memory_engine", "memory_compaction_patch", "memory_synthesizer",
 })
 

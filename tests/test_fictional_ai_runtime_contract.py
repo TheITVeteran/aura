@@ -31,7 +31,11 @@ def test_progressive_autonomy_keeps_memory_state_when_save_fails(monkeypatch, tm
         error = OSError("disk full")
         raise error
 
-    monkeypatch.setattr(synthesis, "atomic_write_text", _raise_disk_full)
+    # One owner writes every engine journal now, so the failure is
+    # injected where the write actually happens.
+    from core.fictional import common as fictional_common
+
+    monkeypatch.setattr(fictional_common, "atomic_write_text", _raise_disk_full)
 
     engine.record_negative_signal("unit-test", strength=0.1)
 

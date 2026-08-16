@@ -216,6 +216,8 @@ def test_proof_tool_context_is_system_source_not_autonomous_background():
 def test_shackled_edi_allows_only_scoped_safe_or_governed_actions(tmp_path: Path):
     from core.fictional_ai_synthesis import AutonomyTier, ProgressiveAutonomySystem
 
+    from core.governance_context import local_internal_governed_scope
+
     edi = ProgressiveAutonomySystem(persist_path=str(tmp_path / "trust_state.json"))
     edi._tier = AutonomyTier.SHACKLED
 
@@ -225,45 +227,46 @@ def test_shackled_edi_allows_only_scoped_safe_or_governed_actions(tmp_path: Path
         effect_scope="pure_compute",
     )[0]
     assert not edi.can_do("unknown_low", risk_level="low", effect_scope="unknown")[0]
-    assert edi.can_do(
-        "run_code",
-        risk_level="high",
-        effect_scope="sandboxed_compute",
-        governed=True,
-        user_authorized=True,
-    )[0]
-    assert edi.can_do(
-        "file_operation",
-        risk_level="medium",
-        effect_scope="workspace_file_io",
-        governed=True,
-        user_authorized=True,
-    )[0]
-    assert edi.can_do(
-        "computer_use",
-        risk_level="high",
-        effect_scope="foreground_desktop_control",
-        governed=True,
-        user_authorized=True,
-    )[0]
-    assert edi.can_do(
-        "computer_use",
-        risk_level="medium",
-        effect_scope="desktop_file_io",
-        governed=True,
-        user_authorized=True,
-    )[0]
+    # Governance is RESOLVED from the live context now, not read off a
+    # keyword (CP126 a05a35dd). These scoped actions clear inside a real
+    # governed scope and are refused outside one, whatever the caller says.
+    with local_internal_governed_scope("test.edi_shackled_scopes"):
+        assert edi.can_do(
+            "run_code",
+            risk_level="high",
+            effect_scope="sandboxed_compute",
+            user_authorized=True,
+        )[0]
+        assert edi.can_do(
+            "file_operation",
+            risk_level="medium",
+            effect_scope="workspace_file_io",
+            user_authorized=True,
+        )[0]
+        assert edi.can_do(
+            "computer_use",
+            risk_level="high",
+            effect_scope="foreground_desktop_control",
+            user_authorized=True,
+        )[0]
+        assert edi.can_do(
+            "computer_use",
+            risk_level="medium",
+            effect_scope="desktop_file_io",
+            user_authorized=True,
+        )[0]
+        assert not edi.can_do(
+            "run_code",
+            risk_level="critical",
+            effect_scope="sandboxed_compute",
+            user_authorized=True,
+        )[0]
+
+    # Outside the scope, a governed=True claim buys nothing.
     assert not edi.can_do(
         "file_operation",
         risk_level="medium",
         effect_scope="workspace_file_io",
-        governed=False,
-        user_authorized=True,
-    )[0]
-    assert not edi.can_do(
-        "run_code",
-        risk_level="critical",
-        effect_scope="sandboxed_compute",
         governed=True,
         user_authorized=True,
     )[0]

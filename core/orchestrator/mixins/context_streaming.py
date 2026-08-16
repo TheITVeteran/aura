@@ -403,11 +403,16 @@ class ContextStreamingMixin:
             if cortana:
                 hist_str = str(self.conversation_history)
                 est_tokens = int(len(hist_str) / 4)
+                # A hardcoded 0.9 and an unconditional True are not
+                # measurements. They were the entire evidence base for a
+                # score reported as progress toward integrated personhood
+                # (CP126 14de312d). The token count is real; the grade is
+                # left unmeasured until something actually grades a turn.
                 cortana.record_turn(
                     context_tokens=est_tokens,
                     max_tokens=32768,
-                    response_quality=0.9,
-                    identity_markers_present=True,
+                    response_quality=None,
+                    identity_markers_present=None,
                     topics_in_play=1,
                     resolved_topics=1
                 )

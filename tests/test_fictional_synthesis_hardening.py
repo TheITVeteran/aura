@@ -13,7 +13,7 @@ from core.fictional_ai_synthesis import (
     DistributedResilienceCore,
     ProgressiveAutonomySystem,
     SocialModelingEngine,
-    _coerce_insight_text,
+    coerce_insight_text,
 )
 
 
@@ -56,8 +56,20 @@ class TestTrustIsNotAuthority:
         assert allowed is False
         assert "governance" in reason.lower()
 
+        # A CLAIM of governance is not governance. The flag used to be
+        # taken at face value, so the argument that unlocked a critical
+        # action was supplied by the code asking permission (CP126
+        # a05a35dd). Claiming it while no scope is active still refuses.
         allowed, _ = engine.can_do("wipe_disk", risk_level="critical", governed=True)
-        assert allowed is True
+        assert allowed is False
+
+        # Inside a real governed scope it goes through, with no flag at all.
+        from core.governance_context import local_internal_governed_scope
+
+        with local_internal_governed_scope("test.edi_authority"):
+            allowed, _ = engine.can_do("wipe_disk", risk_level="critical")
+            assert allowed is True
+
         allowed, _ = engine.can_do("wipe_disk", risk_level="critical", user_authorized=True)
         assert allowed is True
 
@@ -161,11 +173,11 @@ class TestSocialCuesUseWordBoundaries:
 
 
 def test_insight_text_coercion_handles_result_shapes():
-    assert _coerce_insight_text("plain") == "plain"
-    assert _coerce_insight_text({"content": "from dict"}) == "from dict"
+    assert coerce_insight_text("plain") == "plain"
+    assert coerce_insight_text({"content": "from dict"}) == "from dict"
 
     class R:
         text = "from attr"
 
-    assert _coerce_insight_text(R()) == "from attr"
-    assert _coerce_insight_text(None) == ""
+    assert coerce_insight_text(R()) == "from attr"
+    assert coerce_insight_text(None) == ""

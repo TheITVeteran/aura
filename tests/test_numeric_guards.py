@@ -240,36 +240,37 @@ class TestCorruptQualityIsNotAJudgement:
     her cognitive health built on a non-judgement.
     """
 
-    def _monitor(self):
+    def _monitor(self, tmp_path):
+        """Constructed, not hand-assembled.
+
+        This filled six fields through ``__new__`` and drifted from the
+        constructor the moment one was added — which is exactly what
+        happened when ``_measured_turns`` arrived.
+        """
         from core.fictional_ai_synthesis import CognitiveHealthMonitor
 
-        monitor = CognitiveHealthMonitor.__new__(CognitiveHealthMonitor)
-        monitor._total_turns = 0
-        monitor._successful_turns = 0
-        monitor._unresolved_threads = 0
-        monitor._metastability_score = 0.5
-        monitor._rampancy_stage = 0
-        monitor._history = []
+        monitor = CognitiveHealthMonitor(persist_path=str(tmp_path / "c.json"))
+        monitor._coherence_score = 0.5
         return monitor
 
-    def test_a_fully_corrupt_turn_does_not_raise(self):
-        monitor = self._monitor()
+    def test_a_fully_corrupt_turn_does_not_raise(self, tmp_path):
+        monitor = self._monitor(tmp_path)
         monitor.record_turn(
             context_tokens=NAN, max_tokens=NAN, response_quality=NAN,
             identity_markers_present=True, topics_in_play=NAN, resolved_topics=NAN,
         )
         assert monitor._total_turns == 1
 
-    def test_the_metastability_score_stays_finite(self):
-        monitor = self._monitor()
+    def test_the_coherence_score_stays_finite(self, tmp_path):
+        monitor = self._monitor(tmp_path)
         monitor.record_turn(
             context_tokens=NAN, max_tokens=0, response_quality=INF,
             identity_markers_present=False, topics_in_play=-5, resolved_topics=99,
         )
-        assert math.isfinite(monitor._metastability_score)
+        assert math.isfinite(monitor._coherence_score)
 
-    def test_a_genuinely_good_turn_still_counts_as_success(self):
-        monitor = self._monitor()
+    def test_a_genuinely_good_turn_still_counts_as_success(self, tmp_path):
+        monitor = self._monitor(tmp_path)
         monitor.record_turn(
             context_tokens=100, max_tokens=1000, response_quality=0.9,
             identity_markers_present=True, topics_in_play=2, resolved_topics=2,

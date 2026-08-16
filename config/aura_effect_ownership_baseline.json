@@ -1125,16 +1125,8 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/fictional_ai_synthesis.py",
-      "scope": "<module>.ProgressiveAutonomySystem._save_state"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/fictional_ai_synthesis.py",
-      "scope": "<module>.SocialModelingEngine.analyze_message"
+      "path": "core/fictional/common.py",
+      "scope": "<module>.save_engine_state"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -3433,22 +3425,6 @@
       "scope": "<module>.ToolOrchestrator.execute_python"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/agi/skill_synthesizer.py",
-      "scope": "<module>.SkillSynthesizer._save_async"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/agi/skill_synthesizer.py",
-      "scope": "<module>.SkillSynthesizer._save_async"
-    },
-    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3679,14 +3655,6 @@
       "count": 1,
       "path": "core/brain/llm/latent_cortex/verifier_fusion.py",
       "scope": "<module>.VerifierFusionLedger.record_checked"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/semantic_neural_shadow.py",
-      "scope": "<module>.record_semantic_shadow_comparison"
     },
     {
       "callee": "<file_write_gateway>.write_bytes",
@@ -4455,14 +4423,6 @@
       "count": 1,
       "path": "core/memory/black_hole_vault.py",
       "scope": "<module>.BlackHoleVault._save_vault"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/memory/cold_store.py",
-      "scope": "<module>.ColdMemoryStore._initialize"
     },
     {
       "callee": "<file_write_gateway>.ensure_directory",
@@ -5761,38 +5721,6 @@
       "scope": "<module>.CheckpointService.save"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/skill_management/forged_artifact.py",
-      "scope": "<module>.ForgeLedger._write_async"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/skill_management/forged_artifact.py",
-      "scope": "<module>.ForgeLedger._write_async"
-    },
-    {
-      "callee": "<file_write_gateway>.ensure_directory_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 2,
-      "path": "core/skill_management/hephaestus.py",
-      "scope": "<module>.HephaestusEngine._install_artifact"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text_async",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 2,
-      "path": "core/skill_management/hephaestus.py",
-      "scope": "<module>.HephaestusEngine._install_artifact"
-    },
-    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -5849,15 +5777,15 @@
       "scope": "<module>._record_sync"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory_async",
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.execute"
+      "scope": "<module>.ManifestToDeviceSkill.__init__"
     },
     {
-      "callee": "<file_write_gateway>.write_bytes_async",
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -6593,7 +6521,7 @@
       "scope": "<module>.InterAgentCommSkill.execute"
     },
     {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
+      "callee": "core.runtime.network_gateway.get_network_gateway().request",
       "canonical_owner": false,
       "category": "network_gateway",
       "count": 1,
@@ -9577,20 +9505,12 @@
       "scope": "<module>.RepoCartographer.map_repo"
     },
     {
-      "callee": "self.persist_path.parent.mkdir",
+      "callee": "<pathlib.Path>.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
-      "path": "core/fictional_ai_synthesis.py",
-      "scope": "<module>.ProgressiveAutonomySystem.__init__"
-    },
-    {
-      "callee": "self.persist_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/fictional_ai_synthesis.py",
-      "scope": "<module>.SocialModelingEngine.__init__"
+      "path": "core/fictional/common.py",
+      "scope": "<module>.engine_state_path"
     },
     {
       "callee": "self.persist_path.parent.mkdir",
@@ -11961,22 +11881,6 @@
       "scope": "<module>.FileWriteGateway.copy_path_async._copy"
     },
     {
-      "callee": "os.rename",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
-    },
-    {
-      "callee": "shutil.rmtree",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/runtime/file_write_gateway.py",
-      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
-    },
-    {
       "callee": "shutil.rmtree",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -13249,6 +13153,14 @@
       "scope": "<module>.HephaestusEngine.__init__"
     },
     {
+      "callee": "skill_file.write_text",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/skill_management/hephaestus.py",
+      "scope": "<module>.HephaestusEngine.synthesize_skill._synthesize_wrapped"
+    },
+    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13983,14 +13895,6 @@
       "count": 1,
       "path": "core/runtime/network_gateway.py",
       "scope": "<module>.NetworkGateway.request"
-    },
-    {
-      "callee": "urllib.request.build_opener",
-      "canonical_owner": true,
-      "category": "raw_network",
-      "count": 1,
-      "path": "core/runtime/network_gateway.py",
-      "scope": "<module>._build_public_pinned_opener"
     },
     {
       "callee": "socket.create_connection",
@@ -15970,6 +15874,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5c51972dca5546db9b7019bfe3cbc33ed93e8fcd649288f1ac47245a43129f43",
+  "inventory_sha256": "ad136fae0fc017bff669a92e59fa477d024d5ccae36206c8ea78de52fb85f2c8",
   "schema_version": 1
 }

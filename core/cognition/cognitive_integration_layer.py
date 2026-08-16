@@ -680,13 +680,18 @@ class CognitiveIntegrationLayer:
                 # Approximate token counts for health monitoring
                 ctx_tokens = len(str(context)) // 4 if context else 0
                 max_tokens = 8192
-                quality = 0.9 if not brief.error else 0.3
-                
+
+                # No grade and no identity reading are passed, because
+                # neither is measured here. "Nothing raised" was being
+                # mapped to a quality of 0.9 and identity coherence was
+                # asserted True on every turn, and Cortana's coherence
+                # score grew on that (CP126 14de312d). Token and topic
+                # counts are real, so load and should_prune() still work.
                 cortana.record_turn(
                     context_tokens=ctx_tokens,
                     max_tokens=max_tokens,
-                    response_quality=quality,
-                    identity_markers_present=True,
+                    response_quality=None,
+                    identity_markers_present=None,
                     topics_in_play=len(brief.key_points),
                     resolved_topics=1
                 )
