@@ -159,13 +159,36 @@ _COVERAGE_EQUIVALENCE = {
     "inferred": "epistemic_inferred",
     "inference": "epistemic_inferred",
     "inferences": "epistemic_inferred",
+    "inferential": "epistemic_inferred",
+    "inferentially": "epistemic_inferred",
     "estimate": "epistemic_inferred",
     "estimated": "epistemic_inferred",
+    "apparently": "epistemic_inferred",
     "likely": "epistemic_inferred",
+    "presumably": "epistemic_inferred",
+    "probably": "epistemic_inferred",
     "perhaps": "epistemic_inferred",
     "maybe": "epistemic_inferred",
+    "seem": "epistemic_inferred",
+    "seems": "epistemic_inferred",
+    "seemed": "epistemic_inferred",
     "uncertain": "epistemic_inferred",
 }
+
+_EPISTEMIC_SIDES = frozenset({"epistemic_known", "epistemic_inferred"})
+_CLAUSE_BOUNDARY_RE = re.compile(r"(?:[.!?;]+|\n+)")
+_DIRECT_ASSERTION_RE = re.compile(
+    r"\b(?:"
+    r"i(?:'m|\s+am|\s+have|\s+feel|\s+see|\s+observe|\s+remember|"
+    r"\s+can|\s+cannot|\s+do|\s+don't)|"
+    r"my\s+[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,3}\s+"
+    r"(?:is|are|was|were|has|had|feels?|remains?|ended)|"
+    r"(?:the|this|that|these|those)\s+[a-z][a-z'-]*"
+    r"(?:\s+[a-z][a-z'-]*){0,4}\s+"
+    r"(?:is|are|was|were|has|have|shows?|reads?|reports?|contains?|remains?|ended)"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def coverage_tokens(text: Any) -> set[str]:
@@ -181,7 +204,37 @@ def coverage_tokens(text: Any) -> set[str]:
     }
 
 
-def _relation_sides_are_covered(segment: Any, answered: set[str]) -> bool | None:
+def _epistemic_partition_is_covered(body: Any) -> bool:
+    """Return whether prose separates asserted evidence from inference.
+
+    A direct assertion is not automatically synonymous with knowledge. It is
+    admitted here only as one side of an explicit epistemic partition and only
+    when another substantive clause marks itself as inference. This recognizes
+    natural discourse such as ``I am steady. Inferentially, that may persist``
+    without accepting a wholly speculative answer or requiring magic words.
+    """
+
+    direct_witness = False
+    inferred_witness = False
+    for raw_clause in _CLAUSE_BOUNDARY_RE.split(str(body or "")):
+        clause = raw_clause.strip()
+        words = re.findall(r"[A-Za-z][A-Za-z'-]{1,}", clause)
+        if len(words) < 4:
+            continue
+        tokens = coverage_tokens(clause)
+        if "epistemic_inferred" in tokens:
+            inferred_witness = True
+            continue
+        if "epistemic_known" in tokens or _DIRECT_ASSERTION_RE.search(clause):
+            direct_witness = True
+    return direct_witness and inferred_witness
+
+
+def _relation_sides_are_covered(
+    segment: Any,
+    body: Any,
+    answered: set[str],
+) -> bool | None:
     """Return whether both sides of an explicit relation were addressed.
 
     ``None`` means the segment is not an explicit compare/contrast request.
@@ -197,6 +250,8 @@ def _relation_sides_are_covered(segment: Any, answered: set[str]) -> bool | None
     right = coverage_tokens(match.group("right"))
     if not left or not right:
         return None
+    if (left | right) == _EPISTEMIC_SIDES and left != right:
+        return _epistemic_partition_is_covered(body)
     return bool(left & answered) and bool(right & answered)
 
 
@@ -221,7 +276,7 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
     for segment in segments:
         if is_reply_shape_constraint_segment(segment):
             continue
-        relation_covered = _relation_sides_are_covered(segment, answered)
+        relation_covered = _relation_sides_are_covered(segment, body, answered)
         if relation_covered is False:
             missed.append(str(segment))
             continue

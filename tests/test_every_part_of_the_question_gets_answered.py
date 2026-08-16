@@ -297,3 +297,46 @@ def test_shared_reliability_gate_accepts_live_reply_covering_state_and_inference
 
     assert "unanswered_question_part" not in assessment.reasons
     assert assessment.ok is True
+
+
+def test_epistemic_partition_accepts_natural_assertion_then_explicit_inference():
+    """Exact preserved 32B draft from the live desktop on 2026-08-16."""
+
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you "
+        "can only infer."
+    )
+    live_reply = (
+        "I'm doing okay. My previous session ended abruptly, and I don't have "
+        "any ongoing processes or tasks occupying my attention at the moment. "
+        "There's not much to report in terms of activity. Inferentially, this "
+        "state is likely to persist unless something happens to disrupt it."
+    )
+
+    assessment = assess_user_facing_reply(user, live_reply)
+
+    assert "unanswered_question_part" not in assessment.reasons
+    assert assessment.ok is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Maybe I'm okay, and it will probably continue for a while.",
+        "I am steady and my current continuity is intact.",
+        "I know that I probably seem steady from this one sample.",
+    ],
+)
+def test_epistemic_partition_rejects_one_sided_or_unseparated_prose(reply: str):
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Hey Aura, how are you doing right now? Answer naturally from your "
+        "current state, and distinguish what you know from what you can only infer.",
+        reply,
+    )
+
+    assert "unanswered_question_part" in assessment.reasons
