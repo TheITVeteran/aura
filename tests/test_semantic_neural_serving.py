@@ -15,6 +15,19 @@ def _activation():
     return json.loads(DEFAULT_ACTIVATION_PATH.read_text(encoding="utf-8"))
 
 
+def _reseal(activation):
+    body = {key: value for key, value in activation.items() if key != "activation_sha256"}
+    activation["activation_sha256"] = hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+
 def test_materialized_semantic_activation_reopens_source_and_evidence():
     activation = _activation()
     assert semantic_neural_activation_errors(
@@ -28,27 +41,33 @@ def test_semantic_activation_rejects_resealed_source_or_evidence_drift():
     tampered = copy.deepcopy(activation)
     relative = next(iter(tampered["source_sha256s"]))
     tampered["source_sha256s"][relative] = "0" * 64
-    assert "activation_sha256" in semantic_neural_activation_errors(
+    _reseal(tampered)
+    assert "source_drift" in semantic_neural_activation_errors(
         tampered,
         verify_live_identity=False,
     )
 
     tampered = copy.deepcopy(activation)
     tampered["evidence"]["result_path"] = "../outside.json"
-    body = {key: value for key, value in tampered.items() if key != "activation_sha256"}
-    tampered["activation_sha256"] = hashlib.sha256(
-        json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-    ).hexdigest()
+    _reseal(tampered)
     assert "evidence_invalid" in semantic_neural_activation_errors(
         tampered,
         verify_live_identity=False,
     )
+
+
+def test_semantic_activation_rejects_resealed_authority_broadening():
+    activation = _activation()
+    activation["allowed_surface_profiles"].append("free_form")
+    activation["claim_boundary"] = "general reasoning is authorized"
+    _reseal(activation)
+
+    errors = semantic_neural_activation_errors(
+        activation,
+        verify_live_identity=False,
+    )
+    assert "allowed_surface_profiles" in errors
+    assert "claim_boundary" in errors
 
 
 def test_semantic_serving_kill_switch_is_fail_closed(monkeypatch):

@@ -50732,3 +50732,40 @@ does not establish open-domain general reasoning, frontier performance,
 consciousness, static weight fusion or unrestricted global runtime promotion.
 The next step is a content-addressed qualified runtime package, shadow
 activation, rollback and latency/no-regression proof for this exact surface.
+
+## Checkpoint 2026-08-15-567: Qualify the Bounded WOW Runtime Surface
+
+The CP566 result is now materialized as a fail-closed resident runtime package
+bound to the exact active 32B model identity, resident manifest, measured and
+serving source hashes, result receipt, independent verification receipt and
+fixed adjudication receipt. The package carries the adjudicator's bounded WOW
+claim and limitations rather than the stale pre-adjudication wording. Any
+source, model, manifest, evidence, family, surface-profile or claim-boundary
+drift disables serving; `AURA_SEMANTIC_NEURAL_SERVING=0` remains an immediate
+kill switch.
+
+Qualified ingress now admits the canonical coding, calibration, premise and
+scientific grammars plus the three measured scientific surfaces: laboratory
+report, controlled narrative and compact causal facts. Alternate language is
+parsed into an answer-blind public fact graph before execution, authorized by
+exact profile, and bound to both surface and recurrent-state receipts. Changed
+assumptions, ambiguous graphs, unsupported language and unactivated profiles
+remain ineligible rather than being guessed into the qualified lane.
+
+The fresh shadow verifier executed `120/120` requests exactly, evenly split
+across all four domains. All `120/120` family-targeted lesions disrupted their
+corresponding execution, and the scientific rows were balanced `10/10/10`
+across the three surface profiles. Unsupported language was refused. Local
+execution latency was `45.505 ms` mean, `46.160 ms` p50 and `83.188 ms`
+maximum. Activation receipt
+`b63f85ebdd8d0eb383b27f56b18a9a438686fd7ac1488d43fd237180a2e2978c`
+and runtime verification receipt
+`f6e5c85937b325fd475ba020cfc081530ca2516bb6b6c5936193aea4fd26a1bf`
+bind the package and proof. Focused contracts pass `28/28`; canonical smoke
+passes `110/110`.
+
+This promotes the bounded result only to a content-addressed qualified runtime
+surface. It does not authorize open-domain routing, static fusion or a frontier
+claim. The next gate is controlled live shadow routing with automatic rollback,
+ordinary-response comparison and desktop/runtime evidence before any broader
+promotion.

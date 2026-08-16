@@ -54,6 +54,7 @@ _SEMANTIC_PARSER_IDS: Final = {
     "frontier_misleading_premise": "semantic_premise_canonical.v1",
     "frontier_scientific_inference": "semantic_scientific_canonical.v1",
 }
+_SCIENTIFIC_SURFACE_PARSER_PREFIX: Final = "semantic_scientific_surface."
 _QUALIFIED_FAMILIES: Final = frozenset({*_RESULT_KEYS, *_SEMANTIC_PARSER_IDS})
 
 
@@ -225,6 +226,34 @@ def admit_qualified_recurrent_objective(
                 syntax_sha256=program.program_sha256,
             )
     try:
+        from core.brain.llm.latent_cortex.semantic_surface_adapter import (
+            SCIENTIFIC_FAMILY,
+            parse_scientific_surface,
+        )
+        from core.learning.public_frontier_action_compiler import (
+            compile_public_frontier_actions,
+        )
+
+        surface = parse_scientific_surface(prompt)
+        canonical_program = compile_public_frontier_actions(
+            surface.canonical_prompt,
+            SCIENTIFIC_FAMILY,
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        pass
+    else:
+        if not 1 <= len(canonical_program.values) <= 64:
+            return None
+        surface_receipt = surface.receipt()
+        return QualifiedRecurrentAdmission(
+            schema=QUALIFIED_RECURRENT_INGRESS_SCHEMA,
+            family=SCIENTIFIC_FAMILY,
+            task_depth=len(canonical_program.values),
+            parser_id=f"{_SCIENTIFIC_SURFACE_PARSER_PREFIX}{surface.profile}.v1",
+            public_source_sha256=surface_receipt["public_prompt_sha256"],
+            syntax_sha256=surface_receipt["public_fact_graph_sha256"],
+        )
+    try:
         from core.brain.llm.latent_cortex.typed_action_compiler import (
             compile_public_transition_program,
         )
@@ -356,14 +385,56 @@ async def execute_qualified_recurrent_objective(
                 "reason": "semantic_neural_family_not_activated",
                 "admission": admission.receipt(),
             }
-        state = await asyncio.wait_for(
-            asyncio.to_thread(
-                execute_semantic_neural_decode_state,
-                prompt,
-                admission.family,
-            ),
-            timeout=max(1.0, min(30.0, timeout_s)),
-        )
+        surface_decode_receipt: dict[str, Any] | None = None
+        if admission.parser_id.startswith(_SCIENTIFIC_SURFACE_PARSER_PREFIX):
+            from core.brain.llm.latent_cortex.semantic_surface_adapter import (
+                execute_scientific_surface,
+            )
+
+            surface_profile = admission.parser_id.removeprefix(
+                _SCIENTIFIC_SURFACE_PARSER_PREFIX
+            ).removesuffix(".v1")
+            allowed_profiles = (
+                activation_receipt.get("allowed_surface_profiles")
+                if isinstance(activation_receipt, Mapping)
+                else None
+            )
+            if (
+                not isinstance(allowed_profiles, Sequence)
+                or isinstance(allowed_profiles, (str, bytes, bytearray))
+                or surface_profile not in allowed_profiles
+            ):
+                return {
+                    "eligible": True,
+                    "attempted": False,
+                    "ok": False,
+                    "reason": "semantic_neural_surface_profile_not_activated",
+                    "admission": admission.receipt(),
+                }
+            surface_decode = await asyncio.wait_for(
+                asyncio.to_thread(execute_scientific_surface, prompt),
+                timeout=max(1.0, min(30.0, timeout_s)),
+            )
+            surface_receipt = surface_decode.program.receipt()
+            if (
+                surface_decode.program.profile != surface_profile
+                or surface_receipt.get("public_prompt_sha256")
+                != admission.public_source_sha256
+                or surface_receipt.get("public_fact_graph_sha256")
+                != admission.syntax_sha256
+            ):
+                raise RuntimeError("semantic_neural_surface_admission_drift")
+            state = surface_decode.state
+            surface_decode_receipt = surface_decode.receipt()
+        else:
+            state = await asyncio.wait_for(
+                asyncio.to_thread(
+                    execute_semantic_neural_decode_state,
+                    prompt,
+                    admission.family,
+                ),
+                timeout=max(1.0, min(30.0, timeout_s)),
+            )
         text = render_semantic_neural_answer(state)
         if not isinstance(activation_receipt, Mapping):
             raise RuntimeError("semantic_neural_activation_receipt_unavailable")
@@ -371,6 +442,7 @@ async def execute_qualified_recurrent_objective(
             "schema": QUALIFIED_RECURRENT_RESULT_SCHEMA,
             "admission": admission.receipt(),
             "semantic_state_receipt": state.receipt(),
+            "surface_decode_receipt": surface_decode_receipt,
             "activation_receipt": dict(activation_receipt),
             "serialization": "canonical_json_from_authenticated_semantic_state",
             "answer_sha256": hashlib.sha256(text.encode("ascii")).hexdigest(),

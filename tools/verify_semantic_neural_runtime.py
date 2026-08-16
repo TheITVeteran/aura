@@ -10,6 +10,7 @@ import json
 import statistics
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.brain.llm.latent_cortex.semantic_neural_decode_context import (  # noqa: E402
     execute_semantic_neural_decode_state,
+)
+from core.brain.llm.latent_cortex.semantic_surface_adapter import (  # noqa: E402
+    SEMANTIC_SURFACE_PROFILES,
+    execute_scientific_surface,
+    render_scientific_surface,
 )
 from core.brain.llm.qualified_recurrent_ingress import (  # noqa: E402
     execute_qualified_recurrent_objective,
@@ -49,6 +55,7 @@ RUNTIME_FAMILIES = (
     "frontier_scientific_inference",
 )
 RUNTIME_DIFFICULTIES = (1, 2, 3)
+RUNTIME_PACKAGE_ID = "cp567-resident-semantic-neural-serving"
 VERIFIER_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
@@ -72,6 +79,47 @@ class _ResidentIdentityClient:
         raise RuntimeError("semantic path attempted the legacy recurrent worker")
 
 
+def _mixed_runtime_tasks(*, seed: int, tasks_per_difficulty: int) -> list[Any]:
+    tasks = frontier_process_task_battery(
+        RUNTIME_DOMAINS,
+        RUNTIME_DIFFICULTIES,
+        tasks_per_difficulty,
+        seed=seed,
+    )
+    adapted = []
+    surface_index = 0
+    for index, task in enumerate(tasks):
+        if task.family == "frontier_scientific_inference":
+            profile = SEMANTIC_SURFACE_PROFILES[
+                surface_index % len(SEMANTIC_SURFACE_PROFILES)
+            ]
+            surface_index += 1
+            task = replace(
+                task,
+                prompt=render_scientific_surface(
+                    task.prompt,
+                    profile=profile,
+                    permutation_seed=seed + index,
+                ),
+                transition_trace=None,
+                transition_program=None,
+            )
+        adapted.append(task)
+    return adapted
+
+
+def _expected_state(task: Any, *, machine: Any = None) -> tuple[Any, str | None]:
+    if task.family != "frontier_scientific_inference" or not task.prompt.startswith(
+        ("Causal study report.\n", "Controlled causal field note.\n", "CAUSAL_FACTS_V1\n")
+    ):
+        return (
+            execute_semantic_neural_decode_state(task.prompt, task.family, machine=machine),
+            None,
+        )
+    decoded = execute_scientific_surface(task.prompt, machine=machine)
+    return decoded.state, decoded.receipt()["receipt_sha256"]
+
+
 async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
     activation = json.loads(DEFAULT_ACTIVATION_PATH.read_text(encoding="utf-8"))
     model_path = str(activation["model_identity"]["path"])
@@ -81,22 +129,23 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
     activation_receipt = status.get("receipt")
     if (
         not isinstance(activation_receipt, dict)
-        or activation_receipt.get("package_id") != "cp560-resident-semantic-neural-serving"
+        or activation_receipt.get("package_id") != RUNTIME_PACKAGE_ID
         or tuple(activation_receipt.get("allowed_families") or ()) != RUNTIME_FAMILIES
+        or tuple(activation_receipt.get("allowed_surface_profiles") or ())
+        != SEMANTIC_SURFACE_PROFILES
     ):
         raise RuntimeError("semantic neural serving activated the wrong runtime package")
     client = _ResidentIdentityClient(model_path)
-    tasks = frontier_process_task_battery(
-        RUNTIME_DOMAINS,
-        RUNTIME_DIFFICULTIES,
-        tasks_per_difficulty,
+    tasks = _mixed_runtime_tasks(
         seed=seed,
+        tasks_per_difficulty=tasks_per_difficulty,
     )
     rows = []
     latencies = []
     lesion_disruptions = 0
     exact_by_domain = {domain: 0 for domain in RUNTIME_DOMAINS}
     lesions_by_domain = {domain: 0 for domain in RUNTIME_DOMAINS}
+    surface_profiles = {profile: 0 for profile in SEMANTIC_SURFACE_PROFILES}
     for task in tasks:
         started = time.perf_counter()
         result = await execute_qualified_recurrent_objective(
@@ -113,11 +162,29 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
         if domain not in exact_by_domain:
             raise RuntimeError(f"semantic runtime emitted an unexpected family: {task.family}")
         exact_by_domain[domain] += 1
-        expected_state = execute_semantic_neural_decode_state(task.prompt, task.family)
+        expected_state, expected_surface_receipt = _expected_state(task)
+        runtime_surface_receipt = result["receipt"].get("surface_decode_receipt")
+        runtime_surface_receipt_sha = (
+            runtime_surface_receipt.get("receipt_sha256")
+            if isinstance(runtime_surface_receipt, dict)
+            else None
+        )
+        if runtime_surface_receipt_sha != expected_surface_receipt:
+            raise RuntimeError(
+                f"semantic runtime surface receipt differs for {task.task_id}"
+            )
+        parser_id = str(result["receipt"]["admission"]["parser_id"])
+        surface_profile = None
+        if expected_surface_receipt is not None:
+            surface_profile = parser_id.removeprefix(
+                "semantic_scientific_surface."
+            ).removesuffix(".v1")
+            if surface_profile not in surface_profiles:
+                raise RuntimeError("semantic runtime used an unmeasured surface profile")
+            surface_profiles[surface_profile] += 1
         try:
-            lesion_state = execute_semantic_neural_decode_state(
-                task.prompt,
-                task.family,
+            lesion_state, _lesion_surface_receipt = _expected_state(
+                task,
                 machine=semantic_neural_family_lesion_machine(task.family),
             )
         except (RuntimeError, ValueError):
@@ -141,6 +208,8 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
                 "semantic_state_receipt_sha256": result["receipt"][
                     "semantic_state_receipt"
                 ]["receipt_sha256"],
+                "surface_profile": surface_profile,
+                "surface_decode_receipt_sha256": runtime_surface_receipt_sha,
                 "lesion_disrupted": lesion_disrupted,
             }
         )
@@ -163,6 +232,11 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
         count != expected_per_domain for count in lesions_by_domain.values()
     ):
         raise RuntimeError("runtime verification did not cover every admitted domain equally")
+    expected_per_surface = expected_per_domain // len(SEMANTIC_SURFACE_PROFILES)
+    if any(count != expected_per_surface for count in surface_profiles.values()):
+        raise RuntimeError("runtime verification did not balance scientific surfaces")
+    if max(latencies) > 2_000.0:
+        raise RuntimeError("semantic runtime exceeded its bounded local execution latency")
     body = {
         "schema": SCHEMA,
         "verified": True,
@@ -175,6 +249,7 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
         "exact_by_domain": exact_by_domain,
         "lesion_disruption_count": lesion_disruptions,
         "lesion_disruptions_by_domain": lesions_by_domain,
+        "scientific_surface_profiles": surface_profiles,
         "unsupported_language_refused": True,
         "mean_latency_ms": round(statistics.fmean(latencies), 3),
         "p50_latency_ms": round(statistics.median(latencies), 3),
@@ -184,9 +259,9 @@ async def _verify(*, seed: int, tasks_per_difficulty: int) -> dict[str, Any]:
         "rows_sha256": _sha(rows),
         "rows": rows,
         "claim_boundary": (
-            "qualified four-domain semantic runtime integration on the CP560 activation "
-            "bound to CP559 resident evidence; not open-domain, broad reasoning, fusion, "
-            "frontier performance, or WOW"
+            "qualified canonical and less-constrained scientific-surface runtime integration "
+            "on the CP567 activation bound to the CP566 bounded WOW evidence; not "
+            "open-domain, broad reasoning, static fusion, or frontier performance"
         ),
     }
     return {**body, "verification_receipt_sha256": _sha(body)}

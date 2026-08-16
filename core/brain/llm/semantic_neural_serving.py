@@ -13,18 +13,22 @@ from typing import Any, Final
 
 SEMANTIC_NEURAL_SERVING_SCHEMA: Final = "aura.semantic_neural_serving.v1"
 SEMANTIC_NEURAL_SERVING_MODE: Final = "qualified_exact_semantic_v1"
-PACKAGE_ID: Final = "cp560-resident-semantic-neural-serving"
+PACKAGE_ID: Final = "cp567-resident-semantic-neural-serving"
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 DEFAULT_ACTIVATION_PATH: Final = (
-    REPO_ROOT / "artifacts/closeout/latent_cortex/cp560_semantic_neural_runtime/activation.json"
+    REPO_ROOT / "artifacts/closeout/latent_cortex/cp567_semantic_neural_runtime/activation.json"
 )
 RESIDENT_RESULT_PATH: Final = (
     REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp559_resident_scientific_semantic_decode_canary/result.json"
+    / "artifacts/closeout/latent_cortex/cp566_resident_mixed_multidomain_replication/result.json"
 )
 RESIDENT_VERIFICATION_PATH: Final = (
     REPO_ROOT
-    / "artifacts/closeout/latent_cortex/cp559_resident_scientific_semantic_decode_canary/verification.json"
+    / "artifacts/closeout/latent_cortex/cp566_resident_mixed_multidomain_replication/verification.json"
+)
+RESIDENT_ADJUDICATION_PATH: Final = (
+    REPO_ROOT
+    / "artifacts/closeout/latent_cortex/cp566_resident_mixed_multidomain_replication/adjudication.json"
 )
 MEASURED_SOURCE_FILES: Final = (
     "core/brain/llm/latent_cortex/semantic_neural_decode_context.py",
@@ -32,6 +36,7 @@ MEASURED_SOURCE_FILES: Final = (
     "core/brain/llm/latent_cortex/assets/systematic_neural_alu_v1/weights.safetensors",
     "core/brain/llm/latent_cortex/frontier_tasks.py",
     "core/brain/llm/latent_cortex/systematic_neural_alu.py",
+    "core/brain/llm/latent_cortex/semantic_surface_adapter.py",
     "core/learning/frontier_process_supervision.py",
     "core/learning/public_frontier_action_compiler.py",
     "core/learning/recurrent_action_schema.py",
@@ -55,11 +60,22 @@ ALLOWED_FAMILIES: Final = (
     "frontier_misleading_premise",
     "frontier_scientific_inference",
 )
+ALLOWED_SURFACE_PROFILES: Final = (
+    "lab_report",
+    "narrative",
+    "compact",
+)
 EVIDENCE_DOMAINS: Final = (
     "coding",
     "calibration",
     "misleading_premise",
     "scientific_inference",
+)
+ACTIVATION_CLAIM_BOUNDARY: Final = (
+    "runtime qualification of a replicated lesion-dependent resident-32B effective "
+    "reasoning gain over ordinary decode on the frozen four-domain semantic cohort; "
+    "bounded executable families only, not open-domain general reasoning, static "
+    "fusion, frontier performance, consciousness evidence, or unrestricted promotion"
 )
 _FALSE_VALUES: Final = frozenset({"0", "false", "no", "off", "disabled"})
 
@@ -154,29 +170,56 @@ def _verify_resident_evidence(
     repo_root: Path,
     result_path: Path,
     verification_path: Path,
-) -> tuple[dict[str, Any], dict[str, Any], bytes, bytes]:
+    adjudication_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], bytes, bytes, bytes]:
     result, result_raw = _read_bounded_json(result_path, maximum_bytes=4 * 1024 * 1024)
     verification, verification_raw = _read_bounded_json(
         verification_path,
+        maximum_bytes=512 * 1024,
+    )
+    adjudication, adjudication_raw = _read_bounded_json(
+        adjudication_path,
         maximum_bytes=512 * 1024,
     )
     result_body = {key: value for key, value in result.items() if key != "receipt_sha256"}
     verification_body = {
         key: value for key, value in verification.items() if key != "verification_receipt_sha256"
     }
+    adjudication_body = {
+        key: value
+        for key, value in adjudication.items()
+        if key != "adjudication_receipt_sha256"
+    }
     exact_by_arm = verification.get("independent_exact_by_arm")
     task_count = verification.get("task_count")
     if (
         result.get("receipt_sha256") != _sha(result_body)
         or verification.get("verification_receipt_sha256") != _sha(verification_body)
+        or adjudication.get("adjudication_receipt_sha256") != _sha(adjudication_body)
+        or adjudication.get("passed") is not True
+        or adjudication.get("verdict") != "BOUNDED_WOW_SIGNAL"
+        or adjudication.get("claim")
+        != (
+            "replicated lesion-dependent resident-32B effective reasoning gain over "
+            "ordinary decode on the frozen four-domain semantic cohort"
+        )
+        or "not open-domain general reasoning"
+        not in str(adjudication.get("limitations") or "")
+        or adjudication.get("input_receipts", {}).get("result")
+        != result.get("receipt_sha256")
+        or adjudication.get("input_receipts", {}).get("verification")
+        != verification.get("verification_receipt_sha256")
         or verification.get("verified") is not True
         or verification.get("artifact_sha256") != hashlib.sha256(result_raw).hexdigest()
         or verification.get("artifact_receipt_sha256") != result.get("receipt_sha256")
         or verification.get("gain_count", 0) <= 0
         or verification.get("regression_count") != 0
+        or result.get("surface_profile") != "mixed_multidomain_v1"
+        or verification.get("surface_profile") != "mixed_multidomain_v1"
         or result.get("domains") != list(EVIDENCE_DOMAINS)
         or verification.get("domains") != list(EVIDENCE_DOMAINS)
         or result.get("task_count") != task_count
+        or task_count != 60
         or not isinstance(exact_by_arm, dict)
         or exact_by_arm.get("treatment") != task_count
         or any(
@@ -194,7 +237,14 @@ def _verify_resident_evidence(
         for relative in MEASURED_SOURCE_FILES
     ):
         raise RuntimeError("resident measured semantic source has drifted")
-    return result, verification, result_raw, verification_raw
+    return (
+        result,
+        verification,
+        adjudication,
+        result_raw,
+        verification_raw,
+        adjudication_raw,
+    )
 
 
 def build_semantic_neural_activation(
@@ -202,16 +252,25 @@ def build_semantic_neural_activation(
     repo_root: Path = REPO_ROOT,
     result_path: Path = RESIDENT_RESULT_PATH,
     verification_path: Path = RESIDENT_VERIFICATION_PATH,
+    adjudication_path: Path = RESIDENT_ADJUDICATION_PATH,
     resident_manifest_path: Path,
     model_path: Path,
 ) -> dict[str, Any]:
     """Materialize a source/model/evidence-bound qualified activation."""
 
     root = repo_root.expanduser().resolve(strict=True)
-    result, verification, result_raw, verification_raw = _verify_resident_evidence(
+    (
+        result,
+        verification,
+        adjudication,
+        result_raw,
+        verification_raw,
+        adjudication_raw,
+    ) = _verify_resident_evidence(
         repo_root=root,
         result_path=result_path,
         verification_path=verification_path,
+        adjudication_path=adjudication_path,
     )
     model_identity = _identity_for_model(model_path)
     manifest_identity = _identity_for_manifest(resident_manifest_path)
@@ -227,6 +286,7 @@ def build_semantic_neural_activation(
         "mode": SEMANTIC_NEURAL_SERVING_MODE,
         "active_by_default": True,
         "allowed_families": list(ALLOWED_FAMILIES),
+        "allowed_surface_profiles": list(ALLOWED_SURFACE_PROFILES),
         "source_sha256s": {
             relative: _file_sha(root / relative) for relative in ACTIVATION_SOURCE_FILES
         },
@@ -239,6 +299,14 @@ def build_semantic_neural_activation(
             "verification_path": _relative_evidence_path(root, verification_path),
             "verification_sha256": hashlib.sha256(verification_raw).hexdigest(),
             "verification_receipt_sha256": verification["verification_receipt_sha256"],
+            "adjudication_path": _relative_evidence_path(root, adjudication_path),
+            "adjudication_sha256": hashlib.sha256(adjudication_raw).hexdigest(),
+            "adjudication_receipt_sha256": adjudication[
+                "adjudication_receipt_sha256"
+            ],
+            "adjudication_verdict": adjudication["verdict"],
+            "adjudication_claim": adjudication["claim"],
+            "adjudication_limitations": adjudication["limitations"],
             "gain_count": verification["gain_count"],
             "regression_count": verification["regression_count"],
             "paired_one_sided_exact_p": verification["paired_one_sided_exact_p"],
@@ -249,7 +317,7 @@ def build_semantic_neural_activation(
                 "coefficient_lesion_contract_verified"
             ],
         },
-        "claim_boundary": verification["claim_boundary"],
+        "claim_boundary": ACTIVATION_CLAIM_BOUNDARY,
     }
     return {**body, "activation_sha256": _sha(body)}
 
@@ -275,6 +343,10 @@ def semantic_neural_activation_errors(
         errors.append("active_by_default")
     if activation.get("allowed_families") != list(ALLOWED_FAMILIES):
         errors.append("allowed_families")
+    if activation.get("allowed_surface_profiles") != list(ALLOWED_SURFACE_PROFILES):
+        errors.append("allowed_surface_profiles")
+    if activation.get("claim_boundary") != ACTIVATION_CLAIM_BOUNDARY:
+        errors.append("claim_boundary")
     if activation.get("activation_sha256") != _sha(body):
         errors.append("activation_sha256")
     root = repo_root.expanduser().resolve(strict=True)
@@ -296,10 +368,22 @@ def semantic_neural_activation_errors(
                 root,
                 evidence["verification_path"],
             )
-            result, verification, result_raw, verification_raw = _verify_resident_evidence(
+            adjudication_path = _resolve_evidence_path(
+                root,
+                evidence["adjudication_path"],
+            )
+            (
+                result,
+                verification,
+                adjudication,
+                result_raw,
+                verification_raw,
+                adjudication_raw,
+            ) = _verify_resident_evidence(
                 repo_root=root,
                 result_path=result_path,
                 verification_path=verification_path,
+                adjudication_path=adjudication_path,
             )
             if (
                 hashlib.sha256(result_raw).hexdigest() != evidence.get("result_sha256")
@@ -308,6 +392,14 @@ def semantic_neural_activation_errors(
                 != evidence.get("verification_sha256")
                 or verification.get("verification_receipt_sha256")
                 != evidence.get("verification_receipt_sha256")
+                or hashlib.sha256(adjudication_raw).hexdigest()
+                != evidence.get("adjudication_sha256")
+                or adjudication.get("adjudication_receipt_sha256")
+                != evidence.get("adjudication_receipt_sha256")
+                or adjudication.get("verdict") != evidence.get("adjudication_verdict")
+                or adjudication.get("claim") != evidence.get("adjudication_claim")
+                or adjudication.get("limitations")
+                != evidence.get("adjudication_limitations")
             ):
                 errors.append("evidence_drift")
         except (KeyError, OSError, RuntimeError, TypeError, ValueError):
@@ -355,6 +447,7 @@ def semantic_neural_serving_status(model_path: str | Path) -> dict[str, Any]:
             *tuple(root / relative for relative in ACTIVATION_SOURCE_FILES),
             _resolve_evidence_path(root, evidence["result_path"]),
             _resolve_evidence_path(root, evidence["verification_path"]),
+            _resolve_evidence_path(root, evidence["adjudication_path"]),
             Path(resident_identity["path"]),
             selected_model / "config.json",
             selected_model / "model.safetensors.index.json",
@@ -410,6 +503,7 @@ def _cached_semantic_neural_serving_status(
             "package_id",
             "mode",
             "allowed_families",
+            "allowed_surface_profiles",
             "model_identity",
             "resident_manifest_identity",
             "claim_boundary",
@@ -424,11 +518,14 @@ def _cached_semantic_neural_serving_status(
 
 
 __all__ = [
+    "ACTIVATION_CLAIM_BOUNDARY",
     "ACTIVATION_SOURCE_FILES",
     "ALLOWED_FAMILIES",
+    "ALLOWED_SURFACE_PROFILES",
     "DEFAULT_ACTIVATION_PATH",
     "EVIDENCE_DOMAINS",
     "RESIDENT_RESULT_PATH",
+    "RESIDENT_ADJUDICATION_PATH",
     "RESIDENT_VERIFICATION_PATH",
     "SEMANTIC_NEURAL_SERVING_MODE",
     "SEMANTIC_NEURAL_SERVING_SCHEMA",
