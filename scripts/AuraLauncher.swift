@@ -1612,7 +1612,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         )
         let pasteMatch = editMenu.addItem(
             withTitle: "Paste and Match Style",
-            action: Selector(("pasteAsPlainText:")),
+            action: #selector(NSTextView.pasteAsPlainText(_:)),
             keyEquivalent: "v",
         )
         pasteMatch.keyEquivalentModifierMask = [.command, .option, .shift]
