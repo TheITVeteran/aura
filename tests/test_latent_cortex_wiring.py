@@ -268,8 +268,9 @@ def _terminal_disposition_fields(
         finalize_terminal_disposition_receipt,
     )
 
-    instruction_tokens = [101, 102, 103]
-    bridge_tokens = [99, *instruction_tokens]
+    latent_output_authority = receipt.get("decode_incumbent_policy") == "latent"
+    instruction_tokens = [101, 102, 103] if latent_output_authority else []
+    bridge_tokens = [99, *instruction_tokens] if latent_output_authority else []
     decision = classify_terminal_disposition(
         halting_reason=receipt["halting_reason"],
         halting=receipt["halting"],
@@ -279,13 +280,20 @@ def _terminal_disposition_fields(
     )
     bridge_raw = json.dumps(bridge_tokens, separators=(",", ":")).encode("ascii")
     return {
-        "decode_bridge_applied": True,
+        "decode_bridge_applied": latent_output_authority,
         "decode_bridge_token_count": len(bridge_tokens),
-        "decode_bridge_tokens_sha256": hashlib.sha256(bridge_raw).hexdigest(),
-        "decode_bridge_logits_digest": "d" * 64,
+        "decode_bridge_tokens_sha256": (
+            hashlib.sha256(bridge_raw).hexdigest()
+            if latent_output_authority
+            else ""
+        ),
+        "decode_bridge_logits_digest": "d" * 64 if latent_output_authority else "",
         "terminal_disposition": finalize_terminal_disposition_receipt(
             decision,
             instruction_tokens=instruction_tokens,
+            instruction_policy=(
+                "applied" if latent_output_authority else "suppressed"
+            ),
             full_bridge_tokens=bridge_tokens,
             output_tokens=tokens,
             output_text=text,

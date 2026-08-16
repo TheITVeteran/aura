@@ -477,6 +477,7 @@ def validate_terminal_disposition_receipt(
         }
         or language["model_generated"] is not True
         or type(language["instruction_applied"]) is not bool
+        or language["instruction_policy"] not in {"applied", "suppressed"}
         or language["instruction"] != expected.instruction
         or language["instruction_sha256"]
         != _sha256_bytes(expected.instruction.encode("utf-8"))
@@ -490,7 +491,12 @@ def validate_terminal_disposition_receipt(
         is not (language["instruction_token_count"] > 0)
         or (
             language["source"] != "substrate_model_decode"
+            and language["instruction_policy"] == "applied"
             and language["instruction_applied"] is not True
+        )
+        or (
+            language["instruction_policy"] == "suppressed"
+            and language["instruction_applied"] is not False
         )
         or type(language["full_bridge_token_count"]) is not int
         or language["full_bridge_token_count"] < language["instruction_token_count"]

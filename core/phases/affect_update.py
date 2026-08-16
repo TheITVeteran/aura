@@ -735,6 +735,7 @@ register_contract(
             "affect.engagement",
             "affect.physiology",
             "affect.resonance",
+            "affect.social_hunger",
             "affect.valence",
             "cognition.modifiers",
         ),

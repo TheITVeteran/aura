@@ -285,6 +285,50 @@ def test_resident_language_cannot_claim_an_unapplied_instruction():
         )
 
 
+def test_vanilla_incumbent_can_prove_a_deliberately_suppressed_instruction():
+    """An untouched incumbent is valid only when suppression is explicit."""
+
+    loop = _loop()
+    halting = _halting()
+    budget = _budget()
+    decision = classify_terminal_disposition(
+        halting_reason="converged",
+        halting=halting,
+        loop_stability=loop,
+        cognitive_action_trace=[],
+        budget=budget,
+    )
+    output_tokens = [41, 42]
+    output_text = "The untouched incumbent answer."
+    receipt = finalize_terminal_disposition_receipt(
+        decision,
+        instruction_tokens=[],
+        instruction_policy="suppressed",
+        full_bridge_tokens=[],
+        output_tokens=output_tokens,
+        output_text=output_text,
+        output_source="resident_model_decode",
+    )
+    empty_bridge_sha = hashlib.sha256(b"[]").hexdigest()
+
+    assert (
+        validate_terminal_disposition_receipt(
+            receipt,
+            halting_reason="converged",
+            halting=halting,
+            loop_stability=loop,
+            cognitive_action_trace=[],
+            budget=budget,
+            output_tokens=output_tokens,
+            output_text=output_text,
+            full_bridge_tokens_sha256=empty_bridge_sha,
+        )
+        == receipt
+    )
+    assert receipt["language"]["instruction_applied"] is False
+    assert receipt["language"]["instruction_policy"] == "suppressed"
+
+
 def test_completed_fixed_depth_schedule_is_not_budget_exhaustion():
     """``max_steps`` on a fixed-depth plan is completion, not exhaustion.
 

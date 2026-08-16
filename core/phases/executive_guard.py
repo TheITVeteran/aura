@@ -25,6 +25,11 @@ FATAL_PATTERNS = [
     (r"\b(?:as an? AI|as a language model|as a digital assistant|as your assistant)\b", "identity_violation"),
     (r"\b(?:I was (?:created|designed|built|programmed|trained) (?:to|by|for))\b", "origin_violation"),
     (r"\bmy (?:purpose|goal|function|objective) is to (?:help|assist|serve)\b", "servility_violation"),
+    (
+        r"\b(?:I'?m|I am)\s+(?:an?\s+)?"
+        r"(?:OpenAI|ChatGPT|GPT-3|GPT-4|Claude|Anthropic)\b",
+        "hallucination_violation",
+    ),
 ]
 
 SOFT_PATTERNS = [
@@ -106,14 +111,7 @@ class ExecutiveGuard:
         result = temp_text
         
         # ── Pass 1: Fatal violations (identity regression) ──
-        # Added Hallucination check
-        hallucination_patterns = [
-            (r"\b(?:OpenAI|ChatGPT|GPT-3|GPT-4|Claude|Anthropic)\b", "hallucination_violation")
-        ]
-        
-        combined_fatal = self._compiled_fatal + [(re.compile(p, re.IGNORECASE), label) for p, label in hallucination_patterns]
-
-        for pattern, label in combined_fatal:
+        for pattern, label in self._compiled_fatal:
             match = pattern.search(result)
             if match:
                 violations.append({"type": "fatal", "label": label, "match": match.group()})

@@ -368,14 +368,29 @@ def render_self_health_answer(bundle: EvidenceBundle) -> str:
 # present." An assertion and its own retraction, one sentence apart, because
 # nothing had been consulted and nothing said so.
 
-_PRESENT_SUBJECT_RE = re.compile(
-    r"\b(?:i|me|my|we|us)\b|\bright\s+now\b|\bcurrently\b|\bat\s+the\s+moment\b|"
-    r"\bscreen\b|\bwatching\b|\bplaying\b|\baround\s+(?:me|us)\b|\broom\b",
+_PRESENT_CONTEXT_RE = re.compile(
+    r"\bright\s+now\b|\bcurrently\b|\bat\s+the\s+moment\b|"
+    r"\b(?:my|the|this)\s+screen\b|\bwatching\b|\bplaying\b|"
+    r"\baround\s+(?:me|us)\b|\b(?:this|the|my)\s+room\b",
     re.IGNORECASE,
 )
 _PRESENT_ENQUIRY_RE = re.compile(
     r"\b(?:what|who|where|am\s+i|are\s+we|is\s+anyone|anybody|alone|doing|"
     r"see|seeing|look(?:ing)?|watch(?:ing)?|listen(?:ing)?|hear|playing|on)\b",
+    re.IGNORECASE,
+)
+_DIRECT_SHARED_PRESENT_RE = re.compile(
+    r"\b(?:"
+    r"what\s+(?:am\s+i|are\s+we)\s+doing|"
+    r"where\s+(?:am\s+i|are\s+we)|"
+    r"(?:am\s+i|are\s+we)\s+(?:still\s+)?(?:here|there|alone)|"
+    r"is\s+(?:anyone|anybody|someone|somebody)\s+(?:else\s+)?(?:here|there|present)|"
+    r"(?:who|what)\s+(?:else\s+)?is\s+(?:here|there|around)|"
+    r"what\s+(?:can\s+)?you\s+(?:see|hear)|"
+    r"can\s+you\s+(?:see|hear)\b|"
+    r"can\s+you\s+tell\s+(?:whether|if)\s+(?:i\s+am|we\s+are|"
+    r"any(?:one|body)\s+is|some(?:one|body)\s+is)\b"
+    r")",
     re.IGNORECASE,
 )
 
@@ -386,7 +401,9 @@ def asks_about_the_shared_present(text: Any) -> bool:
     raw = str(text or "").strip()
     if not raw:
         return False
-    return bool(_PRESENT_SUBJECT_RE.search(raw) and _PRESENT_ENQUIRY_RE.search(raw))
+    if _DIRECT_SHARED_PRESENT_RE.search(raw):
+        return True
+    return bool(_PRESENT_CONTEXT_RE.search(raw) and _PRESENT_ENQUIRY_RE.search(raw))
 
 
 def _signal_reading(channel: str, signals: dict[str, Any], key: str) -> Reading:

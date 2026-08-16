@@ -13578,7 +13578,17 @@ class MLXLocalClient:
                     raw_text = ""
                 text = raw_text.strip()
                 self._mark_progress()
-                if not text and not res.get("soft_cancelled"):
+                generation_stop_reason = str(
+                    res.get("generation_stop_reason") or ""
+                ).strip().lower()
+                cooperative_stop = bool(
+                    res.get("soft_cancelled")
+                    or generation_stop_reason in {
+                        "soft_cancelled",
+                        "deadline_exceeded",
+                    }
+                )
+                if not text and not cooperative_stop:
                     quality_rejection_reasons = _surface_quality_rejection_reasons(
                         self.get_last_surface_control_receipt()
                     )
@@ -13716,14 +13726,15 @@ class MLXLocalClient:
                         self._set_lane_state("recovering", "repeated_empty_generation")
                     return None
                 self._consecutive_empty = 0
-                if res.get("soft_cancelled"):
+                if cooperative_stop:
                     # Deliberate cooperative preemption: return the partial text
                     # without empty-generation telemetry, inline retries, or a
                     # user-facing completion mark — the health machinery must
                     # not treat a requested cancel as a generation failure.
                     logger.info(
-                        "✋ [MLX] Generation for %s ended by soft-cancel after partial output (%d chars).",
+                        "✋ [MLX] Generation for %s ended by %s after partial output (%d chars); resident lane preserved.",
                         os.path.basename(self.model_path),
+                        generation_stop_reason or "soft_cancelled",
                         len(text),
                     )
                     self._set_lane_state("ready")

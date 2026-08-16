@@ -46,6 +46,15 @@ class _WorkerProtocolError(Exception):
     pass
 
 
+class _CircuitOpenService(_LatentService):
+    def foreground_admission(self):
+        return {
+            "admitted": False,
+            "reason": "unchanged_terminal_bridge_contract_failure",
+            "failure_streak": 1,
+        }
+
+
 class _QualifiedService(_LatentService):
     def __init__(self, result):
         super().__init__({})
@@ -187,6 +196,38 @@ async def test_foreground_latent_runner_allows_fallback_after_terminal_receipt_f
     assert outcome.succeeded is False
     assert outcome.fallback_allowed is True
     assert outcome.trace["latent_cortex_fallback_used"] is True
+
+
+@pytest.mark.asyncio
+async def test_unchanged_terminal_bridge_failure_skips_the_expensive_general_episode(
+    monkeypatch,
+):
+    service = _CircuitOpenService({})
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime.select_foreground_episode",
+        _selected,
+    )
+    monkeypatch.setattr(
+        "core.brain.foreground_latent_runtime._resolve_service",
+        lambda: service,
+    )
+
+    outcome = await run_foreground_latent_episode(
+        orchestrator=None,
+        messages=[{"role": "user", "content": "Compare both designs."}],
+        visible_objective="Compare both designs.",
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        request_timeout_s=180.0,
+    )
+
+    assert outcome.attempted is False
+    assert outcome.fallback_allowed is True
+    assert service.calls == []
+    assert outcome.trace["latent_cortex_failure_reason"] == (
+        "unchanged_terminal_bridge_contract_failure"
+    )
 
 
 @pytest.mark.asyncio

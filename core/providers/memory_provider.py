@@ -72,6 +72,40 @@ def register_memory_services(container):
     container.register('vector_memory', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
     container.register('semantic_memory', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
     container.register('vector_memory_engine', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+    # These are named interfaces over the same durable vault, not additional
+    # databases. Registering the canonical name lets MemoryFacade and the
+    # inventory describe the live object instead of reporting it absent.
+    container.register(
+        'blackhole_vault',
+        lambda: container.get("memory_vector"),
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )
+
+    def create_knowledge_ledger():
+        from core.memory.knowledge_ledger import get_knowledge_ledger
+
+        return get_knowledge_ledger()
+
+    container.register(
+        'knowledge_ledger',
+        create_knowledge_ledger,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )
+
+    def create_cold_store():
+        from core.config import config
+        from core.memory.cold_store import ColdMemoryStore
+
+        return ColdMemoryStore(config.paths.data_dir / "memory" / "cold_store.db")
+
+    container.register(
+        'cold_store',
+        create_cold_store,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )
 
     # 23. Knowledge Graph
     def create_knowledge_graph():

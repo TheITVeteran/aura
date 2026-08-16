@@ -203,6 +203,11 @@ _RISK_RULES: List[Tuple[str, RiskLevel, str]] = [
     (r"open.*app|launch.*app|activate.*app", RiskLevel.LOW, "App launch"),
     (r"create.*file|create.*folder|create.*note", RiskLevel.LOW, "Local file creation"),
     (r"read.*screen|get.*screen|screenshot", RiskLevel.LOW, "Screen read"),
+    (
+        r"(?:get|list|enumerat(?:e|ing)).*(?:open\s+)?tabs?",
+        RiskLevel.LOW,
+        "Browser tab metadata read",
+    ),
     (r"read.*file|list.*file|check.*file", RiskLevel.LOW, "File read"),
     (r"get.*window|get.*app|frontmost", RiskLevel.LOW, "App query"),
     (r"search.*web|web.*search", RiskLevel.LOW, "Web search"),

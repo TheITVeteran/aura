@@ -1590,6 +1590,30 @@ class MemoryFacade:
                     self._last_add_memory_status = {"ok": False, "reason": f"vault_backend_error:{type(e).__name__}"}
                     logger.error("MemoryFacade.add_memory via vault failed: %s", e)
 
+            if self.cold and hasattr(self.cold, "add_memory"):
+                try:
+                    stored = await asyncio.to_thread(
+                        self.cold.add_memory,
+                        text,
+                        payload,
+                    )
+                    self._last_add_memory_status = {
+                        "ok": bool(stored),
+                        "reason": (
+                            "stored_via_cold_store"
+                            if stored
+                            else "cold_store_returned_false"
+                        ),
+                    }
+                    return bool(stored)
+                except (OSError, RuntimeError, TypeError, ValueError) as e:
+                    record_degradation("memory_facade", e)
+                    self._last_add_memory_status = {
+                        "ok": False,
+                        "reason": f"cold_store_error:{type(e).__name__}",
+                    }
+                    logger.error("MemoryFacade.add_memory via cold store failed: %s", e)
+
             self._last_add_memory_status = {"ok": False, "reason": "no_writable_memory_backend"}
             return False
 
@@ -1660,6 +1684,23 @@ class MemoryFacade:
             except (OSError, ConnectionError, TimeoutError) as e:
                 record_degradation('memory_facade', e)
                 logger.error("MemoryFacade.query_memory via semantic failed: %s", e)
+
+        if self.cold and hasattr(self.cold, "search"):
+            try:
+                raw_results = await asyncio.to_thread(
+                    self.cold.search,
+                    semantic_query or query,
+                    limit,
+                )
+                return self._filter_vector_records(
+                    list(raw_results or []),
+                    filter_key=filter_key,
+                    filter_value=filter_value,
+                    limit=limit,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as e:
+                record_degradation("memory_facade", e)
+                logger.error("MemoryFacade.query_memory via cold store failed: %s", e)
 
         return []
 

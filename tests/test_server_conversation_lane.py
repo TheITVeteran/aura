@@ -11167,7 +11167,9 @@ async def test_truncated_foreground_answer_gets_one_full_same_worker_replacement
     assert reply.endswith("peak.")
     assert len(engine.calls) == 2
     assert engine.calls[1][1]["user_surface_completion_retry"] is True
-    assert "Rejected draft for avoidance only" not in engine.calls[1][0]
+    assert engine.calls[1][0] == "Explain what this code does and give the final result."
+    assert engine.calls[1][1]["desktop_quick_reply_contract"] is True
+    assert "failed_reply_excerpt" not in engine.calls[1][1]
     assert trace["foreground_model_generation_count"] == 2
     assert trace["completion_retry_count"] == 1
     assert trace["response_path"] == "cognitive_engine_completion_retry"
@@ -12098,6 +12100,25 @@ def test_compact_desktop_contract_keeps_hypothetical_tool_plans_compact():
         is True
     )
 
+
+def test_structured_code_explanation_uses_the_completion_sized_quick_lane():
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Please explain, in a complete answer with a short introduction, a numbered "
+        "walkthrough, and a final conclusion, how this Python function works: "
+        "def peak(values): return max(values) if values else None"
+    )
+
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
+            capability_inventory_contract=False,
+        )
+        is True
+    )
 
 def test_self_contained_choice_does_not_request_stale_conversation_context():
     from core.brain.types import ThinkingMode

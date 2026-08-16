@@ -261,7 +261,18 @@ def test_questions_about_the_shared_present_are_recognised(message: str) -> None
     assert asks_about_the_shared_present(message) is True
 
 
-@pytest.mark.parametrize("message", ["what is the capital of Peru", "explain recursion", ""])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "what is the capital of Peru",
+        "explain recursion",
+        (
+            "Explain what this Python function returns: def peak(events): "
+            "pressure = []; return [i for i, value in enumerate(pressure) if value]."
+        ),
+        "",
+    ],
+)
 def test_other_questions_do_not_wake_the_senses(message: str) -> None:
     from core.introspection.self_evidence import asks_about_the_shared_present
 

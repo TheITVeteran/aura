@@ -6828,7 +6828,12 @@ def _mlx_worker_loop(
                                                     proof_contract_incomplete = True
                                                 response_text = ""
                                         logger.info(
-                                            "✋ [WORKER] Soft-cancel honored for job seq=%d after %d tokens.",
+                                            "✋ [WORKER] %s honored for job seq=%d after %d tokens.",
+                                            (
+                                                "Deadline stop"
+                                                if deadline_hit
+                                                else "Soft-cancel"
+                                            ),
                                             job_seq,
                                             token_count,
                                         )

@@ -789,7 +789,7 @@ register_contract(
             "RL, plasticity — and fold their outputs into shared state."
         ),
         reads=("cognition.working_memory", "affect.valence", "affect.arousal"),
-        writes=("transition_cause",),
+        writes=("response_modifiers", "transition_cause"),
         preconditions=("state carries a cognition block",),
         branches=(
             BranchSpec(

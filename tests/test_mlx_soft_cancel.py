@@ -237,10 +237,11 @@ def test_soft_cancelled_ok_response_bypasses_empty_telemetry_and_retries():
     import inspect
 
     source = inspect.getsource(mlx_client_mod)
-    assert 'if not text and not res.get("soft_cancelled"):' in source, (
-        "empty-generation telemetry must skip soft-cancelled responses"
+    assert "if not text and not cooperative_stop:" in source, (
+        "empty-generation telemetry must skip cooperative terminal responses"
     )
-    idx_cancel = source.find('if res.get("soft_cancelled")')
+    assert '"deadline_exceeded"' in source
+    idx_cancel = source.find("if cooperative_stop:")
     idx_completed = source.find("self._mark_generation_completed(")
     assert 0 < idx_cancel < idx_completed, (
         "soft-cancel branch must return before the user-facing completion mark"

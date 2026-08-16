@@ -627,6 +627,7 @@ register_contract(
         ),
         reads=("soma.hardware", "soma.latency"),
         writes=(
+            "cognition.modifiers",
             "soma.hardware",
             "soma.latency",
             "soma.updated_at",

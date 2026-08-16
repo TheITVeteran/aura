@@ -486,6 +486,34 @@ async def run_foreground_latent_episode(
         )
         return ForegroundLatentOutcome(text="", trace=trace, fallback_allowed=True)
 
+    admission_probe = getattr(service, "foreground_admission", None)
+    if callable(admission_probe):
+        try:
+            service_admission = admission_probe()
+        except _RECOVERABLE_ERRORS as exc:
+            service_admission = {
+                "admitted": False,
+                "reason": f"foreground_admission_error:{type(exc).__name__}",
+            }
+        if isinstance(service_admission, dict) and service_admission.get("admitted") is False:
+            trace.update(
+                {
+                    "latent_cortex_fallback_used": True,
+                    "latent_cortex_attempted": False,
+                    "latent_cortex_failure_reason": str(
+                        service_admission.get("reason")
+                        or "latent_service_circuit_open"
+                    )[:160],
+                    "latent_cortex_service_admission": dict(service_admission),
+                }
+            )
+            return ForegroundLatentOutcome(
+                text="",
+                trace=trace,
+                fallback_allowed=True,
+                evidence=("general_latent_service_circuit_open",),
+            )
+
     latent_timeout = min(_LATENT_OWNER_TIMEOUT_SECONDS, max(0.0, request_timeout_s))
     latent_timeout = max(0.0, latent_timeout - _LATENT_CLEANUP_RESERVE_SECONDS)
     if latent_timeout < 15.0:

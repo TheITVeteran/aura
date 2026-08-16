@@ -1977,15 +1977,30 @@ class LatentCortexService:
                     budget=receipt.get("budget"),
                     output_tokens=output_tokens,
                     output_text=output_text,
-                    full_bridge_tokens_sha256=receipt.get(
-                        "decode_bridge_tokens_sha256"
+                    full_bridge_tokens_sha256=(
+                        receipt.get("decode_bridge_tokens_sha256")
+                        if config.get(
+                            "decode_incumbent_policy", "vanilla_incumbent"
+                        )
+                        == "latent"
+                        else hashlib.sha256(b"[]").hexdigest()
                     ),
                 )
                 language = receipt["terminal_disposition"]["language"]
+                latent_output_authority = (
+                    config.get("decode_incumbent_policy", "vanilla_incumbent")
+                    == "latent"
+                )
+                expected_instruction_policy = (
+                    "applied" if latent_output_authority else "suppressed"
+                )
                 if (
                     language.get("source")
                     not in {"resident_model_decode", "resident_model_repair"}
-                    or language.get("instruction_applied") is not True
+                    or language.get("instruction_policy")
+                    != expected_instruction_policy
+                    or language.get("instruction_applied")
+                    is not latent_output_authority
                 ):
                     raise ValueError("terminal language was not resident-model generated")
             except (ImportError, KeyError, TypeError, ValueError):
@@ -2536,7 +2551,11 @@ class LatentCortexService:
         }:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")
-        if decode_bridge_policy in {
+        latent_output_authority = (
+            config.get("decode_incumbent_policy", "vanilla_incumbent") == "latent"
+        )
+        decode_bridge_token_count = receipt.get("decode_bridge_token_count")
+        if latent_output_authority and decode_bridge_policy in {
             "assistant_answer_v1",
             "assistant_answer_v2",
             "assistant_answer_v3",
@@ -2551,6 +2570,14 @@ class LatentCortexService:
                 errors.append("decode_bridge_token_identity_unproven")
             if not sha256(receipt.get("decode_bridge_logits_digest")):
                 errors.append("decode_bridge_logits_unproven")
+        elif not latent_output_authority and (
+            receipt.get("decode_bridge_applied") is True
+            or type(decode_bridge_token_count) is not int
+            or decode_bridge_token_count != 0
+            or receipt.get("decode_bridge_tokens_sha256") not in {None, ""}
+            or receipt.get("decode_bridge_logits_digest") not in {None, ""}
+        ):
+            errors.append("decode_bridge_applied_to_vanilla_incumbent")
         if not nonnegative_int(receipt, "decode_newline_suppressions"):
             errors.append("decode_newline_discipline_unreceipted")
         configured_repetition = config.get("decode_repetition_penalty", 1.0)
@@ -2935,6 +2962,13 @@ class LatentCortexService:
                         else 48
                     ),
                 )
+                incumbent_floor_declined_abstention = bool(
+                    executed_config.decode_incumbent_policy == "vanilla_incumbent"
+                    and isinstance(receipt.get("answer_replacement"), dict)
+                    and receipt["answer_replacement"].get("decision") == "abstain"
+                    and "confidence_bound_abstention_declined_under_incumbent"
+                    in (receipt.get("warnings") or [])
+                )
                 validate_answer_replacement_receipt(
                     receipt.get("answer_replacement"),
                     disagreement_graph=receipt.get("disagreement_graph"),
@@ -2957,12 +2991,29 @@ class LatentCortexService:
                     expected_margin=executed_config.answer_replacement_margin,
                     expected_max_output_tokens=replacement_output_limit,
                     expected_output_text=(
-                        output_text if isinstance(output_text, str) else None
+                        None
+                        if incumbent_floor_declined_abstention
+                        else output_text if isinstance(output_text, str) else None
                     ),
                     expected_output_tokens=(
-                        output_tokens if isinstance(output_tokens, list) else None
+                        None
+                        if incumbent_floor_declined_abstention
+                        else output_tokens if isinstance(output_tokens, list) else None
                     ),
                 )
+                if incumbent_floor_declined_abstention:
+                    private_baseline = (
+                        answer_replacement_private
+                        if isinstance(answer_replacement_private, dict)
+                        else {}
+                    )
+                    if (
+                        private_baseline.get("baseline_text") != output_text
+                        or private_baseline.get("baseline_tokens") != output_tokens
+                    ):
+                        raise ValueError(
+                            "incumbent floor output differs from the bound baseline"
+                        )
             except (ImportError, KeyError, TypeError, ValueError):
                 errors.append("answer_replacement_unproven")
             # Hidden benchmark answers are deliberately unavailable in the
@@ -3653,6 +3704,44 @@ class LatentCortexService:
                     else str(value)[:400]
                 )
         return {"ok": False, "reason": self._last_refusal, "refusal_receipt": receipt}
+
+    def foreground_admission(self) -> dict[str, Any]:
+        """Return whether the unchanged general foreground path can succeed.
+
+        A complete worker receipt that lacks the terminal decode bridge is a
+        deterministic source-contract failure, not a stochastic model miss.
+        Re-running the same source spends roughly a minute and returns the
+        same refusal. Keep exact qualified neural ingress available (it runs
+        before this gate), but circuit the general episode until this service
+        restarts with changed code or records a successful episode.
+        """
+
+        reason = str(self._last_refusal or "")
+        prefix = "receipt_contract_failed:"
+        if self._failure_streak < 1 or not reason.startswith(prefix):
+            return {"admitted": True, "reason": "no_deterministic_contract_failure"}
+        failures = {
+            item.strip()
+            for item in reason[len(prefix) :].split(",")
+            if item.strip()
+        }
+        terminal_bridge_failures = {
+            "terminal_disposition_unproven",
+            "answer_replacement_unproven",
+            "decode_bridge_unapplied",
+            "decode_bridge_tokens_missing",
+            "decode_bridge_token_identity_unproven",
+            "decode_bridge_logits_unproven",
+        }
+        matched = sorted(failures & terminal_bridge_failures)
+        if not matched:
+            return {"admitted": True, "reason": "contract_failure_may_be_transient"}
+        return {
+            "admitted": False,
+            "reason": "unchanged_terminal_bridge_contract_failure",
+            "failure_streak": self._failure_streak,
+            "contract_failures": matched,
+        }
 
     @staticmethod
     def _visible_objective(question: str | None, messages: list | None) -> str:

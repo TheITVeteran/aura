@@ -229,7 +229,13 @@ class BrowserController:
         self._started = True
         logger.info("BrowserController ONLINE (preferred: %s)", self._preferred_browser)
 
-    async def _authorize_effect(self, action_name: str, params: dict) -> Any:
+    async def _authorize_effect(
+        self,
+        action_name: str,
+        params: dict,
+        *,
+        read_only: bool = False,
+    ) -> Any:
         """Every desktop browser effect asks the Will, by name.
 
         CP126 c9172c28: opening URLs, switching the active tab, enumerating
@@ -253,7 +259,8 @@ class BrowserController:
                 source="browser_controller",
                 context={
                     "browser": self._preferred_browser,
-                    "user_visible_desktop_effect": True,
+                    "read_only": bool(read_only),
+                    "user_visible_desktop_effect": not read_only,
                     **params,
                 },
             )
@@ -346,7 +353,11 @@ class BrowserController:
         """List all open tabs in the preferred browser."""
         from core.capabilities.host_automation import AppleScriptRunner
 
-        admission = await self._authorize_effect("browser_controller.get_open_tabs", {})
+        admission = await self._authorize_effect(
+            "browser_controller.get_open_tabs",
+            {},
+            read_only=True,
+        )
         if not admission.approved:
             # Enumerating every open tab is reading the person's browsing,
             # which is an effect with a subject even though it changes

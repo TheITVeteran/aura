@@ -3853,6 +3853,9 @@ class CognitiveEngine:
             context.get("identity_continuity_contract", False)
             or context.get("grounded_identity_continuity_context")
         )
+        completion_retry_contract = bool(
+            context.get("user_surface_completion_retry", False)
+        )
         prompt_shape = context.get("prompt_shape")
         if not isinstance(prompt_shape, dict):
             prompt_shape = {}
@@ -4192,6 +4195,18 @@ class CognitiveEngine:
                 "or answer an older topic unless the current user message explicitly asks you to recall or continue it. "
                 "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
                 "unless the user specifically asks for them."
+            )
+        if completion_retry_contract:
+            # Append to the stable ordinary-chat prefix. The prefix can still
+            # reuse resident KV, while the suffix gives the replacement its
+            # only special instruction. Never include the rejected fragment:
+            # a partial answer is a powerful continuation anchor and tended to
+            # reproduce the same cutoff.
+            system_prompt = (
+                f"{system_prompt} Regenerate the answer from the beginning. "
+                "Cover every requested part, finish every sentence, and end "
+                "with the requested conclusion. Prefer a concise complete "
+                "answer over an unfinished exhaustive one."
             )
         neurodynamic_directive = _compact_spiking_active_inference_directive(advice)
         if neurodynamic_directive:

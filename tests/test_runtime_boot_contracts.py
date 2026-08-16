@@ -132,9 +132,16 @@ def test_memory_provider_registers_usable_knowledge_graph_and_dreamer(tmp_path, 
 
         kg = ServiceContainer.require("knowledge_graph")
         dreamer = ServiceContainer.require("dreamer_v2")
+        ledger = ServiceContainer.require("knowledge_ledger")
+        vault = ServiceContainer.require("blackhole_vault")
+        cold = ServiceContainer.require("cold_store")
 
         assert kg.db_path.endswith("knowledge_graph/knowledge.db")
         assert dreamer.kg is kg
+        assert callable(ledger.get_ledger)
+        assert vault is ServiceContainer.require("memory_vector")
+        assert cold.is_ready() is True
+        assert cold.db_path.name == "cold_store.db"
     finally:
         ServiceContainer.clear()
 

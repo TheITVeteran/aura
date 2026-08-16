@@ -7227,8 +7227,13 @@ def _is_compact_desktop_chat_contract(
     )
     if _DURABLE_MEMORY_SCOPE_RE.search(text) and not direct_memory_state_turn:
         return False
-    if bool(getattr(shape, "prefers_extended_answer", False)) and not lightweight_live_state_or_recall:
-        return False
+    # Requested structure changes the answer budget, not the execution lane.
+    # The desktop quick path already grants 896-1536 tokens to extended and
+    # multipart replies. Sending a non-executing explanation through the full
+    # phase/RLC stack solely because the person asked for numbered sections
+    # added over a minute of latency, then regenerated the same answer on the
+    # ordinary lane when the RLC receipt failed. Heavy actions and explicit
+    # deep self-process turns remain excluded below/above.
     if int(getattr(shape, "question_parts", 0) or 0) >= 3:
         return False
     heavy_action = re.search(
@@ -11130,6 +11135,28 @@ async def _run_cognitive_engine_chat_turn(
                 "user_surface_completion_retry": completion_only_retry,
             }
         )
+        if completion_only_retry:
+            # A completion replacement is a fresh answer to the ORIGINAL
+            # request, not a second cognitive turn about a repair directive.
+            # Re-entering the full pipeline here made an ordinary explanation
+            # pay the latent selector, phase ecology and a second 32B prefill;
+            # worse, the model then answered the repair prose rather than the
+            # person.  Keep CognitiveEngine as the owner, but use its bounded
+            # desktop lane and the same visible objective/system-prefix shape
+            # as the first answer so the resident KV cache remains reusable.
+            retry_context.update(
+                {
+                    "desktop_quick_reply_contract": True,
+                    "desktop_descriptive_turn": True,
+                    "deep_handoff": False,
+                    "allow_deep_handoff": False,
+                    "skip_runtime_payload": True,
+                    "visible_user_message": visible,
+                }
+            )
+            # A clipped draft is evidence for the gate, not useful context for
+            # regeneration. Supplying it anchors the model on the same cutoff.
+            retry_context.pop("failed_reply_excerpt", None)
 
         async def repair_engine_think_operation():
             from core.runtime.principal_context import relational_principal_scope
@@ -11140,7 +11167,7 @@ async def _run_cognitive_engine_chat_turn(
             )
             with relational_principal_scope(exact_principal):
                 return await engine.think(
-                    repair_directive,
+                    visible if completion_only_retry else repair_directive,
                     context=retry_context,
                     mode=mode,
                     origin=origin,

@@ -541,7 +541,7 @@ register_contract(
             "transition cause when it happens."
         ),
         reads=("cognition.working_memory", "cognition.last_response"),
-        writes=("transition_cause",),
+        writes=("cognition.modifiers", "transition_cause"),
         preconditions=("state carries a cognition block",),
         branches=(
             BranchSpec(

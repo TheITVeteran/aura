@@ -4457,6 +4457,14 @@
       "scope": "<module>.BlackHoleVault._save_vault"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/cold_store.py",
+      "scope": "<module>.ColdMemoryStore._initialize"
+    },
+    {
       "callee": "<file_write_gateway>.ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15938,6 +15946,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6905193b1838d23366d9d6fd65b9318dafaf199123df51d7d2fffb1dcdc7702f",
+  "inventory_sha256": "e9cdabb8eba6d9f0ae4535bf935425e852c67bea8c7e1020b1e4dbe93457cd54",
   "schema_version": 1
 }

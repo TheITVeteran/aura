@@ -170,6 +170,19 @@ def test_enumerating_tabs_asks_too(controller, monkeypatch):
     assert ran == []
 
 
+def test_tab_enumeration_is_authorized_as_a_passive_read(controller, monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        "core.runtime.action_executor.ActionExecutor.authorize_action",
+        lambda **kwargs: calls.append(kwargs) or _Refused(),
+    )
+
+    assert asyncio.run(controller.get_open_tabs()) == []
+    assert calls[0]["context"]["read_only"] is True
+    assert calls[0]["context"]["user_visible_desktop_effect"] is False
+
+
 def test_an_authorized_open_url_does_run(controller, monkeypatch):
     """The gate must not be a wall: legitimate navigation still works."""
     ran = []
