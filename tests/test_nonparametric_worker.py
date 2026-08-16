@@ -49,6 +49,28 @@ def test_structural_contract_inhibits_token_recall_without_memory_requirement():
     )
 
 
+def test_control_and_measurement_jobs_never_install_associative_recall():
+    for flag in (
+        "health_probe",
+        "warmup_precompile",
+        "proof_evaluation_contract",
+        "operator_evidence_contract",
+        "strict_answer_contract",
+        "strict_value_contract",
+    ):
+        assert foreground_memory_admitted_for_job({flag: True}) is False
+
+    # User recall may request memory, but that cannot override the independence
+    # of a control-plane measurement.
+    assert (
+        foreground_memory_admitted_for_job(
+            {"health_probe": True, "requires_memory_grounding": True}
+        )
+        is False
+    )
+    assert foreground_memory_admitted_for_job({"clean_user_surface_contract": True}) is True
+
+
 # ── the tap captures the hidden the forward already produced ────────────────
 
 def test_tap_records_last_hidden_and_restores_model():

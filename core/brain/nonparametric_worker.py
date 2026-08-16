@@ -27,9 +27,9 @@ per-token error leaves generation exactly as it would have been without memory.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 import pathlib
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -73,11 +73,29 @@ _STRUCTURAL_OUTPUT_CONTRACT_KINDS = frozenset(
     }
 )
 
+_CONTROL_OR_MEASUREMENT_JOB_FLAGS = frozenset(
+    {
+        "health_probe",
+        "warmup_precompile",
+        "proof_evaluation_contract",
+        "operator_evidence_contract",
+        "strict_answer_contract",
+        "strict_value_contract",
+    }
+)
+
 
 def foreground_memory_admitted_for_job(job: Any) -> bool:
-    """Keep token-level recall from competing with structural decoding.
+    """Keep associative recall out of control and structural decoding.
 
-    A structural contract is a decoder constraint, not a retrieval request.
+    A readiness probe measures whether the resident model can answer. Letting a
+    mutable recall store steer that probe instead measures the store/model pair
+    and can deterministically replace the requested probe answer with an
+    unrelated memorized continuation. The same isolation applies to proof,
+    operator-evidence, warmup, and strict-value jobs: supplemental memory must
+    not alter the control plane or the object being measured.
+
+    A structural contract is likewise a decoder constraint, not a retrieval request.
     The non-parametric store may still participate when the caller explicitly
     declares that memory grounding is required; otherwise Aura's ordinary
     model and response-contract machinery own the turn.
@@ -85,6 +103,8 @@ def foreground_memory_admitted_for_job(job: Any) -> bool:
 
     if not isinstance(job, dict):
         return True
+    if any(bool(job.get(flag)) for flag in _CONTROL_OR_MEASUREMENT_JOB_FLAGS):
+        return False
     contract = job.get("requested_output_contract")
     kind = (
         str(contract.get("kind") or "").strip().lower()
