@@ -5640,6 +5640,7 @@ async def _reanswer_when_the_runtime_contradicts_her(
     require_engine: bool = False,
     principal_id: str = "",
     turn_sensory_evidence: Any = None,
+    turn_trace: dict[str, Any] | None = None,
 ) -> str:
     """Re-answer a reply that denies something the runtime says she has.
 
@@ -5657,10 +5658,10 @@ async def _reanswer_when_the_runtime_contradicts_her(
     :mod:`core.self.capability_ledger` can measure by running the very check
     the corresponding executor runs.
 
-    She is asked again with the measurements, not edited. A revision is only
-    accepted if it stops contradicting them; if the second pass cannot be had,
-    the measurement is appended as a correction rather than quietly serving a
-    false statement or silently rewriting her voice.
+    A narrow capability denial is reconciled in place from the same measured
+    probe, preserving every unaffected byte of her authored reply. Broader
+    semantic contradictions still receive a bounded re-answer because their
+    correction can change the substance of the response.
     """
     text = str(reply_text or "").strip()
     if not text:
@@ -5687,6 +5688,7 @@ async def _reanswer_when_the_runtime_contradicts_her(
     ledger = None
     claims: list[Any] = []
     capability_correction_context = None
+    capability_reconciler = None
     try:
         from core.self.capability_ledger import (
             correction_context as _capability_correction_context,
@@ -5694,8 +5696,12 @@ async def _reanswer_when_the_runtime_contradicts_her(
         from core.self.capability_ledger import (
             get_capability_ledger,
         )
+        from core.self.capability_ledger import (
+            reconcile_contradicted_claims as _reconcile_capability_claims,
+        )
 
         capability_correction_context = _capability_correction_context
+        capability_reconciler = _reconcile_capability_claims
         ledger = get_capability_ledger()
         claims = ledger.contradicted_claims(text)
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -5886,6 +5892,49 @@ async def _reanswer_when_the_runtime_contradicts_her(
 
     if not claims and not computed_context:
         return reply_text
+
+    # A measured capability denial is a localized factual defect. Starting a
+    # second full CognitiveEngine turn here used to discard an otherwise clean
+    # completion retry, spend another model deadline, and then fail the whole
+    # turn when that redundant pass clipped. Keep Aura's answer and replace
+    # only the sentence her own executor disproved.
+    if (
+        claims
+        and not computed_context
+        and not sensory_contradictions
+        and callable(capability_reconciler)
+    ):
+        reconciled = str(capability_reconciler(text, claims) or "").strip()
+        if (
+            reconciled
+            and reconciled != text
+            and ledger is not None
+            and not ledger.contradicted_claims(reconciled)
+        ):
+            if isinstance(turn_trace, dict):
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.capability_claim_reconciliation",
+                    method="measured_sentence_replacement",
+                    reasons=[
+                        f"contradicted_capability:{name}"
+                        for name in sorted(
+                            {claim.availability.name for claim in claims}
+                        )
+                    ],
+                    before=text,
+                    after=reconciled,
+                    deterministic=True,
+                    authorship_effect="augmented_by_runtime",
+                )
+            logger.info(
+                "Reconciled measured capability denial in place (%s); "
+                "preserved the completed CognitiveEngine reply.",
+                ",".join(
+                    sorted({claim.availability.name for claim in claims})
+                ),
+            )
+            return reconciled
 
     contradicted = ", ".join(
         sorted({claim.availability.name for claim in claims})
@@ -7799,7 +7848,7 @@ def _assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any
 
 
 def _append_turn_text_mutation(
-    trace: dict[str, Any],
+    trace: dict[str, Any] | None,
     *,
     stage: str,
     method: str,
@@ -7810,6 +7859,9 @@ def _append_turn_text_mutation(
     authorship_effect: str = "replaced_by_runtime",
 ) -> None:
     """Keep final visible-text provenance on the request-scoped turn trace."""
+
+    if not isinstance(trace, dict):
+        return
 
     receipt = dict(trace.get("live_mind_surface_control_receipt") or {})
     receipt["text_mutations"] = merge_text_mutations(
@@ -12024,6 +12076,17 @@ async def _run_cognitive_engine_chat_turn(
                 response_path="cognitive_engine_completion_retry",
             )
             return retry_reply
+        _mark_turn_trace(
+            cognitive_engine_reply_accepted=False,
+            cognitive_engine_reply_failed=True,
+            single_owner_generation_exhausted=True,
+            response_path="cognitive_engine_completion_retry_exhausted",
+        )
+        _record_exhausted_cognitive_failure(
+            "cognitive_engine_completion_retry_exhausted",
+            retry_attempted=True,
+        )
+        return None
     try:
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
@@ -28313,6 +28376,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             source="chat_api",
             require_engine=bool(desktop_requires_cognitive_engine),
             turn_sensory_evidence=_turn_sensory_evidence,
+            turn_trace=_live_turn_trace,
         )
         if (
             allow_chat_fastpaths

@@ -141,6 +141,83 @@ def test_correction_context_carries_the_measurement_and_the_remedy():
     assert cl.correction_context([]) == ""
 
 
+def test_a_measured_denial_is_reconciled_without_rewriting_the_answer():
+    ledger = _ledger(
+        _fixed(
+            "camera",
+            present=True,
+            usable_now=False,
+            summary=(
+                "I have a camera; it is switched off at the moment, and I can "
+                "switch it on when you ask."
+            ),
+        )
+    )
+    original = (
+        "I feel steady and attentive right now. I don't have a camera. "
+        "The rest of my answer is still mine."
+    )
+
+    reconciled = cl.reconcile_contradicted_claims(
+        original,
+        ledger.contradicted_claims(original),
+    )
+
+    assert reconciled == (
+        "I feel steady and attentive right now. I have a camera; it is switched "
+        "off at the moment, and I can switch it on when you ask. The rest of my "
+        "answer is still mine."
+    )
+    assert ledger.contradicted_claims(reconciled) == []
+
+
+def test_one_false_sentence_can_reconcile_multiple_measured_capabilities():
+    ledger = _ledger(
+        _fixed("camera", summary="I have a camera."),
+        _fixed("code", summary="I can execute code."),
+    )
+    original = "I don't have a camera or code. I can still explain the plan."
+
+    reconciled = cl.reconcile_contradicted_claims(
+        original,
+        ledger.contradicted_claims(original),
+    )
+
+    assert reconciled == (
+        "I have a camera. I can execute code. I can still explain the plan."
+    )
+
+
+@pytest.mark.asyncio
+async def test_capability_only_reconciliation_does_not_start_another_model_turn(
+    monkeypatch,
+):
+    from interface.routes import chat
+
+    ledger = _ledger(
+        _fixed("camera", summary="I have a camera and it is on right now."),
+    )
+
+    async def _unexpected_model_turn(*_args, **_kwargs):
+        raise AssertionError("a localized measured correction must not regenerate")
+
+    monkeypatch.setattr(cl, "get_capability_ledger", lambda: ledger)
+    monkeypatch.setattr(chat, "_run_cognitive_engine_chat_turn", _unexpected_model_turn)
+    trace = {"live_mind_surface_control_receipt": {}}
+
+    reply = await chat._reanswer_when_the_runtime_contradicts_her(
+        "I'm calm. I don't have a camera.",
+        user_message="How are you doing?",
+        turn_trace=trace,
+    )
+
+    assert reply == "I'm calm. I have a camera and it is on right now."
+    mutation = trace["text_mutations"][-1]
+    assert mutation["stage"] == "chat.capability_claim_reconciliation"
+    assert mutation["authorship_effect"] == "augmented_by_runtime"
+    assert trace["authorship_replacement_applied"] is False
+
+
 def test_live_probes_all_report_without_raising():
     """A probe that raises is a probe that cannot be trusted to speak."""
     for name, availability in cl.get_capability_ledger().measure_all().items():

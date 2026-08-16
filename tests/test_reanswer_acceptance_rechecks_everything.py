@@ -32,7 +32,10 @@ def test_the_re_ask_uses_that_test_rather_than_one_check():
         SOURCE,
         re.S,
     ).group(0)
-    assert "_still_contradicts_the_runtime(revised_text" in reanswer
+    assert re.search(
+        r"_still_contradicts_the_runtime\(\s*revised_text",
+        reanswer,
+    )
     # The narrow test that let the fabrication through must not be the gate.
     assert "not ledger.contradicted_claims(revised_text)" not in reanswer
 

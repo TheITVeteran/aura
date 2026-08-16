@@ -3087,6 +3087,19 @@ async def test_final_reply_call_sites_record_request_scoped_mutation_provenance(
     assert trace["live_mind_surface_control_receipt"]["text_mutation_count"] == 1
 
 
+def test_optional_turn_trace_cannot_break_a_bounded_repair():
+    from interface.routes import chat as chat_routes
+
+    chat_routes._append_turn_text_mutation(
+        None,
+        stage="chat.optional_trace",
+        method="bounded_repair",
+        reasons=["trace_not_requested"],
+        before="before",
+        after="after",
+    )
+
+
 def test_final_requested_output_contract_repairs_post_affordance_mutation():
     from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes import chat as chat_routes
@@ -15855,10 +15868,18 @@ async def test_api_chat_stabilizes_identity_drift_in_primary_reply(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_api_chat_returns_busy_reply_when_foreground_turn_is_already_in_flight(monkeypatch):
+async def test_api_chat_returns_busy_reply_when_foreground_wait_budget_expires(
+    monkeypatch,
+):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
+    monkeypatch.setattr(
+        chat_routes,
+        "_foreground_chat_lock",
+        chat_routes.PreemptibleChatLock(),
+    )
+    monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 0.01)
     monkeypatch.setattr(server_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         server_module,

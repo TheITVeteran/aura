@@ -924,6 +924,7 @@ def _probe_deferred_action() -> Availability:
     rows = 0
     try:
         import sqlite3
+
         from core.runtime.sqlite_support import connecting
 
         with connecting(sqlite3.connect(f"file:{store}?mode=ro", uri=True)) as con:
@@ -1139,6 +1140,47 @@ def correction_context(claims: Iterable[ContradictedClaim]) -> str:
     return "\n".join(lines)
 
 
+def reconcile_contradicted_claims(
+    reply: str,
+    claims: Iterable[ContradictedClaim],
+) -> str:
+    """Replace only false capability-denial sentences with measured facts.
+
+    A capability probe can settle the narrow factual claim without asking the
+    model to regenerate an otherwise valid answer. The rest of the authored
+    reply stays byte-for-byte intact. Multiple capabilities denied in one
+    sentence become one ordered set of measured summaries.
+    """
+
+    reconciled = str(reply or "")
+    replacements: dict[str, list[Availability]] = {}
+    for claim in claims:
+        sentence = str(claim.sentence or "").strip()
+        availability = claim.availability
+        if not sentence or not availability.known:
+            continue
+        bucket = replacements.setdefault(sentence, [])
+        if not any(
+            existing.name == availability.name
+            and existing.summary == availability.summary
+            for existing in bucket
+        ):
+            bucket.append(availability)
+
+    for sentence, availabilities in replacements.items():
+        summaries: list[str] = []
+        for availability in availabilities:
+            summary = str(availability.summary or "").strip()
+            if not summary:
+                continue
+            if summary[-1:] not in ".!?":
+                summary += "."
+            summaries.append(summary)
+        if summaries:
+            reconciled = reconciled.replace(sentence, " ".join(summaries))
+    return reconciled
+
+
 __all__ = [
     "Availability",
     "fabricated_self_metrics",
@@ -1149,6 +1191,7 @@ __all__ = [
     "LiveCapability",
     "correction_context",
     "get_capability_ledger",
+    "reconcile_contradicted_claims",
     "self_knowledge_line",
     "reset_capability_ledger_for_test",
 ]
