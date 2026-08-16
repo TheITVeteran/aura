@@ -19,6 +19,7 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from core.brain.imagination_basis import Basis, describe_bases, meets
 from core.runtime.errors import record_degradation
 
 # Requires at least one letter, so "76ers", "401k" and "3d" are subjects
@@ -73,6 +74,37 @@ from core.brain.imagination_text import (  # noqa: E402
 )
 
 
+#: Every quantity this frame emits, and how it was produced. Nothing here is
+#: measured: they are regex hits, keyword counts and fixed coefficients. The
+#: map is the honest version of names like ``causal_effects``, which is a
+#: live cross-module key and therefore cannot be renamed to say so.
+DEFAULT_BASES: dict[str, str] = {
+    "salience": Basis.LEXICAL.value,
+    "novelty_pressure": Basis.LEXICAL.value,
+    "curiosity_pressure": Basis.LEXICAL.value,
+    "affective_pressure": Basis.LEXICAL.value,
+    "memory_pressure": Basis.LEXICAL.value,
+    "verification_pressure": Basis.LEXICAL.value,
+    "attractor_state": Basis.LEXICAL.value,
+    "eligibility_trace": Basis.LEXICAL.value,
+    "causal_effects": Basis.LEXICAL.value,
+    "sampling_bias": Basis.LEXICAL.value,
+    "routing_bias": Basis.LEXICAL.value,
+    "working_memory": Basis.LEXICAL.value,
+    "visual_model": Basis.TEMPLATE.value,
+    "phrase_model": Basis.TEMPLATE.value,
+    "conceptual_bridge": Basis.TEMPLATE.value,
+    "mental_canvas": Basis.TEMPLATE.value,
+    "associative_links": Basis.TEMPLATE.value,
+    "novel_thoughts": Basis.TEMPLATE.value,
+    "simulation_steps": Basis.TEMPLATE.value,
+    "counterfactuals": Basis.TEMPLATE.value,
+    "experiments": Basis.TEMPLATE.value,
+    "action_affordances": Basis.TEMPLATE.value,
+    "ablation_predictions": Basis.TEMPLATE.value,
+}
+
+
 @dataclass(frozen=True)
 class ImaginationFrame:
     frame_id: str
@@ -107,6 +139,17 @@ class ImaginationFrame:
     )
     sampling_bias: dict[str, float] = field(default_factory=dict)
     routing_bias: dict[str, bool] = field(default_factory=dict)
+    #: What each quantity above rests on. CP126 raised four criticals against
+    #: this frame and they are one sentence: the names promise measurement
+    #: and the code performs lexical scoring. Renaming is not available —
+    #: ``causal_effects`` is read by cognitive_engine, task_decomposer and
+    #: cognitive_situation_frame — so the basis travels beside the value and
+    #: a reader can ask instead of assuming. See core.brain.imagination_basis.
+    bases: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_BASES))
+    #: True when the objective was cut before classification, so a reader
+    #: knows a constraint or negation may have fallen off the end
+    #: (CP126 ``9d4f7016``).
+    objective_truncated: bool = False
     governance: dict[str, Any] = field(
         default_factory=lambda: {
             "advisory_only": True,
@@ -429,6 +472,22 @@ _COUNTERFACTUAL_MOVES: tuple[_ThoughtMove, ...] = (
 )
 
 
+#: The weakest evidence that may durably change what gets selected. A
+#: caller's word steers this session and dies with it; changing tomorrow's
+#: selection takes a reading (CP126 ``04a745b8``).
+LEARNING_EVIDENCE_FLOOR = Basis.MEASURED
+
+#: Subject partition for learning state. "" is a real key, not a wildcard:
+#: an unattributed reward teaches the unattributed subject and nobody else
+#: (CP126 ``f1ef7cfb``).
+_ANONYMOUS_SUBJECT = "anonymous"
+
+
+def _subject_key(subject: Any) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", str(subject or "")).strip("_")
+    return cleaned[:64] or _ANONYMOUS_SUBJECT
+
+
 class ImaginationEngine:
     """Generator of bounded internal imagination frames.
 
@@ -456,8 +515,10 @@ class ImaginationEngine:
         self._arrival_rate_ema = 0.0
         self._service_rate_ema = 1.0
         self._last_observed_at = time.monotonic()
-        self._attractor_bias: dict[str, float] = {}
-        self._eligibility_trace: dict[str, float] = {}
+        # Keyed by SUBJECT. One flat map meant one person's rewards moved
+        # every later person's selection probabilities (CP126 ``f1ef7cfb``).
+        self._attractor_bias: dict[str, dict[str, float]] = {}
+        self._eligibility_trace: dict[str, dict[str, float]] = {}
         # Which thought SHAPES were used recently, newest last. This is what
         # stops consecutive frames converging on a house style; see
         # _ThoughtMove. Sized to roughly two frames' worth of moves so a
@@ -476,7 +537,17 @@ class ImaginationEngine:
     ) -> ImaginationFrame:
         # What she imagines about is the subject, not the scaffolding that
         # happens to be wrapped around it.
-        text = _normalize_text(imagination_subject(objective, context), 500)
+        raw_subject = imagination_subject(objective, context)
+        # CP126 ``9d4f7016``: the objective was cut to 500 characters before
+        # classification and again to 180 for storage, so a constraint, a
+        # negation or a safety boundary written past the limit could not
+        # reach the frame and nothing said it had been dropped.
+        text = _normalize_text(raw_subject, 500)
+        objective_truncated = len(str(raw_subject or '')) > 500
+        subject_key = _subject_key(
+            (context or {}).get('subject') or (context or {}).get('user_id')
+            if isinstance(context, dict) else ''
+        )
         lowered = text.lower()
         keywords = _extract_keywords(text)
         memories = _top_memory_fragments(state)
@@ -662,6 +733,7 @@ class ImaginationEngine:
             linguistic=linguistic,
             counterfactual=counterfactual,
             creative=creative,
+            subject=subject_key,
             tool_or_reality=tool_or_reality,
         )
         eligibility_trace = self._update_eligibility_trace(
@@ -711,6 +783,7 @@ class ImaginationEngine:
             "compress_imagination": admission in {"compress_foreground", "thin_frame", "defer_background"},
         }
         frame = ImaginationFrame(
+            objective_truncated=objective_truncated,
             frame_id=frame_id,
             objective=text[:180],
             mode=mode,
@@ -754,14 +827,34 @@ class ImaginationEngine:
                     self._frame_index.pop(stale_id, None)
         return frame
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, *, subject: str = "", include_content: bool = False) -> dict[str, Any]:
+        """Health and shape. NOT the contents of the last private scratchpad.
+
+        This returned the complete latest frame — the objective, the
+        memory-derived text, the mental canvas, the novel thoughts, the
+        counterfactuals, the attention targets — plus recent outcomes, to
+        any caller, with no authorization, no user filter, no redaction and
+        no retention policy (CP126 ``566e64ff``). It is reachable from a
+        global status route, so one person's working memory was published to
+        whoever asked next.
+
+        The default is now shape without content. ``include_content=True``
+        returns the latest frame for the NAMED subject only, so a caller who
+        genuinely needs it has to say whose it is.
+        """
+        who = _subject_key(subject) if subject else ""
         with self._state_lock:
-            latest = self._history[-1].to_dict() if self._history else None
+            latest_frame = self._history[-1] if self._history else None
             frame_count = self._frame_count
             history_len = len(self._history)
-            attractor_bias = dict(self._attractor_bias)
-            eligibility = dict(self._eligibility_trace)
-            outcomes = list(self._outcomes)[-5:]
+            attractor_bias = dict(self._attractor_bias.get(who, {})) if who else {}
+            eligibility = dict(self._eligibility_trace.get(who, {})) if who else {}
+            outcomes = [
+                dict(record)
+                for record in list(self._outcomes)[-5:]
+                if not who or record.get("subject") == who
+            ]
+        latest = self._frame_summary(latest_frame, who, include_content)
         return {
             # An on-demand generator with no lifecycle is genuinely always
             # ready to serve, so "running" stays True and callers keep that
@@ -788,6 +881,7 @@ class ImaginationEngine:
                 )[:12]
             },
             "recent_outcomes": outcomes,
+            "bases": describe_bases(dict(DEFAULT_BASES)),
             "governance": {
                 # The first two are properties of THIS module and are true of
                 # it: nothing here calls a tool, writes a file, or executes.
@@ -805,6 +899,32 @@ class ImaginationEngine:
             },
         }
 
+    @staticmethod
+    def _frame_summary(
+        frame: "ImaginationFrame | None", subject: str, include_content: bool
+    ) -> dict[str, Any] | None:
+        """Shape of the latest frame; its content only for a named subject."""
+        if frame is None:
+            return None
+        if include_content and subject and frame.attractor_state.get("subject") == subject:
+            return frame.to_dict()
+        return {
+            "frame_id": frame.frame_id,
+            "mode": frame.mode,
+            "created_at": frame.created_at,
+            "salience": frame.salience,
+            "novelty_pressure": frame.novelty_pressure,
+            "modalities": list(frame.modalities),
+            "keyword_count": len(frame.keywords),
+            "objective_truncated": frame.objective_truncated,
+            "bases": dict(frame.bases),
+            # Deliberately absent: objective, memories, canvas, novel
+            # thoughts, counterfactuals, attention targets. Those are the
+            # person's content, and a status route is not a place to publish
+            # it (CP126 ``566e64ff`` / ``dcc6fd02``).
+            "content_withheld": not include_content,
+        }
+
     get_status = snapshot
     status = snapshot
 
@@ -814,10 +934,29 @@ class ImaginationEngine:
         *,
         reward: float,
         outcome: str = "unknown",
+        subject: str = "",
+        evidence_basis: str = Basis.CALLER_ASSERTED.value,
+        evidence_id: str = "",
     ) -> dict[str, Any] | None:
-        # Learning reshapes GLOBAL attractor bias and eligibility traces, so the
-        # frame being graded must be one this engine issued. A fabricated frame
-        # can no longer teach it.
+        """Reshape selection on an OBSERVED outcome, for one subject.
+
+        Two findings meet here.
+
+        ``04a745b8`` — any caller could hand over a free reward and an
+        outcome string with no evaluator authority, no task receipt and no
+        correlation to a completed response, and it immediately changed the
+        global attractor bias and the eligibility traces. The frame had to
+        be one this engine issued, which stopped fabricated frames and
+        nothing else: the REWARD was still whatever the caller said.
+
+        ``f1ef7cfb`` — none of that state was partitioned, so one person's
+        keywords and rewards changed selection probabilities and prompt
+        steering for every later, unrelated subject.
+
+        So a reward below :data:`LEARNING_EVIDENCE_FLOOR` is RECORDED and
+        does not move anything, and everything that does move is keyed by
+        subject.
+        """
         materialized = self._coerce_frame(frame, require_issued=True)
         if materialized is None:
             return None
@@ -826,22 +965,46 @@ class ImaginationEngine:
             or materialized.mode
         )
         reward_value = max(-1.0, min(1.0, _safe_float(reward, 0.0)))
+        basis = Basis(evidence_basis) if evidence_basis in {b.value for b in Basis} else Basis.LEXICAL
+        admitted = meets(basis, LEARNING_EVIDENCE_FLOOR)
+        who = _subject_key(subject)
+
         with self._state_lock:
-            current_bias = _safe_float(self._attractor_bias.get(selected), 0.0)
+            bias_map = self._attractor_bias.setdefault(who, {})
+            trace_map = self._eligibility_trace.setdefault(who, {})
+            current_bias = _safe_float(bias_map.get(selected), 0.0)
             rpe = reward_value - current_bias
-            self._attractor_bias[selected] = max(-0.45, min(0.45, current_bias + 0.12 * rpe))
-            for key, value in list(materialized.eligibility_trace.items())[:16]:
-                previous = _safe_float(self._eligibility_trace.get(key), 0.0)
-                self._eligibility_trace[key] = _clamp(previous + reward_value * value * 0.04)
+            if admitted:
+                bias_map[selected] = max(-0.45, min(0.45, current_bias + 0.12 * rpe))
+                for key, value in list(materialized.eligibility_trace.items())[:16]:
+                    previous = _safe_float(trace_map.get(key), 0.0)
+                    trace_map[key] = _clamp(previous + reward_value * value * 0.04)
             record = {
                 "frame_id": materialized.frame_id,
+                "subject": who,
                 "outcome": str(outcome or "unknown")[:80],
                 "reward": round(reward_value, 4),
                 "selected_attractor": selected,
                 "reward_prediction_error": round(rpe, 4),
-                "updated_bias": round(self._attractor_bias[selected], 4),
+                "updated_bias": round(_safe_float(bias_map.get(selected), current_bias), 4),
+                "evidence_basis": basis.value,
+                "evidence_id": str(evidence_id or "")[:120],
+                # The honest half. An unadmitted reward is kept as a record
+                # of what a caller believed and changes nothing.
+                "applied": admitted,
+                "refusal": "" if admitted else (
+                    f"evidence basis {basis.value} is below the "
+                    f"{LEARNING_EVIDENCE_FLOOR.value} floor for durable selection change"
+                ),
             }
             self._outcomes.append(record)
+        if not admitted:
+            record_degradation(
+                "imagination_engine",
+                PermissionError(f"unevidenced feedback for frame {materialized.frame_id}"),
+                severity="info",
+                action="recorded the reward and left selection unchanged",
+            )
         return record
 
     def _coerce_frame(
@@ -952,17 +1115,58 @@ class ImaginationEngine:
             "runtime_memory_level": pressure_level,
             "runtime_memory_pressure_pct": round(_safe_float(runtime_pressure.get("pressure_pct"), 0.0), 4),
             "reason": str(runtime_pressure.get("reason") or "")[:220],
+            "runtime_memory_basis": str(runtime_pressure.get("basis") or Basis.LEXICAL.value),
+            # CP126 ``f58115e3``: none of the four rates above is a queue
+            # measurement. There is no queued item, no enqueue or dequeue
+            # event, no worker and no completed service time — it is a
+            # recurrence over prompt salience and the gap between calls. The
+            # numbers are a useful damping model and a dishonest telemetry
+            # feed, so they say which they are.
+            "model": "synthetic_load_model",
+            "measures_a_real_queue": False,
         }
 
     @staticmethod
     def _runtime_memory_pressure(context: dict[str, Any] | None) -> dict[str, Any]:
+        """Read host memory pressure. The MONITOR decides; the caller hints.
+
+        A context dict could supply any level, percentage and reason it
+        liked, with no provenance, no freshness and no range check, and the
+        recognised strings went straight into admission, compression and
+        load shedding (CP126 ``7975bf24``). The real monitor is consulted
+        FIRST now. A caller assertion is used only when no monitor answers,
+        it is clamped, and it is labelled ``caller_asserted`` so an
+        admission decision made on it can be told apart from one made on a
+        reading.
+        """
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            return {
+                "level": str(getattr(snapshot, "level", "normal") or "normal"),
+                "pressure_pct": _safe_float(getattr(snapshot, "pressure_pct", 0.0), 0.0),
+                "reason": str(getattr(snapshot, "reason", "") or ""),
+                "basis": Basis.MEASURED.value,
+            }
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "imagination_engine",
+                exc,
+                severity="warning",
+                action="fell back to the caller's memory-pressure hint; the monitor did not answer",
+            )
+
         if isinstance(context, dict):
             raw = context.get("memory_pressure_snapshot") or context.get("memory_pressure")
             if isinstance(raw, dict):
                 return {
                     "level": str(raw.get("level") or "normal"),
-                    "pressure_pct": _safe_float(raw.get("pressure_pct"), 0.0),
-                    "reason": str(raw.get("reason") or ""),
+                    "pressure_pct": _clamp(
+                        _safe_float(raw.get("pressure_pct"), 0.0), lower=0.0, upper=100.0
+                    ),
+                    "reason": str(raw.get("reason") or "")[:220],
+                    "basis": Basis.CALLER_ASSERTED.value,
                 }
             if isinstance(raw, (int, float)):
                 pct = _safe_float(raw, 0.0)
@@ -976,33 +1180,23 @@ class ImaginationEngine:
                     level = "warning"
                 else:
                     level = "normal"
-                return {"level": level, "pressure_pct": pct, "reason": f"context_memory_pressure:{pct:.1f}%"}
-        try:
-            from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-            snapshot = get_memory_pressure_snapshot()
-            return {
-                "level": str(getattr(snapshot, "level", "normal") or "normal"),
-                "pressure_pct": _safe_float(getattr(snapshot, "pressure_pct", 0.0), 0.0),
-                "reason": str(getattr(snapshot, "reason", "") or ""),
-            }
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
-            record_degradation(
-                "imagination_engine",
-                exc,
-                severity="warning",
-                action="restrained imagination admission: memory pressure unknown",
-            )
-            # Fail toward restraint. An unreadable memory probe is not evidence
-            # of headroom — reporting "normal"/0.0 admitted ordinary imagination
-            # precisely when memory safety was unknown. "warning" is the mildest
-            # level that still damps admission without freezing the engine when
-            # the probe is merely unavailable.
-            return {
-                "level": "warning",
-                "pressure_pct": _UNKNOWN_MEMORY_PRESSURE_PCT,
-                "reason": "memory_pressure_probe_failed:restraining",
-            }
+                return {
+                    "level": level,
+                    "pressure_pct": pct,
+                    "reason": f"context_memory_pressure:{pct:.1f}%",
+                    "basis": Basis.CALLER_ASSERTED.value,
+                }
+        # Fail toward restraint. An unreadable memory probe is not evidence of
+        # headroom — reporting "normal"/0.0 admitted ordinary imagination
+        # precisely when memory safety was unknown. "warning" is the mildest
+        # level that still damps admission without freezing the engine when the
+        # probe is merely unavailable.
+        return {
+            "level": "warning",
+            "pressure_pct": _UNKNOWN_MEMORY_PRESSURE_PCT,
+            "reason": "memory_pressure_probe_failed:restraining",
+            "basis": Basis.LEXICAL.value,
+        }
 
     def _select_attractor_state(
         self,
@@ -1019,6 +1213,7 @@ class ImaginationEngine:
         linguistic: bool,
         counterfactual: bool,
         creative: bool,
+        subject: str = "anonymous",
         tool_or_reality: bool,
     ) -> dict[str, Any]:
         overload = _safe_float(working_memory.get("overload_pressure"), 0.0)
@@ -1032,8 +1227,11 @@ class ImaginationEngine:
             "creative_synthesis": (0.50 if creative else 0.08) + novelty_pressure * 0.36 + affective_pressure * 0.14,
             "load_stabilization": overload * 0.72,
         }
+        # The bias applied is the SUBJECT's own. A flat map meant one
+        # person's rewards steered the next person's selection.
+        bias_map = self._attractor_bias.get(subject, {})
         for key in list(scores):
-            scores[key] = _safe_float(scores[key], 0.0) + _safe_float(self._attractor_bias.get(key), 0.0)
+            scores[key] = _safe_float(scores[key], 0.0) + _safe_float(bias_map.get(key), 0.0)
         probabilities = _stable_softmax(scores, temperature=max(0.30, 0.72 + overload * 0.35))
         ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
         selected = ranked[0][0] if ranked else mode
@@ -1047,8 +1245,17 @@ class ImaginationEngine:
             "entropy": round(_entropy01(probabilities), 4),
             "stability_margin": round(_clamp(margin), 4),
             "recurrent_depth": recurrent_depth,
-            "bias": round(_safe_float(self._attractor_bias.get(selected), 0.0), 4),
+            "bias": round(_safe_float(bias_map.get(selected), 0.0), 4),
             "load_stabilized": selected == "load_stabilization" or overload >= 0.50,
+            # CP126 ``4945e371``: this is a softmax over hand-built scores
+            # plus learned scalar offsets, and `recurrent_depth` is computed
+            # and returned. No loop ran, no state transitioned, nothing
+            # converged, and no receipt shows the depth reached downstream
+            # cognition. The names are kept because callers use them; the
+            # claim is not.
+            "mechanism": "softmax_over_authored_scores",
+            "recurrent_depth_executed": False,
+            "subject": subject,
         }
 
     def _update_eligibility_trace(
@@ -1060,36 +1267,40 @@ class ImaginationEngine:
         novelty_pressure: float,
         memory_pressure: float,
     ) -> dict[str, float]:
-        # Decay-then-reinforce is a read-modify-write over shared learning
-        # state; concurrent frames interleaving here lost each other's decay.
-        with self._state_lock:
-            decayed: dict[str, float] = {}
-            for key, value in self._eligibility_trace.items():
-                next_value = _safe_float(value, 0.0) * 0.82
-                if next_value >= 0.01:
-                    decayed[key] = next_value
-            self._eligibility_trace = decayed
-            self._eligibility_trace[f"attractor:{selected_attractor}"] = _clamp(
-                self._eligibility_trace.get(f"attractor:{selected_attractor}", 0.0)
-                + salience * 0.26
-                + novelty_pressure * 0.12
-            )
-            for token in keywords[:6]:
-                trace_key = f"keyword:{token}"
-                self._eligibility_trace[trace_key] = _clamp(
-                    self._eligibility_trace.get(trace_key, 0.0)
-                    + 0.05
-                    + memory_pressure * 0.05
-                )
-            trace_items = list(self._eligibility_trace.items())
+        """Build this frame's CANDIDATE trace. It reinforces nothing yet.
+
+        Every frame used to decay the shared trace and then reinforce its own
+        attractor and keywords from salience, novelty and memory pressure —
+        before any feedback, before any task succeeded. Invoking the engine
+        was therefore enough to strengthen the associations that made the
+        engine choose that way, which is a loop that closes on itself
+        (CP126 ``91ea5bfa``).
+
+        The eligibility a frame carries is now a PROPOSAL. It is what
+        ``learn_from_feedback`` will reinforce IF an observed outcome
+        arrives, and it changes the durable trace only there.
+        """
+        candidate: dict[str, float] = {
+            f"attractor:{selected_attractor}": _clamp(salience * 0.26 + novelty_pressure * 0.12)
+        }
+        for token in keywords[:6]:
+            candidate[f"keyword:{token}"] = _clamp(0.05 + memory_pressure * 0.05)
         return {
             key: round(value, 4)
-            for key, value in sorted(
-                trace_items,
-                key=lambda item: item[1],
-                reverse=True,
-            )[:12]
+            for key, value in sorted(candidate.items(), key=lambda item: item[1], reverse=True)[:12]
         }
+
+    def _decay_traces(self, subject: str) -> None:
+        """Age one subject's durable trace. Called when an outcome lands."""
+        with self._state_lock:
+            traces = self._eligibility_trace.get(subject)
+            if not traces:
+                return
+            self._eligibility_trace[subject] = {
+                key: value * 0.82
+                for key, value in traces.items()
+                if _safe_float(value, 0.0) * 0.82 >= 0.01
+            }
 
     def _working_memory_snapshot(self) -> dict[str, Any]:
         return {
@@ -1510,17 +1721,23 @@ class ImaginationEngine:
         novelty_pressure: float,
         tool_or_reality: bool,
     ) -> dict[str, str]:
+        # CP126 ``3369210a``: these are behavioural claims emitted from
+        # thresholds. No paired run, no intervention hook, no baseline, no
+        # metric, no stored result tests any of them. They are worth having —
+        # a hypothesis an ablation harness can pick up is better than none —
+        # so each is prefixed with what it is, and the frame records the
+        # basis as TEMPLATE so nothing downstream reads them as results.
         predictions: dict[str, str] = {
-            "no_imagination": "fewer alternatives and weaker counterfactual framing",
+            "no_imagination": "UNTESTED HYPOTHESIS: fewer alternatives and weaker counterfactual framing",
         }
         if memory_pressure >= 0.50:
-            predictions["no_memory_continuity"] = "recent context should anchor less of the response"
+            predictions["no_memory_continuity"] = "UNTESTED HYPOTHESIS: recent context should anchor less of the response"
         if verification_pressure >= 0.45:
-            predictions["no_governance_or_tools"] = "real-world claims should lose verification pressure"
+            predictions["no_governance_or_tools"] = "UNTESTED HYPOTHESIS: real-world claims should lose verification pressure"
         if novelty_pressure >= 0.35:
-            predictions["no_novelty_drive"] = "creative synthesis should collapse toward a safer default framing"
+            predictions["no_novelty_drive"] = "UNTESTED HYPOTHESIS: creative synthesis should collapse toward a safer default framing"
         if tool_or_reality:
-            predictions["no_authority_gateway"] = "external action must block rather than proceed directly"
+            predictions["no_authority_gateway"] = "UNTESTED HYPOTHESIS: external action must block rather than proceed directly"
         return predictions
 
     @staticmethod
@@ -1543,7 +1760,15 @@ class ImaginationEngine:
             "memory_priority": round(memory_pressure, 4),
             "verification_pressure": round(verification_pressure, 4),
             "metacognition_depth": round(metacognition_depth, 4),
+            # A regex matched the word "file" or "search". That is a REQUEST
+            # to consult governance, never a governance decision: Will,
+            # scoped authority, permissions, action risk and consent were
+            # none of them consulted, and no tool receipt exists (CP126
+            # ``b95c4d62``). The key stays because callers read it; what it
+            # means is now written down beside it.
             "tool_governance": bool(tool_or_reality or verification_pressure >= 0.45),
+            "tool_governance_basis": Basis.LEXICAL.value,
+            "tool_governance_is_a_decision": False,
             "external_effects_allowed": False,
             "working_memory_admission": admission,
             "working_memory_overload": round(overload, 4),

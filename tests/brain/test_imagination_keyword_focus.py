@@ -109,7 +109,9 @@ def test_extractor_respects_its_limit() -> None:
 
 def test_auxiliary_families_are_complete() -> None:
     """Half-populated families are what let the contractions through."""
-    from core.brain.imagination import _STOPWORDS
+    # The text helpers moved to core.brain.imagination_text; importing them
+    # from the engine broke six tests in this file the moment they did.
+    from core.brain.imagination_text import _STOPWORDS
 
     for word in ("has", "had", "did", "was", "were", "they", "her", "which"):
         assert word in _STOPWORDS, word
@@ -126,7 +128,7 @@ def test_deleting_and_demoting_are_mutually_exclusive() -> None:
     modal family. Nothing failed loudly; one unrelated contract test caught it
     by luck. This asserts the property directly.
     """
-    from core.brain.imagination import (
+    from core.brain.imagination_text import (
         _SCAFFOLD_ROLE_TOKENS,
         _STOPWORDS,
         _WEAK_TOPIC_TOKENS,
@@ -138,7 +140,7 @@ def test_deleting_and_demoting_are_mutually_exclusive() -> None:
 
 def test_modals_are_demoted_rather_than_deleted() -> None:
     """A modal can be the subject; it may lose, but it may not vanish."""
-    from core.brain.imagination import _WEAK_TOPIC_TOKENS
+    from core.brain.imagination_text import _WEAK_TOPIC_TOKENS
 
     for word in ("should", "shall", "will", "may", "might", "must", "let"):
         assert word in _WEAK_TOPIC_TOKENS, word
@@ -170,7 +172,7 @@ def test_irregular_contractions_resolve_to_their_real_word(
     contraction: str, stem: str
 ) -> None:
     """Truncation gets "wo", "ca" and "sha" — none of them words."""
-    from core.brain.imagination import _contraction_stem
+    from core.brain.imagination_text import _contraction_stem
 
     assert _contraction_stem(contraction) == stem
 

@@ -76,8 +76,29 @@ def test_imagination_engine_models_visual_counterfactual_and_connections():
     assert frame.causal_effects["working_memory_admission"] == frame.working_memory["admission"]
 
 
-def test_imagination_engine_load_gate_compresses_background_under_pressure():
-    engine = ImaginationEngine()
+def test_imagination_engine_load_gate_compresses_background_under_pressure(monkeypatch):
+    """The gate sheds load on a READING, and says which one it used.
+
+    This used to pass a memory level in the caller's context and assert
+    that admission changed. That was the finding, not the contract: any
+    caller could supply a level, a percentage and a reason with no
+    provenance and no range check, and the recognised strings went straight
+    into admission, compression and load shedding (CP126 ``7975bf24``).
+
+    The monitor is consulted first now. A caller hint is used only when the
+    monitor does not answer, and the gate records which of the two it was.
+    """
+    import core.brain.imagination as imagination_module
+
+    class _NoMonitor:
+        @staticmethod
+        def get_memory_pressure_snapshot():
+            raise RuntimeError("no monitor on this host")
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "core.utils.memory_monitor", _NoMonitor
+    )
+    engine = imagination_module.ImaginationEngine()
 
     frame = engine.imagine(
         "Invent a new mental model for desktop tool use and imagine what it looks like.",
@@ -93,12 +114,51 @@ def test_imagination_engine_load_gate_compresses_background_under_pressure():
         },
     )
 
+    assert frame.working_memory["runtime_memory_basis"] == "caller_asserted"
     assert frame.working_memory["admission"] == "defer_background"
     assert frame.working_memory["admitted"] is False
     assert frame.routing_bias["compress_imagination"] is True
     assert frame.sampling_bias["max_tokens_factor"] <= 0.70
     assert frame.causal_effects["load_shed_requested"] is True
     assert "runtime_load_shed" in frame.causal_effects["expected_downstream"]
+    assert frame.governance["no_external_effects"] is True
+
+
+def test_a_caller_cannot_claim_pressure_the_monitor_does_not_see(monkeypatch):
+    """The other half: a hint loses to a reading."""
+    import core.brain.imagination as imagination_module
+
+    class _CalmMonitor:
+        @staticmethod
+        def get_memory_pressure_snapshot():
+            return type(
+                "Snapshot", (), {"level": "normal", "pressure_pct": 12.0, "reason": "calm"}
+            )()
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "core.utils.memory_monitor", _CalmMonitor
+    )
+    engine = imagination_module.ImaginationEngine()
+    frame = engine.imagine(
+        "Invent a new mental model for desktop tool use.",
+        state=AuraState.default(),
+        origin="background",
+        is_background=True,
+        context={"memory_pressure": {"level": "emergency", "pressure_pct": 99.0}},
+    )
+
+    assert frame.working_memory["runtime_memory_basis"] == "measured"
+    assert frame.working_memory["runtime_memory_level"] == "normal", (
+        "a caller's claim overrode the host reading"
+    )
+
+
+def test_the_queue_metrics_say_they_are_not_a_queue():
+    """CP126 ``f58115e3``: no queued item, no worker, no measured wait."""
+    engine = ImaginationEngine()
+    frame = engine.imagine("think about something", state=AuraState.default())
+    assert frame.working_memory["measures_a_real_queue"] is False
+    assert frame.working_memory["model"] == "synthetic_load_model"
     assert frame.governance["no_external_effects"] is True
 
 
@@ -111,18 +171,37 @@ def test_imagination_feedback_updates_future_attractor_bias():
     )
     selected = frame.attractor_state["selected"]
 
+    # A caller's word is recorded and changes nothing (CP126 04a745b8): the
+    # reward that reshapes selection has to rest on an observed outcome.
+    asserted = engine.learn_from_feedback(
+        frame,
+        reward=1.0,
+        outcome="assistant_response",
+        subject="bryan",
+    )
+    assert asserted is not None
+    assert asserted["applied"] is False
+    assert asserted["updated_bias"] == pytest.approx(0.0)
+
     feedback = engine.learn_from_feedback(
         frame,
         reward=1.0,
         outcome="assistant_response",
+        subject="bryan",
+        evidence_basis="measured",
+        evidence_id="turn-receipt-1",
     )
-    snapshot = engine.snapshot()
+    snapshot = engine.snapshot(subject="bryan")
 
     assert feedback is not None
+    assert feedback["applied"] is True
     assert feedback["selected_attractor"] == selected
     assert feedback["updated_bias"] > 0.0
     assert snapshot["attractor_bias"][selected] == pytest.approx(feedback["updated_bias"])
     assert snapshot["recent_outcomes"][-1]["outcome"] == "assistant_response"
+
+    # And it is that subject's bias, not everyone's (CP126 f1ef7cfb).
+    assert engine.snapshot(subject="someone else")["attractor_bias"] == {}
 
 
 def test_cognitive_engine_records_imagination_workspace_as_state_and_context():
