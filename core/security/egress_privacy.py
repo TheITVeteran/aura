@@ -323,6 +323,7 @@ def filter_outbound_body(
     url: str,
     body: bytes | None,
     source: str,
+    publish_evidence: bool = True,
 ) -> EgressFilterResult:
     """Read an outbound body and return what may actually be sent.
 
@@ -349,7 +350,10 @@ def filter_outbound_body(
         text = body.decode("utf-8")
     except _DECODE_ERRORS:
         return _uninspectable(
-            tier, body, "body is not UTF-8 text and cannot be read before sending"
+            tier,
+            body,
+            "body is not UTF-8 text and cannot be read before sending",
+            publish_evidence=publish_evidence,
         )
 
     patterns = _patterns_for(tier)
@@ -378,7 +382,12 @@ def filter_outbound_body(
             action="refused or passed the body per tier after redaction failed",
             enforce_failure_policy=False,
         )
-        return _uninspectable(tier, body, f"redaction failed: {exc}")
+        return _uninspectable(
+            tier,
+            body,
+            f"redaction failed: {exc}",
+            publish_evidence=publish_evidence,
+        )
 
     if not changes:
         # Byte-identical when nothing was found. Re-serializing a clean body
@@ -392,14 +401,15 @@ def filter_outbound_body(
             reason="nothing sensitive found",
         )
 
-    _count_redaction()
-    logger.info(
-        "Egress privacy: stripped %d string(s) [%s] from a %s body to %s",
-        changes,
-        ",".join(sorted(kinds)) or "unclassified",
-        tier,
-        urllib.parse.urlsplit(str(url or "")).hostname or "unknown-host",
-    )
+    if publish_evidence:
+        _count_redaction()
+        logger.info(
+            "Egress privacy: stripped %d string(s) [%s] from a %s body to %s",
+            changes,
+            ",".join(sorted(kinds)) or "unclassified",
+            tier,
+            urllib.parse.urlsplit(str(url or "")).hostname or "unknown-host",
+        )
     return EgressFilterResult(
         allowed=True,
         body=new_body,
@@ -503,11 +513,18 @@ def _kinds_in(
     return kinds
 
 
-def _uninspectable(tier: str, body: bytes | None, reason: str) -> EgressFilterResult:
+def _uninspectable(
+    tier: str,
+    body: bytes | None,
+    reason: str,
+    *,
+    publish_evidence: bool = True,
+) -> EgressFilterResult:
     """A body we could not read. Model providers do not get it."""
     if tier == Tier.FULL:
-        _count_refusal()
-        logger.warning("Egress privacy: refused an uninspectable body — %s", reason)
+        if publish_evidence:
+            _count_refusal()
+            logger.warning("Egress privacy: refused an uninspectable body — %s", reason)
         return EgressFilterResult(
             allowed=False,
             body=None,

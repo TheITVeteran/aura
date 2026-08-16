@@ -41,6 +41,7 @@ from core.runtime.lockdep import checked_lock
 logger = logging.getLogger("Aura.Cognition.EvidenceRelevance")
 
 __all__ = [
+    "PHYSICAL_PERCEPTION",
     "SCREEN_PERCEPTION",
     "OWN_SOURCE",
     "SOURCE_PROVENANCE",
@@ -49,6 +50,12 @@ __all__ = [
     "wants_evidence",
     "semantic_routing_available",
 ]
+
+#: Questions whose answer depends on sensing the person's present physical
+#: surroundings. This is deliberately separate from screen perception: pixels
+#: from a desktop cannot establish who is in the room, what somebody is
+#: holding, or what is in front of the camera.
+PHYSICAL_PERCEPTION = "physical_perception"
 
 #: Questions about what is on the person's screen, in several unrelated
 #: phrasings. These describe the CONCEPT; the match is by meaning.
@@ -81,6 +88,15 @@ SOURCE_PROVENANCE = "source_provenance"
 OTHER_SOURCE = "third_party_source"
 
 _ANCHORS: dict[str, tuple[str, ...]] = {
+    PHYSICAL_PERCEPTION: (
+        "look at the physical surroundings right now and report what is there",
+        "use a present sensor reading to determine whether another person is nearby",
+        "tell who or what is currently in the room with the person",
+        "inspect what the person is holding or showing in front of the camera",
+        "determine from current physical perception what is happening around us",
+        "which of your senses can actually establish what is present here now",
+        "take a fresh look rather than answer from memory or general knowledge",
+    ),
     SCREEN_PERCEPTION: (
         "what is currently displayed on the computer screen",
         "describe the windows and applications that are open right now",
@@ -152,11 +168,35 @@ _BASELINE_ANCHORS: tuple[str, ...] = (
     "describe what you are able to do for me",
 )
 
+# Near-neighbour contrasts belong to one concept, not the global baseline. A
+# physical-perception contrast such as "how cameras work" must not make a
+# source-code paraphrase harder to route. Conversely, generic visual language
+# must not activate a present sensor merely because it is close to "look".
+_CONTRAST_ANCHORS: dict[str, tuple[str, ...]] = {
+    PHYSICAL_PERCEPTION: (
+        "answer a general question about the visible world from knowledge",
+        "discuss camera or microphone hardware without using it now",
+        "describe what kinds of sensors a robot could use in general",
+        "explain a visual metaphor rather than inspect the surroundings",
+    ),
+}
+
 #: How much closer to the concept than to ordinary talk a request must be.
 #: Calibrated against the live 2026-08-04 transcript: every phrasing Bryan
 #: actually used, plus the unrelated turns from the same conversation that
 #: must NOT pull evidence in.
 _MARGIN = 0.12
+
+# Calibrated per evidence family. Short source/provenance follow-ups naturally
+# contain little semantic material ("where can it be found?") and need a lower
+# absolute margin than a privacy-sensitive decision to activate a camera.
+_KIND_MARGINS: dict[str, float] = {
+    PHYSICAL_PERCEPTION: 0.12,
+    SCREEN_PERCEPTION: 0.04,
+    OWN_SOURCE: 0.02,
+    SOURCE_PROVENANCE: 0.04,
+    OTHER_SOURCE: 0.04,
+}
 
 #: How far behind the best-matching concept a kind may fall and still be
 #: considered part of what was asked.
@@ -298,7 +338,8 @@ def relevance(request: Any, kind: str) -> float:
     if vector is None:
         return 0.0
     concept = _anchor_vectors(kind, _ANCHORS[kind])
-    baseline = _anchor_vectors("__baseline__", _BASELINE_ANCHORS)
+    baseline_sentences = _BASELINE_ANCHORS + _CONTRAST_ANCHORS.get(kind, ())
+    baseline = _anchor_vectors(f"__baseline__:{kind}", baseline_sentences)
     if not concept or not baseline:
         return 0.0
     best_concept = max(_cosine(vector, anchor) for anchor in concept)
@@ -334,7 +375,12 @@ def wants_evidence(
     if not semantic_routing_available():
         return False
     score = relevance(text, kind)
-    if score < margin:
+    required_margin = (
+        _KIND_MARGINS.get(kind, margin)
+        if margin == _MARGIN
+        else margin
+    )
+    if score < required_margin:
         return False
     # Competitive, not independent. "What's on my screen?" scores +0.59
     # against perception and +0.09 against her source — both above an

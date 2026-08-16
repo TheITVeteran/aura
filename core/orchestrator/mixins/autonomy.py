@@ -11,7 +11,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from core.health.degraded_events import record_degraded_event
-from core.runtime.background_policy import background_activity_reason
+from core.runtime.background_policy import THOUGHT_BACKGROUND_POLICY, background_activity_reason
 from core.runtime.errors import record_degradation
 from core.runtime.impulse_governance import run_governed_impulse
 from core.runtime.safe_mode import runtime_mode_value
@@ -830,6 +830,24 @@ class AutonomyMixin:
                     "pursue_goal", desc
                 )
                 if not allowed:
+                    return
+                # The policy was checked when AgencyCore began its pulse, but
+                # model admission can change before the selected action is
+                # dispatched. Recheck at the side-effect boundary so a new
+                # foreground quiet window leaves the durable goal pending
+                # instead of claiming it, obtaining an empty planner reply,
+                # and recording that planned deferral as a failed attempt.
+                dispatch_defer_reason = background_activity_reason(
+                    self,
+                    profile=THOUGHT_BACKGROUND_POLICY,
+                    require_conversation_ready=True,
+                )
+                if dispatch_defer_reason:
+                    logger.info(
+                        "Agency goal dispatch deferred before claim for '%s' (%s).",
+                        desc[:80],
+                        dispatch_defer_reason,
+                    )
                     return
                 execution_id = f"agency-goal-{uuid.uuid4().hex}"
                 claimer = getattr(agency, "claim_goal_for_execution", None)

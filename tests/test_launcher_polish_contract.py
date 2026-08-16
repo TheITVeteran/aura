@@ -688,6 +688,9 @@ def test_packaged_launcher_reopens_primary_desktop_without_resurrecting_monitor(
     assert "target.makeKeyAndOrderFront" in primary_body
     assert "frontPrimaryWindow()" in reopen_body
     assert "window.makeKeyAndOrderFront" not in reopen_body
+    assert "showPrimaryWindowNotification" in swift
+    assert "handleShowPrimaryWindowNotification" in swift
+    assert "DistributedNotificationCenter.default().postNotificationName" in swift
 
 
 def test_packaged_launcher_readiness_is_single_window_handoff():

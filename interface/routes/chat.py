@@ -9720,7 +9720,7 @@ def _build_cognitive_engine_reply_repair_directive(
         )
     )
     completion_clause = (
-        "- Produce the entire answer from its beginning through a natural ending; cover every requested part and do not stop after setup or an unfinished list item.\n"
+        "- Continue the valid partial answer from its exact cutoff; return only the missing continuation, cover every remaining requested part, and end naturally.\n"
         if completion_only
         else ""
     )
@@ -9743,6 +9743,49 @@ def _build_cognitive_engine_reply_repair_directive(
         f"Original user request:\n{str(original_user_message or '').strip()}"
         f"{rejected_draft_block}"
     ).strip()
+
+
+def _merge_reply_continuation(partial: object, continuation: object) -> str:
+    """Join a same-model continuation without repeating its overlap.
+
+    The continuation model may resume at the exact next token, repeat a short
+    suffix for coherence, or ignore the contract and regenerate the complete
+    answer. All three are valid model outputs; this deterministic merge only
+    removes byte-identical overlap and never invents prose.
+    """
+    head = str(partial or "").rstrip()
+    tail = str(continuation or "").lstrip()
+    if not head:
+        return tail
+    if not tail:
+        return head
+    if tail.startswith(head):
+        return tail
+
+    common_prefix = 0
+    for left, right in zip(head, tail, strict=False):
+        if left != right:
+            break
+        common_prefix += 1
+    if common_prefix >= 24:
+        # The model regenerated from the beginning despite the continuation
+        # contract. Prefer that complete authored answer to concatenating two
+        # copies of its opening.
+        return tail
+
+    max_overlap = min(len(head), len(tail), 1200)
+    overlap = 0
+    for size in range(max_overlap, 2, -1):
+        if head[-size:] == tail[:size]:
+            overlap = size
+            break
+    if overlap:
+        return head + tail[overlap:]
+
+    separator = ""
+    if not head[-1].isspace() and not tail[0].isspace():
+        separator = "" if tail[0] in ".,;:!?)]}" else " "
+    return f"{head}{separator}{tail}"
 
 
 def _desktop_cognitive_failure_repair_target(reason: str) -> str:
@@ -11187,14 +11230,9 @@ async def _run_cognitive_engine_chat_turn(
             }
         )
         if completion_only_retry:
-            # A completion replacement is a fresh answer to the ORIGINAL
-            # request, not a second cognitive turn about a repair directive.
-            # Re-entering the full pipeline here made an ordinary explanation
-            # pay the latent selector, phase ecology and a second 32B prefill;
-            # worse, the model then answered the repair prose rather than the
-            # person.  Keep CognitiveEngine as the owner, but use its bounded
-            # desktop lane and the same visible objective/system-prefix shape
-            # as the first answer so the resident KV cache remains reusable.
+            # Continue the valid draft instead of recomputing it under a shorter
+            # deadline. The resident model receives the original request and its
+            # own partial assistant turn, then supplies only what is missing.
             retry_context.update(
                 {
                     "desktop_quick_reply_contract": True,
@@ -11203,11 +11241,10 @@ async def _run_cognitive_engine_chat_turn(
                     "allow_deep_handoff": False,
                     "skip_runtime_payload": True,
                     "visible_user_message": visible,
+                    "user_surface_continuation_contract": True,
+                    "user_surface_continuation_partial": str(rejected_reply or "")[:6000],
                 }
             )
-            # A clipped draft is evidence for the gate, not useful context for
-            # regeneration. Supplying it anchors the model on the same cutoff.
-            retry_context.pop("failed_reply_excerpt", None)
 
         async def repair_engine_think_operation():
             from core.runtime.principal_context import relational_principal_scope
@@ -11265,6 +11302,8 @@ async def _run_cognitive_engine_chat_turn(
         if not isinstance(retry_metadata, dict) and isinstance(repair_thought, dict):
             retry_metadata = repair_thought.get("metadata")
         retry_metadata = retry_metadata if isinstance(retry_metadata, dict) else {}
+        if completion_only_retry:
+            retry_text = _merge_reply_continuation(rejected_reply, retry_text)
         if bool(retry_metadata.get("desktop_cognitive_engine_failure")) or is_cognitive_engine_failure_envelope(retry_text):
             logger.warning(
                 "CognitiveEngine desktop chat repair retry produced a failure envelope; "
@@ -21707,10 +21746,7 @@ def _self_health_answer_or_empty(message: object) -> str:
     """
 
     try:
-        from core.introspection.self_evidence import (
-            self_health_answer,
-            shared_present_answer,
-        )
+        from core.introspection.self_evidence import self_health_answer
 
         answer = str(self_health_answer(message) or "").strip()
         if answer:
@@ -21723,11 +21759,11 @@ def _self_health_answer_or_empty(message: object) -> str:
         recorded = str(past_actions_answer(message) or "").strip()
         if recorded:
             return recorded
-        # "What am I doing right now, and am I alone?" is the same demand aimed
-        # at the senses instead of the telemetry: it must be answered from
-        # readings, and a sense that has never sampled must say so rather than
-        # let a guess stand in.
-        return str(shared_present_answer(message) or "").strip()
+        # Present-world questions are active perception requests. They must go
+        # through the sight/audio preflight that can actually sample now; a
+        # failed generation must never replace the user's question with a fixed
+        # inventory of idle sensors.
+        return ""
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         return ""
@@ -29427,7 +29463,13 @@ async def _run_chat_preflight(
                 if _sight.kind == "look":
                     from core.senses.sight import look as _look
 
-                    _seen = await _look(_sight.question)
+                    # Asking what is physically present is consent for this one
+                    # capture. It does not enable ambient vision or alter the
+                    # persisted privacy setting.
+                    _seen = await _look(
+                        _sight.question,
+                        explicit_user_consent=True,
+                    )
                     if _seen.ok:
                         body.message = (
                             "[you just looked through the camera. This is what "

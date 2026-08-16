@@ -3856,6 +3856,15 @@ class CognitiveEngine:
         completion_retry_contract = bool(
             context.get("user_surface_completion_retry", False)
         )
+        continuation_partial = self._contract_safe(
+            context.get("user_surface_continuation_partial"),
+            6000,
+        )
+        continuation_contract = bool(
+            completion_retry_contract
+            and context.get("user_surface_continuation_contract", False)
+            and continuation_partial
+        )
         prompt_shape = context.get("prompt_shape")
         if not isinstance(prompt_shape, dict):
             prompt_shape = {}
@@ -4315,6 +4324,17 @@ class CognitiveEngine:
 
         if style_contract and not capability_inventory_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
+        if continuation_contract:
+            system_prompt = (
+                f"{system_prompt}\n"
+                "[USER-SURFACE CONTINUATION CONTRACT]\n"
+                "The assistant text immediately before the final continuation request is "
+                "your own valid partial answer to the current user turn. Continue from its "
+                "exact cutoff. Supply only the missing continuation, do not restart, summarize, "
+                "apologize, mention a retry, or repeat completed material. Finish every requested "
+                "part and end naturally.\n"
+                "[END USER-SURFACE CONTINUATION CONTRACT]"
+            )
         persona_contract = str(context.get("persona_system_prompt") or "").strip()
         if persona_contract:
             # CP126 ab3abbae: persona conditioning arrives as a structured
@@ -4562,6 +4582,16 @@ class CognitiveEngine:
                 )
                 messages.extend(history_messages)
             messages.append({"role": "user", "content": user_prompt})
+            validation_prompt = visible_user_message or objective
+            if continuation_contract:
+                messages.append(
+                    {"role": "assistant", "content": continuation_partial}
+                )
+                validation_prompt = (
+                    "Continue the immediately preceding assistant answer from its exact cutoff. "
+                    "Return only the missing continuation and finish the answer naturally."
+                )
+                messages.append({"role": "user", "content": validation_prompt})
             router_kwargs = {
                 "messages": messages,
                 "origin": f"desktop_quick_{origin}",
@@ -4586,7 +4616,7 @@ class CognitiveEngine:
                 "self_condition_contract": self_condition_contract,
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
-                "user_surface_validation_prompt": visible_user_message or objective,
+                "user_surface_validation_prompt": validation_prompt,
                 # Wrapped so a paired trial can run this exact code with the
                 # contribution removed, rather than reconstructing what that
                 # would have looked like. Outside a trial this is one dict
@@ -4663,6 +4693,16 @@ class CognitiveEngine:
                 ),
                 "timeout": request_timeout,
             }
+            if continuation_contract:
+                # The first pass already paid for the body of the answer. The
+                # continuation needs enough room to finish, not another 1,536-
+                # token reservation that cannot fit the bounded repair deadline.
+                continuation_tokens = max(256, min(max_tokens, 768))
+                router_kwargs["max_tokens"] = continuation_tokens
+                router_kwargs["num_predict"] = continuation_tokens
+                router_kwargs["user_surface_completion_floor"] = continuation_tokens
+                router_kwargs["reply_needs_room"] = True
+                router_kwargs["user_surface_continuation_contract"] = True
             # The lesion for this channel is omission, not substitution: a
             # neutral temperature is still a temperature somebody chose, and
             # measuring against one would compare two mind-derived settings

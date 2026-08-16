@@ -270,6 +270,19 @@ class TestFailClosed:
         assert result.body is None
         assert egress_privacy.egress_privacy_counters()["bodies_refused"] == 1
 
+    def test_deliberate_probe_can_refuse_without_publishing_an_incident(self, caplog):
+        result = filter_outbound_body(
+            url=GEMINI,
+            body=b"\xff\xfe\x00\x01binary",
+            source=MODEL_SOURCE,
+            publish_evidence=False,
+        )
+
+        assert result.allowed is False
+        assert result.inspected is False
+        assert egress_privacy.egress_privacy_counters()["bodies_refused"] == 0
+        assert "refused an uninspectable body" not in caplog.text
+
     def test_an_unreadable_body_to_a_tool_passes_and_says_it_was_not_read(self):
         # Refusing every binary upload would break working capability to
         # protect nothing this filter can see. The receipt carries the truth.

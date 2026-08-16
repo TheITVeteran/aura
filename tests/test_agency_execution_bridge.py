@@ -77,6 +77,10 @@ def approve_agency(monkeypatch):
             approve_initiative=_AsyncRecorder((True, "approved_by_test", None))
         ),
     )
+    monkeypatch.setattr(
+        "core.orchestrator.mixins.autonomy.background_activity_reason",
+        lambda *_args, **_kwargs: "",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -200,6 +204,27 @@ async def test_denied_initiative_never_claims_or_executes_goal(approve_agency, m
     assert harness._agency_core.settle_goal_execution.calls == []
     assert harness.scheduled == []
     assert harness.execute_tool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_goal_is_not_claimed_when_dispatch_policy_changes_after_selection(
+    approve_agency,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "core.orchestrator.mixins.autonomy.background_activity_reason",
+        lambda *_args, **_kwargs: "foreground_quiet_window",
+    )
+    goal = {"id": "goal-deferred", "text": "Inspect embodied interfaces"}
+    harness = _AgencyHarness(
+        {"type": "pursue_goal", "goal": goal, "source": "goal_persistence"}
+    )
+
+    await harness._pulse_agency_core()
+
+    assert harness._agency_core.claim_goal_for_execution.calls == []
+    assert harness._agency_core.settle_goal_execution.calls == []
+    assert harness.scheduled == []
 
 
 @pytest.mark.asyncio

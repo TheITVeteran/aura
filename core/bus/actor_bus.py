@@ -430,6 +430,12 @@ class ActorBus:
             )
         self._transports.clear()
         self._last_health_check.clear()
+        cleaned_segments = LocalPipeBus.cleanup_owned_shared_memory()
+        if cleaned_segments:
+            logger.info(
+                "ActorBus shutdown released %d retained outbound shared-memory segment(s).",
+                cleaned_segments,
+            )
         LocalPipeBus.shutdown_executor()
 
     @classmethod

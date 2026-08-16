@@ -183,6 +183,9 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "canonical_memory_state_evidence": Field_(Kind.OPAQUE),
     "response_style_contract": Field_(Kind.OPAQUE),
     "live_speech_grounding_frame": Field_(Kind.OPAQUE),
+    "user_surface_completion_retry": Field_(Kind.BOOL),
+    "user_surface_continuation_contract": Field_(Kind.BOOL),
+    "user_surface_continuation_partial": Field_(Kind.STRING),
     # ── live-mind readiness claims (authority-relevant) ─────────────────
     "live_mind_controls_bound": Field_(Kind.BOOL, policy=True),
     "live_mind_generation_controls": Field_(Kind.OPAQUE),

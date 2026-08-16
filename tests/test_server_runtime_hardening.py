@@ -1757,6 +1757,27 @@ async def test_local_pipe_bus_retains_offloaded_shm_until_cleanup(monkeypatch):
     assert closed == [prepared["__shm__"]]
 
 
+def test_local_pipe_bus_process_barrier_releases_all_retained_segments():
+    closed = []
+
+    class _FakeShm:
+        name = "shm_msg_process_barrier"
+
+        def close(self):
+            closed.append(self.name)
+
+    bus = LocalPipeBus(start_reader=False)
+    bus._outbound_shm_segments[_FakeShm.name] = (_FakeShm(), float("inf"))
+
+    try:
+        assert LocalPipeBus.cleanup_owned_shared_memory() >= 1
+        assert closed == [_FakeShm.name]
+        assert bus._outbound_shm_segments == {}
+    finally:
+        bus.read_conn.close()
+        bus.write_conn.close()
+
+
 def test_local_pipe_bus_start_requires_running_event_loop():
     bus = LocalPipeBus(start_reader=False)
     try:

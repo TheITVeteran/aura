@@ -494,9 +494,12 @@ async function captureFrameForAura(request) {
     const requestId = request && request.request_id;
     if (!requestId) return;
 
-    // No camera permission from the user means no frame. The server's
-    // deadline expires and she says she could not look, which is true.
-    if (!state.cameraSignalWanted) return;
+    // A direct request to look grants one correlated capture without enabling
+    // ambient sensing or changing the saved camera switch. The server validates
+    // the request id against its pending one-shot lease before accepting the
+    // frame, so this client flag is not the authority boundary.
+    const oneShotAuthorized = !!request.one_shot_authorized;
+    if (!state.cameraSignalWanted && !oneShotAuthorized) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
 
     const width = Number(request.width) || 1280;

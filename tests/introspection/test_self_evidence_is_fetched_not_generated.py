@@ -531,6 +531,7 @@ def test_the_refusal_helper_covers_recall_as_well_as_health() -> None:
 
     assert "past_actions_answer" in source
     assert "self_health_answer" in source
+    assert "shared_present_answer" not in source
 
 
 def test_recall_ranks_by_what_the_step_observed_not_by_recency_alone() -> None:

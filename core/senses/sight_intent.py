@@ -145,6 +145,29 @@ def classify(message: str) -> SightIntent:
             "look", question=text, reason="asked to look at something present"
         )
 
+    # Language is not a finite trigger list. Requests such as "which of your
+    # senses can actually tell whether anyone else is physically here?" do not
+    # need a visual verb or one of the deictics above, but their answer still
+    # depends on a fresh physical observation. Route the meaning through the
+    # same local semantic evidence engine used for screen and source questions.
+    # The lexical rules remain a cheap, privacy-conservative floor when the
+    # embedding model is unavailable; semantic routing may add a request but
+    # never turns an explicit camera-off or about-camera statement into one.
+    try:
+        from core.cognition.evidence_relevance import (
+            PHYSICAL_PERCEPTION,
+            wants_evidence,
+        )
+
+        if wants_evidence(text, PHYSICAL_PERCEPTION):
+            return SightIntent(
+                "look",
+                question=text,
+                reason="the question semantically requires present physical perception",
+            )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
     return SightIntent("none")
 
 

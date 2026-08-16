@@ -2882,6 +2882,7 @@ def _egress_privacy_contract_holds() -> bool:
         url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
         body=f'{{"contents":"key {secret}"}}'.encode(),
         source="llm_provider:gemini:probe",
+        publish_evidence=False,
     )
     # The same secret one character to the left of the colon. The walk used to
     # read values only, so this exact body left the machine intact while the
@@ -2890,16 +2891,19 @@ def _egress_privacy_contract_holds() -> bool:
         url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
         body=f'{{"{secret}":"quota"}}'.encode(),
         source="llm_provider:gemini:probe",
+        publish_evidence=False,
     )
     unreadable = filter_outbound_body(
         url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
         body=b"\xff\xfe\x00binary",
         source="llm_provider:gemini:probe",
+        publish_evidence=False,
     )
     local = filter_outbound_body(
         url="http://127.0.0.1:8000/v1",
         body=f'{{"contents":"key {secret}"}}'.encode(),
         source="llm_provider:mlx",
+        publish_evidence=False,
     )
     return bool(
         stripped.allowed

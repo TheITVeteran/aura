@@ -88,6 +88,22 @@ def test_a_deictic_is_what_separates_looking_from_remembering() -> None:
     assert classify("what colour is a fire engine").kind == "none"
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Which of your senses can actually tell what is around you right now?",
+        "Can you determine whether anyone else is physically here with me?",
+        "Do you have a current reading of who is nearby?",
+        "Establish from your present surroundings whether I am alone.",
+    ],
+)
+def test_physical_perception_follows_meaning_across_paraphrases(message: str) -> None:
+    """Novel wording must not make an available sense disappear."""
+    intent = classify(message)
+    assert intent.kind == "look", (message, intent.reason)
+    assert intent.question == message
+
+
 # ── operating the camera ─────────────────────────────────────────────────
 
 
@@ -231,6 +247,81 @@ def test_a_camera_that_is_off_is_reported_as_the_users_choice(monkeypatch) -> No
         assert canned.lower() not in block.lower()
 
 
+def test_direct_look_is_a_scoped_one_shot_even_when_ambient_camera_is_off(monkeypatch) -> None:
+    """The question authorizes one frame, not a persistent privacy mutation."""
+    from core.senses import sight as sight_module
+
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(sight_module, "sight_dependency_gap", lambda: "")
+    monkeypatch.setattr(sight_module, "camera_enabled", lambda: False)
+
+    async def request_frame(*, timeout_s: float, explicit_user_consent: bool):
+        observed.update(timeout_s=timeout_s, consent=explicit_user_consent)
+        return None
+
+    monkeypatch.setattr(
+        sight_module.get_capture_broker(),
+        "request_frame",
+        request_frame,
+    )
+
+    result = asyncio.run(
+        sight_module.look(
+            "Can you determine whether anyone else is here?",
+            timeout_s=0.5,
+            explicit_user_consent=True,
+        )
+    )
+
+    assert result.cause == "no_frame"
+    assert observed == {"timeout_s": 0.5, "consent": True}
+
+
+@pytest.mark.asyncio
+async def test_capture_api_accepts_only_a_live_correlated_one_shot_lease(monkeypatch) -> None:
+    import base64
+
+    from fastapi import HTTPException
+    from interface.routes import interaction_signals as routes
+
+    class Broker:
+        def __init__(self, authorized: bool):
+            self.authorized = authorized
+            self.delivered = False
+
+        async def one_shot_authorized(self, request_id: str) -> bool:
+            return self.authorized and request_id == "pending-request"
+
+        async def deliver(self, request_id: str, frame: Frame) -> bool:
+            self.delivered = request_id == "pending-request" and bool(frame.data)
+            return self.delivered
+
+    payload = routes.CameraCapturePayload(
+        request_id="pending-request",
+        frame_data_url=(
+            "data:image/jpeg;base64," + base64.b64encode(b"jpeg").decode("ascii")
+        ),
+        width=1280,
+        height=720,
+    )
+    monkeypatch.setattr(routes, "_camera_signal_allowed", lambda: False)
+
+    from core.senses import sight as sight_module
+
+    denied = Broker(False)
+    monkeypatch.setattr(sight_module, "get_capture_broker", lambda: denied)
+    with pytest.raises(HTTPException) as exc:
+        await routes.api_camera_capture(payload, None)
+    assert exc.value.status_code == 409
+    assert denied.delivered is False
+
+    allowed = Broker(True)
+    monkeypatch.setattr(sight_module, "get_capture_broker", lambda: allowed)
+    response = await routes.api_camera_capture(payload, None)
+    assert response.status_code == 200
+    assert allowed.delivered is True
+
+
 def test_no_frame_in_time_is_reported_with_the_real_reason(monkeypatch) -> None:
     monkeypatch.setattr("core.senses.sight.sight_dependency_gap", lambda: "")
     monkeypatch.setattr("core.senses.sight.camera_enabled", lambda: True)
@@ -334,7 +425,8 @@ def test_the_client_will_not_capture_without_the_users_camera_switch() -> None:
     ).read_text(encoding="utf-8")
     capture = client[client.index("async function captureFrameForAura") :]
     capture = capture[: capture.index("\nfunction captureCameraSignalFrame")]
-    assert "if (!state.cameraSignalWanted) return;" in capture
+    assert "if (!state.cameraSignalWanted && !oneShotAuthorized) return;" in capture
+    assert "request.one_shot_authorized" in capture
     # A stream this function opened is torn down; the presence lane's is not.
     assert "if (ownStream) ownStream.getTracks()" in capture
 

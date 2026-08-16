@@ -6,10 +6,10 @@ import multiprocessing.connection
 import os
 import time
 import uuid
-from dataclasses import dataclass
 import weakref
 from collections.abc import Awaitable, Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any
 
 from core.bus.shared_mem_bus import SharedMemoryTransport
@@ -86,6 +86,15 @@ class LocalPipeBus:
     def shutdown_executor(cls) -> None:
         for bus in list(cls._LIVE_BUSES):
             bus._shutdown_executor()
+
+    @classmethod
+    def cleanup_owned_shared_memory(cls) -> int:
+        """Release every retained outbound segment at the process barrier."""
+        cleaned = 0
+        for bus in list(cls._LIVE_BUSES):
+            cleaned += len(bus._outbound_shm_segments)
+            bus._cleanup_expired_shm_segments(force=True)
+        return cleaned
 
     def __init__(self, is_child: bool = False, 
                  read_conn: multiprocessing.connection.Connection | None = None,

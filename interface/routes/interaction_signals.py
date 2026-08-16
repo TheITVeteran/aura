@@ -128,10 +128,12 @@ async def api_camera_capture(
     right now. This is the reply to a specific request, correlated by id, and
     the turn holding that id is blocked on it.
     """
-    if not _camera_signal_allowed():
-        raise HTTPException(status_code=409, detail="Camera privacy is disabled")
-
     from core.senses.sight import decode_frame, get_capture_broker
+
+    broker = get_capture_broker()
+    one_shot_authorized = await broker.one_shot_authorized(payload.request_id)
+    if not _camera_signal_allowed() and not one_shot_authorized:
+        raise HTTPException(status_code=409, detail="Camera privacy is disabled")
 
     frame = decode_frame(payload.frame_data_url)
     if frame is None:
@@ -139,7 +141,7 @@ async def api_camera_capture(
     frame.width = int(payload.width or 0)
     frame.height = int(payload.height or 0)
 
-    delivered = await get_capture_broker().deliver(payload.request_id, frame)
+    delivered = await broker.deliver(payload.request_id, frame)
     # A late frame is not an error worth raising — the turn that wanted it has
     # already given up and said so — but the client is told it was too late so
     # it can stop retrying.

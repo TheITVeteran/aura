@@ -16,6 +16,7 @@ import pytest
 
 from core.cognition.evidence_relevance import (
     OWN_SOURCE,
+    PHYSICAL_PERCEPTION,
     SCREEN_PERCEPTION,
     relevance,
     semantic_routing_available,
@@ -62,11 +63,26 @@ def test_a_question_about_the_screen_finds_the_perception(question: str) -> None
 
 @pytest.mark.parametrize(
     "question",
+    [
+        "Which of your senses can actually tell what is around you right now?",
+        "Can you determine whether anyone else is physically here with me?",
+        "Do you have a current reading of who is nearby?",
+        "Establish from your present surroundings whether I am alone.",
+    ],
+)
+def test_physical_perception_follows_semantics_not_trigger_phrases(question: str) -> None:
+    assert relevance(question, PHYSICAL_PERCEPTION) > 0.0, question
+    assert wants_evidence(question, PHYSICAL_PERCEPTION), question
+
+
+@pytest.mark.parametrize(
+    "question",
     ["what's 17 times 4?", "how are you feeling today?", "tell me a joke"],
 )
 def test_unrelated_turns_pull_no_evidence(question: str) -> None:
     assert not wants_evidence(question, OWN_SOURCE), question
     assert not wants_evidence(question, SCREEN_PERCEPTION), question
+    assert not wants_evidence(question, PHYSICAL_PERCEPTION), question
 
 
 def test_writing_new_code_is_not_a_question_about_her_own():

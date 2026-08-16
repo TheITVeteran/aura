@@ -11122,7 +11122,7 @@ async def test_worker_exhausted_quality_rejection_skips_duplicate_route_retry(mo
 
 
 @pytest.mark.asyncio
-async def test_truncated_foreground_answer_gets_one_full_same_worker_replacement(monkeypatch):
+async def test_truncated_foreground_answer_gets_one_same_worker_continuation(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -11167,11 +11167,10 @@ async def test_truncated_foreground_answer_gets_one_full_same_worker_replacement
                 )
             return SimpleNamespace(
                 content=(
-                    "The function tracks balances in a dictionary, removes names "
-                    "whose balance reaches zero, records each position where the "
-                    "number of active names reaches its maximum, and returns those "
-                    "positions. In short, it reports every point at which concurrent "
-                    "nonzero balances are tied for the peak."
+                    " dictionary, records each position where the number of active "
+                    "names reaches its maximum, and returns those positions. In short, "
+                    "it reports every point at which concurrent nonzero balances are "
+                    "tied for the peak."
                 ),
                 metadata=second_metadata,
             )
@@ -11221,7 +11220,8 @@ async def test_truncated_foreground_answer_gets_one_full_same_worker_replacement
     assert engine.calls[1][1]["user_surface_completion_retry"] is True
     assert engine.calls[1][0] == "Explain what this code does and give the final result."
     assert engine.calls[1][1]["desktop_quick_reply_contract"] is True
-    assert "failed_reply_excerpt" not in engine.calls[1][1]
+    assert engine.calls[1][1]["user_surface_continuation_contract"] is True
+    assert engine.calls[1][1]["user_surface_continuation_partial"].endswith("from the")
     assert trace["foreground_model_generation_count"] == 2
     assert trace["completion_retry_count"] == 1
     assert trace["response_path"] == "cognitive_engine_completion_retry"
@@ -14860,7 +14860,7 @@ def test_completion_retry_still_blocks_at_critical_pressure(monkeypatch):
     assert reason == "memory_pressure:critical"
 
 
-def test_completion_retry_prompt_regenerates_without_anchoring_on_clipped_text():
+def test_completion_retry_prompt_continues_the_valid_draft():
     from interface.routes import chat as chat_routes
 
     prompt = chat_routes._build_cognitive_engine_reply_repair_directive(
@@ -14869,9 +14869,21 @@ def test_completion_retry_prompt_regenerates_without_anchoring_on_clipped_text()
         ("truncated_tail",),
     )
 
-    assert "Produce the entire answer from its beginning" in prompt
+    assert "Continue the valid partial answer from its exact cutoff" in prompt
     assert "Rejected draft for avoidance only" not in prompt
     assert "deletes entries from the" not in prompt
+
+
+def test_reply_continuation_merge_handles_exact_overlap_and_full_regeneration():
+    from interface.routes import chat as chat_routes
+
+    partial = "It records every active balance and removes zero entries from the"
+    assert chat_routes._merge_reply_continuation(
+        partial,
+        "the dictionary before returning the peak.",
+    ) == "It records every active balance and removes zero entries from the dictionary before returning the peak."
+    complete = "It records every active balance and returns the peak."
+    assert chat_routes._merge_reply_continuation(partial, complete) == complete
 
 
 def test_force_disable_same_worker_desktop_repair_is_still_honored(monkeypatch):

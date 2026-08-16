@@ -1437,6 +1437,10 @@ final class TopStripPanGestureRecognizer: NSPanGestureRecognizer {
 
 final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
     WKScriptMessageHandler, NSWindowDelegate, WKUIDelegate {
+    private static let showPrimaryWindowNotification = Notification.Name(
+        "com.aura.desktop.show-primary-window"
+    )
+
     private enum BadgeStyle {
         case violet
         case cyan
@@ -1664,6 +1668,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             return
         }
 
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleShowPrimaryWindowNotification(_:)),
+            name: Self.showPrimaryWindowNotification,
+            object: nil,
+        )
+
         buildWindow()
         renderTitle("Aura is waking up")
         renderStatus(
@@ -1702,6 +1713,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         return true
     }
 
+    @objc private func handleShowPrimaryWindowNotification(_ notification: Notification) {
+        if let targetPID = notification.userInfo?["target_pid"] as? NSNumber,
+           targetPID.int32Value != ProcessInfo.processInfo.processIdentifier {
+            return
+        }
+        frontPrimaryWindow()
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         frontPrimaryWindow()
     }
@@ -1715,6 +1734,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         // AppleScript quit, logout, and explicit stop must all reap it; an
         // attached pre-existing runtime is absent from spawnedProcesses.
         terminateSpawnedProcesses()
+        DistributedNotificationCenter.default().removeObserver(self)
         releaseAppInstanceLock()
     }
 
@@ -1881,6 +1901,12 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             .filter { $0.processIdentifier != currentPID }
         if let existing = candidates.first {
             existing.activate(options: [.activateAllWindows])
+            DistributedNotificationCenter.default().postNotificationName(
+                Self.showPrimaryWindowNotification,
+                object: nil,
+                userInfo: ["target_pid": existing.processIdentifier],
+                deliverImmediately: true,
+            )
         }
     }
 

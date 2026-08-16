@@ -114,22 +114,33 @@ class CaptureBroker:
 
     def __init__(self) -> None:
         self._pending: dict[str, asyncio.Future[Frame]] = {}
+        self._one_shot_authorized: set[str] = set()
         # Checked rather than raw: lockdep only sees the locks it wraps, and
         # a lock it cannot see is one that cannot be ordered against the rest
         # — which is how an ABBA deadlock stays invisible until it happens on
         # the live runtime. LEAF because nothing is acquired underneath it.
         self._lock = checked_async_lock("sight.capture_broker", rank=LockRank.LEAF)
 
-    async def request_frame(self, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Frame | None:
+    async def request_frame(
+        self,
+        *,
+        timeout_s: float = CAPTURE_TIMEOUT_S,
+        explicit_user_consent: bool = False,
+    ) -> Frame | None:
         """Ask the surface for a fresh frame. None if none arrived in time."""
         request_id = uuid.uuid4().hex[:16]
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Frame] = loop.create_future()
         async with self._lock:
             self._pending[request_id] = future
+            if explicit_user_consent:
+                self._one_shot_authorized.add(request_id)
 
         try:
-            if not await self._publish_request(request_id):
+            if not await self._publish_request(
+                request_id,
+                explicit_user_consent=explicit_user_consent,
+            ):
                 return None
             return await asyncio.wait_for(future, timeout=max(0.5, float(timeout_s)))
         except TimeoutError:
@@ -140,8 +151,14 @@ class CaptureBroker:
         finally:
             async with self._lock:
                 self._pending.pop(request_id, None)
+                self._one_shot_authorized.discard(request_id)
 
-    async def _publish_request(self, request_id: str) -> bool:
+    async def _publish_request(
+        self,
+        request_id: str,
+        *,
+        explicit_user_consent: bool = False,
+    ) -> bool:
         """Tell the surface to capture. False when there is no surface."""
         try:
             from core.container import ServiceContainer
@@ -156,6 +173,9 @@ class CaptureBroker:
                     "request_id": request_id,
                     "width": CAPTURE_WIDTH,
                     "height": CAPTURE_HEIGHT,
+                    # This permits one correlated frame only. It does not turn
+                    # on ambient camera sensing or mutate the persisted switch.
+                    "one_shot_authorized": bool(explicit_user_consent),
                 }
             )
             return True
@@ -168,10 +188,16 @@ class CaptureBroker:
             )
             return False
 
+    async def one_shot_authorized(self, request_id: str) -> bool:
+        """Whether this pending request carries direct per-turn consent."""
+        async with self._lock:
+            return str(request_id or "") in self._one_shot_authorized
+
     async def deliver(self, request_id: str, frame: Frame) -> bool:
         """Hand a captured frame to whoever asked for it."""
         async with self._lock:
             future = self._pending.pop(str(request_id or ""), None)
+            self._one_shot_authorized.discard(str(request_id or ""))
         if future is None or future.done():
             # Late or unsolicited. Dropping it is correct: the turn that
             # wanted it has already given up and said so.
@@ -285,7 +311,12 @@ def _sight_prompt(question: str) -> str:
     )
 
 
-async def look(question: str, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Look:
+async def look(
+    question: str,
+    *,
+    timeout_s: float = CAPTURE_TIMEOUT_S,
+    explicit_user_consent: bool = False,
+) -> Look:
     """Capture now and answer ``question`` from what is actually in frame.
 
     Every failure path records facts through ``failure_context`` rather than
@@ -308,7 +339,7 @@ async def look(question: str, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Look:
         )
         return Look(ok=False, cause="no_vision_runtime", detail=gap)
 
-    if not camera_enabled():
+    if not camera_enabled() and not explicit_user_consent:
         record_capability_failure(
             "camera",
             intent=f"look through the camera to answer: {question[:120]}",
@@ -318,7 +349,10 @@ async def look(question: str, *, timeout_s: float = CAPTURE_TIMEOUT_S) -> Look:
         )
         return Look(ok=False, cause="camera_off", detail="camera privacy is off")
 
-    frame = await get_capture_broker().request_frame(timeout_s=timeout_s)
+    frame = await get_capture_broker().request_frame(
+        timeout_s=timeout_s,
+        explicit_user_consent=explicit_user_consent,
+    )
     if frame is None:
         record_capability_failure(
             "camera",
