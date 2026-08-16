@@ -575,6 +575,9 @@ async def test_router_stamps_inferred_foreground_for_user_local_runtime_client(m
 
 @pytest.mark.asyncio
 async def test_router_defers_background_local_runtime_during_foreground_quiet_window():
+    from core.brain.llm import deferral_record
+
+    deferral_record.reset_for_test()
     router = HealthAwareLLMRouter()
     client = _KwargRecordingGenerateClient()
     router.register(
@@ -596,6 +599,13 @@ async def test_router_defers_background_local_runtime_during_foreground_quiet_wi
 
     assert result is None
     assert client.calls == []
+    recorded = deferral_record.take_deferral(
+        origin="affect_engine",
+        not_before=0.0,
+    )
+    assert recorded is not None
+    assert recorded.reason == "foreground_quiet_window"
+    deferral_record.reset_for_test()
 
 
 def test_desktop_background_headroom_defers_brainstem_before_memory_spike(monkeypatch):

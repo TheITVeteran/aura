@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 
 from core.brain.llm.chat_format import format_chatml_messages
+from core.brain.llm.deferral_record import record_deferral
 from core.brain.llm.model_registry import (
     BRAINSTEM_ENDPOINT,
     DEEP_ENDPOINT,
@@ -994,6 +995,25 @@ def _background_error_is_quiet(error: str) -> bool:
     ))
 
 
+def _declared_background_deferral_reason(result: Mapping[str, Any]) -> str:
+    """Extract only explicit admission deferrals from a router result."""
+    error = str(result.get("error", "") or "").strip()
+    normalized = error.lower()
+    if normalized.startswith("background_deferred:"):
+        return error.split(":", 1)[1].strip() or "background_deferred"
+    if bool(result.get("deferred", False)):
+        return error or str(result.get("endpoint", "") or "background_deferred")
+    if normalized in {
+        "foreground_busy",
+        "foreground_quiet_window",
+        "desktop_background_local_disabled",
+    }:
+        return error
+    if normalized.startswith("desktop_background_headroom:"):
+        return error
+    return ""
+
+
 def _consume_deliberate_no_text_reason(client: Any) -> str:
     """Why the client last returned no text ON PURPOSE, if it did.
 
@@ -1949,6 +1969,21 @@ class HealthAwareLLMRouter:
             )
             if isinstance(result, dict):
                 self._publish_generation_metadata(result)
+                origin = str(kwargs.get("origin", "") or "").lower()
+                is_background = self._is_background_request(
+                    origin=origin,
+                    purpose=str(kwargs.get("purpose", "") or "").lower(),
+                    explicit_background=bool(kwargs.get("is_background", False)),
+                    explicit_foreground=bool(kwargs.get("foreground_request", False))
+                    or bool(kwargs.get("health_probe", False)),
+                )
+                if is_background:
+                    deferral_reason = _declared_background_deferral_reason(result)
+                    if deferral_reason:
+                        record_deferral(
+                            origin=origin or "background",
+                            reason=deferral_reason,
+                        )
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             strict_answer_request = "<answer>" in str(prompt or "").lower() or "<answer>" in str(
                 system_prompt or ""
