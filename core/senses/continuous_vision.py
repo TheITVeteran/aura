@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import logging
 import os
 import time
@@ -28,6 +30,10 @@ class ScreenBackendState(StrEnum):
     BACKEND_ERROR = "backend_error"
 
 
+class ScreenCaptureDeferredError(RuntimeError):
+    """A privacy or foreground transition prevented publication of a frame."""
+
+
 # When a screen frame was last captured, as a monotonic clock reading.
 #
 # The continuous vision feed grabs the screen every couple of seconds and is
@@ -36,6 +42,8 @@ class ScreenBackendState(StrEnum):
 # that an ACCURATE description of Bryan's screen was fabricated. A fresh
 # frame is the evidence that perception really happened.
 _LAST_SCREEN_FRAME_AT: float = 0.0
+_NATIVE_FRAME_MAX_BYTES = 32 * 1024 * 1024
+_NATIVE_FRAME_MAX_AGE_NS = 15_000_000_000
 
 
 def _note_screen_frame() -> None:
@@ -66,6 +74,8 @@ class ContinuousSensoryBuffer:
         self._screen_permission_notice_interval_s = 300.0
         self._screen_backend_state = ScreenBackendState.UNINITIALIZED
         self._screen_backend_reason = "not_probed"
+        self._screen_backend_kind = ""
+        self._last_native_frame_receipt: dict[str, Any] = {}
         self._screen_retry_delay_s = 0.75
         try:
             import mss
@@ -153,7 +163,19 @@ class ContinuousSensoryBuffer:
             )
             return
         if not self._is_active:
+            native_bridge_available = False
             if self._mss_module is None and not self.camera_capture_enabled:
+                try:
+                    from core.security.native_desktop_bridge import bridge_executable
+
+                    native_bridge_available = bridge_executable() is not None
+                except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+                    native_bridge_available = False
+            if (
+                self._mss_module is None
+                and not native_bridge_available
+                and not self.camera_capture_enabled
+            ):
                 logger.warning("👁️ Continuous Sensory Buffer not started: no capture backends are available.")
                 return
             self._is_active = True
@@ -313,21 +335,129 @@ class ContinuousSensoryBuffer:
         candidate = self.sct
         self.sct = None
         self.monitor = None
+        self._screen_backend_kind = ""
+        self._last_native_frame_receipt = {}
         if candidate is not None:
             await self._close_screen_backend_candidate(candidate)
         self._set_screen_backend_state(ScreenBackendState.BACKEND_ERROR, reason)
         self._schedule_screen_retry()
 
+    def _screen_backend_ready(self) -> bool:
+        kind = str(getattr(self, "_screen_backend_kind", "") or "")
+        if kind == "native_bridge":
+            return self.monitor is not None
+        return self.sct is not None and self.monitor is not None
+
+    @staticmethod
+    def _native_bridge_size() -> dict[str, int] | None:
+        try:
+            from core.security.native_desktop_bridge import (
+                invoke_native_desktop_bridge,
+            )
+
+            result = invoke_native_desktop_bridge(
+                "size",
+                read_only=True,
+                timeout=1.0,
+                allow_one_shot=False,
+            )
+            width = int(result.get("width", 0) or 0)
+            height = int(result.get("height", 0) or 0)
+            if (
+                result.get("ok")
+                and result.get("bridge_transport") == "resident_ipc"
+                and width > 0
+                and height > 0
+            ):
+                return {"left": 0, "top": 0, "width": width, "height": height}
+        except (ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+            return None
+        return None
+
+    def _capture_native_bridge_png(self) -> bytes:
+        from core.security.native_desktop_bridge import invoke_native_desktop_bridge
+
+        result = invoke_native_desktop_bridge(
+            "observe_foreground_frame",
+            read_only=True,
+            timeout=10.0,
+            allow_one_shot=False,
+        )
+        if not result.get("ok") or result.get("bridge_transport") != "resident_ipc":
+            error = str(result.get("error") or "resident screen capture failed")
+            if error in {
+                "screen_capture_refused",
+                "foreground_changed",
+                "foreground_unknown",
+            }:
+                raise ScreenCaptureDeferredError(error)
+            raise RuntimeError(
+                error
+            )
+        if result.get("schema") != "aura.perception.foreground_frame.v1":
+            raise RuntimeError("resident screen capture returned an unknown schema")
+        encoded = str(result.get("frame_base64") or "")
+        declared_length = int(result.get("byte_length", -1) or -1)
+        if (
+            declared_length <= 0
+            or declared_length > _NATIVE_FRAME_MAX_BYTES
+            or len(encoded) > ((_NATIVE_FRAME_MAX_BYTES * 4 // 3) + 8)
+        ):
+            raise RuntimeError("resident screen capture exceeded the frame size contract")
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("resident screen capture returned invalid base64") from exc
+        if len(payload) < 8 or payload[:8] != b"\x89PNG\r\n\x1a\n":
+            raise RuntimeError("resident screen capture produced an invalid PNG")
+        if len(payload) != declared_length:
+            raise RuntimeError("resident screen capture byte length mismatch")
+        if hashlib.sha256(payload).hexdigest() != str(result.get("frame_sha256") or ""):
+            raise RuntimeError("resident screen capture hash mismatch")
+        sequence = int(result.get("sequence", 0) or 0)
+        captured_ns = int(result.get("captured_monotonic_ns", 0) or 0)
+        previous_sequence = int(
+            getattr(self, "_last_native_frame_receipt", {}).get("sequence", 0) or 0
+        )
+        age_ns = time.monotonic_ns() - captured_ns
+        admission = result.get("capture_admission")
+        if (
+            sequence <= previous_sequence
+            or captured_ns <= 0
+            or age_ns < -1_000_000_000
+            or age_ns > _NATIVE_FRAME_MAX_AGE_NS
+            or not str(result.get("context_revision") or "").strip()
+            or int(result.get("width", 0) or 0) <= 0
+            or int(result.get("height", 0) or 0) <= 0
+            or not isinstance(admission, dict)
+            or not bool(admission.get("allowed", False))
+            or admission.get("authority") != "resident_bridge"
+        ):
+            raise RuntimeError("resident screen capture receipt is incomplete")
+        self._last_native_frame_receipt = {
+            key: result.get(key)
+            for key in (
+                "schema",
+                "sequence",
+                "captured_monotonic_ns",
+                "context_revision",
+                "app",
+                "title",
+                "window_id",
+                "bounds",
+                "width",
+                "height",
+                "byte_length",
+                "frame_sha256",
+                "capture_admission",
+            )
+        }
+        return payload
+
     async def _ensure_screen_backend(self) -> bool:
-        if self.sct is not None and self.monitor is not None:
+        if self._screen_backend_ready():
             self._set_screen_backend_state(ScreenBackendState.READY, "capture_ready")
             return True
-        if self._mss_module is None:
-            self._set_screen_backend_state(
-                ScreenBackendState.BACKEND_UNAVAILABLE,
-                "mss_unavailable",
-            )
-            return False
         if time.monotonic() < getattr(self, "_screen_probe_cooldown_until", 0.0):
             return False
         if not await self._screen_permission_active():
@@ -335,6 +465,8 @@ class ContinuousSensoryBuffer:
             return False
         sct = None
         try:
+            if self._mss_module is None:
+                raise ModuleNotFoundError("mss unavailable")
             sct = await asyncio.get_running_loop().run_in_executor(
                 self._vision_executor,
                 self._mss_module.mss,
@@ -360,6 +492,7 @@ class ContinuousSensoryBuffer:
             ):
                 self.sct = sct
                 self.monitor = monitor
+                self._screen_backend_kind = "mss"
                 self._screen_probe_cooldown_until = 0.0
                 self._screen_retry_delay_s = 0.75
                 self._set_screen_backend_state(
@@ -373,26 +506,42 @@ class ContinuousSensoryBuffer:
                 )
                 return True
             await self._close_screen_backend_candidate(sct)
-            self._set_screen_backend_state(
-                ScreenBackendState.NO_MONITORS,
-                "monitor_enumeration_empty",
-            )
-            self._schedule_screen_retry()
-            logger.info(
-                "👁️ [VISION] Screen capture unavailable: monitor enumeration returned no valid displays."
-            )
-            return False
-        except (OSError, ConnectionError, RuntimeError, TimeoutError) as exc:
+            sct = None
+        except (ModuleNotFoundError, OSError, ConnectionError, RuntimeError, TimeoutError):
             if sct is not None:
                 await self._close_screen_backend_candidate(sct)
-            record_degradation('continuous_vision', exc)
+            sct = None
+
+        native_monitor = await asyncio.get_running_loop().run_in_executor(
+            self._vision_executor,
+            self._native_bridge_size,
+        )
+        if native_monitor is not None:
+            self.sct = None
+            self.monitor = native_monitor
+            self._screen_backend_kind = "native_bridge"
+            self._screen_probe_cooldown_until = 0.0
+            self._screen_retry_delay_s = 0.75
             self._set_screen_backend_state(
-                ScreenBackendState.BACKEND_ERROR,
-                type(exc).__name__,
+                ScreenBackendState.READY,
+                "native_bridge_capture_ready",
             )
-            self._schedule_screen_retry()
-            logger.warning("👁️ [VISION] Continuous screen capture backend unavailable: %s", exc)
-            return False
+            logger.info(
+                "👁️ [VISION] Signed native screen capture backend initialized: %sx%s.",
+                native_monitor["width"],
+                native_monitor["height"],
+            )
+            return True
+
+        self._set_screen_backend_state(
+            ScreenBackendState.NO_MONITORS,
+            "no_usable_screen_backend",
+        )
+        self._schedule_screen_retry()
+        logger.info(
+            "👁️ [VISION] Screen capture unavailable: neither mss nor the signed native bridge exposed a valid display."
+        )
+        return False
 
     async def _capture_loop(self):
         """Runs continuously in the background, updating Aura's visual working memory."""
@@ -400,9 +549,9 @@ class ContinuousSensoryBuffer:
             budget = self._compute_budget()
             self._last_compute_budget = budget
             try:
-                if self.sct is None or self.monitor is None:
+                if not self._screen_backend_ready():
                     await self._ensure_screen_backend()
-                    if self.sct is None:
+                    if not self._screen_backend_ready():
                         now = time.monotonic()
                         if now - getattr(self, "_last_backend_fail_log", 0) > 300.0:
                             logger.info(
@@ -430,7 +579,8 @@ class ContinuousSensoryBuffer:
                             )
                             continue
 
-                if self.sct and self.monitor:
+                if self._screen_backend_ready():
+                    png_bytes = None
                     async with self._capture_lock:
                         # The signed native bridge rechecks foreground privacy
                         # at the final boundary before the Python capture call.
@@ -443,23 +593,41 @@ class ContinuousSensoryBuffer:
                             # A prior public frame must not masquerade as the
                             # current private screen.
                             self.frame_buffer.clear()
-                            sct_img = None
+                            self._last_native_frame_receipt = {}
+                            capture_result = None
                         else:
                             self._set_screen_backend_state(
                                 ScreenBackendState.READY,
                                 "capture_ready",
                             )
                             try:
-                                sct_img = await asyncio.wait_for(
-                                    asyncio.get_running_loop().run_in_executor(
-                                        self._vision_executor, self.sct.grab, self.monitor
-                                    ),
-                                    timeout=10.0
-                                )
+                                if getattr(self, "_screen_backend_kind", "") == "native_bridge":
+                                    capture_result = await asyncio.wait_for(
+                                        asyncio.get_running_loop().run_in_executor(
+                                            self._vision_executor,
+                                            self._capture_native_bridge_png,
+                                        ),
+                                        timeout=12.0,
+                                    )
+                                else:
+                                    capture_result = await asyncio.wait_for(
+                                        asyncio.get_running_loop().run_in_executor(
+                                            self._vision_executor, self.sct.grab, self.monitor
+                                        ),
+                                        timeout=10.0
+                                    )
                             except TimeoutError:
-                                logger.error("👁️ [VISION] Screenshot capture timed out after 10s. Skipping frame.")
+                                logger.error("👁️ [VISION] Screenshot capture timed out. Skipping frame.")
                                 await self._invalidate_screen_backend("capture_timeout")
-                                sct_img = None
+                                capture_result = None
+                            except ScreenCaptureDeferredError as exc:
+                                self._set_screen_backend_state(
+                                    ScreenBackendState.PRIVACY_DEFERRED,
+                                    str(exc),
+                                )
+                                self.frame_buffer.clear()
+                                self._last_native_frame_receipt = {}
+                                capture_result = None
                             except (OSError, ConnectionError, RuntimeError, TypeError, ValueError) as exc:
                                 record_degradation(
                                     "continuous_vision",
@@ -473,21 +641,24 @@ class ContinuousSensoryBuffer:
                                     exc,
                                 )
                                 await self._invalidate_screen_backend(type(exc).__name__)
-                                sct_img = None
+                                capture_result = None
 
-                    if sct_img:
-                        import mss.tools
+                    if capture_result:
+                        if isinstance(capture_result, bytes):
+                            png_bytes = capture_result
+                        else:
+                            import mss.tools
 
-                        # PNG compression is CPU-heavy on a full-resolution
-                        # frame. Running it on the asyncio thread caused the
-                        # same multi-second event-loop lag the health monitor
-                        # correctly reported during active perception.
-                        png_bytes = await asyncio.get_running_loop().run_in_executor(
-                            self._vision_executor,
-                            mss.tools.to_png,
-                            sct_img.rgb,
-                            sct_img.size,
-                        )
+                            # PNG compression is CPU-heavy on a full-resolution
+                            # frame. Running it on the asyncio thread caused the
+                            # same multi-second event-loop lag the health monitor
+                            # correctly reported during active perception.
+                            png_bytes = await asyncio.get_running_loop().run_in_executor(
+                                self._vision_executor,
+                                mss.tools.to_png,
+                                capture_result.rgb,
+                                capture_result.size,
+                            )
                         self.frame_buffer.append(("image/png", png_bytes))
                         # A frame IS the evidence for "I can see your screen".
                         # Recorded so the reliability gate can tell a real

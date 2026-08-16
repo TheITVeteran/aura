@@ -10663,10 +10663,26 @@ async def _run_cognitive_engine_chat_turn(
         or int(getattr(shape, "question_parts", 0) or 0) >= 2
         or int(getattr(shape, "imperative_parts", 0) or 0) >= 2
     )
+    # Several clauses can belong to one state report (for example, condition
+    # plus known-versus-inferred evidence). Question count alone cannot decide
+    # whether the state contract covers the turn. Competing operational or
+    # retrieval contracts are the mechanical evidence that it does not.
+    self_condition_contract_covers_turn = bool(
+        self_condition_contract
+        and not (
+            desktop_execution_contract
+            or capability_inventory_contract
+            or bounded_planning_contract
+            or memory_state_contract
+            or runtime_fact_status_contract
+            or identity_continuity_contract
+            or private_cognitive_model_contract
+        )
+    )
     if self_condition_contract and not self_contained_compound:
         # One prior exchange is enough to preserve a natural "though?" follow-up
         # without letting an older task replace the current condition question.
-        recent_context_limit = 1
+        recent_context_limit = 1 if recent_context_needed else 0
     elif memory_state_contract and not recent_context_needed:
         # Canonical memory/state turns already carry the authoritative state
         # evidence for the current question. Replaying older chat here makes the
@@ -10763,6 +10779,7 @@ async def _run_cognitive_engine_chat_turn(
         "memory_state_contract_covers_turn": memory_state_contract_covers_turn,
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
         "self_condition_contract": self_condition_contract,
+        "self_condition_contract_covers_turn": self_condition_contract_covers_turn,
         "canonical_self_condition_context": canonical_self_condition_context,
         "live_capability_condition": live_capability_condition,
         "canonical_self_condition_reply": canonical_self_condition_reply,

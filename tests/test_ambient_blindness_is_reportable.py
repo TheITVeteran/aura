@@ -79,21 +79,39 @@ def test_an_empty_capture_says_which_adapter_returned_nothing(presence):
     assert state["last_skip"]["detail"]
 
 
-def test_no_frontmost_window_is_distinguishable_from_an_empty_capture(presence):
-    """Both were "capture_failed: N" and nothing else."""
+def test_no_frontmost_window_is_idle_not_broken_capture(presence, monkeypatch):
+    """An empty desktop is not a capture attempt and cannot make her blind."""
+
+    recorded: list = []
+    monkeypatch.setattr(
+        "core.perception.ambient_presence.record_degradation",
+        lambda *a, **k: recorded.append(a),
+    )
 
     async def _no_context():
         return None
 
     presence._current_context = _no_context
-    asyncio.run(presence.tick())
-    from_no_window = presence.state()["skip_details"]["capture_failed"]
+    for _ in range(_BROKEN_SKIP_ESCALATION * 2):
+        result = asyncio.run(presence.tick())
 
-    _capture_returns(presence, "")
-    asyncio.run(presence.tick())
-    from_empty = presence.state()["skip_details"]["capture_failed"]
+    assert result.skip_reason is SkipReason.NO_FOREGROUND
+    assert presence.state()["blind"] is False
+    assert not recorded
 
-    assert from_no_window != from_empty
+
+def test_frontmost_provider_failure_remains_a_broken_skip(presence):
+    """Only a successful lookup returning no window receives idle semantics."""
+
+    async def _failed_context():
+        presence._context_lookup_failure = "resident bridge unavailable"
+        return None
+
+    presence._current_context = _failed_context
+    result = asyncio.run(presence.tick())
+
+    assert result.skip_reason is SkipReason.CAPTURE_FAILED
+    assert result.detail == "resident bridge unavailable"
 
 
 def test_persistent_total_failure_is_escalated_once(presence, monkeypatch):

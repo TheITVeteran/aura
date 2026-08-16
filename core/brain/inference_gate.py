@@ -5680,6 +5680,16 @@ class InferenceGate:
         context = context or {}
         if bool(context.get("deep_mind_probe", False)):
             return "deep_probe"
+        # Current-condition questions already carry a fresh canonical state
+        # projection. Preserve that semantic distinction at the model boundary
+        # instead of replacing it with the generic full-desktop profile.
+        if bool(
+            context.get(
+                "self_condition_contract_covers_turn",
+                context.get("self_condition_contract", False),
+            )
+        ):
+            return "state_report"
         # A question with one right answer is answered from a lean prompt.
         # Measured live 2026-07-26 on the desktop surface: a 78-character
         # arithmetic question was sent as
@@ -5755,6 +5765,8 @@ class InferenceGate:
             is_live_self_reflection_turn(prompt)
             or is_self_process_question(prompt)
         ):
+            return 2
+        if profile == "state_report":
             return 2
         if profile == "simple":
             return 4
@@ -8455,6 +8467,13 @@ class InferenceGate:
                 "user": 1_000,
                 "assistant": 700,
             }
+        elif profile == "state_report":
+            prompt_budget_chars = 2_800
+            limits = {
+                "system": 1_800,
+                "user": 1_000,
+                "assistant": 500,
+            }
         elif profile == "simple":
             prompt_budget_chars = min(
                 9000,
@@ -8503,6 +8522,7 @@ class InferenceGate:
         if role == "system" and profile not in {
             "contract",
             "contract_grounding",
+            "state_report",
             "deep_probe",
         }:
             limits["system"] = InferenceGate._proportionate_scaffold_limit(
@@ -8707,9 +8727,26 @@ class InferenceGate:
     _GROUNDING_DEFAULT_BUDGET_CHARS = 6_000
     #: The clock and the receipts always survive, whatever else is dropped.
     _GROUNDING_FLOOR_CHARS = 600
+    #: Current-condition turns reserve one bounded envelope for the stable
+    #: identity prefix and one for the fresh state projection.
+    _STATE_REPORT_TOTAL_BUDGET_CHARS = 4_200
+    _STATE_REPORT_GROUNDING_BUDGET_CHARS = 1_400
 
     def _grounding_char_budget(self, context: Any, messages: Any) -> int:
         """How much room the volatile grounding has on this turn."""
+        if isinstance(context, dict):
+            visible = str(context.get("visible_user_message") or "")
+            if self._foreground_prompt_profile(visible, context) == "state_report":
+                used = sum(
+                    len(str(msg.get("content", "") or ""))
+                    for msg in (messages or ())
+                    if isinstance(msg, dict)
+                )
+                available = max(
+                    self._GROUNDING_FLOOR_CHARS,
+                    self._STATE_REPORT_TOTAL_BUDGET_CHARS - used,
+                )
+                return min(self._STATE_REPORT_GROUNDING_BUDGET_CHARS, available)
         try:
             constrained = bool(self._has_short_live_output_contract(context))
         except _INFERENCE_RECOVERABLE_ERRORS:
@@ -8926,6 +8963,10 @@ class InferenceGate:
         context_window = self._foreground_prompt_context_window()
         if profile == "contract":
             total_budget_chars = 2_800
+        elif profile == "state_report":
+            # The remaining 1,400 characters are reserved for the canonical
+            # state projection appended after stable-prefix compaction.
+            total_budget_chars = 2_800
         elif profile == "simple":
             total_budget_chars = min(
                 9000,
@@ -8993,6 +9034,8 @@ class InferenceGate:
                 content = str(first.get("content", "") or "")
                 if profile == "contract":
                     min_system_chars = 1_000
+                elif profile == "state_report":
+                    min_system_chars = 1_200
                 else:
                     min_system_chars = 3200 if profile == "simple" else 4200
                 new_limit = max(min_system_chars, len(content) - overflow - 1)

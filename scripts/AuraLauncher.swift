@@ -1,7 +1,9 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Darwin
 import Foundation
+import ScreenCaptureKit
 import WebKit
 
 private let nativeBridgeFlag = "--native-desktop-bridge"
@@ -126,6 +128,70 @@ private struct BridgeScreenCaptureAdmission {
     }
 }
 
+private struct BridgeForegroundWindowContext {
+    let appName: String
+    let processIdentifier: pid_t
+    let title: String
+    let windowID: CGWindowID
+    let bounds: CGRect
+    let windows: [[String: Any]]
+}
+
+private let bridgeFrameSequenceLock = NSLock()
+private var bridgeFrameSequence: UInt64 = 0
+
+private func nextBridgeFrameSequence() -> UInt64 {
+    bridgeFrameSequenceLock.lock()
+    defer { bridgeFrameSequenceLock.unlock() }
+    bridgeFrameSequence &+= 1
+    return bridgeFrameSequence
+}
+
+private func bridgeForegroundWindowContext() -> BridgeForegroundWindowContext? {
+    guard let application = NSWorkspace.shared.frontmostApplication else {
+        return nil
+    }
+    let appName = (application.localizedName ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !appName.isEmpty else {
+        return nil
+    }
+
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+        as? [[String: Any]] ?? []
+    var title = ""
+    var windowID: CGWindowID = 0
+    var bounds = CGRect.zero
+    for window in windows {
+        let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+        let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+        if ownerPID == application.processIdentifier && layer == 0 {
+            title = (window[kCGWindowName as String] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+            if let rawBounds = window[kCGWindowBounds as String] as? [String: Any],
+               let parsedBounds = CGRect(
+                   dictionaryRepresentation: rawBounds as CFDictionary
+               ) {
+                bounds = parsedBounds
+            }
+            break
+        }
+    }
+    guard windowID != 0, bounds.width > 0, bounds.height > 0 else {
+        return nil
+    }
+    return BridgeForegroundWindowContext(
+        appName: appName,
+        processIdentifier: application.processIdentifier,
+        title: title,
+        windowID: windowID,
+        bounds: bounds,
+        windows: windows
+    )
+}
+
 private let bridgeScreenCapturePrivacyPolicy: BridgeScreenCapturePrivacyPolicy? = {
     guard let resource = Bundle.main.url(
         forResource: "screen_capture_privacy_policy",
@@ -162,7 +228,9 @@ private let bridgeScreenCapturePrivacyPolicy: BridgeScreenCapturePrivacyPolicy? 
     )
 }()
 
-private func bridgeScreenCaptureAdmission() -> BridgeScreenCaptureAdmission {
+private func bridgeScreenCaptureAdmission(
+    context suppliedContext: BridgeForegroundWindowContext? = nil
+) -> BridgeScreenCaptureAdmission {
     guard let policy = bridgeScreenCapturePrivacyPolicy else {
         return BridgeScreenCaptureAdmission(
             allowed: false,
@@ -170,37 +238,15 @@ private func bridgeScreenCaptureAdmission() -> BridgeScreenCaptureAdmission {
             contextKnown: false
         )
     }
-    guard let application = NSWorkspace.shared.frontmostApplication else {
+    guard let context = suppliedContext ?? bridgeForegroundWindowContext() else {
         return BridgeScreenCaptureAdmission(
             allowed: false,
             reason: "foreground_unknown",
             contextKnown: false
         )
     }
-    let appName = (application.localizedName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !appName.isEmpty else {
-        return BridgeScreenCaptureAdmission(
-            allowed: false,
-            reason: "foreground_unknown",
-            contextKnown: false
-        )
-    }
-
-    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-    let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
-    var title = ""
-    for window in windows {
-        let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
-        let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
-        if ownerPID == application.processIdentifier && layer == 0 {
-            title = (window[kCGWindowName as String] as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            break
-        }
-    }
-
-    let loweredApp = appName.lowercased()
-    for window in windows {
+    let loweredApp = context.appName.lowercased()
+    for window in context.windows {
         let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
         guard layer == 0 else { continue }
         let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
@@ -214,7 +260,7 @@ private func bridgeScreenCaptureAdmission() -> BridgeScreenCaptureAdmission {
             || policy.privateWindowMarkers.contains(where: combined.contains) {
             return BridgeScreenCaptureAdmission(
                 allowed: false,
-                reason: ownerPID == application.processIdentifier
+                reason: ownerPID == context.processIdentifier
                     ? "private_foreground"
                     : "private_visible",
                 contextKnown: true
@@ -228,7 +274,7 @@ private func bridgeScreenCaptureAdmission() -> BridgeScreenCaptureAdmission {
             )
         }
     }
-    if policy.privateBrowsingApps.contains(loweredApp) && title.isEmpty {
+    if policy.privateBrowsingApps.contains(loweredApp) && context.title.isEmpty {
         return BridgeScreenCaptureAdmission(
             allowed: false,
             reason: "browser_title_unknown",
@@ -250,6 +296,128 @@ private func bridgeScreenCaptureRefusal(
         "error": "screen_capture_refused",
         "capture_admission": admission.receipt,
     ], 2)
+}
+
+private func bridgeForegroundContextMatches(
+    _ before: BridgeForegroundWindowContext,
+    _ after: BridgeForegroundWindowContext
+) -> Bool {
+    before.processIdentifier == after.processIdentifier
+        && before.windowID == after.windowID
+        && before.title == after.title
+        && before.bounds.equalTo(after.bounds)
+}
+
+private final class BridgeCapturedImageBox: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.aura.desktop.capture-result")
+    private var image: CGImage?
+
+    func store(_ value: CGImage) {
+        queue.sync { image = value }
+    }
+
+    func load() -> CGImage? {
+        queue.sync { image }
+    }
+}
+
+private func bridgeCaptureWindowImage(windowID: CGWindowID) -> CGImage? {
+    guard #available(macOS 14.0, *) else {
+        return nil
+    }
+    let semaphore = DispatchSemaphore(value: 0)
+    let result = BridgeCapturedImageBox()
+    Task {
+        defer { semaphore.signal() }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                true,
+                onScreenWindowsOnly: true
+            )
+            guard let window = content.windows.first(where: {
+                $0.windowID == windowID
+            }) else {
+                return
+            }
+            let configuration = SCStreamConfiguration()
+            configuration.width = max(1, Int(window.frame.width))
+            configuration.height = max(1, Int(window.frame.height))
+            configuration.showsCursor = false
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            )
+            result.store(image)
+        } catch {
+            return
+        }
+    }
+    guard semaphore.wait(timeout: .now() + 8.0) == .success else {
+        return nil
+    }
+    return result.load()
+}
+
+private func bridgeObserveForegroundFrame() -> ([String: Any], Int32) {
+    guard let before = bridgeForegroundWindowContext() else {
+        return (["ok": false, "error": "foreground_unknown"], 2)
+    }
+    let admission = bridgeScreenCaptureAdmission(context: before)
+    guard admission.allowed else {
+        return bridgeScreenCaptureRefusal(admission)
+    }
+    guard let image = bridgeCaptureWindowImage(windowID: before.windowID) else {
+        return (["ok": false, "error": "screen_capture_unavailable"], 2)
+    }
+    let representation = NSBitmapImageRep(cgImage: image)
+    guard let png = representation.representation(using: .png, properties: [:]) else {
+        return (["ok": false, "error": "screen_capture_encoding_failed"], 2)
+    }
+
+    guard let after = bridgeForegroundWindowContext() else {
+        return (["ok": false, "error": "foreground_changed"], 2)
+    }
+    let finalAdmission = bridgeScreenCaptureAdmission(context: after)
+    guard finalAdmission.allowed else {
+        return bridgeScreenCaptureRefusal(finalAdmission)
+    }
+    guard bridgeForegroundContextMatches(before, after) else {
+        return (["ok": false, "error": "foreground_changed"], 2)
+    }
+
+    let digest = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
+    let contextRevision = [
+        String(before.processIdentifier),
+        String(before.windowID),
+        String(Int(before.bounds.origin.x)),
+        String(Int(before.bounds.origin.y)),
+        String(Int(before.bounds.width)),
+        String(Int(before.bounds.height)),
+        before.title,
+    ].joined(separator: ":")
+    return ([
+        "ok": true,
+        "schema": "aura.perception.foreground_frame.v1",
+        "sequence": nextBridgeFrameSequence(),
+        "captured_monotonic_ns": DispatchTime.now().uptimeNanoseconds,
+        "context_revision": contextRevision,
+        "app": before.appName,
+        "title": before.title,
+        "window_id": before.windowID,
+        "bounds": [
+            "x": before.bounds.origin.x,
+            "y": before.bounds.origin.y,
+            "width": before.bounds.width,
+            "height": before.bounds.height,
+        ],
+        "width": image.width,
+        "height": image.height,
+        "byte_length": png.count,
+        "frame_sha256": digest,
+        "frame_base64": png.base64EncodedString(),
+        "capture_admission": finalAdmission.receipt,
+    ], 0)
 }
 
 private func bridgeActivateForPermissionPrompt() {
@@ -332,6 +500,23 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
             "ok": true,
             "capture_admission": admission.receipt,
         ], 0)
+    case "frontmost_window_context":
+        guard let context = bridgeForegroundWindowContext() else {
+            return (["ok": false, "error": "foreground_unknown"], 2)
+        }
+        let admission = bridgeScreenCaptureAdmission(context: context)
+        guard admission.allowed else {
+            return bridgeScreenCaptureRefusal(admission)
+        }
+        return ([
+            "ok": true,
+            "app": context.appName,
+            "title": context.title,
+            "window_id": context.windowID,
+            "capture_admission": admission.receipt,
+        ], 0)
+    case "observe_foreground_frame":
+        return bridgeObserveForegroundFrame()
     case "screenshot":
         let admission = bridgeScreenCaptureAdmission()
         guard admission.allowed else {

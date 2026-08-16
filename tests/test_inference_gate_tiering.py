@@ -1278,6 +1278,65 @@ def test_required_desktop_foreground_prompt_keeps_standard_mind_budget(monkeypat
     assert compact[-1]["content"] == current_user
 
 
+def test_current_condition_turn_has_one_bounded_state_evidence_envelope(monkeypatch):
+    """A fresh state projection must not inherit the generic live-mind budget."""
+
+    monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
+    gate = InferenceGate.__new__(InferenceGate)
+    current_user = (
+        "Hey Aura, how are you doing right now? Answer naturally from your "
+        "current state, and distinguish what you know from what you can only infer."
+    )
+    context = {
+        "desktop_quick_reply_contract": True,
+        "desktop_cognitive_engine_required": True,
+        "live_runtime_payload_required": True,
+        "live_mind_context_required": True,
+        "self_condition_contract": True,
+        "self_condition_contract_covers_turn": True,
+        "visible_user_message": current_user,
+    }
+    messages = [{"role": "system", "content": "S" * 12_000}]
+    for index in range(6):
+        messages.extend(
+            [
+                {"role": "user", "content": f"old user {index} " + "U" * 500},
+                {"role": "assistant", "content": f"old Aura {index} " + "A" * 500},
+            ]
+        )
+    messages.append({"role": "user", "content": current_user})
+
+    profile = gate._foreground_prompt_profile(current_user, context)
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=gate._foreground_prebuilt_history_limit(current_user, context),
+        budget_profile=profile,
+        current_user_content=current_user,
+    )
+    stable_chars = sum(len(message["content"]) for message in compact)
+    grounding_budget = gate._grounding_char_budget(context, compact)
+
+    assert profile == "state_report"
+    assert gate._foreground_prebuilt_history_limit(current_user, context) == 2
+    assert stable_chars <= 2_800
+    assert len(compact[0]["content"]) <= 1_800
+    assert grounding_budget <= 1_400
+    assert stable_chars + grounding_budget <= 4_200
+    assert compact[-1] == {"role": "user", "content": current_user}
+
+
+def test_compound_self_condition_turn_keeps_the_extended_task_profile():
+    prompt = "How are you feeling, and compare two locking strategies with failure cases?"
+    context = {
+        "self_condition_contract": True,
+        "self_condition_contract_covers_turn": False,
+        "desktop_cognitive_engine_required": True,
+        "coding_request": True,
+    }
+
+    assert InferenceGate._foreground_prompt_profile(prompt, context) == "extended"
+
+
 def test_required_desktop_system_compaction_preserves_live_mind_sections(monkeypatch):
     monkeypatch.setenv("AURA_CORTEX_CTX", "8192")
     system_prompt = (

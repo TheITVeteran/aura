@@ -624,6 +624,56 @@ class HostAutomationProvider:
         )
         receipt.action = "get_frontmost_window_context"
         receipt.target = "frontmost_window"
+        if receipt.success and str(receipt.result or "").strip("|").strip():
+            return receipt
+
+        # System Events can be unavailable to the Python child even while the
+        # signed resident Aura.app has the correct desktop identity. Use the
+        # resident bridge's NSWorkspace + CoreGraphics observation before
+        # declaring the foreground unknowable. This is metadata only; pixels
+        # remain behind the independent capture-admission gate.
+        try:
+            from core.security.native_desktop_bridge import (
+                invoke_native_desktop_bridge,
+            )
+
+            native = await asyncio.to_thread(
+                invoke_native_desktop_bridge,
+                "frontmost_window_context",
+                read_only=True,
+                timeout=1.0,
+                allow_one_shot=False,
+            )
+        except (ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+            native = {}
+        if native.get("ok") and native.get("bridge_transport") == "resident_ipc":
+            app = str(native.get("app") or "").strip()
+            title = str(native.get("title") or "").strip()
+            if app or title:
+                return AutomationReceipt(
+                    action="get_frontmost_window_context",
+                    target="frontmost_window",
+                    adapter="resident_native_bridge",
+                    success=True,
+                    result=f"{app}|{title}",
+                    duration_ms=receipt.duration_ms,
+                )
+        admission = native.get("capture_admission")
+        if (
+            native.get("error") == "screen_capture_refused"
+            and isinstance(admission, dict)
+            and not bool(admission.get("allowed", True))
+        ):
+            # A private foreground is a successful privacy decision. Return no
+            # metadata and let ambient perception treat the surface as absent.
+            return AutomationReceipt(
+                action="get_frontmost_window_context",
+                target="frontmost_window",
+                adapter="resident_native_bridge",
+                success=True,
+                result="",
+                duration_ms=receipt.duration_ms,
+            )
         return receipt
 
     @staticmethod

@@ -9196,6 +9196,8 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
     assert calls[0]["context"]["visible_user_message"] == prompt
     assert calls[0]["context"]["raw_user_message"] == raw_prompt
     assert calls[0]["context"]["declared_interlocutor"]["display_name"] == "ChatGPT"
+    assert calls[0]["context"]["self_condition_contract_covers_turn"] is True
+    assert calls[0]["context"]["recent_completed_exchanges"] == []
     assert any(
         item.get("authorship_effect") == "replaced_by_model"
         for item in trace["text_mutations"]

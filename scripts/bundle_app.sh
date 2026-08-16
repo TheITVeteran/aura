@@ -165,7 +165,9 @@ CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/aura-launcher-clang-cache" xcrun swiftc
     -O \
     -framework AppKit \
     -framework CoreGraphics \
+    -framework CryptoKit \
     -framework Foundation \
+    -framework ScreenCaptureKit \
     -framework WebKit \
     "${LAUNCHER_SOURCE}" \
     -o "${EXECUTABLE_PATH}"

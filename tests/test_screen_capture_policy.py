@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import queue
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -520,14 +523,162 @@ async def test_continuous_vision_reports_true_monitor_enumeration_failure(monkey
         return True
 
     monkeypatch.setattr(buffer, "_screen_permission_active", _permission_active)
+    monkeypatch.setattr(buffer, "_native_bridge_size", lambda: None)
     try:
         assert await buffer._ensure_screen_backend() is False
         assert buffer._screen_backend_state.value == "no_monitors"
-        assert buffer._screen_backend_reason == "monitor_enumeration_empty"
+        assert buffer._screen_backend_reason == "no_usable_screen_backend"
         assert buffer._screen_retry_delay_s == 30.0
         assert candidate.closed is True
     finally:
         buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_continuous_vision_falls_through_zero_sized_mss_to_native_bridge(
+    monkeypatch,
+):
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    class _Capture:
+        monitors = [{"left": 0, "top": 0, "width": 0, "height": 0}]
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    candidate = _Capture()
+
+    class _MSS:
+        @staticmethod
+        def mss():
+            return candidate
+
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer.sct = None
+    buffer.monitor = None
+    buffer._screen_backend_kind = ""
+    buffer._mss_module = _MSS
+    buffer._vision_executor = ThreadPoolExecutor(max_workers=1)
+    buffer._screen_probe_cooldown_until = 0.0
+
+    async def _permission_active():
+        return True
+
+    monkeypatch.setattr(buffer, "_screen_permission_active", _permission_active)
+    monkeypatch.setattr(
+        buffer,
+        "_native_bridge_size",
+        lambda: {"left": 0, "top": 0, "width": 1728, "height": 1117},
+    )
+    try:
+        assert await buffer._ensure_screen_backend() is True
+    finally:
+        buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+    assert candidate.closed is True
+    assert buffer.sct is None
+    assert buffer.monitor["width"] == 1728
+    assert buffer._screen_backend_kind == "native_bridge"
+    assert buffer._screen_backend_state.value == "ready"
+    assert buffer._screen_backend_reason == "native_bridge_capture_ready"
+
+
+def test_native_continuous_capture_validates_atomic_in_memory_receipt(monkeypatch):
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    png = b"\x89PNG\r\n\x1a\nframe"
+
+    def _native(command, **payload):
+        assert command == "observe_foreground_frame"
+        assert "path" not in payload
+        return {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "schema": "aura.perception.foreground_frame.v1",
+            "sequence": 17,
+            "captured_monotonic_ns": time.monotonic_ns(),
+            "context_revision": "100:22:0:0:1728:1117:Aura",
+            "app": "Google Chrome",
+            "title": "Aura",
+            "window_id": 22,
+            "bounds": {"x": 0, "y": 0, "width": 1728, "height": 1117},
+            "width": 1728,
+            "height": 1117,
+            "byte_length": len(png),
+            "frame_sha256": hashlib.sha256(png).hexdigest(),
+            "frame_base64": base64.b64encode(png).decode("ascii"),
+            "capture_admission": {"allowed": True, "authority": "resident_bridge"},
+        }
+
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.invoke_native_desktop_bridge",
+        _native,
+    )
+
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer._last_native_frame_receipt = {}
+    payload = buffer._capture_native_bridge_png()
+
+    assert payload.startswith(b"\x89PNG")
+    assert buffer._last_native_frame_receipt["sequence"] == 17
+    assert "frame_base64" not in buffer._last_native_frame_receipt
+
+
+def test_native_continuous_capture_rejects_contextless_frame(monkeypatch):
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    png = b"\x89PNG\r\n\x1a\nframe"
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.invoke_native_desktop_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "schema": "aura.perception.foreground_frame.v1",
+            "sequence": 1,
+            "captured_monotonic_ns": time.monotonic_ns(),
+            "context_revision": "",
+            "width": 100,
+            "height": 100,
+            "byte_length": len(png),
+            "frame_sha256": hashlib.sha256(png).hexdigest(),
+            "frame_base64": base64.b64encode(png).decode("ascii"),
+        },
+    )
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer._last_native_frame_receipt = {}
+
+    with pytest.raises(RuntimeError, match="receipt is incomplete"):
+        buffer._capture_native_bridge_png()
+
+
+def test_native_continuous_capture_rejects_replayed_frame(monkeypatch):
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    png = b"\x89PNG\r\n\x1a\nframe"
+    result = {
+        "ok": True,
+        "bridge_transport": "resident_ipc",
+        "schema": "aura.perception.foreground_frame.v1",
+        "sequence": 8,
+        "captured_monotonic_ns": time.monotonic_ns(),
+        "context_revision": "100:22:0:0:100:100:Aura",
+        "width": 100,
+        "height": 100,
+        "byte_length": len(png),
+        "frame_sha256": hashlib.sha256(png).hexdigest(),
+        "frame_base64": base64.b64encode(png).decode("ascii"),
+        "capture_admission": {"allowed": True, "authority": "resident_bridge"},
+    }
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.invoke_native_desktop_bridge",
+        lambda *_args, **_kwargs: result,
+    )
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer._last_native_frame_receipt = {"sequence": 8}
+
+    with pytest.raises(RuntimeError, match="receipt is incomplete"):
+        buffer._capture_native_bridge_png()
 
 
 @pytest.mark.asyncio

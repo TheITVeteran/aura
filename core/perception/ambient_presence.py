@@ -114,6 +114,7 @@ class SkipReason(StrEnum):
     SUPPRESSED = "proactivity_suppressed"
     HIDDEN = "hidden_by_user"
     UNCHANGED = "context_unchanged"
+    NO_FOREGROUND = "no_foreground_window"
     NO_PERMISSION = "no_permission"
     CAPTURE_FAILED = "capture_failed"
 
@@ -208,6 +209,7 @@ class AmbientPresence:
         self._mode = PresenceMode.WINDOW
         self._foreground_context: ScreenContext | None = None
         self._foreground_context_at = 0.0
+        self._context_lookup_failure = ""
         self._last_context: ScreenContext | None = None
         self._last_observed_at = 0.0
         self._pending_utterance: str = ""
@@ -600,7 +602,15 @@ class AmbientPresence:
             with self._lock:
                 self._foreground_context = None
                 self._foreground_context_at = time.time()
-            return self._skip(SkipReason.CAPTURE_FAILED, detail="no frontmost window")
+            if self._context_lookup_failure:
+                return self._skip(
+                    SkipReason.CAPTURE_FAILED,
+                    detail=self._context_lookup_failure,
+                )
+            return self._skip(
+                SkipReason.NO_FOREGROUND,
+                detail="no foreground window is currently eligible",
+            )
 
         # Record the cheap foreground identity before the privacy decision.
         # This never captures content. It prevents a cached observation from a
@@ -728,17 +738,22 @@ class AmbientPresence:
         )
 
     async def _current_context(self) -> ScreenContext | None:
+        self._context_lookup_failure = ""
         try:
             from core.capabilities.host_automation import get_host_automation
 
             receipt = await get_host_automation().get_frontmost_window_context()
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError) as exc:
+            self._context_lookup_failure = f"context lookup raised {type(exc).__name__}: {exc}"
             record_degradation(
                 "ambient_presence", exc, severity="debug",
                 action="ambient tick could not read the frontmost window",
             )
             return None
         if not getattr(receipt, "success", False):
+            self._context_lookup_failure = str(
+                getattr(receipt, "error", "") or "frontmost-window provider failed"
+            )[:300]
             return None
         raw = str(getattr(receipt, "result", "") or "")
         app, separator, title = raw.partition("|")

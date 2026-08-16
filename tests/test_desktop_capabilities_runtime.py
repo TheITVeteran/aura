@@ -16,6 +16,79 @@ from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
 from core.capabilities.post_action_verifier import PostActionVerifier
 
 
+@pytest.mark.asyncio
+async def test_frontmost_context_falls_through_to_resident_native_bridge(monkeypatch):
+    """The signed app can see the desktop when its Python child cannot."""
+
+    async def _applescript_failed(*_args, **_kwargs):
+        return AutomationReceipt(
+            action="execute_applescript",
+            target="",
+            adapter="applescript",
+            success=False,
+            error="System Events invalid index",
+        )
+
+    def _native(command, **kwargs):
+        assert command == "frontmost_window_context"
+        assert kwargs["read_only"] is True
+        assert kwargs["allow_one_shot"] is False
+        return {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "app": "Google Chrome",
+            "title": "Aura test",
+        }
+
+    monkeypatch.setattr(AppleScriptRunner, "run", _applescript_failed)
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.invoke_native_desktop_bridge",
+        _native,
+    )
+
+    receipt = await HostAutomationProvider().get_frontmost_window_context()
+
+    assert receipt.success is True
+    assert receipt.adapter == "resident_native_bridge"
+    assert receipt.result == "Google Chrome|Aura test"
+
+
+@pytest.mark.asyncio
+async def test_private_native_foreground_returns_no_metadata(monkeypatch):
+    """A privacy refusal is an observed absence, not a leaked window title."""
+
+    async def _applescript_failed(*_args, **_kwargs):
+        return AutomationReceipt(
+            action="execute_applescript",
+            target="",
+            adapter="applescript",
+            success=False,
+            error="System Events invalid index",
+        )
+
+    monkeypatch.setattr(AppleScriptRunner, "run", _applescript_failed)
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.invoke_native_desktop_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "error": "screen_capture_refused",
+            "bridge_transport": "resident_ipc",
+            "capture_admission": {
+                "allowed": False,
+                "reason": "private_foreground",
+                "authority": "resident_bridge",
+            },
+        },
+    )
+
+    receipt = await HostAutomationProvider().get_frontmost_window_context()
+
+    assert receipt.success is True
+    assert receipt.adapter == "resident_native_bridge"
+    assert receipt.result == ""
+    assert "private" not in str(receipt.result).lower()
+
+
 class _FakeProcess:
     def __init__(self, *, stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> None:
         self._stdout = stdout
