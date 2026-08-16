@@ -24,10 +24,13 @@ Nothing observes an action into existence, so a frame never excuses one. And
 a fabricated screen with no frames behind it is still caught.
 """
 
+import time
+
 import pytest
 
 import core.senses.continuous_vision as continuous_vision
 import core.senses.sight as sight
+from core.senses.turn_evidence import build_camera_turn_evidence
 from core.conversation.response_reliability import (
     _has_unfounded_tool_execution_claim,
 )
@@ -71,6 +74,12 @@ class TestActionIsBackedByAReceipt:
     def test_an_unbacked_action_is_caught(self, no_frames):
         assert _has_unfounded_tool_execution_claim(ACTING, tool_receipts=())
 
+    def test_a_supported_observation_does_not_excuse_an_action(self, fresh_frame):
+        assert _has_unfounded_tool_execution_claim(
+            "I can see Chrome on your screen. I opened Chrome for you.",
+            tool_receipts=(),
+        )
+
 
 class TestTheOriginalGuardStillHolds:
     def test_fabricated_code_output_is_still_caught(self, no_frames):
@@ -112,4 +121,30 @@ class TestPhysicalPerceptionNeedsAnInterpretedCameraFrame:
         sight._note_camera_observation()
         assert not _has_unfounded_tool_execution_claim(
             "I can see two people in front of me.", tool_receipts=()
+        )
+
+    def test_cross_process_typed_evidence_backs_the_claim(self):
+        evidence = build_camera_turn_evidence(
+            "Is anyone else physically here?",
+            ok=True,
+            observation="No other person is visible in the current camera view.",
+            observed_at=time.time(),
+        )
+        assert not _has_unfounded_tool_execution_claim(
+            "I do not see anyone else in the current camera view.",
+            tool_receipts=(),
+            sensory_evidence=evidence,
+        )
+
+    def test_stale_typed_evidence_cannot_back_a_current_claim(self):
+        evidence = build_camera_turn_evidence(
+            "Is anyone else physically here?",
+            ok=True,
+            observation="No other person is visible in the current camera view.",
+            observed_at=time.time() - 301.0,
+        )
+        assert _has_unfounded_tool_execution_claim(
+            "No one else is physically here with you.",
+            tool_receipts=(),
+            sensory_evidence=evidence,
         )

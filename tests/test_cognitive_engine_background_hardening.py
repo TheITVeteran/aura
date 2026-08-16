@@ -515,6 +515,10 @@ async def test_cognitive_engine_desktop_quick_reply_carries_fresh_turn_sight(mon
     assert "[FRESH TURN SENSORY EVIDENCE]" in user_prompt
     assert "status: observed" in user_prompt
     assert "No other person is visible" in user_prompt
+    assert captured["user_surface_sensory_evidence"] == evidence
+    from core.utils.injected_blocks import is_stamped_grounding
+
+    assert is_stamped_grounding(captured["messages"][0])
 
 
 @pytest.mark.asyncio

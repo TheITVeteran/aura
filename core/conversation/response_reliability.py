@@ -5734,6 +5734,17 @@ def _camera_perception_is_live() -> bool:
     return age <= _CAMERA_OBSERVATION_MAX_AGE_SECONDS
 
 
+def _typed_sensory_evidence_is_live(value: Any, channel: str) -> bool:
+    """Whether an exact-turn serialized sensor receipt backs this claim."""
+
+    try:
+        from core.senses.turn_evidence import sensory_evidence_supports_channel
+
+        return sensory_evidence_supports_channel(value, channel)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 #: Framing that makes an execution word hypothetical rather than a claim.
 _EXECUTION_CLAIM_HEDGE_RE = re.compile(
     r"\b(?:would|could|might|if\s+i|were\s+i\s+to|suppose|imagine|"
@@ -5747,6 +5758,7 @@ def _has_unfounded_tool_execution_claim(
     reply_text: Any,
     *,
     tool_receipts: Iterable[Any] | None = None,
+    sensory_evidence: Any = None,
 ) -> bool:
     """True when a reply says it executed something and nothing executed.
 
@@ -5775,21 +5787,30 @@ def _has_unfounded_tool_execution_claim(
     # existence, though, so "I opened Chrome" still needs a receipt.
     match = _SCREEN_PERCEPTION_CLAIM_RE.search(raw)
     if match:
-        if _screen_perception_is_live() or tool_receipts:
-            return False
-        start = max(0, raw.rfind(".", 0, match.start()) + 1)
-        end = raw.find(".", match.end())
-        clause = raw[start : end if end != -1 else len(raw)]
-        return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
+        supported = bool(
+            _screen_perception_is_live()
+            or _typed_sensory_evidence_is_live(sensory_evidence, "screen")
+            or tool_receipts
+        )
+        if not supported:
+            start = max(0, raw.rfind(".", 0, match.start()) + 1)
+            end = raw.find(".", match.end())
+            clause = raw[start : end if end != -1 else len(raw)]
+            if not _EXECUTION_CLAIM_HEDGE_RE.search(clause):
+                return True
 
     match = _CAMERA_PERCEPTION_CLAIM_RE.search(raw)
     if match:
-        if _camera_perception_is_live():
-            return False
-        start = max(0, raw.rfind(".", 0, match.start()) + 1)
-        end = raw.find(".", match.end())
-        clause = raw[start : end if end != -1 else len(raw)]
-        return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
+        supported = bool(
+            _camera_perception_is_live()
+            or _typed_sensory_evidence_is_live(sensory_evidence, "camera")
+        )
+        if not supported:
+            start = max(0, raw.rfind(".", 0, match.start()) + 1)
+            end = raw.find(".", match.end())
+            clause = raw[start : end if end != -1 else len(raw)]
+            if not _EXECUTION_CLAIM_HEDGE_RE.search(clause):
+                return True
 
     match = _DESKTOP_ACTION_CLAIM_RE.search(raw) or _TOOL_EXECUTION_CLAIM_RE.search(raw)
     if not match:
@@ -7061,6 +7082,7 @@ def _model_text_integrity_reasons(
     prompt: Any = "",
     user_facing: bool = False,
     antecedent: Any = None,
+    sensory_evidence: Any = None,
 ) -> list[str]:
     raw = str(reply_text or "").strip()
     reasons: list[str] = []
@@ -7173,6 +7195,23 @@ def _model_text_integrity_reasons(
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_unfounded_voice_intrusion(prompt, raw):
         reasons.append("unfounded_voice_intrusion")
+    if user_facing and sensory_evidence:
+        try:
+            from core.senses.turn_evidence import sensory_evidence_contradictions
+
+            contradictions = sensory_evidence_contradictions(raw, sensory_evidence)
+            if "camera_scope_overclaim" in contradictions:
+                reasons.append("unsupported_sensor_scope_claim")
+            if any(reason != "camera_scope_overclaim" for reason in contradictions):
+                reasons.append("sensory_evidence_contradiction")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "response_reliability.sensory_evidence",
+                exc,
+                severity="warning",
+                action="continued with independent perception-claim validation",
+                enforce_failure_policy=False,
+            )
     if user_facing:
         try:
             from core.conversation.surface_disposition import turn_tool_receipts
@@ -7193,7 +7232,11 @@ def _model_text_integrity_reasons(
                 action="evaluated tool-execution claims with no receipts available",
             )
             receipts = ()
-        if _has_unfounded_tool_execution_claim(raw, tool_receipts=receipts):
+        if _has_unfounded_tool_execution_claim(
+            raw,
+            tool_receipts=receipts,
+            sensory_evidence=sensory_evidence,
+        ):
             reasons.append("unfounded_tool_execution_claim")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
         reasons.append("pseudo_internal_jargon")
@@ -7270,6 +7313,8 @@ def assess_model_text_integrity(
         "raw_model_identity_leak",
         "unsupported_external_provider_path_claim",
         "unsupported_embodiment_claim",
+        "sensory_evidence_contradiction",
+        "unsupported_sensor_scope_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -7423,6 +7468,7 @@ def assess_user_facing_reply(
     grounding: Iterable[str] | None = None,
     antecedent: Any = None,
     provenance: Any = None,
+    sensory_evidence: Any = None,
 ) -> ConversationReplyAssessment:
     """Classify a reply, and record the verdict on the turn's candidate ledger.
 
@@ -7468,12 +7514,30 @@ def assess_user_facing_reply(
             enforce_failure_policy=False,
         )
 
+    bound_sensory_evidence = sensory_evidence
+    if bound_sensory_evidence is None:
+        try:
+            from core.conversation.turn_evidence_custody import turn_sensory_evidence
+
+            available_sensory_evidence = turn_sensory_evidence()
+            if available_sensory_evidence:
+                bound_sensory_evidence = available_sensory_evidence[-1]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "response_reliability.turn_sensory_evidence",
+                exc,
+                severity="warning",
+                action="continued without unavailable typed turn sensory evidence",
+                enforce_failure_policy=False,
+            )
+
     assessment = _assess_user_facing_reply(
         user_message,
         reply_text,
         recent_user_messages=recent_user_messages,
         grounding=bound_grounding,
         antecedent=antecedent,
+        sensory_evidence=bound_sensory_evidence,
     )
     assessment = _apply_reply_provenance(
         user_message, reply_text, assessment, provenance
@@ -7581,6 +7645,7 @@ def _assess_user_facing_reply(
     recent_user_messages: Iterable[str] | None = None,
     grounding: Iterable[str] | None = None,
     antecedent: Any = None,
+    sensory_evidence: Any = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
     # Defense in depth. The ingress now binds the visible request
@@ -7639,6 +7704,7 @@ def _assess_user_facing_reply(
             raw,
             prompt=user_message,
             user_facing=True,
+            sensory_evidence=sensory_evidence,
         )
         unique = tuple(dict.fromkeys(reasons))
         hard_reasons = {
@@ -7650,6 +7716,8 @@ def _assess_user_facing_reply(
             "raw_model_identity_leak",
             "unsupported_external_provider_path_claim",
             "unsupported_embodiment_claim",
+            "sensory_evidence_contradiction",
+            "unsupported_sensor_scope_claim",
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
@@ -7685,6 +7753,7 @@ def _assess_user_facing_reply(
             prompt=user_message,
             user_facing=True,
             antecedent=antecedent,
+            sensory_evidence=sensory_evidence,
         )
     )
     if _GENERIC_ASSISTANT_RE.search(raw):
@@ -7838,6 +7907,8 @@ def _assess_user_facing_reply(
         "raw_model_identity_leak",
         "unsupported_external_provider_path_claim",
         "unsupported_embodiment_claim",
+        "sensory_evidence_contradiction",
+        "unsupported_sensor_scope_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",

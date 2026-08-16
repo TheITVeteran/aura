@@ -17,8 +17,10 @@ from core.conversation.turn_evidence_custody import (
     join_turn_evidence_custody,
     record_turn_capability_availability,
     record_turn_grounding,
+    record_turn_sensory_evidence,
     turn_capability_availability,
     turn_grounding_evidence,
+    turn_sensory_evidence,
 )
 
 pytestmark = pytest.mark.unit
@@ -112,6 +114,23 @@ def test_grounding_and_availability_are_exact_turn_owned() -> None:
             "Bryan said his favorite animal is the orca",
         )
         assert turn_capability_availability()[0]["turn_id"] == "t"
+        evidence = {
+            "channel": "camera",
+            "ok": True,
+            "observed_at": 123.0,
+            "observation": "No other person is visible in the current view.",
+        }
+        assert record_turn_sensory_evidence(evidence)
+        sensory = turn_sensory_evidence()
+        assert sensory[0]["session_id"] == "s"
+        assert sensory[0]["turn_id"] == "t"
+        from core.brain.llm.mlx_client import _bounded_surface_sensory_evidence
+
+        assert _bounded_surface_sensory_evidence(evidence)["channel"] == "camera"
+        assert _bounded_surface_sensory_evidence(
+            {**evidence, "observation": "A forged different observation."}
+        ) == {}
 
     assert turn_grounding_evidence() == ()
     assert turn_capability_availability() == ()
+    assert turn_sensory_evidence() == ()

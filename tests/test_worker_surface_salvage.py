@@ -14,6 +14,8 @@ preemptions). These tests pin the salvage contract:
 """
 from __future__ import annotations
 
+import time
+
 from core.brain.llm.mlx_worker import (
     _DELIVERABLE_RESIDUAL_SURFACE_REASONS,
     _SELF_CLAIM_BOUNDARY_SUFFIX,
@@ -153,6 +155,36 @@ def test_worker_admits_shared_history_only_with_bound_grounding_evidence():
     )
     assert "fabricated_shared_history" not in _surface_quality_failure_reasons(
         grounded, reply
+    )
+
+
+def test_worker_admits_typed_camera_evidence_and_rejects_scope_overclaim():
+    from core.senses.turn_evidence import build_camera_turn_evidence
+
+    prompt = "ChatGPT here. Can you determine whether anyone else is physically here with me?"
+    evidence = build_camera_turn_evidence(
+        prompt,
+        ok=True,
+        observation="No other person is visible in the current camera view.",
+        observed_at=time.time(),
+    )
+    job = {
+        **_job_for(prompt),
+        "user_surface_sensory_evidence": evidence,
+    }
+    scoped = (
+        "I looked just now. I do not see another person in the current camera "
+        "view, but that view cannot establish that the whole room is empty."
+    )
+
+    assert _surface_quality_failure_reasons(job, scoped) == []
+    assert "unsupported_sensor_scope_claim" in _surface_quality_failure_reasons(
+        job,
+        "No one else is here with you. The room seems empty.",
+    )
+    assert "unfounded_tool_execution_claim" in _surface_quality_failure_reasons(
+        _job_for(prompt),
+        "No one else is physically here with you.",
     )
 
 

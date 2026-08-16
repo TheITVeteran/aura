@@ -415,6 +415,8 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         # person cannot check for themselves.
         "unfounded_voice_intrusion",
         "unfounded_tool_execution_claim",
+        "sensory_evidence_contradiction",
+        "unsupported_sensor_scope_claim",
         "unsupported_embodiment_claim",
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",

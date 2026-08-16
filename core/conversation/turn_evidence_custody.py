@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import math
 import secrets
 import threading
 import time
@@ -43,9 +44,11 @@ __all__ = [
     "join_turn_evidence_custody",
     "record_turn_capability_availability",
     "record_turn_grounding",
+    "record_turn_sensory_evidence",
     "run_as_turn_evidence_participant",
     "turn_capability_availability",
     "turn_grounding_evidence",
+    "turn_sensory_evidence",
 ]
 
 
@@ -87,6 +90,7 @@ class TurnEvidenceCustody:
         self._leases: dict[str, EvidenceParticipantLease] = {}
         self._receipts: list[dict[str, Any]] = []
         self._grounding: list[str] = []
+        self._sensory_evidence: dict[str, dict[str, Any]] = {}
         self._capability_availability: dict[str, dict[str, Any]] = {}
         self._closed = False
 
@@ -201,6 +205,50 @@ class TurnEvidenceCustody:
         with self._lock:
             return tuple(self._grounding)
 
+    def record_sensory_evidence(self, evidence: Any) -> bool:
+        """Attach one typed sensor result to this exact turn.
+
+        Prose grounding reaches the model, but a separate MLX worker cannot
+        recover provenance from prose. Keeping the bounded typed receipt here
+        lets every gate distinguish a real observation from model-authored
+        text without treating a sense as a tool execution.
+        """
+
+        if not self.admits_current_execution() or not isinstance(evidence, dict):
+            return False
+        channel = str(evidence.get("channel") or "").strip().casefold()
+        if channel not in {"camera", "microphone", "screen"}:
+            return False
+        if not isinstance(evidence.get("ok"), bool):
+            return False
+        try:
+            observed_at = float(evidence.get("observed_at") or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(observed_at) or observed_at <= 0.0:
+            return False
+        if bool(evidence.get("ok")) and not str(evidence.get("observation") or "").strip():
+            return False
+        row = dict(evidence)
+        row["session_id"] = self.session_id
+        row["turn_id"] = self.turn_id
+        with self._lock:
+            if self._closed:
+                return False
+            self._sensory_evidence[channel] = row
+        return True
+
+    def sensory_evidence(self) -> tuple[dict[str, Any], ...]:
+        """Typed sensor results admitted to this exact turn."""
+
+        if not self.admits_current_execution():
+            return ()
+        with self._lock:
+            return tuple(
+                dict(self._sensory_evidence[channel])
+                for channel in sorted(self._sensory_evidence)
+            )
+
     def record_capability_availability(
         self,
         capability: Any,
@@ -270,6 +318,20 @@ def turn_grounding_evidence() -> tuple[str, ...]:
 
     custody = current_turn_evidence_custody()
     return custody.grounding() if custody is not None else ()
+
+
+def record_turn_sensory_evidence(evidence: Any) -> bool:
+    """Attach typed sensory evidence under the active turn's custody."""
+
+    custody = current_turn_evidence_custody()
+    return bool(custody and custody.record_sensory_evidence(evidence))
+
+
+def turn_sensory_evidence() -> tuple[dict[str, Any], ...]:
+    """Return only typed sensory evidence owned by this execution."""
+
+    custody = current_turn_evidence_custody()
+    return custody.sensory_evidence() if custody is not None else ()
 
 
 def record_turn_capability_availability(

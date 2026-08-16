@@ -64,6 +64,21 @@ def test_epistemic_uncertainty_does_not_count_as_sample_denial() -> None:
     assert sensory_evidence_contradictions(reply, evidence) == ()
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "No one else is here with you. The room seems empty.",
+        "No, you're alone.",
+        "There's no one else here with you. The room is empty except for you and me.",
+    ],
+)
+def test_partial_camera_view_rejects_unbounded_absence_claims(reply: str) -> None:
+    assert "camera_scope_overclaim" in sensory_evidence_contradictions(
+        reply,
+        _camera_evidence(),
+    )
+
+
 def test_failed_read_rejects_a_claimed_current_observation() -> None:
     evidence = _camera_evidence(ok=False)
 

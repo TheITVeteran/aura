@@ -29599,6 +29599,7 @@ async def _run_chat_preflight(
                     )
                     from core.conversation.turn_evidence_custody import (
                         record_turn_grounding,
+                        record_turn_sensory_evidence,
                     )
                     from core.senses.turn_evidence import (
                         build_camera_turn_evidence,
@@ -29617,6 +29618,7 @@ async def _run_chat_preflight(
                             else time.time()
                         ),
                     )
+                    record_turn_sensory_evidence(_turn_sensory_evidence)
                     record_turn_grounding(
                         sensory_evidence_grounding_block(
                             _turn_sensory_evidence

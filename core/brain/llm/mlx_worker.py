@@ -913,6 +913,7 @@ def _surface_quality_failure_reasons(
         response_text,
         recent_user_messages=recent_messages,
         grounding=grounding,
+        sensory_evidence=job.get("user_surface_sensory_evidence"),
     )
     if assessment.ok and not assessment.retryable and not assessment.hard_failure:
         return []

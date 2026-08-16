@@ -4577,7 +4577,9 @@ class CognitiveEngine:
 
         router_generation_metadata: dict[str, Any] = {}
         try:
-            messages = [{"role": "system", "content": system_prompt}]
+            from core.utils.injected_blocks import stamp_grounding
+
+            messages = [stamp_grounding({"role": "system", "content": system_prompt})]
             if history_messages:
                 messages.append(
                     {
@@ -4628,6 +4630,9 @@ class CognitiveEngine:
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": validation_prompt,
+                "user_surface_sensory_evidence": context.get(
+                    "turn_sensory_evidence"
+                ),
                 # Wrapped so a paired trial can run this exact code with the
                 # contribution removed, rather than reconstructing what that
                 # would have looked like. Outside a trial this is one dict

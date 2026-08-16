@@ -2943,6 +2943,47 @@ def _bounded_surface_grounding_evidence(value: Any = None) -> list[str]:
     return bounded
 
 
+def _bounded_surface_sensory_evidence(value: Any = None) -> dict[str, Any]:
+    """Carry one typed exact-turn sensor receipt across worker IPC."""
+
+    try:
+        from core.conversation.turn_evidence_custody import turn_sensory_evidence
+
+        available = turn_sensory_evidence()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        available = ()
+    try:
+        from core.senses.turn_evidence import TurnSensoryEvidence
+
+        parsed_requested = TurnSensoryEvidence.from_value(value) if value is not None else None
+        admitted = [
+            (item, parsed)
+            for item in available
+            if (parsed := TurnSensoryEvidence.from_value(item)) is not None
+        ]
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        parsed_requested = None
+        admitted = []
+    if not admitted:
+        return {}
+    if parsed_requested is None:
+        candidate, parsed = admitted[-1]
+    else:
+        matched = [
+            pair for pair in admitted if pair[1].to_dict() == parsed_requested.to_dict()
+        ]
+        if not matched:
+            return {}
+        candidate, parsed = matched[-1]
+    bounded = parsed.to_dict()
+    if isinstance(candidate, dict):
+        for key in ("session_id", "turn_id"):
+            identity = str(candidate.get(key) or "").strip()[:160]
+            if identity:
+                bounded[key] = identity
+    return bounded
+
+
 def _rejected_surface_draft(value: Any) -> str:
     """The draft the worker's quality gate rejected, if it carried one."""
     receipt = value if isinstance(value, dict) else {}
@@ -13373,6 +13414,9 @@ class MLXLocalClient:
             ),
             "user_surface_grounding_evidence": _bounded_surface_grounding_evidence(
                 kwargs.get("user_surface_grounding_evidence")
+            ),
+            "user_surface_sensory_evidence": _bounded_surface_sensory_evidence(
+                kwargs.get("user_surface_sensory_evidence")
             ),
             "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
             "clean_user_surface_recurrent_loops": (
