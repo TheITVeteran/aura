@@ -70,6 +70,13 @@ class StuckPattern(StrEnum):
     MONOLOGUE = "monologue"
     OSCILLATION = "oscillation"
     REPEATED_CONTEXT_OVERFLOW = "repeated_context_overflow"
+    #: Different actions, unchanged world.
+    #:
+    #: The one shape that is not a repetition: she *varied* what she tried and
+    #: the observation never moved. Plain repetition is a stuck hand; this is a
+    #: stuck world, and it is the only pattern here that a caller cannot fix by
+    #: telling her to stop doing the same thing.
+    NO_PROGRESS = "no_progress"
 
 
 class Remedy(StrEnum):
@@ -165,6 +172,7 @@ class StuckDetector:
         error_threshold: int = 3,
         monologue_threshold: int = 3,
         oscillation_cycles: int = 3,
+        no_progress_threshold: int = 3,
     ) -> None:
         if window < 2:
             raise ValueError("window must be at least 2")
@@ -173,6 +181,7 @@ class StuckDetector:
             ("error_threshold", error_threshold),
             ("monologue_threshold", monologue_threshold),
             ("oscillation_cycles", oscillation_cycles),
+            ("no_progress_threshold", no_progress_threshold),
         ):
             if value < 2:
                 raise ValueError(f"{name} must be at least 2 to describe a repetition")
@@ -181,6 +190,7 @@ class StuckDetector:
         self.error_threshold = error_threshold
         self.monologue_threshold = monologue_threshold
         self.oscillation_cycles = oscillation_cycles
+        self.no_progress_threshold = no_progress_threshold
         #: How many times a rut has already been called on this run, so the
         #: remedy can escalate rather than repeating a nudge that did not work.
         self._interventions = 0
@@ -189,31 +199,68 @@ class StuckDetector:
 
     def check(self, steps: Sequence[AgentStep]) -> StuckVerdict:
         """Look at the recent history and decide whether she is going in circles."""
+        found = self.check_all(steps)
+        if not found:
+            return StuckVerdict()
+        self._interventions += 1
+        escalated = self._escalate(found[0])
+        logger.info("stuck: %s", escalated.describe())
+        return escalated
+
+    def check_all(self, steps: Sequence[AgentStep]) -> list[StuckVerdict]:
+        """Every pattern currently visible, strongest first, without escalating.
+
+        A window can hold more than one rut at a time — a caller that already
+        acknowledged the first still needs to hear about a genuinely different
+        second one, and a single-verdict interface can only answer "the same
+        thing you already knew". Ordering is the priority order below and does
+        not change; only the count does.
+
+        Escalation is deliberately not applied here. Reading the state must not
+        advance the remedy ladder, or a caller that inspects twice gets a
+        harsher answer for looking.
+        """
         recent = list(steps)[-self.window:]
         if len(recent) < 2:
-            return StuckVerdict()
-
+            return []
+        found: list[StuckVerdict] = []
         for detect in (
             self._context_overflow,
             self._repeated_error,
             self._repeated_observation,
+            self._no_progress,
             self._oscillation,
             self._monologue,
         ):
-            verdict = detect(recent)
-            if verdict.stuck:
-                self._interventions += 1
-                escalated = StuckVerdict(
-                    stuck=True,
-                    pattern=verdict.pattern,
-                    remedy=self._remedy_for(verdict.pattern),
-                    evidence=verdict.evidence,
-                    detail=verdict.detail,
-                )
-                logger.info("stuck: %s", escalated.describe())
-                return escalated
+            # The repetition detectors return every fingerprint at or above
+            # threshold, because a window can hold two different repeated
+            # actions and reporting only the most common one hides the second
+            # behind the first. The rest describe a single shape and return one
+            # verdict. Both arrive here as a sequence.
+            result = detect(recent)
+            verdicts = result if isinstance(result, list) else [result]
+            found.extend(v for v in verdicts if v.stuck)
+        return found
 
-        return StuckVerdict()
+    def escalate(self, verdict: StuckVerdict) -> StuckVerdict:
+        """Count this finding as an intervention and attach the remedy it earns.
+
+        Public because a caller using :meth:`check_all` to pick which finding to
+        act on still has to advance the ladder for the one it chose — and doing
+        that by reaching into the counter would put the escalation policy in two
+        places.
+        """
+        self._interventions += 1
+        return self._escalate(verdict)
+
+    def _escalate(self, verdict: StuckVerdict) -> StuckVerdict:
+        return StuckVerdict(
+            stuck=True,
+            pattern=verdict.pattern,
+            remedy=self._remedy_for(verdict.pattern),
+            evidence=verdict.evidence,
+            detail=verdict.detail,
+        )
 
     def reset(self) -> None:
         """Forget prior interventions. Call when real progress resumes."""
@@ -227,6 +274,12 @@ class StuckDetector:
         # Context overflow is never something she can talk her way out of: the
         # window is full and the next call fails the same way.
         if pattern is StuckPattern.REPEATED_CONTEXT_OVERFLOW:
+            return Remedy.FORCE_NEW_STRATEGY if self._interventions < 2 else Remedy.ASK_HUMAN
+        # No progress is the other pattern a nudge cannot touch. "Stop repeating
+        # yourself" is the wrong advice to someone who already varied what they
+        # tried — by the time this fires, trying something else is the thing that
+        # has been failing.
+        if pattern is StuckPattern.NO_PROGRESS:
             return Remedy.FORCE_NEW_STRATEGY if self._interventions < 2 else Remedy.ASK_HUMAN
         # One nudge, then escalate. Repeating a nudge that already failed to
         # change anything is itself a loop, which would be a poor look for the
@@ -242,53 +295,115 @@ class StuckDetector:
 
     @staticmethod
     def _actionable(steps: Iterable[AgentStep]) -> list[AgentStep]:
-        """Steps that can meaningfully repeat.
+        """Steps that can meaningfully repeat *as actions*.
 
         Waits are dropped here, once, rather than special-cased in each
         detector — polling a build is repetition and is also correct, and that
         distinction should live in one place.
-        """
-        return [s for s in steps if not s.is_wait]
 
-    def _repeated_observation(self, steps: Sequence[AgentStep]) -> StuckVerdict:
-        """The same action returning the same thing, over and over."""
+        Messages are dropped for a sharper reason. They carry no action, so a
+        run of them is three steps with an identical empty fingerprint, and the
+        action-repetition detectors fired on it before the monologue detector
+        was ever reached: three sentences in a row were reported as "'' ran 3
+        times with an identical result". A monologue is a real pattern and it
+        already has its own detector; letting it also register as a repeated
+        action means the verdict names the wrong problem and the remedy treats
+        the wrong thing.
+        """
+        return [s for s in steps if not s.is_wait and s.kind != "message"]
+
+    def _repeated_observation(self, steps: Sequence[AgentStep]) -> list[StuckVerdict]:
+        """The same action returning the same thing, over and over.
+
+        Every fingerprint at or above threshold, not just the most common one.
+        Two different actions can both be looping in one window, and
+        ``most_common(1)`` would report whichever appeared first and hide the
+        other for as long as it stayed in the window.
+        """
         candidates = [s for s in self._actionable(steps) if not s.is_error]
         if len(candidates) < self.repeat_threshold:
-            return StuckVerdict()
+            return []
 
         counts = Counter(s.fingerprint() for s in candidates)
-        fingerprint, count = counts.most_common(1)[0]
-        if count < self.repeat_threshold:
-            return StuckVerdict()
+        return [
+            StuckVerdict(
+                stuck=True,
+                pattern=StuckPattern.REPEATED_ACTION_OBSERVATION,
+                evidence=(fingerprint[0],),
+                detail=(
+                    f"{fingerprint[0]!r} ran {count} times with an identical result "
+                    "and nothing changed"
+                ),
+            )
+            for fingerprint, count in counts.most_common()
+            if count >= self.repeat_threshold
+        ]
 
-        return StuckVerdict(
-            stuck=True,
-            pattern=StuckPattern.REPEATED_ACTION_OBSERVATION,
-            evidence=(fingerprint[0],),
-            detail=(
-                f"{fingerprint[0]!r} ran {count} times with an identical result "
-                "and nothing changed"
-            ),
-        )
-
-    def _repeated_error(self, steps: Sequence[AgentStep]) -> StuckVerdict:
-        """The same action failing the same way."""
+    def _repeated_error(self, steps: Sequence[AgentStep]) -> list[StuckVerdict]:
+        """The same action failing the same way. Every such action, not one."""
         candidates = [s for s in self._actionable(steps) if s.is_error]
         if len(candidates) < self.error_threshold:
-            return StuckVerdict()
+            return []
 
         counts = Counter(s.fingerprint() for s in candidates)
-        fingerprint, count = counts.most_common(1)[0]
-        if count < self.error_threshold:
+        found: list[StuckVerdict] = []
+        for fingerprint, count in counts.most_common():
+            if count < self.error_threshold:
+                continue
+            # The error itself goes in the detail. "Failed 3 times with the same
+            # error" tells a reader there is a loop and not what the loop is
+            # about, which is the half that decides whether it is fixable.
+            failure = fingerprint[2]
+            found.append(
+                StuckVerdict(
+                    stuck=True,
+                    pattern=StuckPattern.REPEATED_ACTION_ERROR,
+                    evidence=(fingerprint[0],),
+                    detail=(
+                        f"{fingerprint[0]!r} failed {count} times with the same error"
+                        + (f" ({failure})" if failure else "")
+                        + "; retrying it again will fail the same way"
+                    ),
+                )
+            )
+        return found
+
+    def _no_progress(self, steps: Sequence[AgentStep]) -> StuckVerdict:
+        """She varied what she tried and the world did not move.
+
+        Checked after plain repetition and before oscillation. Repetition is the
+        more specific finding — if the actions were also identical, that is a
+        stuck hand and says so. This only fires once *more than one* distinct
+        action has produced the same unchanging observation, which is what makes
+        it a statement about the environment rather than about her.
+        """
+        candidates = [s for s in self._actionable(steps) if not s.is_error]
+        if len(candidates) < self.no_progress_threshold:
+            return StuckVerdict()
+
+        tail = candidates[-self.no_progress_threshold:]
+        outcomes = {s.outcome() for s in tail}
+        actions = {s.signature() for s in tail}
+        if len(outcomes) != 1 or len(actions) < 2:
+            return StuckVerdict()
+
+        # An absent observation is no evidence about the world, not evidence
+        # that the world is unchanged. Without this, a healthy turn running
+        # perceive → recall → reason → answer — four different phases, none of
+        # which records an observation — matched "different actions, identical
+        # outcome" perfectly and was reported as a stuck world. That is the
+        # false positive this whole module is designed around, arriving through
+        # the newest pattern.
+        if not next(iter(outcomes)).strip():
             return StuckVerdict()
 
         return StuckVerdict(
             stuck=True,
-            pattern=StuckPattern.REPEATED_ACTION_ERROR,
-            evidence=(fingerprint[0],),
+            pattern=StuckPattern.NO_PROGRESS,
+            evidence=tuple(sorted({a for a, _ in actions})),
             detail=(
-                f"{fingerprint[0]!r} failed {count} times with the same error; "
-                "retrying it again will fail the same way"
+                f"{len(actions)} different actions over {len(tail)} steps and the "
+                "observation never changed; the state is not moving"
             ),
         )
 

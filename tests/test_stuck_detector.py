@@ -94,7 +94,7 @@ def test_alternation_needs_two_full_cycles():
     assert d.assess() is None, "read/write/read is an ordinary sequence"
     _feed(d, b)
     verdict = d.assess()
-    assert verdict.pattern is StuckPattern.ALTERNATING
+    assert verdict.pattern is StuckPattern.OSCILLATION
     assert set(verdict.actions) == {"read", "write"}
 
 
@@ -286,3 +286,82 @@ async def test_beginning_a_step_lifts_the_block(monkeypatch):
 
     registry.begin_step()
     assert (await registry.execute_tool("read", path="a.txt"))["ok"]
+
+# ── the merge: one mechanism, two reporting layers ───────────────────────
+
+
+def test_there_is_only_one_detector_implementation():
+    """Two copies drifted to thresholds 3/20 and 4/24 and disagreed on patterns."""
+    from core.agency.stuck_detector import AgentStep as AgencyStep
+    from core.agency.stuck_detector import StuckPattern as AgencyPattern
+    from core.runtime.stuck_detector import AgentStep as RuntimeStep
+    from core.runtime.stuck_detector import StuckPattern as RuntimePattern
+
+    assert AgencyPattern is RuntimePattern
+    assert issubclass(AgencyStep, RuntimeStep)
+
+
+def test_a_monologue_is_not_reported_as_a_repeated_action():
+    """Message steps share an empty fingerprint and outranked their own pattern."""
+    d = StuckDetector()
+    for _ in range(4):
+        d.observe_idle_turn()
+    verdict = d.assess()
+    assert verdict is not None
+    assert verdict.pattern is StuckPattern.MONOLOGUE
+
+
+def test_an_absent_observation_is_not_an_unchanged_world():
+    """A healthy turn runs different phases and records no observation."""
+    from core.runtime.stuck_detector import AgentStep as RuntimeStep
+    from core.runtime.stuck_detector import StuckDetector as Mechanism
+
+    steps = [RuntimeStep(action=name) for name in ("perceive", "recall", "reason", "answer")]
+    assert not Mechanism().check(steps).stuck
+
+
+def test_no_progress_needs_a_real_unchanged_observation():
+    from core.runtime.stuck_detector import AgentStep as RuntimeStep
+    from core.runtime.stuck_detector import StuckDetector as Mechanism
+    from core.runtime.stuck_detector import StuckPattern as Pattern
+
+    steps = [
+        RuntimeStep(action=name, observation="still 0 rows")
+        for name in ("query", "reindex", "query_again")
+    ]
+    verdict = Mechanism().check(steps)
+    assert verdict.stuck and verdict.pattern is Pattern.NO_PROGRESS
+
+
+def test_two_distinct_loops_in_one_window_both_report():
+    d = StuckDetector()
+    _feed(d, *_same_call(3))
+    first = d.assess_once()
+    for _ in range(3):
+        d.observe(AgentStep.of("write", arguments={"p": "b"}, observation="other"))
+    second = d.assess_once()
+    assert first is not None and second is not None
+    assert first.actions != second.actions
+
+
+def test_the_remedy_escalates_rather_than_repeating_a_nudge():
+    from core.runtime.stuck_detector import Remedy
+
+    d = StuckDetector()
+    _feed(d, *_same_call(3))
+    first = d.assess_once()
+    assert first.remedy is Remedy.NUDGE
+    for _ in range(3):
+        d.observe(AgentStep.of("write", arguments={"p": "b"}, observation="other"))
+    assert d.assess_once().remedy is not Remedy.NUDGE
+
+
+def test_reading_the_state_does_not_advance_the_ladder():
+    from core.runtime.stuck_detector import AgentStep as RuntimeStep
+    from core.runtime.stuck_detector import StuckDetector as Mechanism
+
+    mechanism = Mechanism(repeat_threshold=3)
+    steps = [RuntimeStep(action="read", observation="same") for _ in range(3)]
+    mechanism.check_all(steps)
+    mechanism.check_all(steps)
+    assert mechanism.interventions == 0

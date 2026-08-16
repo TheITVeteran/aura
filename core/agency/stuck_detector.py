@@ -1,56 +1,47 @@
-"""Loop detection over actions and observations, reported as a no-change impasse.
+"""Loop detection reported as a no-change impasse.
 
-What Aura had
--------------
-One repetition guard, in ``core/orchestrator/mixins/message_handling.py``. It
-compares the *text* of consecutive replies, and when three come back more than
-eighty percent alike it appends a paragraph to the prompt telling the model it
-must try a different approach.
+This module used to carry a second, independent implementation of the same five
+patterns that :mod:`core.runtime.stuck_detector` detects. Two detectors, two
+sets of thresholds, two windows — 3 and 20 here, 4 and 24 there — and two
+consumers that could never agree on whether a turn was stuck. Each had a pattern
+the other lacked, so neither was simply the better one: this side knew about
+*no progress* (varied actions, unchanged world), and the runtime side knew about
+repeated context overflow, carried an escalating remedy, stripped volatile
+detail before comparing, and had the ``progress_marker`` guard that stops a long
+poll being killed as a loop.
 
-That guard has two problems and the second is the serious one.
+That is now one detector. The mechanism lives in :mod:`core.runtime.stuck_detector`
+— the foundation layer, which :mod:`core.observability` may import and this
+module may too — with ``NO_PROGRESS`` moved into it. What is left here is the
+one thing that genuinely cannot live down there: the impasse.
 
-It watches the wrong channel. An agent stuck in a tool loop — reading the same
-file, running the same failing command, alternating between two calls forever —
-produces different prose every turn while doing exactly the same thing. Nothing
-was watching what it *did*.
-
-And its response is an instruction. Whether the loop breaks depends on whether
-the model complies with a paragraph, which is the same faculty that produced the
-loop. A detector whose only actuator is a request to the thing that is stuck is
-not a control.
-
-So this watches actions and observations, and its output is a typed verdict the
-caller must handle, not text appended to a context window.
+Why the split is real and not bureaucratic
+------------------------------------------
+``core/runtime`` may not import cognition; ``core/observability`` may not import
+agency. So a detector that constructs a
+:class:`~core.cognition.impasse.Impasse` cannot be the detector that
+``turn_observer`` uses. Rather than duplicate detection to satisfy that, the
+detection is shared and only the *reporting* differs — which is the honest
+factoring anyway. Detecting a loop and deciding what a loop means to the rest of
+cognition are different jobs.
 
 Why it reports an impasse
 -------------------------
-OpenHands calls this a stuck detector and enumerates repeated action-observation
-cycles, repeated action-error cycles, monologue, and alternating patterns. Soar
-already named the same condition thirty years earlier and named it better: a
-:attr:`~core.cognition.impasse.ImpasseType.NO_CHANGE` impasse is "something was
-chosen and applying it changed nothing". That is the definition of being stuck.
-
-Making it an impasse is not a relabelling. It puts loop detection into machinery
-that already exists here: :class:`~core.cognition.impasse.ImpasseLearner` counts
-impasses by type, so the loop rate becomes a reportable diagnostic beside every
-other kind of deadlock, and a resolution that gets a loop unstuck can be chunked
-and reused the next time the same situation arises. A bespoke counter would have
-had none of that.
-
-The fifth pattern
------------------
-:attr:`StuckPattern.NO_PROGRESS` has no OpenHands equivalent and is the one worth
-having. The four repetition patterns all ask whether the *agent* is repeating
-itself. This one asks whether the *world* is moving: several different actions,
-each observed to leave the state exactly as it was. An agent trying a new thing
-every turn and changing nothing looks busy under every other check here, and it
-is the more expensive failure because nothing about it looks wrong.
+Soar's :attr:`~core.cognition.impasse.ImpasseType.NO_CHANGE` is "something was
+selected and applying it changed nothing", which is exactly what a loop is.
+Saying so puts loop detection into machinery that already exists:
+:class:`~core.cognition.impasse.ImpasseLearner` counts impasses by type, so the
+loop rate becomes a reportable diagnostic beside every other way a decision can
+fail, instead of a log line nobody aggregates.
 
 Thresholds
 ----------
-None of the counts below are tuned. Each is the smallest number that separates
-the failure from the legitimate behaviour it resembles, and each says which
-behaviour that is where it is defined.
+The adapter passes its own thresholds rather than taking the runtime defaults.
+Three, not four, for a repeat: three is the first count containing *two*
+consecutive repeats of the same transition, and one retry after a transient
+failure is correct behaviour a detector must not punish. That rationale was
+written for the tool loop this module serves, and keeping it here means sharing
+the mechanism did not silently recalibrate the caller.
 """
 
 from __future__ import annotations
@@ -58,15 +49,18 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 
 from core.cognition.impasse import Impasse, ImpasseType, situation_signature
+from core.runtime.stuck_detector import Remedy, StuckPattern
+from core.runtime.stuck_detector import AgentStep as _RuntimeStep
+from core.runtime.stuck_detector import StuckDetector as _Mechanism
 
 __all__ = [
     "StuckPattern",
+    "Remedy",
     "AgentStep",
     "StuckVerdict",
     "StuckDetector",
@@ -78,30 +72,18 @@ __all__ = [
 #: Three occurrences, because three is the first count containing *two*
 #: consecutive repeats of the same transition. Two occurrences is one retry, and
 #: retrying once after a transient failure is correct behaviour that a detector
-#: must not punish.
+#: must not call a loop.
 _REPEAT_THRESHOLD = 3
-
-#: Steps of an A-B-A-B alternation before it counts as a loop.
-#:
-#: Four, which is two complete cycles. Three steps of A-B-A is an ordinary
-#: sequence — read, edit, read — and calling it a loop would fire on the most
-#: common shape in normal tool use.
-_ALTERNATION_THRESHOLD = 4
-
-#: Consecutive agent turns with no action at all.
-#:
-#: Three, for the same reason as the repeat threshold: one turn of thinking
-#: aloud before acting is normal, two is a plan, three with nothing done is a
-#: monologue.
-_MONOLOGUE_THRESHOLD = 3
 
 #: Steps over which the observation never changes, with more than one distinct
 #: action attempted, before the world is called unmoved.
-#:
-#: Three again, and the added condition that the actions differ is what makes it
-#: a different finding from plain repetition: the agent varied its behaviour and
-#: the state still did not move.
 _NO_PROGRESS_THRESHOLD = 3
+
+#: Consecutive turns that produced words and no action.
+_MONOLOGUE_THRESHOLD = 3
+
+#: Full A-B-A-B cycles before alternation counts.
+_OSCILLATION_CYCLES = 2
 
 #: Most recent steps considered. A window rather than the whole history because
 #: an agent that looped, recovered, and moved on is not stuck now, and a
@@ -109,51 +91,31 @@ _NO_PROGRESS_THRESHOLD = 3
 DEFAULT_WINDOW = 20
 
 
-class StuckPattern(StrEnum):
-    """What kind of not-getting-anywhere this is."""
-
-    #: The same action producing the same observation, repeatedly.
-    REPEATED_ACTION_OBSERVATION = "repeated_action_observation"
-    #: The same action failing the same way, repeatedly.
-    REPEATED_ACTION_ERROR = "repeated_action_error"
-    #: Consecutive turns that took no action at all.
-    MONOLOGUE = "monologue"
-    #: Two actions alternating without progress.
-    ALTERNATING = "alternating"
-    #: Different actions, unchanged world.
-    NO_PROGRESS = "no_progress"
-
-
 def digest_of(value: Any) -> str:
-    """A stable short digest for arguments or an observation.
+    """A stable short digest of any JSON-ish value.
 
-    Sorted keys, and a repr fallback for anything JSON cannot hold, so two calls
-    that differ only in dict ordering are recognised as the same call. Without
-    the sort, ``{"a": 1, "b": 2}`` and ``{"b": 2, "a": 1}`` are different
-    actions and no repetition is ever detected.
-    """
-    try:
-        payload = json.dumps(value, sort_keys=True, default=repr)
-    except (TypeError, ValueError):
-        payload = repr(value)
-    return hashlib.blake2b(payload.encode("utf-8"), digest_size=12).hexdigest()
-
-
-@dataclass(frozen=True)
-class AgentStep:
-    """One thing the agent did, and what came back.
-
-    ``observation`` is digested rather than stored. The detector only ever asks
+    Observations are digested rather than stored. The detector only ever asks
     whether two observations are the same, and keeping the payloads would mean a
     loop-detection window holding twenty tool outputs — including whatever they
     contained — for the lifetime of the loop.
     """
+    if value is None:
+        return ""
+    try:
+        text = json.dumps(value, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        text = repr(value)
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
 
-    action: str
-    arguments_digest: str = ""
-    observation_digest: str = ""
-    failed: bool = False
-    error_kind: str = ""
+
+class AgentStep(_RuntimeStep):
+    """One thing the agent did, and what came back, with payloads digested.
+
+    A subclass rather than a parallel type so the shared mechanism compares
+    these with the same fingerprint logic it uses everywhere else. Digesting
+    happens in :meth:`of`; the mechanism never sees the payload, and normalising
+    a digest is a no-op, so the volatile-stripping upstream costs nothing here.
+    """
 
     @staticmethod
     def of(
@@ -163,28 +125,48 @@ class AgentStep:
         observation: Any = None,
         failed: bool = False,
         error_kind: str = "",
+        kind: str = "tool",
+        progress_marker: str | None = None,
     ) -> "AgentStep":
+        # A failed step is identified by how it failed, not by what it returned.
+        # Folding error_kind into the observation is what makes "the same action
+        # failing the same way" a distinct fingerprint from "the same action
+        # failing differently", which is the distinction the error pattern rests
+        # on.
+        outcome = str(error_kind) if failed else digest_of(observation)
         return AgentStep(
             action=str(action),
-            arguments_digest=digest_of(arguments),
-            observation_digest=digest_of(observation),
-            failed=bool(failed),
-            error_kind=str(error_kind),
+            arguments=digest_of(arguments),
+            observation=outcome,
+            is_error=bool(failed),
+            kind=kind,
+            progress_marker=progress_marker,
         )
 
     @property
     def call_key(self) -> str:
         """Identity of the call: what was done, with what."""
-        return f"{self.action}#{self.arguments_digest}"
+        return f"{self.action}#{self.arguments}"
 
     @property
     def cycle_key(self) -> str:
         """Identity of the whole transition: the call and what it produced."""
-        return f"{self.call_key}->{self.observation_digest}"
+        return f"{self.call_key}->{self.observation}"
 
     @property
-    def error_key(self) -> str:
-        return f"{self.call_key}!{self.error_kind}"
+    def failed(self) -> bool:
+        """Whether the step errored. Named for the tool loop that reads it."""
+        return self.is_error
+
+    @property
+    def error_kind(self) -> str:
+        """How it failed, or empty for a step that did not.
+
+        The error kind *is* the observation for a failed step — see :meth:`of`,
+        where folding it there is what makes "failed the same way" a different
+        fingerprint from "failed differently".
+        """
+        return self.observation if self.is_error else ""
 
 
 @dataclass(frozen=True)
@@ -196,6 +178,7 @@ class StuckVerdict:
     repetitions: int
     actions: tuple[str, ...]
     impasse: Impasse
+    remedy: Remedy = Remedy.NONE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -203,6 +186,7 @@ class StuckVerdict:
             "detail": self.detail,
             "repetitions": self.repetitions,
             "actions": list(self.actions),
+            "remedy": self.remedy.value,
             "impasse": self.impasse.type.value,
             "signature": self.impasse.signature,
         }
@@ -220,61 +204,86 @@ class StuckDetector:
     scope: str = "agent_loop"
     window: int = DEFAULT_WINDOW
     _steps: deque[AgentStep] = field(default_factory=deque)
-    _idle_turns: int = 0
     _reported: set[str] = field(default_factory=set)
+    _mechanism: _Mechanism = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.window < _ALTERNATION_THRESHOLD:
+        needed = _OSCILLATION_CYCLES * 2
+        if self.window < needed:
             raise ValueError(
-                f"window must hold at least {_ALTERNATION_THRESHOLD} steps to detect alternation"
+                f"window must hold at least {needed} steps to detect alternation"
             )
         self._steps = deque(self._steps, maxlen=self.window)
+        self._mechanism = _Mechanism(
+            window=self.window,
+            repeat_threshold=_REPEAT_THRESHOLD,
+            error_threshold=_REPEAT_THRESHOLD,
+            monologue_threshold=_MONOLOGUE_THRESHOLD,
+            oscillation_cycles=_OSCILLATION_CYCLES,
+            no_progress_threshold=_NO_PROGRESS_THRESHOLD,
+        )
 
     # -- recording -------------------------------------------------------
 
     def reset(self) -> None:
         """Forget the window. Called when the user says something new."""
         self._steps.clear()
-        self._idle_turns = 0
         self._reported.clear()
+        self._mechanism.reset()
 
     def observe(self, step: AgentStep) -> None:
         self._steps.append(step)
-        self._idle_turns = 0
 
     def observe_idle_turn(self) -> None:
         """Record a turn that produced words and no action."""
-        self._idle_turns += 1
+        self._steps.append(AgentStep(action="", kind="message"))
 
     @property
     def steps(self) -> tuple[AgentStep, ...]:
         return tuple(self._steps)
 
+    @property
+    def interventions(self) -> int:
+        return self._mechanism.interventions
+
     # -- detection -------------------------------------------------------
 
     def assess(self, *, context: Mapping[str, Any] | None = None) -> StuckVerdict | None:
-        """The strongest loop currently visible, or None.
+        """The strongest loop currently visible, or None."""
+        verdict = self._mechanism.check(tuple(self._steps))
+        if not verdict.stuck or verdict.pattern is None:
+            return None
+        return self._as_impasse(verdict, context)
 
-        Order matters. A repeated failure is checked before a repeated success
-        because it is the more actionable finding: the caller can surface the
-        error. Alternation is checked last because a two-cycle alternation is
-        the weakest evidence here and would otherwise mask a straightforward
-        repetition inside it.
-        """
+    def _as_impasse(self, verdict: Any, context: Mapping[str, Any] | None) -> StuckVerdict:
         ctx = dict(context or {})
         ctx.setdefault("scope", self.scope)
+        actions = tuple(verdict.evidence)
+        return StuckVerdict(
+            pattern=verdict.pattern,
+            detail=verdict.detail,
+            repetitions=self._repetitions(verdict.pattern, actions),
+            actions=actions,
+            remedy=verdict.remedy,
+            impasse=Impasse(
+                type=ImpasseType.NO_CHANGE,
+                signature=situation_signature(ctx, actions or (verdict.pattern.value,)),
+                candidates=actions,
+                detail=verdict.detail,
+            ),
+        )
 
-        for check in (
-            self._check_repeated_error,
-            self._check_repeated_cycle,
-            self._check_no_progress,
-            self._check_monologue,
-            self._check_alternation,
-        ):
-            verdict = check(ctx)
-            if verdict is not None:
-                return verdict
-        return None
+    def _repetitions(self, pattern: StuckPattern, actions: Sequence[str]) -> int:
+        """How many recent steps the pattern actually spans.
+
+        Counted from the window rather than reported by the mechanism, which
+        deals in verdicts rather than tallies. A caller deciding whether to
+        escalate wants to know how deep the rut is.
+        """
+        if not actions:
+            return 0
+        wanted = set(actions)
+        return sum(1 for step in self._steps if step.action in wanted)
 
     def assess_once(self, *, context: Mapping[str, Any] | None = None) -> StuckVerdict | None:
         """:meth:`assess`, but each distinct loop is reported only once.
@@ -284,14 +293,37 @@ class StuckDetector:
         stuck episode would look like a dozen. The signature is what identifies
         an episode, so a genuinely new loop still reports.
         """
-        verdict = self.assess(context=context)
-        if verdict is None:
-            return None
-        key = f"{verdict.pattern.value}:{verdict.impasse.signature}"
-        if key in self._reported:
-            return None
-        self._reported.add(key)
-        return verdict
+        for raw in self._mechanism.check_all(tuple(self._steps)):
+            if raw.pattern is None:
+                continue
+            verdict = self._as_impasse(raw, context)
+            key = f"{verdict.pattern.value}:{verdict.impasse.signature}"
+            if key in self._reported:
+                # Already acknowledged. Keep looking rather than returning None:
+                # a window can hold two different ruts, and reporting only the
+                # first would hide a genuinely new one behind an old one that
+                # has not aged out yet.
+                continue
+            self._reported.add(key)
+            return StuckVerdict(
+                pattern=verdict.pattern,
+                detail=verdict.detail,
+                repetitions=verdict.repetitions,
+                actions=verdict.actions,
+                remedy=self._mechanism.escalate(raw).remedy,
+                impasse=verdict.impasse,
+            )
+        return None
+
+    def report(self) -> dict[str, Any]:
+        """What this detector is holding, for a health surface to read."""
+        return {
+            "scope": self.scope,
+            "window": self.window,
+            "steps_held": len(self._steps),
+            "loops_reported": len(self._reported),
+            "interventions": self._mechanism.interventions,
+        }
 
     def record_to_learner(self, verdict: StuckVerdict) -> None:
         """File the verdict with the process-wide impasse learner.
@@ -304,170 +336,27 @@ class StuckDetector:
 
         get_impasse_learner().record_impasse(verdict.impasse)
 
-    # -- individual patterns ---------------------------------------------
 
-    def _impasse(
-        self, ctx: Mapping[str, Any], pattern: StuckPattern, actions: Sequence[str], detail: str
-    ) -> Impasse:
-        return Impasse(
-            type=ImpasseType.NO_CHANGE,
-            signature=situation_signature({**ctx, "pattern": pattern.value}, actions),
-            candidates=tuple(sorted(set(actions))),
-            detail=detail,
-        )
+def steps_from(records: Sequence[Mapping[str, Any]]) -> list[AgentStep]:
+    """Build a step window from stored tool records.
 
-    def _trailing_run(self, key: "callable[[AgentStep], str]") -> tuple[str, int]:
-        """Length of the identical run ending at the most recent step."""
-        if not self._steps:
-            return "", 0
-        steps = list(self._steps)
-        target = key(steps[-1])
-        count = 0
-        for step in reversed(steps):
-            if key(step) != target:
-                break
-            count += 1
-        return target, count
-
-    def _check_repeated_cycle(self, ctx: Mapping[str, Any]) -> StuckVerdict | None:
-        _key, count = self._trailing_run(lambda s: s.cycle_key)
-        if count < _REPEAT_THRESHOLD:
-            return None
-        last = self._steps[-1]
-        detail = (
-            f"{last.action} ran {count} times with identical arguments and returned "
-            "an identical observation every time"
-        )
-        return StuckVerdict(
-            pattern=StuckPattern.REPEATED_ACTION_OBSERVATION,
-            detail=detail,
-            repetitions=count,
-            actions=(last.action,),
-            impasse=self._impasse(
-                ctx, StuckPattern.REPEATED_ACTION_OBSERVATION, [last.action], detail
-            ),
-        )
-
-    def _check_repeated_error(self, ctx: Mapping[str, Any]) -> StuckVerdict | None:
-        if not self._steps or not self._steps[-1].failed:
-            return None
-        steps = list(self._steps)
-        target = steps[-1].error_key
-        count = 0
-        for step in reversed(steps):
-            if not step.failed or step.error_key != target:
-                break
-            count += 1
-        if count < _REPEAT_THRESHOLD:
-            return None
-        last = steps[-1]
-        detail = (
-            f"{last.action} failed {count} times in a row with the same arguments and the "
-            f"same error ({last.error_kind or 'unclassified'})"
-        )
-        return StuckVerdict(
-            pattern=StuckPattern.REPEATED_ACTION_ERROR,
-            detail=detail,
-            repetitions=count,
-            actions=(last.action,),
-            impasse=self._impasse(ctx, StuckPattern.REPEATED_ACTION_ERROR, [last.action], detail),
-        )
-
-    def _check_no_progress(self, ctx: Mapping[str, Any]) -> StuckVerdict | None:
-        if len(self._steps) < _NO_PROGRESS_THRESHOLD:
-            return None
-        recent = list(self._steps)[-_NO_PROGRESS_THRESHOLD:]
-        observations = {s.observation_digest for s in recent}
-        if len(observations) != 1:
-            return None
-        calls = {s.call_key for s in recent}
-        if len(calls) < 2:
-            # Identical calls are plain repetition and the earlier check owns
-            # that finding. This one is specifically about varied effort.
-            return None
-        actions = tuple(dict.fromkeys(s.action for s in recent))
-        detail = (
-            f"{len(calls)} different calls across {len(recent)} steps and the observed "
-            "state did not change once"
-        )
-        return StuckVerdict(
-            pattern=StuckPattern.NO_PROGRESS,
-            detail=detail,
-            repetitions=len(recent),
-            actions=actions,
-            impasse=self._impasse(ctx, StuckPattern.NO_PROGRESS, actions, detail),
-        )
-
-    def _check_monologue(self, ctx: Mapping[str, Any]) -> StuckVerdict | None:
-        if self._idle_turns < _MONOLOGUE_THRESHOLD:
-            return None
-        detail = f"{self._idle_turns} consecutive turns produced no action"
-        return StuckVerdict(
-            pattern=StuckPattern.MONOLOGUE,
-            detail=detail,
-            repetitions=self._idle_turns,
-            actions=(),
-            impasse=self._impasse(ctx, StuckPattern.MONOLOGUE, ["<no action>"], detail),
-        )
-
-    def _check_alternation(self, ctx: Mapping[str, Any]) -> StuckVerdict | None:
-        if len(self._steps) < _ALTERNATION_THRESHOLD:
-            return None
-        recent = list(self._steps)[-_ALTERNATION_THRESHOLD:]
-        keys = [s.cycle_key for s in recent]
-        if keys[0] == keys[1]:
-            return None
-        if keys[0::2] != [keys[0]] * len(keys[0::2]):
-            return None
-        if keys[1::2] != [keys[1]] * len(keys[1::2]):
-            return None
-        actions = tuple(dict.fromkeys(s.action for s in recent))
-        detail = (
-            f"{' and '.join(actions)} alternated for {len(recent)} steps, each returning "
-            "what it returned the time before"
-        )
-        return StuckVerdict(
-            pattern=StuckPattern.ALTERNATING,
-            detail=detail,
-            repetitions=len(recent) // 2,
-            actions=actions,
-            impasse=self._impasse(ctx, StuckPattern.ALTERNATING, actions, detail),
-        )
-
-    # -- reporting -------------------------------------------------------
-
-    def report(self) -> dict[str, Any]:
-        return {
-            "scope": self.scope,
-            "window": self.window,
-            "steps_held": len(self._steps),
-            "idle_turns": self._idle_turns,
-            "episodes_reported": len(self._reported),
-        }
-
-
-def steps_from(records: Iterable[Mapping[str, Any]]) -> list[AgentStep]:
-    """Build steps from loosely-shaped call records.
-
-    A convenience for callers holding dicts of tool calls rather than typed
-    events. Records missing an action name are dropped rather than given a
-    placeholder, because a run of placeholder-named steps would look exactly
-    like a repetition loop.
+    Records with no action name are dropped rather than turned into a step with
+    an empty action. Several of those in a row are identical by fingerprint and
+    would read as a loop of nothing.
     """
     steps: list[AgentStep] = []
     for record in records:
-        name = str(record.get("action") or record.get("name") or record.get("tool") or "").strip()
+        name = str(record.get("name") or record.get("tool") or record.get("action") or "").strip()
         if not name:
             continue
+        error = record.get("error")
         steps.append(
             AgentStep.of(
                 name,
-                arguments=record.get("arguments") or record.get("args") or record.get("params"),
-                observation=record.get("observation")
-                if "observation" in record
-                else record.get("result") or record.get("output"),
-                failed=bool(record.get("failed") or record.get("error")),
-                error_kind=str(record.get("error_kind") or record.get("error") or "")[:80],
+                arguments=record.get("arguments"),
+                observation=record.get("result"),
+                failed=bool(error),
+                error_kind=str(record.get("error_kind") or error or ""),
             )
         )
     return steps
