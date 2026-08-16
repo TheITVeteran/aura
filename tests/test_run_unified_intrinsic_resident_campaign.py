@@ -28,6 +28,36 @@ from tools.unified_intrinsic_checkpoint import resolve_checkpoint_generation
 from tools.unified_intrinsic_resident_identity import canonical_bytes, canonical_sha256
 
 
+
+def _compiled_depth_ladder(training) -> list[int]:
+    """The depths this profile's compiler actually emits.
+
+    Asserting a literal here is what let the profiles drift away from the
+    compiler in the first place, so every depth assertion in this file goes
+    through the battery.
+    """
+    families = tuple(training["families"].split(","))
+    difficulties = tuple(
+        int(value) for value in training["frontier_difficulties"].split(",")
+    )
+    train_tasks = frontier_process_task_battery(
+        families,
+        difficulties,
+        int(training["per_cell"]),
+        seed=int(training["seed"]),
+        registry_version=str(training["frontier_registry_version"]),
+    )
+    holdout_tasks = frontier_process_task_battery(
+        families,
+        difficulties,
+        int(training["holdout_per_cell"]),
+        seed=int(training["seed"]) + 9_973,
+        registry_version=str(training["frontier_registry_version"]),
+        excluded_prompts=tuple(task.prompt for task in train_tasks),
+    )
+    return sorted({int(task.depth) for task in (*train_tasks, *holdout_tasks)})
+
+
 def _private(path: Path) -> Path:
     path.mkdir(parents=True)
     path.chmod(0o700)
@@ -372,20 +402,43 @@ def test_process_neural_acquisition_trains_balanced_recurrent_tissue() -> None:
     assert training["process_query_gradient_scale"] == pytest.approx(0.01)
     assert training["state_warmup_steps"] == training["max_steps"] == 64
     assert training["eval_every"] == training["checkpoint_every"] == 8
-    assert training["task_depths"] == "3,4,5,6,9,10"
-    assert training["train_depths"] == "1,3,4,5,6,9,10"
     assert arguments[arguments.index("--process-family-batch-mode") + 1] == ("balanced_families")
     assert arguments[arguments.index("--process-query-gradient-scale") + 1] == "0.01"
 
+    # The ladder is READ OFF the compiler, not typed into the profile. It used
+    # to be three hardcoded strings, and when the semantic-micro migration took
+    # the deepest program from 10 steps to 28 the campaign could no longer
+    # admit the tasks its own compiler emitted. Asserting a literal set here
+    # would rebuild exactly that trap, so this test compiles the battery and
+    # checks the profile agrees with it.
     families = tuple(training["families"].split(","))
-    tasks = frontier_process_task_battery(
+    difficulties = tuple(
+        int(value) for value in training["frontier_difficulties"].split(",")
+    )
+    train_tasks = frontier_process_task_battery(
         families,
-        tuple(int(value) for value in training["frontier_difficulties"].split(",")),
-        1,
+        difficulties,
+        int(training["per_cell"]),
         seed=int(training["seed"]),
         registry_version=str(training["frontier_registry_version"]),
     )
-    assert {task.depth for task in tasks} == {3, 4, 5, 6, 9, 10}
+    holdout_tasks = frontier_process_task_battery(
+        families,
+        difficulties,
+        int(training["holdout_per_cell"]),
+        seed=int(training["seed"]) + 9_973,
+        registry_version=str(training["frontier_registry_version"]),
+        excluded_prompts=tuple(task.prompt for task in train_tasks),
+    )
+    tasks = (*train_tasks, *holdout_tasks)
+    compiled_depths = sorted({int(task.depth) for task in tasks})
+    assert training["task_depths"] == ",".join(str(d) for d in compiled_depths)
+    assert training["train_depths"] == ",".join(
+        str(d) for d in sorted({1, *compiled_depths})
+    )
+    # Held-out depths have to extrapolate beyond every trained one.
+    heldout = [int(value) for value in training["heldout_depths"].split(",")]
+    assert min(heldout) > max(compiled_depths)
     _validate_task_depth_admission(training, tasks)
 
     stale = {**training, "train_depths": "1,3,4,5,6,8,10"}
@@ -441,8 +494,11 @@ def test_public_transition_acquisition_removes_answer_and_microcode_authority() 
     assert training["process_curriculum"] == "transition_only"
     assert training["process_family_batch_size"] == 4
     assert training["process_family_batch_mode"] == "balanced_families"
-    assert training["task_depths"] == "3,5,9,10"
-    assert training["train_depths"] == "1,3,5,9,10"
+    compiled_depths = _compiled_depth_ladder(training)
+    assert training["task_depths"] == ",".join(str(d) for d in compiled_depths)
+    assert training["train_depths"] == ",".join(
+        str(d) for d in sorted({1, *compiled_depths})
+    )
     assert training["state_warmup_steps"] == training["max_steps"] == 128
     assert training["answer_bridge_steps"] == 0
     assert "--public-action-program" in arguments
@@ -545,7 +601,9 @@ def test_semantic_transition_canary_proves_local_state_without_replay() -> None:
 
     assert training["state_schema"] == "semantic_v2"
     assert training["families"] == "coding,calibration,misleading_premise"
-    assert training["task_depths"] == "3,5,10"
+    assert training["task_depths"] == ",".join(
+        str(depth) for depth in _compiled_depth_ladder(training)
+    )
     assert training["window_tissue_mode"] == "controller_only"
     assert training["public_action_program"] is True
     assert training["direct_transition_processor"] is True

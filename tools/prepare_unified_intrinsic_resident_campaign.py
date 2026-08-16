@@ -265,7 +265,7 @@ def _private_directory(path: Path, *, must_be_new: bool = False) -> Path:
     return path
 
 
-def _profile_training(profile: str) -> dict[str, Any]:
+def _declared_profile_training(profile: str) -> dict[str, Any]:
     if profile not in PROFILES:
         _fail("campaign_profile_invalid")
     common: dict[str, Any] = {
@@ -1038,6 +1038,74 @@ def _training_cli(training: Mapping[str, Any]) -> list[str]:
         if training[name]:
             arguments.append(flag)
     return arguments
+
+
+#: How far past the deepest trained program the held-out ladder reaches. The
+#: campaign has always extrapolated by these two steps — 10 trained, 12 and 16
+#: held out — and keeping the distances while deriving the base is what makes
+#: the ladder follow the compiler instead of a typed constant.
+_HELDOUT_NEAR_STEP: Final = 2
+_HELDOUT_FAR_STEP: Final = 6
+
+
+def _frontier_depth_ladder(training: Mapping[str, Any]) -> dict[str, str]:
+    """Read the recurrence ladder off the compiler that produces the programs.
+
+    task_depths, train_depths and heldout_depths used to be typed into each
+    profile. When the frontier compiler changed what it emits — the
+    semantic-micro migration took the deepest program from 10 steps to 28 —
+    nothing connected the two, so a prepared campaign could no longer admit
+    the tasks its own compiler produced, and _validate_task_depth_admission
+    refused at run time with compiled_task_depth_not_train_admitted.
+
+    Deriving both from the compiler makes that failure unreachable rather than
+    merely fixed: the next compilation change moves the ladder with it.
+
+    The batteries are built exactly as the preparation path builds them,
+    holdout exclusions included, because a depth set computed any other way
+    would be a different set.
+    """
+    families = tuple(str(training["families"]).split(","))
+    difficulties = tuple(
+        int(value) for value in str(training["frontier_difficulties"]).split(",")
+    )
+    registry_version = str(training["frontier_registry_version"])
+    train_tasks = frontier_process_task_battery(
+        families,
+        difficulties,
+        int(training["per_cell"]),
+        seed=int(training["seed"]),
+        registry_version=registry_version,
+    )
+    holdout_tasks = frontier_process_task_battery(
+        families,
+        difficulties,
+        int(training["holdout_per_cell"]),
+        seed=int(training["seed"]) + 9_973,
+        registry_version=registry_version,
+        excluded_prompts=tuple(task.prompt for task in train_tasks),
+    )
+    observed = sorted({int(task.depth) for task in (*train_tasks, *holdout_tasks)})
+    if not observed:
+        _fail("frontier_depth_ladder_empty")
+    # UnifiedIntrinsicTrainingSpec requires the T=1 anchor and requires every
+    # held-out depth to sit beyond the deepest trained one.
+    train_depths = sorted({1, *observed})
+    deepest = max(train_depths)
+    heldout = (deepest + _HELDOUT_NEAR_STEP, deepest + _HELDOUT_FAR_STEP)
+    return {
+        "task_depths": ",".join(str(depth) for depth in observed),
+        "train_depths": ",".join(str(depth) for depth in train_depths),
+        "heldout_depths": ",".join(str(depth) for depth in heldout),
+    }
+
+
+def _profile_training(profile: str) -> dict[str, Any]:
+    """A profile's declared settings, with its depth ladder read off the compiler."""
+    training = _declared_profile_training(profile)
+    if training.get("task_source") != "frontier_process":
+        return training
+    return {**training, **_frontier_depth_ladder(training)}
 
 
 def _validate_task_depth_admission(
