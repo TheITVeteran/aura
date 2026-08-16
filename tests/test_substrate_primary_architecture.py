@@ -511,6 +511,97 @@ async def test_overt_action_semantic_plan_never_claims_partial_work_completed(mo
 
 
 @pytest.mark.asyncio
+async def test_overt_action_semantic_plan_records_admission_deferral_without_failure(
+    tmp_path,
+    monkeypatch,
+):
+    from core.agency.autonomous_task_engine import TaskResult
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    objective = "Inspect runtime health after the foreground turn finishes"
+
+    class DeferredTaskEngine:
+        async def execute_goal(self, goal, context=None):
+            return TaskResult(
+                plan_id="plan-deferred",
+                goal=goal,
+                succeeded=False,
+                summary="Planning is queued until background inference admission clears.",
+                trace_id="trace-deferred",
+                steps_completed=0,
+                steps_total=0,
+                deferred_reason="foreground_quiet_window",
+            )
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={
+                    "goal": objective,
+                    "source": "cognitive_loop",
+                    "urgency": 0.5,
+                },
+                will_receipt_id="will-deferred-1",
+            )
+
+    life_events = []
+    visible_events = []
+    degraded_events = []
+    monkeypatch.setattr(
+        "core.runtime.service_access.resolve_task_engine",
+        lambda default=None: DeferredTaskEngine(),
+    )
+    monkeypatch.setattr(
+        "core.runtime.life_trace.get_life_trace",
+        lambda: SimpleNamespace(
+            record=lambda event_name, **payload: (
+                life_events.append((event_name, payload))
+                or SimpleNamespace(event_id="life-deferred-1")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "core.thought_stream.get_emitter",
+        lambda: SimpleNamespace(
+            emit=lambda *args, **kwargs: visible_events.append((args, kwargs))
+        ),
+    )
+    monkeypatch.setattr(
+        "core.runtime.overt_action_loop.record_degraded_event",
+        lambda *args, **kwargs: degraded_events.append((args, kwargs)),
+    )
+
+    receipt_store = ReceiptStore(tmp_path / "receipts")
+    loop = OvertActionLoop(
+        capability_engine=SimpleNamespace(),
+        synthesizer=FakeSynth(),
+        receipt_store=receipt_store,
+        state_provider=lambda: SimpleNamespace(
+            cognition=SimpleNamespace(pending_initiatives=[])
+        ),
+    )
+
+    result = await loop.run_once(force=True)
+
+    assert result["status"] == "deferred"
+    assert result["verified"] is False
+    assert result["error"] == ""
+    assert result["next_step_hint"] == "retry_after_idle_and_resource_window"
+    assert loop.status()["consecutive_failures"] == 0
+    receipt = receipt_store.get(result["tool_receipt_id"])
+    assert receipt.status == "deferred"
+    assert life_events[0][0] == "action_deferred"
+    assert life_events[0][1]["action_taken"]["executed"] is False
+    assert visible_events[0][0][0] == "Overt Action Deferred"
+    assert visible_events[0][1]["level"] == "info"
+    assert degraded_events == []
+
+
+@pytest.mark.asyncio
 async def test_initiative_synthesis_preserves_structured_pending_action_contract(
     monkeypatch,
 ):

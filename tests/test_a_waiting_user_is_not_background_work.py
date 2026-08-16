@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -135,9 +136,39 @@ def test_a_stale_deferral_never_explains_an_unrelated_failure() -> None:
     """A confident wrong cause is worse than an absent one."""
     deferral_record.reset_for_test()
     deferral_record.record_deferral(origin="metabolic", reason="something much earlier")
-    import time
 
     assert deferral_record.explain_empty_generation(now=time.time() + 3600) == ""
+    deferral_record.reset_for_test()
+
+
+def test_a_deferral_can_only_be_consumed_by_its_exact_call() -> None:
+    deferral_record.reset_for_test()
+    started_at = time.time()
+    deferral_record.record_deferral(
+        origin="autonomous_task_engine",
+        reason="foreground_quiet_window",
+    )
+
+    assert (
+        deferral_record.take_deferral(
+            origin="another_lane",
+            not_before=started_at,
+        )
+        is None
+    )
+    entry = deferral_record.take_deferral(
+        origin="autonomous_task_engine",
+        not_before=started_at,
+    )
+    assert entry is not None
+    assert entry.reason == "foreground_quiet_window"
+    assert (
+        deferral_record.take_deferral(
+            origin="autonomous_task_engine",
+            not_before=started_at,
+        )
+        is None
+    )
     deferral_record.reset_for_test()
 
 

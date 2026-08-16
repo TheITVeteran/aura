@@ -441,6 +441,13 @@ class OvertActionLoop:
                 )
                 raw = {"ok": False, "error": result.error}
 
+        if isinstance(raw, dict) and raw.get("status") == "deferred":
+            result.status = "deferred"
+            result.error = ""
+            result.result_summary = self._summarize_result(raw)
+            result.next_step_hint = "retry_after_idle_and_resource_window"
+            return self._finish(result, raw_result=raw)
+
         if isinstance(raw, dict) and expectation is not None:
             from core.runtime.skill_contract import apply_action_expectation_payload
 
@@ -526,6 +533,20 @@ class OvertActionLoop:
             }
 
         task_payload = asdict(task_result)
+        if task_result.deferred_reason:
+            return {
+                "ok": False,
+                "status": "deferred",
+                "summary": task_result.summary,
+                "plan_id": task_result.plan_id,
+                "trace_id": task_result.trace_id,
+                "steps_completed": 0,
+                "steps_total": 0,
+                "evidence": [],
+                "result": task_payload,
+                "reason": task_result.deferred_reason,
+                "error": "",
+            }
         steps_total = int(task_result.steps_total or 0)
         steps_completed = int(task_result.steps_completed or 0)
         completed = bool(
@@ -1001,6 +1022,8 @@ class OvertActionLoop:
         if result.verified:
             self._actions_verified += 1
             self._consecutive_failures = 0
+        elif result.status == "deferred":
+            pass
         else:
             self._consecutive_failures += 1
             self._annotate_failure_learning(result, raw_result)
@@ -1076,6 +1099,8 @@ class OvertActionLoop:
                     status=(
                         "success_verified"
                         if result.verified
+                        else "deferred"
+                        if result.status == "deferred"
                         else str(
                             result.expectation_verdict.get("status")
                             or "failed_unverified"
@@ -1192,8 +1217,9 @@ class OvertActionLoop:
         try:
             from core.runtime.life_trace import get_life_trace
 
+            deferred = result.status == "deferred"
             event = get_life_trace().record(
-                "action_executed",
+                "action_deferred" if deferred else "action_executed",
                 origin="overt_action_loop",
                 user_requested=False,
                 will_decision={"receipt_id": result.will_receipt_id},
@@ -1202,6 +1228,7 @@ class OvertActionLoop:
                     "skill": result.skill,
                     "params": result.params,
                     "objective": result.objective,
+                    "executed": not deferred,
                 },
                 result={
                     "verified": result.verified,
@@ -1260,15 +1287,30 @@ class OvertActionLoop:
         try:
             from core.thought_stream import get_emitter
 
-            title = "Overt Action Verified" if result.verified else "Overt Action Failed"
+            title = (
+                "Overt Action Verified"
+                if result.verified
+                else "Overt Action Deferred"
+                if result.status == "deferred"
+                else "Overt Action Failed"
+            )
             content = (
                 f"{result.skill} -> {result.result_summary or result.error} "
                 f"(receipt {result.tool_receipt_id or 'pending'})"
             )
-            get_emitter().emit(title, content, level="info" if result.verified else "warning", category="OvertAction")
+            get_emitter().emit(
+                title,
+                content,
+                level=(
+                    "info"
+                    if result.verified or result.status == "deferred"
+                    else "warning"
+                ),
+                category="OvertAction",
+            )
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
-        if not result.verified:
+        if not result.verified and result.status != "deferred":
             record_degraded_event(
                 "overt_action_loop",
                 "action_failed",

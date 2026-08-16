@@ -15,15 +15,17 @@ admission. That is the same failure class as a good answer discarded by a gate
 and then reported as an infrastructure fault: the true cause exists, briefly, in
 one function, and is thrown away before anyone who could report it sees it.
 
-So the router writes the reason down here on its way out, and any caller holding
-an unexplained empty generation can ask. Deliberately tiny: a process-local
-last-value per lane, no history, no lock contention on the hot path. It explains
-a failure; it is not telemetry and nothing branches on it.
+So the router writes the reason down here on its way out, and the same async
+task holding an unexplained empty generation can ask. Deliberately tiny: one
+context-local value, no history and no lock contention on the hot path. Most
+callers use it only to explain an empty result. A caller that must distinguish
+admission from failure consumes it with an exact origin and call-start bound,
+so unrelated concurrent or stale deferrals cannot alter control flow.
 """
 from __future__ import annotations
 
-import threading
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 # Older than this and the deferral almost certainly belongs to some other call.
@@ -48,28 +50,57 @@ class Deferral:
         )
 
 
-_lock = threading.Lock()
-_last: Deferral | None = None
+_last: ContextVar[Deferral | None] = ContextVar("aura_last_llm_deferral", default=None)
 
 
 def record_deferral(*, origin: str, reason: str) -> None:
     """Called by whoever returned the empty string, at the moment it did."""
-    global _last
     cleaned = " ".join(str(reason or "").split())[:200]
     if not cleaned:
         return
-    with _lock:
-        _last = Deferral(origin=" ".join(str(origin or "").split())[:80], at=time.time(), reason=cleaned)
+    _last.set(
+        Deferral(
+            origin=" ".join(str(origin or "").split())[:80],
+            at=time.time(),
+            reason=cleaned,
+        )
+    )
 
 
-def last_deferral(*, now: float | None = None) -> Deferral | None:
-    """The most recent deferral, if it is recent enough to explain a failure."""
-    with _lock:
-        entry = _last
+def last_deferral(
+    *,
+    now: float | None = None,
+    origin: str | None = None,
+    not_before: float | None = None,
+) -> Deferral | None:
+    """Return the current task's matching fresh deferral, when one exists."""
+    entry = _last.get()
     if entry is None:
         return None
     stamp = float(now if now is not None else time.time())
-    return entry if stamp - entry.at <= _FRESHNESS_S else None
+    if stamp - entry.at > _FRESHNESS_S:
+        return None
+    if not_before is not None and entry.at < float(not_before):
+        return None
+    if (
+        origin is not None
+        and entry.origin.strip().lower() != str(origin).strip().lower()
+    ):
+        return None
+    return entry
+
+
+def take_deferral(
+    *,
+    origin: str,
+    not_before: float,
+    now: float | None = None,
+) -> Deferral | None:
+    """Consume the exact deferral produced by one just-finished routed call."""
+    entry = last_deferral(now=now, origin=origin, not_before=not_before)
+    if entry is not None:
+        _last.set(None)
+    return entry
 
 
 def explain_empty_generation(*, now: float | None = None) -> str:
@@ -83,9 +114,7 @@ def explain_empty_generation(*, now: float | None = None) -> str:
 
 
 def reset_for_test() -> None:
-    global _last
-    with _lock:
-        _last = None
+    _last.set(None)
 
 
 __all__ = [
@@ -94,4 +123,5 @@ __all__ = [
     "last_deferral",
     "record_deferral",
     "reset_for_test",
+    "take_deferral",
 ]

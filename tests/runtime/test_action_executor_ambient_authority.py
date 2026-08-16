@@ -311,3 +311,37 @@ def test_screenshot_retention_declares_its_own_scope() -> None:
     assert marker in source
     prefix = source.split(marker)[0]
     assert "local_internal_governed_scope" in prefix.rsplit("try:", 1)[-1]
+
+
+def test_ephemeral_ocr_cleanup_has_exact_private_maintenance_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.governance.will import ActionDomain
+    from core.governance_context import local_internal_governed_scope
+    from core.runtime import action_executor
+
+    monkeypatch.setattr(action_executor, "state_root", lambda: tmp_path)
+    target = tmp_path / "data" / "ephemeral" / "ocr.png"
+    params = {"path": str(target), "op": "delete"}
+    with local_internal_governed_scope(
+        "host_automation.ephemeral_ocr_cleanup",
+        domain=ActionDomain.FILE_WRITE.value,
+        constraints=params,
+    ):
+        admitted = action_executor._ambient_authority_context(
+            ActionDomain.FILE_WRITE,
+            source="host_automation.ephemeral_ocr_cleanup",
+            action_name="host_automation.ephemeral_ocr_cleanup",
+            params=params,
+        )
+        retained_capture = action_executor._ambient_authority_context(
+            ActionDomain.FILE_WRITE,
+            source="host_automation.ephemeral_ocr_cleanup",
+            action_name="host_automation.ephemeral_ocr_cleanup",
+            params={"path": str(tmp_path / "data" / "screenshots" / "kept.png"), "op": "delete"},
+        )
+
+    assert admitted["scoped_authority"] == "exact_private_runtime_maintenance"
+    assert admitted["maintenance_operation"] == "delete"
+    assert "scoped_authority" not in retained_capture

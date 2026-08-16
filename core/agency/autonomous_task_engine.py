@@ -15,6 +15,7 @@ from typing import Any
 
 from core.agency.capability_system import get_capability_manager
 from core.agency.safety_registry import get_safety_registry
+from core.brain.llm.deferral_record import take_deferral
 from core.config import config
 from core.knowledge.mycelial_graph import get_mycelial
 from core.runtime.errors import record_degradation
@@ -251,6 +252,7 @@ class TaskResult:
     steps_total: int
     evidence: list[str] = field(default_factory=list)
     duration_s: float = 0.0
+    deferred_reason: str = ""
 
 
 # ── The Engine ────────────────────────────────────────────────────────────────
@@ -736,13 +738,46 @@ class AutonomousTaskEngine:
 
         if plan is None:
             plan = await self._decompose_goal(goal, requested_plan_id, context)
-            plan.context = dict(context or {})
+            plan.context = dict(plan.context or {}) | dict(context or {})
         else:
             plan.context = dict(plan.context or {}) | dict(context or {})
             plan.context["resume_count"] = int(plan.context.get("resume_count", 0) or 0) + 1
             plan.context["last_resumed_at"] = time.time()
             logger.info(
                 "TaskEngine: resuming interrupted plan %s for goal '%s'", plan.plan_id, goal[:60]
+            )
+
+        planning_deferred_reason = str(
+            plan.context.get("planning_deferred_reason", "") or ""
+        ).strip()
+        if planning_deferred_reason:
+            logger.info(
+                "TaskEngine: planning for '%s' deferred until %s clears",
+                goal[:60],
+                planning_deferred_reason,
+            )
+            await self._report_progress_event(
+                on_progress,
+                {
+                    "event": "planning_deferred",
+                    "plan_id": plan.plan_id,
+                    "status": "deferred",
+                    "reason": planning_deferred_reason,
+                    "steps_completed": 0,
+                    "steps_total": 0,
+                },
+            )
+            return TaskResult(
+                plan_id=plan.plan_id,
+                goal=goal,
+                succeeded=False,
+                summary=(
+                    "Planning is queued until background inference admission clears."
+                ),
+                trace_id=trace_id,
+                steps_completed=0,
+                steps_total=0,
+                deferred_reason=planning_deferred_reason,
             )
 
         if self._plan_needs_grounding_repair(plan, goal, plan.context):
@@ -1112,6 +1147,7 @@ Respond ONLY with a JSON array, no other text:
 
         try:
             llm = self.kernel.organs["llm"].get_instance()
+            planning_started_at = time.time()
             raw = await asyncio.wait_for(
                 llm.think(
                     prompt,
@@ -1124,6 +1160,22 @@ Respond ONLY with a JSON array, no other text:
             )
 
             if not raw:
+                deferral = take_deferral(
+                    origin="autonomous_task_engine",
+                    not_before=planning_started_at,
+                )
+                if deferral is not None:
+                    return TaskPlan(
+                        plan_id=plan_id,
+                        goal=goal,
+                        steps=[],
+                        trace_id="",
+                        context={
+                            **dict(context or {}),
+                            "planning_deferred_reason": str(deferral.reason or "")[:200],
+                            "planning_deferred_at": float(deferral.at),
+                        },
+                    )
                 raise ValueError("LLM returned empty or None response")
 
             # Extract JSON from response

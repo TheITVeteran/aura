@@ -90,6 +90,42 @@ async def test_task_engine_recoverable_decomposition_failure_does_not_trip_fail_
 
 
 @pytest.mark.asyncio
+async def test_task_engine_treats_router_admission_deferral_as_deferred_not_failure(
+    monkeypatch,
+):
+    from core.brain.llm import deferral_record
+
+    llm = SimpleNamespace(think=AsyncCallRecorder(return_value=""))
+    kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})
+    recorded = []
+    monkeypatch.setattr(
+        "core.agency.autonomous_task_engine.record_degradation",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+    deferral_record.reset_for_test()
+
+    async def deferred_think(*args, **kwargs):
+        deferral_record.record_deferral(
+            origin="autonomous_task_engine",
+            reason="foreground_quiet_window",
+        )
+        return ""
+
+    llm.think = deferred_think
+    try:
+        engine = AutonomousTaskEngine(kernel)
+        result = await engine.execute_goal("Inspect runtime health")
+    finally:
+        deferral_record.reset_for_test()
+
+    assert result.succeeded is False
+    assert result.steps_total == 0
+    assert result.deferred_reason == "foreground_quiet_window"
+    assert "queued" in result.summary.lower()
+    assert recorded == []
+
+
+@pytest.mark.asyncio
 async def test_task_engine_cognitive_planning_goal_uses_deterministic_plan():
     llm = SimpleNamespace(think=AsyncCallRecorder(return_value="[]"))
     kernel = SimpleNamespace(organs={"llm": SimpleNamespace(get_instance=lambda: llm)})

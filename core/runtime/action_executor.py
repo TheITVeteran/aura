@@ -102,6 +102,12 @@ _PRIVATE_MAINTENANCE_ACTIONS = {
         "host_automation.screenshot_retention_delete",
         "delete",
     ),
+    (
+        ActionDomain.FILE_WRITE.value,
+        "host_automation.ephemeral_ocr_cleanup",
+        "host_automation.ephemeral_ocr_cleanup",
+        "delete",
+    ),
 }
 EffectHandler = Callable[
     [Mapping[str, Any]],
