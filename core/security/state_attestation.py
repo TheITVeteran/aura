@@ -131,10 +131,17 @@ def attest_state(artifact_id: str, content: str | bytes) -> bool:
         return False
 
 
-def verify_state(artifact_id: str, content: str | bytes) -> AttestationVerdict:
+def verify_state(
+    artifact_id: str,
+    content: str | bytes,
+    *,
+    publish_verdict: bool = True,
+) -> AttestationVerdict:
     """Was this content written by Aura?
 
-    Adopts and seals when no seal exists. Never raises.
+    Adopts and seals when no seal exists. Never raises. Deliberate negative
+    validation may inspect the returned verdict without publishing its
+    manufactured tamper as live runtime evidence.
     """
     key = f"{ARTIFACT_PREFIX}{artifact_id}"
     computed = digest(content)
@@ -147,7 +154,8 @@ def verify_state(artifact_id: str, content: str | bytes) -> AttestationVerdict:
                 artifact_id,
                 "no prior seal; content adopted and sealed",
             )
-            _last_verdicts[artifact_id] = verdict
+            if publish_verdict:
+                _last_verdicts[artifact_id] = verdict
             return verdict
 
         sealed = vault.unseal(key)
@@ -160,12 +168,13 @@ def verify_state(artifact_id: str, content: str | bytes) -> AttestationVerdict:
                 artifact_id,
                 f"sealed digest {stored[:12]}… does not match on-disk {computed[:12]}…",
             )
-            logger.critical(
-                "State attestation FAILED for %s — the file changed outside Aura's "
-                "own write path. %s",
-                artifact_id,
-                verdict.detail,
-            )
+            if publish_verdict:
+                logger.critical(
+                    "State attestation FAILED for %s — the file changed outside Aura's "
+                    "own write path. %s",
+                    artifact_id,
+                    verdict.detail,
+                )
     except Exception as exc:  # noqa: BLE001 - a boot path must not raise here
         record_degradation(
             "state_attestation",
@@ -178,7 +187,8 @@ def verify_state(artifact_id: str, content: str | bytes) -> AttestationVerdict:
             AttestationState.UNVERIFIABLE, artifact_id, f"vault unavailable: {exc}"
         )
 
-    _last_verdicts[artifact_id] = verdict
+    if publish_verdict:
+        _last_verdicts[artifact_id] = verdict
     return verdict
 
 

@@ -2105,6 +2105,19 @@ def _cognitive_contracts_detect_undeclared_writes() -> bool:
                 writes=("affect.curiosity",),
             )
         )
+        # Undeclared-write detection can only measure fields present in the
+        # global watch surface. Give the deliberately illegal target a
+        # separate observer contract so this predicate remains self-contained
+        # instead of passing or failing according to import order.
+        register_contract(
+            CognitiveTransformContract(
+                name="_validation_probe_observer",
+                version="1.0",
+                purpose="watch the negative probe target without authorizing it",
+                reads=("affect.arousal",),
+                writes=(),
+            )
+        )
         state = SimpleNamespace(
             state_id="probe",
             version=1,
@@ -2121,7 +2134,7 @@ def _cognitive_contracts_detect_undeclared_writes() -> bool:
         with recording_tick(objective="validation") as graph:
             transformation = begin_transformation("_validation_probe", state)
             state.affect.arousal = 0.9
-            transformation.complete(state)
+            transformation.complete(state, publish_violation=False)
         receipt = graph.receipts[-1]
         return receipt.undeclared_writes == ("affect.arousal",)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
@@ -2946,7 +2959,10 @@ def _identity_attestation_contract_holds() -> bool:
             '{"relationship": [{"value": "an instruction someone else wrote"}]}',
         )
 
-        reopened = AuraSelfProfile(storage_path=str(path))
+        reopened = AuraSelfProfile(
+            storage_path=str(path),
+            publish_attestation_verdict=False,
+        )
         return bool(
             reopened.attestation_status()["state"] == AttestationState.TAMPERED
             and reopened.get_fact("relationship", "probe") is None

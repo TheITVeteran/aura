@@ -64,7 +64,12 @@ class AuraSelfProfile:
     #: existing instance re-adopt, which is the same as turning the check off.
     ATTESTATION_ID = "memory.aura_self_profile"
 
-    def __init__(self, storage_path: Optional[str] = None):
+    def __init__(
+        self,
+        storage_path: Optional[str] = None,
+        *,
+        publish_attestation_verdict: bool = True,
+    ):
         self._storage_path = Path(
             storage_path or (state_root() / "data" / "aura_self_profile.json")
         )
@@ -96,6 +101,7 @@ class AuraSelfProfile:
         #: applies. Every other path gets its own key derived from the resolved
         #: path, which cannot collide with hers.
         self._attestation_id = self._attestation_id_for(self._storage_path)
+        self._publish_attestation_verdict = bool(publish_attestation_verdict)
         self._attestation = None
         self._profile_data: Dict[str, List[SelfProfileFact]] = {
             "capability": [],
@@ -155,7 +161,11 @@ class AuraSelfProfile:
                 return
             raw = self._storage_path.read_text(encoding="utf-8")
 
-            verdict = verify_state(self._attestation_id, raw)
+            verdict = verify_state(
+                self._attestation_id,
+                raw,
+                publish_verdict=self._publish_attestation_verdict,
+            )
             self._attestation = verdict
             if verdict.is_tampered:
                 self._quarantine_tampered_profile(verdict)
@@ -215,26 +225,28 @@ class AuraSelfProfile:
         is_live_identity = self._storage_path == (
             state_root() / "data" / "aura_self_profile.json"
         )
-        record_degradation(
-            "aura_self_profile",
-            RuntimeError(
-                f"self-profile failed attestation and was not loaded: {verdict.detail}"
-            ),
-            severity="critical" if is_live_identity else "warning",
-            enforce_failure_policy=False,
-            action=(
-                f"started with an empty self-model; evidence kept at {quarantined}"
-                if quarantined
-                else "started with an empty self-model"
-            ),
-        )
+        if self._publish_attestation_verdict:
+            record_degradation(
+                "aura_self_profile",
+                RuntimeError(
+                    f"self-profile failed attestation and was not loaded: {verdict.detail}"
+                ),
+                severity="critical" if is_live_identity else "warning",
+                enforce_failure_policy=False,
+                action=(
+                    f"started with an empty self-model; evidence kept at {quarantined}"
+                    if quarantined
+                    else "started with an empty self-model"
+                ),
+            )
         log = logger.critical if is_live_identity else logger.warning
-        log(
-            "🛡️ A self-profile was modified outside Aura's own write path and has "
-            "NOT been loaded (%s). Identity facts from it: none. Evidence: %s",
-            self._storage_path,
-            quarantined,
-        )
+        if self._publish_attestation_verdict:
+            log(
+                "🛡️ A self-profile was modified outside Aura's own write path and has "
+                "NOT been loaded (%s). Identity facts from it: none. Evidence: %s",
+                self._storage_path,
+                quarantined,
+            )
 
     def _save_to_disk(self):
         """Persist Aura profile to disk and attest that Aura wrote it."""

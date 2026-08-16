@@ -140,6 +140,37 @@ class TestSelfProfileIsIdentity:
         assert len(quarantined) == 1, "an incident with the payload destroyed cannot be investigated"
         assert not path.exists()
 
+    def test_negative_probe_does_not_publish_manufactured_tamper(
+        self,
+        tmp_path,
+        vault,
+        monkeypatch,
+    ):
+        from core.memory import aura_self_profile
+
+        path = tmp_path / "self_profile.json"
+        first = self._profile(tmp_path)
+        first.add_or_reinforce_fact("capability", "debugging", "genuine")
+        injected = json.loads(path.read_text())
+        injected["capability"][0]["value"] = "manufactured tamper"
+        path.write_text(json.dumps(injected))
+        incidents = []
+        monkeypatch.setattr(
+            aura_self_profile,
+            "record_degradation",
+            lambda *args, **kwargs: incidents.append((args, kwargs)),
+        )
+
+        reopened = AuraSelfProfile(
+            storage_path=str(path),
+            publish_attestation_verdict=False,
+        )
+
+        assert reopened.attestation_status()["state"] == AttestationState.TAMPERED
+        assert reopened.to_identity_block() == ""
+        assert incidents == []
+        assert reopened._attestation_id not in attestation_report()["tampered"]
+
     def test_an_existing_profile_from_before_attestation_is_adopted(self, tmp_path, vault):
         # Upgrading must not delete the identity of every existing instance.
         path = tmp_path / "self_profile.json"

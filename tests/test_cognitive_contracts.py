@@ -272,6 +272,37 @@ def test_undeclared_write_is_caught_without_the_phase_reporting_it() -> None:
     assert graph.contract_violations
 
 
+def test_negative_validation_can_measure_without_filing_runtime_incident(
+    monkeypatch,
+) -> None:
+    """A manufactured boot probe is evidence, not a live phase failure."""
+
+    from core.runtime import cognitive_provenance
+
+    register_contract(
+        CognitiveTransformContract(
+            name="_isolated_negative_probe",
+            version="1.0",
+            purpose="measure an expected undeclared write",
+            writes=("affect.curiosity",),
+        )
+    )
+    reported = []
+    monkeypatch.setattr(
+        cognitive_provenance,
+        "_report_violation",
+        lambda name, fields: reported.append((name, fields)),
+    )
+    state = _State()
+    with recording_tick(objective="isolated validation") as graph:
+        transformation = begin_transformation("_isolated_negative_probe", state)
+        state.affect.arousal = 0.05
+        transformation.complete(state, publish_violation=False)
+
+    assert graph.receipts[-1].undeclared_writes == ("affect.arousal",)
+    assert reported == []
+
+
 def test_declared_write_is_not_a_violation() -> None:
     register_contract(
         CognitiveTransformContract(

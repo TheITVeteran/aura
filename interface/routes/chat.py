@@ -1826,11 +1826,14 @@ _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S = _env_float(
 )
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
 _CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME = "ChatTurnMemoryLogRetry"
+_CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME = "ChatTurnMemoryLogStartup"
 _CHAT_TURN_MEMORY_LOG_BATCH_MAX = 16
 _CHAT_TURN_MEMORY_LOG_RUN_MAX = 128
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
 _CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
 _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S = 61.0
+_CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S = 120.0
+_CHAT_TURN_MEMORY_LOG_STARTUP_POLL_S = 0.25
 _CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER = "chat.durable_memory_log_outbox"
 _DURABLE_CONVERSATION_WRITE_TIMEOUT_S = _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S
 _DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S = 12.0
@@ -2695,6 +2698,38 @@ async def _retry_chat_turn_memory_log_after(delay_s: float) -> None:
     await _drain_chat_turn_memory_log_queue()
 
 
+def _memory_log_outbox_is_ready() -> bool:
+    persistence = ServiceContainer.get("persistence", default=None)
+    return bool(
+        callable(getattr(persistence, "claim_memory_log_batch", None))
+        and callable(getattr(persistence, "settle_memory_log_item", None))
+    )
+
+
+async def _start_chat_turn_memory_log_when_ready() -> None:
+    """Wait through normal service ordering, but never wait indefinitely."""
+
+    deadline = time.monotonic() + _CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if _memory_log_outbox_is_ready():
+            if not _schedule_chat_turn_memory_log(chat_origin="startup_recovery"):
+                raise RuntimeError("chat_memory_log_startup_schedule_failed")
+            return
+        await asyncio.sleep(_CHAT_TURN_MEMORY_LOG_STARTUP_POLL_S)
+    error = RuntimeError("persistence_memory_log_outbox_not_ready_before_deadline")
+    record_degradation(
+        "chat.memory_log_outbox_startup",
+        error,
+        action="durable outbox remains on disk and will be retried by the next chat write",
+        enforce_failure_policy=False,
+    )
+    logger.error(
+        "Durable chat memory outbox dependency was not ready within %.1fs; "
+        "pending work remains on disk.",
+        _CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S,
+    )
+
+
 def _schedule_chat_turn_memory_log_retry(delay_s: float) -> bool:
     tracker = get_task_tracker()
     if _active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME):
@@ -2780,14 +2815,30 @@ def _schedule_chat_turn_memory_log(
 
 def start_chat_turn_memory_log_worker() -> bool:
     """Recover durable pending memory work when the API runtime starts."""
-
-    return _schedule_chat_turn_memory_log(
-        user_message="",
-        aura_response="",
-        session_id="",
-        chat_origin="startup_recovery",
-        user_id="",
-    )
+    if _memory_log_outbox_is_ready():
+        return _schedule_chat_turn_memory_log(chat_origin="startup_recovery")
+    try:
+        tracker = get_task_tracker()
+        if _active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME):
+            return True
+        schedule = getattr(tracker, "bounded_track", None) or getattr(
+            tracker,
+            "create_task",
+            None,
+        )
+        if not callable(schedule):
+            raise RuntimeError("task_tracker_has_no_scheduler")
+        waiter = _start_chat_turn_memory_log_when_ready()
+        try:
+            schedule(waiter, name=_CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME)
+        except _CHAT_RECOVERABLE_ERRORS:
+            waiter.close()
+            raise
+        return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.memory_log_outbox_startup", exc)
+        logger.error("Durable chat memory outbox startup could not be scheduled: %s", exc)
+        return False
 
 
 #: A second, separate request following the thing to be remembered. Only an

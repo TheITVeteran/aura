@@ -4422,6 +4422,58 @@ def test_chat_turn_memory_log_scheduler_does_not_duplicate_active_drain(
 
 
 @pytest.mark.asyncio
+async def test_chat_turn_memory_log_startup_waits_for_persistence(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class _Persistence:
+        def claim_memory_log_batch(self):
+            return []
+
+        def settle_memory_log_item(self):
+            return None
+
+    class _FakeTracker:
+        def __init__(self):
+            self.tasks = set()
+            self.scheduled = []
+
+        def bounded_track(self, coro, name=None):
+            task = asyncio.create_task(coro, name=name)
+            self.tasks.add(task)
+            self.scheduled.append((task, name))
+            task.add_done_callback(self.tasks.discard)
+            return task
+
+    holder = {"persistence": None}
+    tracker = _FakeTracker()
+    wakes = []
+    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: holder["persistence"]
+            if name == "persistence"
+            else default
+        ),
+    )
+    monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_STARTUP_POLL_S", 0.001)
+    monkeypatch.setattr(chat_routes, "_CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(
+        chat_routes,
+        "_schedule_chat_turn_memory_log",
+        lambda **kwargs: wakes.append(kwargs) or True,
+    )
+
+    assert chat_routes.start_chat_turn_memory_log_worker() is True
+    assert tracker.scheduled[0][1] == chat_routes._CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME
+    holder["persistence"] = _Persistence()
+    await tracker.scheduled[0][0]
+
+    assert wakes == [{"chat_origin": "startup_recovery"}]
+
+
+@pytest.mark.asyncio
 async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     from core.consciousness import coordinator as consciousness_coordinator
     from core.conversation.persistence import ConversationPersistence

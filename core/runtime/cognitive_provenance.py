@@ -336,6 +336,7 @@ class _Transformation:
         skipped: bool = False,
         skip_reason: str = "",
         inputs: Mapping[str, Any] | None = None,
+        publish_violation: bool = True,
     ) -> TransformationReceipt | None:
         graph = _CURRENT.get()
         contract = self._contract
@@ -371,7 +372,7 @@ class _Transformation:
         )
         if graph is not None:
             graph.add(receipt)
-        if undeclared:
+        if undeclared and publish_violation:
             _report_violation(self._name, undeclared)
         return receipt
 
