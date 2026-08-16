@@ -50869,3 +50869,36 @@ Ruff pass. The live attempt also exposed a separate response-lifecycle defect: a
 cancelled ordinary decode produced a known truncated draft that the chat route
 persisted as complete. That defect remains open for the next checkpoint; no live
 reasoning result is claimed from this failed canary.
+
+## Checkpoint 2026-08-15-572: Make Foreground Completion an Admitted Contract
+
+The clipped CP571 reply was caused upstream of the UI. The route admitted a
+`1,536`-token answer, but the shared MLX memory-pressure control reduced it to
+`192` because the resident model's normal process RSS entered a process-ratio
+`high` band. The worker stopped at that cap, the sovereign response path kept
+the resulting `truncated_tail` as repairable, and the final route served the
+partial draft. That same underallocation also forced avoidable recovery work
+after an expensive first decode.
+
+Clean foreground replies now carry their question-shaped output budget as an
+explicit completion floor. Warning/high pressure preserves that already bounded
+budget and recurrent depth; critical and emergency pressure keep their `64/32`
+hard caps. The worker records its applied pressure cap, completion floor,
+generated-token count and exact stop reason. Both compact and full sovereign
+CognitiveEngine paths promote worker and post-latent truncation evidence into an
+incomplete-generation contract. A clipped answer cannot become authoritative:
+the same resident worker may make one bounded full replacement, and that
+replacement must itself prove a natural stop before the route can serve it.
+
+The native shell also recovers a top-level document navigation when an old
+immutable revision has aged out of the in-process snapshot store. The recovery
+redirect removes only the stale revision address and preserves the other launch
+parameters; revisioned subresources still return `409`, so a document cannot mix
+assets across attested shell revisions.
+
+Focused memory, generation, truncation and shell contracts pass `169/169`; the
+complete conversation-lane suite passes `316/316`; canonical smoke passes
+`110/110`; compile and Ruff pass. These are offline contracts. The next gate is
+a clean installed-app rebuild followed by repeated long foreground replies on
+the live resident lane, with end-to-end latency, stop receipts, neural-stream
+warnings and terminal errors observed before the CP569 shadow campaign resumes.

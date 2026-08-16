@@ -2738,11 +2738,44 @@ def _apply_memory_pressure_generation_controls(
     # This is why the desktop demo degrades exactly when a screen recorder is
     # running: the recorder raises unified-memory pressure, the cap drops, and
     # the plan no longer fits in the budget it was given.
+    try:
+        requested_max_tokens = max(
+            1,
+            int(options.get("max_tokens", default_max_tokens)),
+        )
+    except (TypeError, ValueError, OverflowError):
+        requested_max_tokens = max(1, int(default_max_tokens or 1))
+    clean_user_surface = bool(options.get("clean_user_surface_contract", False))
+    try:
+        completion_floor = max(
+            0,
+            int(options.get("user_surface_completion_floor", 0) or 0),
+        )
+    except (TypeError, ValueError, OverflowError):
+        completion_floor = 0
+    completion_floor = min(requested_max_tokens, completion_floor)
+    try:
+        pressure_cap = max(1, int(max_token_cap))
+    except (TypeError, ValueError, OverflowError):
+        pressure_cap = 1
+
     if bool(options.get("desktop_execution_contract", False)):
         plan_floor = int(options.get("desktop_plan_token_floor", 1024) or 1024)
-        effective_cap = max(int(max_token_cap or 0), plan_floor)
+        effective_cap = max(pressure_cap, plan_floor)
+    elif clean_user_surface and completion_floor > 0 and pressure_cap >= 192:
+        # The resident model's normal RSS places the process-ratio probe in its
+        # `high` band even when the host still has ample available memory. The
+        # old global cap therefore turned a route-approved 1,536-token answer
+        # into 192 tokens and the UI received a sentence severed at "from the".
+        # Preserve a question-shaped reserve at warning/high pressure. True
+        # critical/emergency caps (64/32) remain hard.
+        effective_cap = max(pressure_cap, completion_floor)
     else:
-        effective_cap = max_token_cap
+        effective_cap = pressure_cap
+
+    options["memory_pressure_token_cap"] = pressure_cap
+    options["user_surface_completion_floor"] = completion_floor
+    options["completion_floor_applied"] = bool(effective_cap > pressure_cap)
 
     options["max_tokens"] = _bounded_max_tokens(
         options.get("max_tokens"),
@@ -2750,7 +2783,7 @@ def _apply_memory_pressure_generation_controls(
         default_max_tokens,
     )
     if (
-        bool(options.get("clean_user_surface_contract", False))
+        clean_user_surface
         or "clean_user_surface_recurrent_loops" in options
     ):
         # CP126 0989c717: this overwrote the recurrent depth to 1 whenever a
@@ -2763,8 +2796,16 @@ def _apply_memory_pressure_generation_controls(
             requested_loops = int(options.get("clean_user_surface_recurrent_loops") or 1)
         except (TypeError, ValueError):
             requested_loops = 1
-        options["clean_user_surface_recurrent_loops"] = 1
-        if requested_loops > 1:
+        reduce_recurrence = bool(
+            requested_loops > 1
+            and (
+                pressure_cap < 192
+                or completion_floor <= 0
+                or int(options["max_tokens"]) < completion_floor
+            )
+        )
+        if reduce_recurrence:
+            options["clean_user_surface_recurrent_loops"] = 1
             options["recurrent_loops_requested"] = requested_loops
             options["recurrent_loops_reduced_by_pressure"] = True
             _record_mlx_degradation(
@@ -2805,6 +2846,10 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "surface_quality_gate_reasons",
         "surface_quality_gate_error",
         "generation_max_tokens",
+        "memory_pressure_token_cap",
+        "user_surface_completion_floor",
+        "completion_floor_applied",
+        "generation_stop_reason",
         "caller_requested_max_tokens",
         "adaptive_suggested_max_tokens",
         "output_contract_generation_floor",
@@ -13287,6 +13332,9 @@ class MLXLocalClient:
             # max_tokens is a cap: both the latent bridge and the typed visible
             # output contract may shrink it, but neither can expand the caller.
             "max_tokens": generation_max_tokens,
+            "memory_pressure_token_cap": kwargs.get("memory_pressure_token_cap"),
+            "user_surface_completion_floor": kwargs.get("user_surface_completion_floor"),
+            "completion_floor_applied": bool(kwargs.get("completion_floor_applied", False)),
             "caller_requested_max_tokens": kwargs.get("max_tokens", self.max_tokens),
             "adaptive_suggested_max_tokens": adaptive_suggested_max_tokens,
             "output_contract_generation_floor": contract_generation_floor,

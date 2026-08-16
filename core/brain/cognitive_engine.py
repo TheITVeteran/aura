@@ -3227,6 +3227,55 @@ class CognitiveEngine:
                     generation_controls=generation_controls,
                     source="cognitive_engine_full_phase_controls",
                 )
+                latent_final_quality = state.response_modifiers.get(
+                    "latent_cortex_final_output_quality"
+                )
+                latent_quality_reasons = (
+                    tuple(latent_final_quality.get("reasons") or ())
+                    if isinstance(latent_final_quality, dict)
+                    else ()
+                )
+                surface_reasons = tuple(
+                    dict.fromkeys(
+                        (
+                            *tuple(
+                                surface_control_receipt.get(
+                                    "surface_quality_gate_reasons"
+                                )
+                                or ()
+                            ),
+                            *latent_quality_reasons,
+                        )
+                    )
+                )
+                generation_stop_reason = str(
+                    surface_control_receipt.get("generation_stop_reason") or ""
+                )
+                full_phase_text = str(last_msg.get("content") or "").strip()
+                generation_failure_class = str(
+                    state.response_modifiers.get("generation_failure_class") or ""
+                ).lower()
+                reply_generation_incomplete = bool(
+                    set(surface_reasons)
+                    & {
+                        "truncated_tail",
+                        "final_answer_missing",
+                        "missing_final_answer",
+                        "incomplete_code_response",
+                    }
+                    or generation_stop_reason
+                    in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
+                    or any(
+                        reason in generation_failure_class
+                        for reason in (
+                            "truncated_tail",
+                            "final_answer_missing",
+                            "missing_final_answer",
+                            "incomplete_code_response",
+                        )
+                    )
+                    or _truncation_verdict(full_phase_text)
+                )
                 latent_metadata = {
                     key: state.response_modifiers.get(key)
                     for key in (
@@ -3300,6 +3349,10 @@ class CognitiveEngine:
                             surface_control_receipt.get("live_mind_controls_bound")
                             and surface_control_receipt.get("applied")
                         ),
+                        "reply_generation_incomplete": reply_generation_incomplete,
+                        "reply_generation_stop_reason": generation_stop_reason,
+                        "reply_generation_failure_reasons": surface_reasons,
+                        "reply_original_chars": len(full_phase_text),
                         **latent_metadata,
                         "response_path": str(
                             state.response_modifiers.get("response_path")
@@ -3880,6 +3933,10 @@ class CognitiveEngine:
             # 512-token floor: a live conversational reply must have room to
             # finish its sentences even after advisory reductions.
             max_tokens = max(512, min(max_tokens, 1024))
+        # ``max_tokens`` is already the question-shaped, route-approved budget.
+        # Preserve it unless memory pressure is truly critical. The MLX gate
+        # keeps 64/32-token critical and emergency caps hard.
+        completion_floor = max_tokens
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             request_timeout = min(request_timeout, 90.0)
@@ -4560,6 +4617,7 @@ class CognitiveEngine:
                 # 512 — the caller's reason for asking was never carried, so
                 # the train problem still ran out of room at "- The".
                 "reply_needs_room": shape_wants_room,
+                "user_surface_completion_floor": completion_floor,
                 "sampling_bias": apply_channel(
                     influence_channels.SPIKING_SAMPLING_BIAS,
                     advice.get("sampling_bias") if isinstance(advice, dict) else None,
@@ -4662,15 +4720,31 @@ class CognitiveEngine:
                 )
             return None
         text = _restore_sentence_spacing(text)
-        text, trimmed_cutoff = _complete_reply_tail(text)
-        if trimmed_cutoff:
+        surface_receipt = (
+            router_generation_metadata.get("surface_control_receipt")
+            if isinstance(router_generation_metadata, dict)
+            else None
+        )
+        if not isinstance(surface_receipt, dict):
+            surface_receipt = {}
+        surface_reasons = tuple(surface_receipt.get("surface_quality_gate_reasons") or ())
+        generation_stop_reason = str(
+            surface_receipt.get("generation_stop_reason") or ""
+        )
+        reply_generation_incomplete = bool(
+            "truncated_tail" in surface_reasons
+            or generation_stop_reason
+            in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
+            or _truncation_verdict(text)
+        )
+        if reply_generation_incomplete:
             record_degradation(
                 "cognitive_engine",
                 RuntimeError("desktop_quick_reply_midsentence_cutoff"),
                 severity="info",
                 action=(
-                    "trimmed a token-budget mid-sentence cutoff back to the last "
-                    "complete sentence before surfacing the desktop reply"
+                    "preserved a clipped draft as incomplete so the chat route can "
+                    "replace it with a full answer before surfacing"
                 ),
             )
         # 0.8 immediately after a nonempty generation, before user feedback,
@@ -4679,7 +4753,7 @@ class CognitiveEngine:
         # it. The reply is not yet known to be good; what IS known is whether
         # it came out whole. A reply the budget cut mid-sentence is the one
         # signal available here, and it is negative.
-        _quick_reward = 0.4 if trimmed_cutoff else 0.6
+        _quick_reward = 0.4 if reply_generation_incomplete else 0.6
         imagination_feedback = self._learn_imagination_workspace_outcome(
             context,
             outcome="desktop_quick_reply",
@@ -4743,6 +4817,10 @@ class CognitiveEngine:
                     surface_control_receipt.get("live_mind_controls_bound")
                     and surface_control_receipt.get("applied")
                 ),
+                "reply_generation_incomplete": reply_generation_incomplete,
+                "reply_generation_stop_reason": generation_stop_reason,
+                "reply_generation_failure_reasons": surface_reasons,
+                "reply_original_chars": len(text),
                 "self_condition_contract": self_condition_contract,
                 "self_condition_evidence_id": str(
                     (

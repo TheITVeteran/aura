@@ -143,6 +143,34 @@ async def test_server_serves_only_known_frozen_revision_bytes(
 
 
 @pytest.mark.asyncio
+async def test_missing_revision_document_recovers_without_mixing_snapshot_assets(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from interface import server
+
+    monkeypatch.setattr(server, "validate_runtime_security_request", lambda _request: None)
+
+    async def forbidden(_request):
+        raise AssertionError("revision-addressed document fell through to mutable disk")
+
+    revision = "d" * 64
+    response = await server.serve_immutable_runtime_shell(
+        _request(
+            "/",
+            query=f"build=2026.4.20&_aura_runtime={revision}&surface=native-app",
+        ),
+        forbidden,
+    )
+
+    assert response.status_code == 307
+    assert "_aura_runtime" not in response.headers["location"]
+    assert "build=2026.4.20" in response.headers["location"]
+    assert "surface=native-app" in response.headers["location"]
+    assert response.headers["x-aura-runtime-recovery"] == "revision_snapshot_unavailable"
+    assert response.headers["cache-control"].startswith("no-store")
+
+
+@pytest.mark.asyncio
 async def test_revision_marked_document_gets_frozen_unaddressed_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -15,20 +15,41 @@ def test_external_memory_sentinel_uses_current_footprint_not_lifetime_peak():
     assert current_phys_footprint_bytes(usage) == 7 * 1024**3
 
 
-def test_memory_pressure_generation_controls_clamp_tokens_and_recurrent_depth():
+def test_high_pressure_preserves_foreground_completion_reserve_and_recurrence():
     from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
 
     options = {
         "max_tokens": 2048,
         "clean_user_surface_contract": True,
         "clean_user_surface_recurrent_loops": 2,
+        "user_surface_completion_floor": 1024,
     }
     snapshot = SimpleNamespace(max_token_cap=192)
 
     controlled = _apply_memory_pressure_generation_controls(options, snapshot)
 
-    assert controlled["max_tokens"] == 192
+    assert controlled["max_tokens"] == 1024
+    assert controlled["clean_user_surface_recurrent_loops"] == 2
+    assert controlled["memory_pressure_token_cap"] == 192
+    assert controlled["completion_floor_applied"] is True
+
+
+def test_critical_pressure_keeps_hard_cap_even_with_completion_reserve():
+    from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
+
+    controlled = _apply_memory_pressure_generation_controls(
+        {
+            "max_tokens": 1536,
+            "clean_user_surface_contract": True,
+            "clean_user_surface_recurrent_loops": 2,
+            "user_surface_completion_floor": 1024,
+        },
+        SimpleNamespace(max_token_cap=64),
+    )
+
+    assert controlled["max_tokens"] == 64
     assert controlled["clean_user_surface_recurrent_loops"] == 1
+    assert controlled["completion_floor_applied"] is False
 
 
 def test_memory_pressure_generation_controls_preserve_depth_without_cap():
@@ -64,6 +85,22 @@ def test_memory_pressure_generation_controls_use_model_default_when_unspecified(
 
     assert controlled["max_tokens"] == 192
     assert controlled["clean_user_surface_recurrent_loops"] == 1
+
+
+def test_completion_reserve_never_expands_the_callers_budget():
+    from core.brain.llm.mlx_client import _apply_memory_pressure_generation_controls
+
+    controlled = _apply_memory_pressure_generation_controls(
+        {
+            "max_tokens": 384,
+            "clean_user_surface_contract": True,
+            "user_surface_completion_floor": 1024,
+        },
+        SimpleNamespace(max_token_cap=192),
+    )
+
+    assert controlled["max_tokens"] == 384
+    assert controlled["user_surface_completion_floor"] == 384
 
 
 def test_mlx_client_retains_surface_control_receipt_from_worker_response():

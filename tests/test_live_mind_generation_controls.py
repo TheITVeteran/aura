@@ -293,6 +293,7 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert router_kwargs["clean_user_surface_recurrent_loops"] == 2
     assert router_kwargs["clean_user_surface_steering_alpha"] > 0.25
     assert router_kwargs["clean_user_surface_contract"] is True
+    assert router_kwargs["user_surface_completion_floor"] == 512
     assert router_kwargs["user_surface_validation_prompt"] == "What are you attending to?"
     assert router_kwargs["allow_mesh_cognition"] is False
     assert router_kwargs["live_mind_controls_bound"] is True
@@ -306,6 +307,59 @@ async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypat
     assert thought.metadata["live_mind_controls_worker_applied"] is True
     assert thought.metadata["live_mind_snapshot_ready"] is True
     assert thought.metadata["live_mind_generation_controls"]["top_p"] <= 0.94
+
+
+@pytest.mark.asyncio
+async def test_desktop_quick_reply_preserves_worker_truncation_as_incomplete(monkeypatch):
+    from core.brain import cognitive_engine as cognitive_engine_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    class Router:
+        async def think(self, **_kwargs):
+            return "It initializes the map, updates each balance, and then deletes"
+
+        def get_last_generation_metadata(self):
+            return {
+                "surface_control_receipt": {
+                    "enabled": True,
+                    "applied": True,
+                    "live_mind_controls_bound": True,
+                    "clean_user_surface_contract": True,
+                    "surface_quality_gate_enabled": True,
+                    "surface_quality_gate_passed": False,
+                    "surface_quality_gate_attempts": 3,
+                    "surface_quality_gate_reasons": ["truncated_tail"],
+                    "generation_stop_reason": "max_tokens",
+                }
+            }
+
+    class Container:
+        def get(self, name, default=None):
+            return Router() if name == "llm_router" else default
+
+    monkeypatch.setattr(cognitive_engine_module, "get_container", lambda: Container())
+
+    thought = await CognitiveEngine()._direct_desktop_quick_reply(
+        "Explain this code fully.",
+        ThinkingMode.FAST,
+        "user",
+        {
+            "desktop_quick_reply_contract": True,
+            "live_mind_context_required": True,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context": _ready_live_mind_context(),
+            "visible_user_message": "Explain this code fully.",
+            "max_tokens": 512,
+        },
+        timeout_s=30.0,
+    )
+
+    assert thought.content.endswith("deletes")
+    assert thought.metadata["reply_generation_incomplete"] is True
+    assert thought.metadata["reply_generation_stop_reason"] == "max_tokens"
+    assert "truncated_tail" in thought.metadata["reply_generation_failure_reasons"]
 
 
 @pytest.mark.asyncio
@@ -567,6 +621,133 @@ async def test_full_phase_reply_preserves_live_mind_controls_and_worker_receipt(
     assert thought.metadata["live_mind_controls_worker_applied"] is True
     assert thought.metadata["live_mind_surface_control_receipt"] == receipt
     assert thought.metadata["live_mind_generation_controls"]["temperature"] > 0.58
+
+
+@pytest.mark.asyncio
+async def test_full_phase_reply_exposes_worker_truncation_for_route_replacement():
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+    from core.state.aura_state import AuraState
+
+    class FullPhase:
+        async def execute(self, state, **_kwargs):
+            state.response_modifiers["live_mind_surface_control_receipt"] = {
+                "enabled": True,
+                "applied": True,
+                "live_mind_controls_bound": True,
+                "clean_user_surface_contract": True,
+                "surface_quality_gate_passed": False,
+                "surface_quality_gate_reasons": ["truncated_tail"],
+                "generation_stop_reason": "max_tokens",
+                "generated_tokens": 192,
+                "generation_max_tokens": 192,
+            }
+            state.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "The function updates each balance and removes a name when "
+                        "its balance reaches zero from the"
+                    ),
+                }
+            )
+            return state
+
+    engine = CognitiveEngine()
+    engine._phases = [FullPhase()]
+    thought = await engine._run_thinking_loop(
+        AuraState.default(),
+        "Explain this code fully.",
+        ThinkingMode.REFLECTIVE,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": False,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context_required": True,
+            "live_mind_context": {
+                **_ready_live_mind_context(),
+                "required_subsystems_ok": True,
+            },
+            "visible_user_message": "Explain this code fully.",
+        },
+        is_background=False,
+        timeout_s=30.0,
+    )
+
+    assert thought.metadata["reply_generation_incomplete"] is True
+    assert thought.metadata["reply_generation_stop_reason"] == "max_tokens"
+    assert thought.metadata["reply_generation_failure_reasons"] == (
+        "truncated_tail",
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_phase_reply_exposes_latent_quality_truncation_without_worker_reason():
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+    from core.state.aura_state import AuraState
+
+    class FullPhase:
+        async def execute(self, state, **_kwargs):
+            state.response_modifiers.update(
+                {
+                    "live_mind_surface_control_receipt": {
+                        "enabled": True,
+                        "applied": True,
+                        "live_mind_controls_bound": True,
+                        "clean_user_surface_contract": True,
+                        "surface_quality_gate_passed": True,
+                        "surface_quality_gate_reasons": [],
+                        "generation_stop_reason": "eos_or_stop_sequence",
+                    },
+                    "latent_cortex_final_output_quality": {
+                        "passed": False,
+                        "reasons": ["truncated_tail"],
+                    },
+                    "generation_failure_class": (
+                        "final_output_quality_failed:truncated_tail"
+                    ),
+                    "response_path": "cognitive_engine_latent_owner_exhausted",
+                }
+            )
+            state.cognition.working_memory.append(
+                {
+                    "role": "assistant",
+                    "content": "It returns every position where the active count reaches the",
+                }
+            )
+            return state
+
+    engine = CognitiveEngine()
+    engine._phases = [FullPhase()]
+    thought = await engine._run_thinking_loop(
+        AuraState.default(),
+        "Explain this function and state its result.",
+        ThinkingMode.REFLECTIVE,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": False,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "live_mind_context_required": True,
+            "live_mind_context": {
+                **_ready_live_mind_context(),
+                "required_subsystems_ok": True,
+            },
+            "visible_user_message": "Explain this function and state its result.",
+        },
+        is_background=False,
+        timeout_s=30.0,
+    )
+
+    assert thought.metadata["reply_generation_incomplete"] is True
+    assert thought.metadata["reply_generation_failure_reasons"] == (
+        "truncated_tail",
+    )
+    assert thought.metadata["response_path"] == (
+        "cognitive_engine_latent_owner_exhausted"
+    )
 
 
 

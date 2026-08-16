@@ -8493,6 +8493,7 @@ def _build_live_turn_contract_payload(
     confidence = str(response_confidence or "").strip().lower()
     accepted_full_mind_response_paths = {
         "cognitive_engine",
+        "cognitive_engine_completion_retry",
         "cognitive_engine_repair_retry",
         "cognitive_engine_devocatived",
         "cognitive_engine_desktop_plan",
@@ -8527,6 +8528,7 @@ def _build_live_turn_contract_payload(
     foreground_model_generation_consumed = bool(
         trace.get("foreground_model_generation_consumed")
     )
+    completion_retry_count = int(trace.get("completion_retry_count") or 0)
     single_owner_model_generation_proven = bool(
         (
             live_mind_generation_required
@@ -8537,6 +8539,13 @@ def _build_live_turn_contract_payload(
             not live_mind_generation_required
             and not foreground_model_generation_consumed
             and foreground_model_generation_count == 0
+        )
+        or (
+            live_mind_generation_required
+            and response_path == "cognitive_engine_completion_retry"
+            and foreground_model_generation_consumed
+            and foreground_model_generation_count == 2
+            and completion_retry_count == 1
         )
     )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
@@ -8632,6 +8641,7 @@ def _build_live_turn_contract_payload(
         "engine_think_invoked": engine_think_invoked,
         "foreground_model_generation_consumed": foreground_model_generation_consumed,
         "foreground_model_generation_count": foreground_model_generation_count,
+        "completion_retry_count": completion_retry_count,
         "single_owner_model_generation_proven": single_owner_model_generation_proven,
         "cognitive_engine_reply_accepted": engine_reply_accepted,
         "cognitive_engine_reply_failed": engine_reply_failed,
@@ -9641,6 +9651,28 @@ def _build_cognitive_engine_reply_repair_directive(
                 + "; ".join(obligations)
                 + "."
             )
+    completion_reasons = {
+        "truncated_tail",
+        "final_answer_missing",
+        "missing_final_answer",
+        "incomplete_code_response",
+    }
+    completion_only = bool(
+        reasons
+        and {str(reason or "").strip().lower() for reason in reasons}.issubset(
+            completion_reasons
+        )
+    )
+    completion_clause = (
+        "- Produce the entire answer from its beginning through a natural ending; cover every requested part and do not stop after setup or an unfinished list item.\n"
+        if completion_only
+        else ""
+    )
+    rejected_draft_block = (
+        ""
+        if completion_only
+        else f"\n\nRejected draft for avoidance only:\n{draft}"
+    )
     return (
         "The prior draft for this same user turn did not satisfy the user-facing response contract.\n"
         f"Observed problems: {reason_text}.\n"
@@ -9649,10 +9681,11 @@ def _build_cognitive_engine_reply_repair_directive(
         "Rules:\n"
         "- Obey every explicit count, numbering, paragraph, and follow-up instruction in the original request.\n"
         "- Return only the final user-visible answer.\n"
+        f"{completion_clause}"
         "- Do not mention repair, response contracts, runtime status, retries, prior drafts, or inability unless the original request asks for that.\n"
         "- Do not ask for more details when the original request is already answerable.\n\n"
-        f"Original user request:\n{str(original_user_message or '').strip()}\n\n"
-        f"Rejected draft for avoidance only:\n{draft}"
+        f"Original user request:\n{str(original_user_message or '').strip()}"
+        f"{rejected_draft_block}"
     ).strip()
 
 
@@ -11016,6 +11049,19 @@ async def _run_cognitive_engine_chat_turn(
         rejected_reply: str,
         reasons: tuple[str, ...] | list[str],
     ) -> str | None:
+        completion_retry_reasons = {
+            "truncated_tail",
+            "final_answer_missing",
+            "missing_final_answer",
+            "incomplete_code_response",
+        }
+        normalized_reasons = {
+            str(reason or "").strip().lower() for reason in (reasons or ())
+        }
+        completion_only_retry = bool(
+            normalized_reasons
+            and normalized_reasons.issubset(completion_retry_reasons)
+        )
         if require_engine:
             if bool(
                 turn_trace
@@ -11023,15 +11069,21 @@ async def _run_cognitive_engine_chat_turn(
                     turn_trace.get("foreground_model_generation_consumed")
                     or turn_trace.get("single_owner_generation_exhausted")
                 )
+                and not completion_only_retry
             ):
                 logger.warning(
                     "Skipping CognitiveEngine desktop repair retry; the foreground "
                     "model owner already produced work for this turn."
                 )
                 return None
+            repair_reason = (
+                "cognitive_engine_completion_retry"
+                if completion_only_retry
+                else "cognitive_engine_repair_retry"
+            )
             allowed, block_reason = _desktop_secondary_model_repair_allowed(
-                reason="cognitive_engine_repair_retry",
-                lane_snapshot=lane,
+                reason=repair_reason,
+                lane_snapshot=None if completion_only_retry else lane,
             )
             if not allowed:
                 logger.warning(
@@ -11074,6 +11126,8 @@ async def _run_cognitive_engine_chat_turn(
                 "failed_reply_reasons": tuple(reasons or ()),
                 "failed_reply_excerpt": str(rejected_reply or "")[:1200],
                 "suppress_user_memory_append": True,
+                "require_complete_user_reply": completion_only_retry,
+                "user_surface_completion_retry": completion_only_retry,
             }
         )
 
@@ -11140,6 +11194,39 @@ async def _run_cognitive_engine_chat_turn(
                 no_reply_action,
             )
             return None
+        retry_surface_receipt = retry_metadata.get("live_mind_surface_control_receipt")
+        if not isinstance(retry_surface_receipt, dict):
+            retry_surface_receipt = retry_metadata.get("surface_control_receipt")
+        retry_surface_receipt = (
+            retry_surface_receipt if isinstance(retry_surface_receipt, dict) else {}
+        )
+        retry_stop_reason = str(
+            retry_metadata.get("reply_generation_stop_reason")
+            or retry_surface_receipt.get("generation_stop_reason")
+            or ""
+        )
+        retry_failure_reasons = {
+            str(reason or "").strip().lower()
+            for reason in (
+                retry_metadata.get("reply_generation_failure_reasons")
+                or retry_surface_receipt.get("surface_quality_gate_reasons")
+                or ()
+            )
+            if str(reason or "").strip()
+        }
+        retry_still_incomplete = bool(
+            retry_metadata.get("reply_generation_incomplete", False)
+            or retry_stop_reason in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
+            or retry_failure_reasons & completion_retry_reasons
+        )
+        if retry_still_incomplete:
+            logger.warning(
+                "CognitiveEngine completion replacement remained incomplete "
+                "(stop=%s reasons=%s); withholding it from the user surface.",
+                retry_stop_reason or "unknown",
+                ",".join(sorted(retry_failure_reasons)) or "unknown",
+            )
+            return None
 
         def _accept_retry_text(
             final_text: Any,
@@ -11155,6 +11242,10 @@ async def _run_cognitive_engine_chat_turn(
                 inherit_turn_context=False,
             )
             if turn_trace is not None:
+                if completion_only_retry:
+                    turn_trace["completion_retry_count"] = (
+                        int(turn_trace.get("completion_retry_count") or 0) + 1
+                    )
                 _append_turn_text_mutation(
                     turn_trace,
                     stage="chat.cognitive_engine_repair_retry",
@@ -11590,6 +11681,27 @@ async def _run_cognitive_engine_chat_turn(
                 response_path="cognitive_engine_desktop_plan",
             )
             return text
+    if require_engine and bool(thought_metadata.get("reply_generation_incomplete", False)):
+        incomplete_reasons = tuple(
+            str(reason or "").strip().lower()
+            for reason in (
+                thought_metadata.get("reply_generation_failure_reasons") or ("truncated_tail",)
+            )
+            if str(reason or "").strip()
+        ) or ("truncated_tail",)
+        logger.warning(
+            "CognitiveEngine marked the foreground draft incomplete (%s); "
+            "requiring a full same-worker replacement before it can become authoritative.",
+            thought_metadata.get("reply_generation_stop_reason") or "truncated_tail",
+        )
+        retry_reply = await _attempt_repair_retry(text, incomplete_reasons)
+        if retry_reply:
+            _mark_turn_trace(
+                cognitive_engine_reply_accepted=True,
+                cognitive_engine_reply_failed=False,
+                response_path="cognitive_engine_completion_retry",
+            )
+            return retry_reply
     try:
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
@@ -11598,30 +11710,6 @@ async def _run_cognitive_engine_chat_turn(
             is_status_check_turn,
             numeric_answer_missing,
         )
-
-        # LIVE DEFECT, 2026-08-03 19:51. "Cortex response received (len=125)"
-        # then "reply_reliability_gate_failed:truncated_tail", and the person
-        # got a preserved repairable draft instead of the answer. The engine
-        # already has a trimmer that cuts a clipped reply back to its last
-        # complete sentence and re-asks the same gate until it is satisfied
-        # (cognitive_engine._complete_reply_tail) — but it runs only on the
-        # direct desktop quick-reply path, not on this one, so a reply that
-        # ran into its token budget here died with a real answer in hand.
-        # Trim BEFORE the gate judges it, exactly as the other path does.
-        try:
-            from core.brain.cognitive_engine import _complete_reply_tail
-
-            completed_text, tail_trimmed = _complete_reply_tail(text)
-            if tail_trimmed and completed_text.strip():
-                logger.info(
-                    "Trimmed a token-budget mid-sentence cutoff before the chat "
-                    "reliability gate (%d -> %d chars).",
-                    len(text),
-                    len(completed_text),
-                )
-                text = completed_text
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug("Reply tail completion unavailable: %s", exc)
 
         recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
         # LIVE DEFECT, 2026-08-03. Bryan asked "Why did it catch your attention
@@ -15026,6 +15114,14 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat", exc)
             continue
+        completion_failures = {
+            "truncated_tail",
+            "final_answer_missing",
+            "missing_final_answer",
+            "incomplete_code_response",
+        }
+        if set(assessment.reasons or ()) & completion_failures:
+            continue
         if draft_is_servable(assessment.reasons):
             return candidate
     return ""
@@ -17546,6 +17642,7 @@ def _desktop_secondary_model_repair_allowed(
     explicit_enabled = enabled in {"1", "true", "yes", "on", "enabled"}
     explicit_disabled = enabled in {"0", "false", "no", "off", "disabled"}
     safe_same_worker_reasons = {
+        "cognitive_engine_completion_retry",
         "cognitive_engine_repair_retry",
         "stabilizer_rewrite",
         "semantic_glitch",
@@ -17567,8 +17664,11 @@ def _desktop_secondary_model_repair_allowed(
         from core.utils.memory_monitor import get_memory_pressure_snapshot
 
         snapshot = get_memory_pressure_snapshot()
-        if bool(getattr(snapshot, "warning", False)) or bool(
-            getattr(snapshot, "refuse_heavy_local_generation", False)
+        completion_retry = normalized_reason.startswith(
+            "cognitive_engine_completion_retry"
+        )
+        if bool(getattr(snapshot, "refuse_heavy_local_generation", False)) or (
+            bool(getattr(snapshot, "warning", False)) and not completion_retry
         ):
             return False, str(getattr(snapshot, "reason", "") or "memory_pressure")
     except _CHAT_RECOVERABLE_ERRORS as exc:

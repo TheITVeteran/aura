@@ -31,7 +31,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 # ── Third-party ───────────────────────────────────────────────
 import uvicorn
@@ -43,7 +43,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 from core.runtime import resource_psutil as psutil
@@ -734,6 +734,34 @@ async def serve_immutable_runtime_shell(request: Request, call_next):
         )
     content = runtime_shell_snapshot_asset(revision, path)
     if content is None:
+        if request.method == "GET" and path in {"/", "/static/index.html"}:
+            # A native window can outlive the in-process snapshot that supplied
+            # its revision (runtime restart, or enough source revisions to evict
+            # the old entry). Returning the 409 body as the document strands the
+            # whole WKWebView on raw diagnostic text, where no shell JavaScript
+            # exists to retire the stale worker. Recover only document
+            # navigations through the unaddressed bootstrap. Revisioned
+            # subresources remain fail-closed below so one page can never mix
+            # assets from different attested shells.
+            recovery_query = urlencode(
+                [
+                    (key, value)
+                    for key, value in request.query_params.multi_items()
+                    if key != "_aura_runtime"
+                ],
+                doseq=True,
+            )
+            recovery_url = request.url.replace(query=recovery_query)
+            if path == "/static/index.html":
+                recovery_url = recovery_url.replace(path="/")
+            return RedirectResponse(
+                url=str(recovery_url),
+                status_code=307,
+                headers={
+                    **NO_CACHE_HEADERS,
+                    "X-Aura-Runtime-Recovery": "revision_snapshot_unavailable",
+                },
+            )
         return Response(
             status_code=409,
             content="runtime revision is not available from verified immutable storage",

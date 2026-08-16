@@ -43,6 +43,21 @@ def test_pressure_still_clamps_an_ordinary_reply():
     assert controlled["clean_user_surface_recurrent_loops"] == 1
 
 
+def test_question_shaped_completion_floor_survives_high_pressure():
+    controlled = _apply_memory_pressure_generation_controls(
+        {
+            "max_tokens": 1536,
+            "clean_user_surface_contract": True,
+            "clean_user_surface_recurrent_loops": 2,
+            "user_surface_completion_floor": 1024,
+        },
+        SimpleNamespace(max_token_cap=192),
+    )
+
+    assert controlled["max_tokens"] == 1024
+    assert controlled["clean_user_surface_recurrent_loops"] == 2
+
+
 def test_pressure_cannot_shrink_an_execution_turn_below_its_plan():
     controlled = _apply_memory_pressure_generation_controls(
         {"max_tokens": 1024, "desktop_execution_contract": True},

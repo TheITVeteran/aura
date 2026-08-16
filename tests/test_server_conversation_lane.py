@@ -11070,6 +11070,196 @@ async def test_worker_exhausted_quality_rejection_skips_duplicate_route_retry(mo
 
 
 @pytest.mark.asyncio
+async def test_truncated_foreground_answer_gets_one_full_same_worker_replacement(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    first_metadata = _bound_live_mind_controls_metadata()
+    first_metadata.update(
+        {
+            "reply_generation_incomplete": True,
+            "reply_generation_stop_reason": "max_tokens",
+        }
+    )
+    first_metadata["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_reasons": ["truncated_tail"],
+            "generated_tokens": 192,
+            "generation_max_tokens": 192,
+            "generation_stop_reason": "max_tokens",
+        }
+    )
+    second_metadata = _bound_live_mind_controls_metadata()
+    second_metadata["live_mind_surface_control_receipt"].update(
+        {
+            "generated_tokens": 156,
+            "generation_max_tokens": 1024,
+            "generation_stop_reason": "eos_or_stop_sequence",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, objective, context=None, **kwargs):
+            self.calls.append((objective, dict(context or {})))
+            if len(self.calls) == 1:
+                return SimpleNamespace(
+                    content=(
+                        "The function tracks balances in a dictionary and removes "
+                        "names whose balance reaches zero from the"
+                    ),
+                    metadata=first_metadata,
+                )
+            return SimpleNamespace(
+                content=(
+                    "The function tracks balances in a dictionary, removes names "
+                    "whose balance reaches zero, records each position where the "
+                    "number of active names reaches its maximum, and returns those "
+                    "positions. In short, it reports every point at which concurrent "
+                    "nonzero balances are tied for the peak."
+                ),
+                metadata=second_metadata,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    trace = {}
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "completion_retry_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Explain what this code does and give the final result.",
+        visible_user_message="Explain what this code does and give the final result.",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply is not None
+    assert reply.endswith("peak.")
+    assert len(engine.calls) == 2
+    assert engine.calls[1][1]["user_surface_completion_retry"] is True
+    assert "Rejected draft for avoidance only" not in engine.calls[1][0]
+    assert trace["foreground_model_generation_count"] == 2
+    assert trace["completion_retry_count"] == 1
+    assert trace["response_path"] == "cognitive_engine_completion_retry"
+
+
+@pytest.mark.asyncio
+async def test_truncated_completion_replacement_cannot_become_authoritative(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    first_metadata = _bound_live_mind_controls_metadata()
+    first_metadata.update(
+        {
+            "reply_generation_incomplete": True,
+            "reply_generation_stop_reason": "max_tokens",
+            "reply_generation_failure_reasons": ["truncated_tail"],
+        }
+    )
+    second_metadata = _bound_live_mind_controls_metadata()
+    second_metadata.update(
+        {
+            "reply_generation_incomplete": True,
+            "reply_generation_stop_reason": "max_tokens",
+            "reply_generation_failure_reasons": ["truncated_tail"],
+        }
+    )
+    second_metadata["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_reasons": ["truncated_tail"],
+            "generation_stop_reason": "max_tokens",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, *_args, **_kwargs):
+            self.calls += 1
+            metadata = first_metadata if self.calls == 1 else second_metadata
+            return SimpleNamespace(
+                content=(
+                    "The function updates each balance and removes names whose "
+                    "balance reaches zero from the"
+                ),
+                metadata=metadata,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "completion_retry_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Explain this code fully.",
+        visible_user_message="Explain this code fully.",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace={},
+    )
+
+    assert reply is None
+    assert engine.calls == 2
+
+
+@pytest.mark.asyncio
 async def test_cognitive_owner_suppression_blocks_duplicate_route_retry(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
@@ -14539,6 +14729,76 @@ def test_same_worker_desktop_repair_blocks_when_lane_is_busy(monkeypatch):
 
     assert allowed is False
     assert reason == "conversation_generation_already_active"
+
+
+def test_completion_retry_is_admitted_at_high_pressure_when_lane_is_ready(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=True,
+            refuse_heavy_local_generation=False,
+            reason="memory_pressure:high",
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "state": "ready",
+            "conversation_ready": True,
+            "warmup_in_flight": False,
+            "active_generations": 0,
+            "foreground_owned": False,
+            "foreground_guard_active_count": 0,
+            "readiness_blockers": [],
+        },
+    )
+
+    allowed, reason = chat_routes._desktop_secondary_model_repair_allowed(
+        reason="cognitive_engine_completion_retry",
+        default_enabled=False,
+    )
+
+    assert allowed is True
+    assert "same_worker_ready" in reason
+
+
+def test_completion_retry_still_blocks_at_critical_pressure(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            warning=True,
+            refuse_heavy_local_generation=True,
+            reason="memory_pressure:critical",
+        ),
+    )
+
+    allowed, reason = chat_routes._desktop_secondary_model_repair_allowed(
+        reason="cognitive_engine_completion_retry",
+        default_enabled=False,
+    )
+
+    assert allowed is False
+    assert reason == "memory_pressure:critical"
+
+
+def test_completion_retry_prompt_regenerates_without_anchoring_on_clipped_text():
+    from interface.routes import chat as chat_routes
+
+    prompt = chat_routes._build_cognitive_engine_reply_repair_directive(
+        "Explain the code and give the final result.",
+        "It initializes the map and deletes entries from the",
+        ("truncated_tail",),
+    )
+
+    assert "Produce the entire answer from its beginning" in prompt
+    assert "Rejected draft for avoidance only" not in prompt
+    assert "deletes entries from the" not in prompt
 
 
 def test_force_disable_same_worker_desktop_repair_is_still_honored(monkeypatch):

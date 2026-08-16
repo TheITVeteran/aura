@@ -90,3 +90,15 @@ def test_code_blocks_are_never_cut() -> None:
     text, trimmed = _trim_midsentence_cutoff(reply)
     assert trimmed is False
     assert text == reply
+
+
+def test_chat_last_resort_will_not_serve_a_known_partial_answer() -> None:
+    """A preserved draft is evidence for retry, not a finished user answer."""
+    from interface.routes.chat import _servable_draft_or_none
+
+    partial = (
+        "Let's reason through the code. It initializes a dictionary, updates each "
+        "balance, and if a balance becomes zero it is deleted from the"
+    )
+
+    assert _servable_draft_or_none(partial, "Explain what this code does") == ""

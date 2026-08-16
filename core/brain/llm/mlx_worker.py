@@ -716,6 +716,9 @@ def _surface_generation_control_receipt(
             job.get("grounded_runtime_status_contract", False)
         ),
         "generation_max_tokens": generation_max_tokens,
+        "memory_pressure_token_cap": job.get("memory_pressure_token_cap"),
+        "user_surface_completion_floor": job.get("user_surface_completion_floor"),
+        "completion_floor_applied": bool(job.get("completion_floor_applied", False)),
         "caller_requested_max_tokens": job.get("caller_requested_max_tokens"),
         "adaptive_suggested_max_tokens": job.get("adaptive_suggested_max_tokens"),
         "output_contract_generation_floor": job.get(
@@ -723,6 +726,7 @@ def _surface_generation_control_receipt(
         ),
         "semantic_output_token_cap": job.get("semantic_output_token_cap"),
         "hard_output_token_ceiling": job.get("hard_output_token_ceiling"),
+        "generation_stop_reason": state.get("generation_stop_reason"),
         "instruction_shape_repair_applied": bool(
             state.get("instruction_shape_repair_applied", False)
         ),
@@ -7293,6 +7297,28 @@ def _mlx_worker_loop(
                                             surface_wall_exceeded = _surface_retry_wall_exceeded(
                                                 surface_retry_started, surface_retry_wall_s
                                             )
+                                            completion_retry_reasons = {
+                                                "truncated_tail",
+                                                "final_answer_missing",
+                                                "missing_final_answer",
+                                                "incomplete_code_response",
+                                            }
+                                            completion_only_failure = bool(
+                                                rejection_reasons
+                                                and set(rejection_reasons).issubset(
+                                                    completion_retry_reasons
+                                                )
+                                            )
+                                            deadline_open = bool(
+                                                job_deadline_unix <= 0.0
+                                                or time.time() < job_deadline_unix
+                                            )
+                                            if completion_only_failure and deadline_open:
+                                                # The generic wall stops stylistic retry
+                                                # storms. It must not make a max-token
+                                                # cutoff authoritative merely because the
+                                                # first decode itself took twenty seconds.
+                                                surface_wall_exceeded = False
                                             binding_failure = any(
                                                 reason.startswith(
                                                     "surface_validation_prompt_binding"
@@ -7567,6 +7593,21 @@ def _mlx_worker_loop(
 
                     # : Tag with action: "generate" so client can distinguish
                     # from init/heartbeat responses unambiguously.
+                    if soft_cancelled:
+                        generation_stop_reason = "soft_cancelled"
+                    elif deadline_hit:
+                        generation_stop_reason = "deadline_exceeded"
+                    elif total_generated_tokens >= max(
+                        1,
+                        _safe_int(
+                            surface_control_state.get("generation_max_tokens_applied"),
+                            max_tokens,
+                        ),
+                    ):
+                        generation_stop_reason = "max_tokens"
+                    else:
+                        generation_stop_reason = "eos_or_stop_sequence"
+                    surface_control_state["generation_stop_reason"] = generation_stop_reason
                     generate_payload: dict[str, Any] = {
                         "id": job.get("id"),
                         "action": "generate",
@@ -7587,6 +7628,7 @@ def _mlx_worker_loop(
                         ),
                         "soft_cancelled": bool(soft_cancelled),
                         "deadline_exceeded": bool(deadline_hit),
+                        "generation_stop_reason": generation_stop_reason,
                         "speculative": {
                             "enabled": bool(use_speculative),
                             "draft_tokens_accepted": int(draft_accepted_tokens),
