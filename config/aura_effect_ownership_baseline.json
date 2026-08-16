@@ -3517,6 +3517,14 @@
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
+      "path": "core/autonomy/research_history.py",
+      "scope": "<module>.ResearchHistory.append"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
       "path": "core/autonomy/self_modification.py",
       "scope": "<module>.AutonomousSelfModification._audit_log_ready"
     },
@@ -8039,14 +8047,6 @@
       "count": 1,
       "path": "core/autonomy/research_cycle.py",
       "scope": "<module>.ResearchCycle.__init__"
-    },
-    {
-      "callee": "self._record_path.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/autonomy/research_cycle.py",
-      "scope": "<module>.ResearchCycle._save_record"
     },
     {
       "callee": "os.replace",
@@ -15978,6 +15978,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6eb1551799d8bb6982adf1d4da41b0fc50146437a5389dedb7a4aa9055b3856c",
+  "inventory_sha256": "987f06ae0da2aa4e01db918078fa48868972ee266e9a13da1c3f29e5e38af009",
   "schema_version": 1
 }

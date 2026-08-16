@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import math
 import logging
 import os
 import time
@@ -19,6 +20,15 @@ from core.autonomy.research_goal_filter import (
 from core.runtime import background_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
+from core.autonomy.research_history import ResearchHistory
+from core.autonomy.research_text_policy import (
+    MAX_NARRATIVE_CHARS,
+    PARAMETRIC_PREFIX,
+    bounded_narrative,
+    is_transient_failure,
+    label_findings,
+    narrative_admits,
+)
 from core.runtime.state_ownership import state_root
 
 logger = logging.getLogger("Aura.ResearchCycle")
@@ -42,7 +52,12 @@ def _record_research_degradation(
     severity: Severity = "warning",
     extra: dict[str, Any] | None = None,
 ) -> None:
-    _ensure_research_failure_policy()
+    # A required service's failure is worth a receipt. Every one of these
+    # was recorded as SAFE_FALLBACK with receipt_required=False, so the
+    # exact runtime failure class a person would report — research silently
+    # stopped — left the weakest possible forensic trail (CP126
+    # ``a12f95c0``).
+    receipt_required = severity in {"degraded", "critical"} or _needs_receipt(action)
     try:
         record_degradation(
             "research_cycle",
@@ -50,7 +65,7 @@ def _record_research_degradation(
             severity=severity,
             action=action,
             classification=FallbackClassification.SAFE_FALLBACK,
-            receipt_required=False,
+            receipt_required=receipt_required,
             extra=extra,
         )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -60,22 +75,27 @@ def _record_research_degradation(
         )
 
 
-def _ensure_research_failure_policy() -> None:
-    """Keep recoverable research faults from tripping system fail-closed policy."""
-    try:
-        from core.container import ServiceContainer
+#: Failure kinds an operator has to be able to reconstruct: the research
+#: lane stopping, an initiative being lost, or an integration half-applied.
+_RECEIPT_MARKERS = (
+    "without integration",
+    "lost",
+    "suppress",
+    "rollback",
+    "timeout",
+    "unavailable",
+    # An objective that may not come back is the failure a person notices
+    # as "it stopped researching things".
+    "intent",
+    "initiative",
+    "objective",
+    "queue",
+)
 
-        resolved = ServiceContainer._resolve_name("research_cycle")
-        with ServiceContainer._lock:
-            desc = ServiceContainer._services.get(resolved)
-            if desc is not None and getattr(desc, "failure_policy", None) == "fail-closed":
-                desc.failure_policy = "degrade_with_receipt"
-                desc.required_for = (
-                    "full desktop autonomy; failures block full-runtime readiness "
-                    "and route to supervised restart instead of global fail-closed"
-                )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("ResearchCycle failure-policy self-heal unavailable: %s", exc)
+
+def _needs_receipt(action: str) -> bool:
+    lowered = str(action or "").lower()
+    return any(marker in lowered for marker in _RECEIPT_MARKERS)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -154,6 +174,64 @@ class ResearchRecord:
 
 # ── The Research Cycle ────────────────────────────────────────────────────────
 
+def _materialize_research_goal(
+    cycle: "ResearchCycle",
+    initiative: dict[str, Any],
+    state: Any,
+) -> dict[str, Any] | None:
+    """Turn a placeholder initiative into something researchable."""
+    metadata = dict(initiative.get("metadata", {}) or {})
+    goal = str(initiative.get("goal", "") or "").strip()
+    drive = str(initiative.get("drive") or metadata.get("triggered_by") or "curiosity")
+
+    if _generic_internal_goal(goal):
+        topic = _derive_autotelic_topic(cycle, state)
+        if not topic:
+            return None
+        initiative["goal"] = f"Research and learn something new about {topic}"
+        initiative["drive"] = "curiosity" if drive in {"curiosity", "boredom"} else drive
+        metadata["materialized_from"] = goal[:120]
+        metadata["materialized_topic"] = topic
+        initiative["metadata"] = metadata
+    return initiative
+
+
+def _generic_internal_goal(goal: str) -> bool:
+    """Whether a goal is a placeholder rather than something to look up."""
+    lowered = str(goal or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "review internal knowledge graph continuity",
+            "quietly consolidate internal state",
+            "wait for a stronger signal",
+            "reflect on recent interactions",
+            "hold attentive idle posture",
+        )
+    )
+
+def _derive_autotelic_topic(cycle: "ResearchCycle", state: Any) -> str:
+    """A topic worth researching, drawn from live state."""
+    try:
+        from core.autonomy.topic_selection import select_autonomous_topic
+
+        candidate = select_autonomous_topic(
+            cycle.orchestrator,
+            state,
+            excluded=(record.goal for record in cycle._history[-20:]),
+        )
+        if candidate is not None:
+            return candidate.text
+    except RESEARCH_RECOVERABLE_ERRORS as exc:
+        _record_research_degradation(
+            exc,
+            action="left autonomous research idle because grounded topic derivation failed",
+            extra={"cycle_count": cycle._cycle_count},
+        )
+        logger.debug("Autotelic topic derivation failed: %s", exc)
+    return ""
+
+
 class ResearchCycle:
     """
     Autonomous background research engine.
@@ -182,6 +260,9 @@ class ResearchCycle:
         self._cycle_count: int = 0
         self._history: list[ResearchRecord] = []
         self._daemon_failure_count: int = 0
+        self._leased_intent: tuple[list, dict] | None = None
+        self._last_energy_reading: dict[str, float] = {}
+        self._transient_failure_counts: dict[str, int] = {}
         self._last_cycle_error: str | None = None
         self._history_load_errors: int = 0
         self._restart_count: int = 0
@@ -215,6 +296,8 @@ class ResearchCycle:
                     extra={"configured_path": str(self._record_path), "fallback_path": str(fallback_root)},
                 )
                 self._record_path = fallback_root / "cycle_history.jsonl"
+        #: The durable record: chained, gateway-written, verified on load.
+        self._history_store = ResearchHistory(self._record_path)
         self._load_history()
 
         logger.info("ResearchCycle initialized. Previous cycles: %d", self._cycle_count)
@@ -291,6 +374,10 @@ class ResearchCycle:
             except asyncio.CancelledError:
                 break
             except RESEARCH_RECOVERABLE_ERRORS as e:
+                # A crashed cycle is a cycle that did not do the work, so
+                # the objective goes back to the queue rather than being
+                # lost with the exception.
+                self._settle_intent_lease(completed=False)
                 self._daemon_failure_count += 1
                 self._last_cycle_error = f"{type(e).__name__}: {e}"
                 _record_research_degradation(
@@ -300,6 +387,82 @@ class ResearchCycle:
                 )
                 logger.error("ResearchCycle daemon error: %s", e, exc_info=True)
                 await asyncio.sleep(60.0)  # Back off on error
+
+    def _has_energy_for_research(self, state: Any) -> bool:
+        """Whether the energy budget allows research, on either scale.
+
+        The capacity is the scale: a budget whose capacity is 1.0 is
+        normalized and 0.2 is the same fraction as 20 out of 100. When
+        neither the level nor the capacity is readable this admits, because
+        an unreadable budget is not evidence of exhaustion — and reading it
+        as one is what would disable research forever.
+        """
+        budget = state.motivation.budgets.get("energy", {}) or {}
+        try:
+            level = float(budget.get("level"))
+        except (TypeError, ValueError):
+            return True
+        if not math.isfinite(level):
+            return True
+        try:
+            capacity = float(budget.get("capacity", 100.0))
+        except (TypeError, ValueError):
+            capacity = 100.0
+        if not math.isfinite(capacity) or capacity <= 0.0:
+            capacity = 100.0
+        fraction = level / capacity
+        self._last_energy_reading = {
+            "level": level,
+            "capacity": capacity,
+            "fraction": round(fraction, 4),
+        }
+        return fraction >= (self.MIN_ENERGY_FOR_RESEARCH / 100.0)
+
+    def research_health(self) -> dict[str, Any]:
+        """Whether research can actually happen, not whether the loop woke.
+
+        The daemon reported a self-healing heartbeat before checking
+        admission, state, energy, curiosity, tool readiness or progress, so
+        a permanently blocked research lane stayed heartbeat-healthy
+        (CP126 ``6e817da1``).
+        """
+        blockers: list[str] = []
+        state = self._get_state()
+        if state is None:
+            blockers.append("no_state")
+        if not hasattr(self.orchestrator, "execute_tool"):
+            blockers.append("no_tool_surface")
+        elif not self._research_tool_allowlist():
+            blockers.append("no_research_tools_available")
+        try:
+            reason = background_policy.background_activity_reason(
+                self.orchestrator,
+                profile=background_policy.RESEARCH_BACKGROUND_POLICY,
+            )
+            if reason:
+                blockers.append(f"background_policy:{reason}")
+        except RESEARCH_RECOVERABLE_ERRORS as exc:
+            blockers.append(f"background_policy_unavailable:{type(exc).__name__}")
+
+        since_last = (
+            monotonic() - self._last_cycle_mono if self._last_cycle_mono else None
+        )
+        stalled = bool(
+            self._last_cycle_mono
+            and since_last is not None
+            and since_last > (self.MIN_CYCLE_INTERVAL_S * 10)
+        )
+        return {
+            "loop_alive": self.is_alive(),
+            # The distinction the heartbeat could not make.
+            "can_research": not blockers,
+            "blockers": blockers,
+            "cycles_completed": self._cycle_count,
+            "seconds_since_last_cycle": round(since_last, 1) if since_last else None,
+            "stalled": stalled,
+            "last_error": self._last_cycle_error or "",
+            "consecutive_daemon_failures": self._daemon_failure_count,
+        }
 
     def _should_run(self) -> bool:
         """Check all conditions before starting a research cycle."""
@@ -344,9 +507,11 @@ class ResearchCycle:
         if state is None:
             return False
 
-        # 5. Energy check
-        energy = state.motivation.budgets.get("energy", {}).get("level", 100.0)
-        if energy < self.MIN_ENERGY_FOR_RESEARCH:
+        # 5. Energy check. The gate defaulted to 100 and compared against 20
+        # while other autonomy systems normalize energy to 0-1, so schema
+        # drift would read a full battery of 0.9 as exhausted and disable
+        # research permanently (CP126 ``3dec59b8``).
+        if not self._has_energy_for_research(state):
             return False
 
         # 6. Curiosity check
@@ -402,29 +567,17 @@ class ResearchCycle:
         if len(findings) < self.MIN_FINDINGS:
             logger.info("ResearchCycle: insufficient findings for '%s'. Skipping integration.", goal[:60])
             await self._handle_no_findings(state, goal, drive)
+            # The objective was not researched, so it goes back.
+            self._settle_intent_lease(completed=False)
             self._last_cycle_mono = monotonic()
             return None
 
-        # 5. Remove from pending_initiatives (SUCCESS CASE)
-        try:
-            from core.consciousness.executive_authority import get_executive_authority
-
-            state, _ = await get_executive_authority(self.orchestrator).suppress_initiatives(
-                state,
-                predicate=lambda item: str(item.get("goal", "") or "") == goal,
-                reason="research_cycle_goal_completed",
-                source="research_cycle",
-            )
-        except RESEARCH_RECOVERABLE_ERRORS as exc:
-            self._last_cycle_error = f"{type(exc).__name__}: {exc}"
-            _record_research_degradation(
-                exc,
-                action="continued integration but left completed initiative for future authority reconciliation",
-                extra={"goal": goal[:160]},
-            )
-            logger.warning("ResearchCycle: executive suppression failed, leaving initiative intact: %s", exc)
-
-        # 5. Integrate into knowledge graph
+        # 5. Integrate into knowledge graph FIRST. Executive suppression used
+        # to run here, before knowledge, the eternal vault, the narrative,
+        # affect, budgets and the durable record — so any later failure
+        # retired the goal while the work it stood for was incomplete, with
+        # nothing to roll back (CP126 ``bf08b6a9``). The initiative is the
+        # record of unfinished work, so it is the LAST thing to go.
         await self._integrate_knowledge(findings, goal, drive)
 
         # 6. Write to eternal vault (deferred via pending_intents)
@@ -460,7 +613,34 @@ class ResearchCycle:
                 budgets[drive]["level"] + 20.0,
             )
 
-        # 10. Snapshot state after
+        # 10. Retire the initiative. Everything it stood for is now written.
+        try:
+            from core.consciousness.executive_authority import get_executive_authority
+
+            state, _ = await get_executive_authority(self.orchestrator).suppress_initiatives(
+                state,
+                predicate=lambda item: str(item.get("goal", "") or "") == goal,
+                reason="research_cycle_goal_completed",
+                source="research_cycle",
+            )
+            self._settle_intent_lease(completed=True)
+        except RESEARCH_RECOVERABLE_ERRORS as exc:
+            self._last_cycle_error = f"{type(exc).__name__}: {exc}"
+            _record_research_degradation(
+                exc,
+                action=(
+                    "integrated the findings and left the initiative pending; a "
+                    "later cycle may repeat it rather than lose it"
+                ),
+                extra={"goal": goal[:160]},
+            )
+            logger.warning(
+                "ResearchCycle: executive suppression failed, leaving initiative intact: %s",
+                exc,
+            )
+            self._settle_intent_lease(completed=False)
+
+        # 11. Snapshot state after
         state_after = self._get_state()
         affect_after = {
             "valence":   float(getattr(state_after, "affect", state.affect).valence),
@@ -508,6 +688,34 @@ class ResearchCycle:
 
     # ── Step implementations ──────────────────────────────────────────────────
 
+    def _settle_intent_lease(self, *, completed: bool) -> None:
+        """Consume the leased intent on success; return it on failure.
+
+        Consuming up front made every downstream failure a silent loss of
+        the objective. Consuming here makes the queue the record of what
+        still needs doing (CP126 ``58359965``).
+        """
+        leased = getattr(self, "_leased_intent", None)
+        if not leased:
+            return
+        queue, intent = leased
+        self._leased_intent = None
+        try:
+            intent.pop("research_lease", None)
+            if completed:
+                queue.remove(intent)
+        except (ValueError, AttributeError, TypeError) as exc:
+            _record_research_degradation(
+                exc,
+                action=(
+                    "could not settle the autotelic intent lease; the objective "
+                    "may be researched twice"
+                    if completed
+                    else "could not return the autotelic intent to the queue"
+                ),
+                severity="warning",
+            )
+
     def _select_initiative(self, state: Any) -> dict | None:
         """
         Select the best initiative from pending_initiatives.
@@ -553,7 +761,7 @@ class ResearchCycle:
 
             # Sort by continuity-aware urgency (highest first)
             sorted_init = sorted(initiatives, key=_priority, reverse=True)
-            return self._materialize_research_goal(dict(sorted_init[0]), state)
+            return _materialize_research_goal(self, dict(sorted_init[0]), state)
 
         # 2. Fallback: Autotelic intent generated by learning/self-review modules.
         # Use a unified approach to finding pending intents
@@ -562,23 +770,32 @@ class ResearchCycle:
         if isinstance(possible_intents, list):
             for intent in list(possible_intents):
                 if isinstance(intent, dict) and intent.get("type") == "autotelic_objective":
-                    domain = intent.get("domain") or self._derive_autotelic_topic(state)
+                    domain = intent.get("domain") or _derive_autotelic_topic(self, state)
                     if not domain:
                         logger.debug("Autotelic intent deferred: no grounded topic is available yet.")
                         return None
                     logger.info("⚡ [AUTOTELIC] Autotelic signal identified: %s", domain)
                     
-                    # Consume the intent so it's only researched once
+                    # LEASED, not consumed. The intent used to be removed
+                    # here, before any search ran — so a failure in search,
+                    # extraction, integration or persistence lost the
+                    # objective outright, with nothing to roll back to
+                    # (CP126 ``58359965``). It is marked in flight and
+                    # returned to the queue if the cycle does not complete.
                     try:
-                        possible_intents.remove(intent)
-                    except (ValueError, AttributeError) as exc:
+                        intent["research_lease"] = {
+                            "leased_at": time.time(),
+                            "by": "research_cycle",
+                        }
+                        self._leased_intent = (possible_intents, intent)
+                    except (TypeError, AttributeError) as exc:
                         _record_research_degradation(
                             exc,
-                            action="continued with selected autotelic intent after consume marker update failed",
+                            action="continued with selected autotelic intent without a lease marker",
                             severity="debug",
                         )
-                        logger.debug("Autotelic intent consume failed: %s", exc)
-                        
+                        self._leased_intent = None
+
                     return {
                         "goal": f"Self-directed exploration of {domain}",
                         "drive": "curiosity",
@@ -589,7 +806,27 @@ class ResearchCycle:
         return None
 
     async def _execute_research(self, goal: str, drive: str) -> Any:
-        """Execute the research goal using AutonomousTaskEngine."""
+        """Execute the research goal, whole, under one deadline.
+
+        ``MAX_GOAL_DURATION_S`` wrapped only ``engine.execute_goal``. The
+        grounded web search that runs first and the direct fallback that
+        runs instead both had no deadline at all, so a cycle could exceed
+        the documented maximum without limit (CP126 ``fca4ad22``).
+        """
+        try:
+            async with asyncio.timeout(self.MAX_GOAL_DURATION_S):
+                return await self._execute_research_inner(goal, drive)
+        except TimeoutError as exc:
+            self._last_cycle_error = f"{type(exc).__name__}: {exc}"
+            _record_research_degradation(
+                exc,
+                action="ended research attempt without integration after the cycle deadline",
+                extra={"goal": goal[:160], "drive": drive},
+            )
+            logger.warning("ResearchCycle: research timed out for '%s'", goal[:60])
+            return None
+
+    async def _execute_research_inner(self, goal: str, drive: str) -> Any:
         try:
             grounded = await self._perform_grounded_search(goal, drive)
             if grounded is not None:
@@ -605,39 +842,25 @@ class ResearchCycle:
 
             engine = AutonomousTaskEngine(kernel)
 
-            # Register ALL orchestrator skills — full autonomous repertoire
+            # Research reads. It does not need to be able to delete a file,
+            # send a message or spend money, and the whole capability
+            # repertoire — including the destructive half — used to be
+            # registered for it with nothing but an origin string as scope
+            # (CP126 ``0b4dc777``).
             if hasattr(self.orchestrator, "execute_tool"):
-                cap_engine = getattr(self.orchestrator, "capability_engine", None)
-                if cap_engine and hasattr(cap_engine, "skills"):
-                    for tool_name in cap_engine.skills:
-                        engine.register_tool(
-                            tool_name,
-                            lambda name=tool_name, **kw: self.orchestrator.execute_tool(name, kw, origin="research_cycle")
-                        )
-                else:
-                    # Fallback: register core tools if capability_engine unavailable
-                    for tool_name in ["web_search", "run_python", "memory_ops"]:
-                        engine.register_tool(
-                            tool_name,
-                            lambda name=tool_name, **kw: self.orchestrator.execute_tool(name, kw, origin="research_cycle")
-                        )
+                for tool_name in self._research_tool_allowlist():
+                    engine.register_tool(
+                        tool_name,
+                        lambda name=tool_name, **kw: self.orchestrator.execute_tool(
+                            name, kw, origin="research_cycle"
+                        ),
+                    )
 
-            async with asyncio.timeout(self.MAX_GOAL_DURATION_S):
-                result = await engine.execute_goal(
-                    goal=goal,
-                    context={"origin": "research_cycle", "drive": drive},
-                )
-            return result
-
-        except TimeoutError as exc:
-            self._last_cycle_error = f"{type(exc).__name__}: {exc}"
-            _record_research_degradation(
-                exc,
-                action="ended research attempt without integration after goal execution timeout",
-                extra={"goal": goal[:160], "drive": drive},
+            return await engine.execute_goal(
+                goal=goal,
+                context={"origin": "research_cycle", "drive": drive},
             )
-            logger.warning("ResearchCycle: research timed out for '%s'", goal[:60])
-            return None
+
         except RESEARCH_RECOVERABLE_ERRORS as e:
             self._last_cycle_error = f"{type(e).__name__}: {e}"
             _record_research_degradation(
@@ -648,18 +871,86 @@ class ResearchCycle:
             logger.error("ResearchCycle: research execution failed: %s", e)
             return None
 
-    async def _direct_llm_research(self, goal: str) -> str | None:
-        """Fallback when TaskEngine isn't available: direct LLM call."""
+    #: Re-exported from research_text_policy so a reader of this class
+    #: can find the constants without knowing where they moved.
+    PARAMETRIC_PREFIX = PARAMETRIC_PREFIX
+    MAX_NARRATIVE_CHARS = MAX_NARRATIVE_CHARS
+
+    #: Tools a research cycle may use. Read-shaped by construction: a
+    #: research goal is answered by looking things up, and anything that
+    #: writes, sends, spends or deletes is outside what "research" means.
+    RESEARCH_TOOL_ALLOWLIST = frozenset(
+        {
+            "web_search",
+            "grounded_search",
+            "web_fetch",
+            "read_file",
+            "memory_ops",
+            "memory_search",
+            "knowledge_query",
+            "run_python",
+        }
+    )
+
+    def _research_tool_allowlist(self) -> list[str]:
+        """The intersection of what research may do and what exists here."""
+        cap_engine = getattr(self.orchestrator, "capability_engine", None)
+        available = set(getattr(cap_engine, "skills", None) or ())
+        if not available:
+            # No registry to intersect with. The allowlist still binds —
+            # an unavailable tool simply fails when called, which is a far
+            # better outcome than registering everything.
+            return sorted(self.RESEARCH_TOOL_ALLOWLIST)
+        admitted = sorted(self.RESEARCH_TOOL_ALLOWLIST & available)
+        refused = sorted(available - self.RESEARCH_TOOL_ALLOWLIST)
+        if refused:
+            logger.debug(
+                "ResearchCycle: %d capability skill(s) withheld from autonomous "
+                "research (%s...)",
+                len(refused),
+                ", ".join(refused[:5]),
+            )
+        return admitted
+
+    async def _direct_llm_research(self, goal: str) -> dict[str, Any] | None:
+        """What the resident model already holds. NOT research.
+
+        This asked the model to "research the following topic as thoroughly
+        as you can" and the prose came back to be mined for concrete facts,
+        with no external evidence boundary anywhere in the path (CP126
+        ``69bca04d``). The result is typed and labelled
+        ``parametric_only``, and the findings it produces carry that label
+        with them.
+        """
         try:
             from core.container import ServiceContainer
             kernel = ServiceContainer.get("aura_kernel", default=None)
             if kernel:
                 llm = kernel.organs["llm"].get_instance()
+                # The prompt no longer says "research". Asking the resident
+                # model about a topic returns what its weights already hold,
+                # and calling that research — then extracting its prose as
+                # concrete facts — is how parametric recall became evidence
+                # with no external boundary (CP126 ``69bca04d``).
                 prompt = (
-                    f"Research the following topic as thoroughly as you can:\n\n{goal}\n\n"
-                    "Provide a detailed synthesis with specific facts, insights, and implications."
+                    "Say what you already know about the following topic, from "
+                    "your own training. Do NOT present anything as a looked-up "
+                    "fact, and mark anything you are unsure of.\n\n"
+                    f"{goal}"
                 )
-                return await llm.think(prompt)
+                # The outer deadline covers this; a second one here would
+                # only shorten the same budget.
+                recalled = await llm.think(prompt)
+                if not recalled:
+                    return None
+                # Returned as a typed result rather than a bare string, so
+                # `_extract_findings` and everything downstream can see that
+                # nothing external was consulted.
+                return {
+                    "answer": str(recalled),
+                    "evidence_boundary": "parametric_only",
+                    "external_sources": 0,
+                }
         except RESEARCH_RECOVERABLE_ERRORS as e:
             self._last_cycle_error = f"{type(e).__name__}: {e}"
             _record_research_degradation(
@@ -671,9 +962,20 @@ class ResearchCycle:
         return None
 
     async def _extract_findings(self, result: Any, goal: str) -> list[str]:
-        """Extract concrete facts from research results."""
+        """Extract concrete facts from research results.
+
+        A finding from a source with no external evidence is prefixed so
+        the label travels with it into knowledge, memory and the narrative.
+        Stripping it there and re-deriving it later is exactly the
+        provenance loss CP126 ``69bca04d`` describes.
+        """
         if result is None:
             return []
+
+        parametric = (
+            isinstance(result, dict)
+            and str(result.get("evidence_boundary") or "") == "parametric_only"
+        )
 
         # Get the text content from the result
         if isinstance(result, dict):
@@ -683,7 +985,7 @@ class ResearchCycle:
                 if str(item).strip()
             ]
             if explicit_facts:
-                return explicit_facts[:8]
+                return label_findings(explicit_facts[:8], parametric)
             evidence = [
                 str(item.get("text") or "").strip()
                 for item in list(result.get("chunks") or result.get("evidence") or [])[:6]
@@ -729,7 +1031,10 @@ class ResearchCycle:
                 end = raw_text.rfind("]") + 1
                 if start != -1 and end > start:
                     findings = json.loads(raw_text[start:end])
-                    return [str(f) for f in findings if isinstance(f, str) and len(f) > 10]
+                    return label_findings(
+                        [str(f) for f in findings if isinstance(f, str) and len(f) > 10],
+                        parametric,
+                    )
         except RESEARCH_RECOVERABLE_ERRORS as e:
             _record_research_degradation(
                 e,
@@ -740,7 +1045,9 @@ class ResearchCycle:
 
         # Fallback: split content into sentences as findings
         sentences = [s.strip() for s in content.split(".") if len(s.strip()) > 30]
-        return sentences[:5]
+        return label_findings(sentences[:5], parametric)
+
+
 
     async def _integrate_knowledge(
         self, findings: list[str], goal: str, drive: str
@@ -841,14 +1148,27 @@ class ResearchCycle:
             impact = str(impact or "").strip()
 
             if impact and len(impact) > 10 and _identity is not None:
-                # Update the state's identity narrative
-                separator = " " if getattr(_identity, "current_narrative", None) else ""
-                _identity.current_narrative = (
-                    (getattr(_identity, "current_narrative", None) or "") + separator + impact
+                # A generated sentence went straight onto the identity
+                # narrative, and past 2000 characters the oldest prefix was
+                # sliced off mid-word — so the beginning of who she says she
+                # is was destroyed a fragment at a time, with no
+                # constitutional reconciliation anywhere in the path (CP126
+                # ``0d164a09``).
+                admitted, refusal = narrative_admits(impact)
+                if not admitted:
+                    _record_research_degradation(
+                        ValueError(f"identity sentence refused: {refusal}"),
+                        action="left the identity narrative unchanged",
+                        severity="info",
+                        extra={"goal": goal[:120]},
+                    )
+                    return "Research integrated."
+
+                existing = str(getattr(_identity, "current_narrative", None) or "")
+                separator = " " if existing else ""
+                _identity.current_narrative = bounded_narrative(
+                    existing + separator + impact
                 )
-                # Cap narrative length
-                if len(getattr(_identity, "current_narrative", "") or "") > 2000:
-                    _identity.current_narrative = _identity.current_narrative[-2000:]
 
                 title_str = str(goal)[:40]
                 if identity_engine and hasattr(identity_engine, "append_chapter"):
@@ -871,6 +1191,9 @@ class ResearchCycle:
             logger.debug("Narrative update failed: %s", e)
 
         return "Research integrated into knowledge base."
+
+
+
 
     async def _maybe_trigger_dream(self) -> None:
         """
@@ -919,7 +1242,7 @@ class ResearchCycle:
     async def _perform_grounded_search(self, goal: str, drive: str) -> dict[str, Any] | None:
         if not hasattr(self.orchestrator, "execute_tool"):
             return None
-        query = self._search_query_for_goal(goal)
+        query = research_query_for_goal(goal)
         if not query:
             return None
         try:
@@ -939,61 +1262,9 @@ class ResearchCycle:
             logger.debug("ResearchCycle grounded search failed for %s: %s", goal[:80], exc)
         return None
 
-    def _search_query_for_goal(self, goal: str) -> str:
-        return research_query_for_goal(goal)
 
-    def _materialize_research_goal(
-        self,
-        initiative: dict[str, Any],
-        state: Any,
-    ) -> dict[str, Any] | None:
-        metadata = dict(initiative.get("metadata", {}) or {})
-        goal = str(initiative.get("goal", "") or "").strip()
-        drive = str(initiative.get("drive") or metadata.get("triggered_by") or "curiosity")
 
-        if self._generic_internal_goal(goal):
-            topic = self._derive_autotelic_topic(state)
-            if not topic:
-                return None
-            initiative["goal"] = f"Research and learn something new about {topic}"
-            initiative["drive"] = "curiosity" if drive in {"curiosity", "boredom"} else drive
-            metadata["materialized_from"] = goal[:120]
-            metadata["materialized_topic"] = topic
-            initiative["metadata"] = metadata
-        return initiative
 
-    def _generic_internal_goal(self, goal: str) -> bool:
-        lowered = str(goal or "").lower()
-        return any(
-            marker in lowered
-            for marker in (
-                "review internal knowledge graph continuity",
-                "quietly consolidate internal state",
-                "wait for a stronger signal",
-                "reflect on recent interactions",
-                "hold attentive idle posture",
-            )
-        )
-
-    def _derive_autotelic_topic(self, state: Any) -> str:
-        try:
-            from core.autonomy.topic_selection import select_autonomous_topic
-
-            candidate = select_autonomous_topic(
-                self.orchestrator,
-                state,
-                excluded=(record.goal for record in self._history[-20:]),
-            )
-            if candidate is not None:
-                return candidate.text
-        except RESEARCH_RECOVERABLE_ERRORS as exc:
-            _record_research_degradation(
-                exc,
-                action="left autonomous research idle because grounded topic derivation failed",
-                extra={"cycle_count": self._cycle_count},
-            )
-            logger.debug("Autotelic topic derivation failed: %s", exc)
-        return ""
 
     async def _suppress_unresearchable_initiatives(self, state: Any) -> None:
         cognition = getattr(state, "cognition", None)
@@ -1012,8 +1283,21 @@ class ResearchCycle:
             reason="research_cycle_non_research_goal_quarantined",
         )
 
+
+
     async def _handle_no_findings(self, state: Any, goal: str, drive: str) -> None:
         key = goal.casefold()
+        if is_transient_failure(self._last_cycle_error):
+            # The lane broke, not the goal. Counting this toward suppression
+            # is how a network outage retires an initiative.
+            self._transient_failure_counts[key] = self._transient_failure_counts.get(key, 0) + 1
+            logger.info(
+                "ResearchCycle: '%s' produced no findings for a transient reason "
+                "(%s); not counted toward suppression.",
+                goal[:60],
+                str(self._last_cycle_error or "")[:80],
+            )
+            return
         failures = self._goal_failure_counts.get(key, 0) + 1
         self._goal_failure_counts[key] = failures
         suppress_after = _env_int("AURA_RESEARCH_SUPPRESS_AFTER_FAILURES", 2)
@@ -1079,11 +1363,9 @@ class ResearchCycle:
         return None
 
     def _save_record(self, record: ResearchRecord) -> None:
+        """Append one record through the chained, gateway-written history."""
         try:
-            with self._record_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record.to_dict()) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+            self._history_store.append(record.to_dict())
         except RESEARCH_RECOVERABLE_ERRORS as e:
             self._last_cycle_error = f"{type(e).__name__}: {e}"
             _record_research_degradation(
@@ -1092,6 +1374,34 @@ class ResearchCycle:
                 extra={"record_id": record.record_id, "path": str(self._record_path)},
             )
             logger.debug("Record save failed: %s", e)
+
+    def _restore_cycle_state_from_history(self) -> None:
+        """Rebuild the cooldown and per-goal failure counts from the record."""
+        if not self._history:
+            return
+        newest = max(
+            (
+                float(
+                    getattr(record, "completed_at", 0.0)
+                    or getattr(record, "started_at", 0.0)
+                    or 0.0
+                )
+                for record in self._history
+            ),
+            default=0.0,
+        )
+        if newest > 0.0:
+            age = max(0.0, time.time() - newest)
+            # A monotonic clock cannot be set to a wall-clock instant, so
+            # the cooldown is reconstructed as "this long ago" — which is
+            # what the interval check actually reads.
+            self._last_cycle_mono = monotonic() - min(age, self.MIN_CYCLE_INTERVAL_S * 10)
+        for record in self._history:
+            goal = str(getattr(record, "goal", "") or "").casefold()
+            if not goal:
+                continue
+            if not getattr(record, "findings", None):
+                self._goal_failure_counts[goal] = self._goal_failure_counts.get(goal, 0) + 1
 
     def _load_history(self) -> None:
         if not self._record_path.exists():
@@ -1103,7 +1413,12 @@ class ResearchCycle:
             with open(self._record_path, encoding="utf-8") as f:
                 for line in f:
                     try:
-                        data = json.loads(line)
+                        data = self._history_store.read_payload(line)
+                        if data is None:
+                            # A row that does not hash to its own contents
+                            # was edited after it was written.
+                            self._history_load_errors += 1
+                            continue
                         record = ResearchRecord.from_dict(data)
                         self._history.append(record)
                         count += 1
@@ -1118,6 +1433,12 @@ class ResearchCycle:
                 extra={"path": str(self._record_path)},
             )
             logger.debug("Research history load failed: %s", _e)
+        # Restore what the loaded history implies. Reload set only the
+        # records and the cycle count, so the cooldown clock and every
+        # per-goal failure count reset — a restart could immediately rerun
+        # research it had just done, or retry a goal that had already failed
+        # its budget (CP126 ``a9ed8b95``).
+        self._restore_cycle_state_from_history()
         if self._history_load_errors:
             _record_research_degradation(
                 ValueError(f"{self._history_load_errors} invalid research history row(s)"),

@@ -30,7 +30,8 @@ def test_research_cycle_respects_background_policy_gate_before_starting(monkeypa
 def test_research_cycle_refuses_stale_desktop_action_as_search_query():
     cycle = ResearchCycle.__new__(ResearchCycle)
 
-    query = cycle._search_query_for_goal(
+    # The query helper is a module-level delegate now.
+    query = research_module.research_query_for_goal(
         "Stalled goal: Please create a folder named 'Aura Live Proof' in my Documents folder "
         "and write a file named live_test.txt in it."
     )
@@ -209,6 +210,12 @@ def test_research_cycle_save_record_keeps_memory_copy_when_history_append_fails(
     cycle = ResearchCycle.__new__(ResearchCycle)
     cycle._record_path = tmp_path
     cycle._last_cycle_error = None
+    # The fields the constructor sets. A fixture that fills them by hand
+    # drifts the moment one is added; these are the history chain and its
+    # lock (CP126 9e6e006e).
+    from core.autonomy.research_history import ResearchHistory
+
+    cycle._history_store = ResearchHistory(tmp_path)
     record = ResearchRecord(
         record_id="abc123",
         drive="curiosity",
@@ -308,7 +315,16 @@ async def test_research_cycle_start_recovers_dead_daemon_task(monkeypatch):
         await cycle.stop()
 
 
-def test_research_degradation_self_heals_stale_fail_closed_descriptor(service_container):
+def test_recording_a_degradation_does_not_rewrite_the_failure_policy(service_container):
+    """CP126 ``846a5eac`` — a service does not get to set its own policy.
+
+    The degradation helper reached into ``ServiceContainer._lock`` and
+    ``_services`` and rewrote its own descriptor from fail-closed to
+    degrade_with_receipt every time it recorded a fault. That bypassed
+    registration ownership and masked the root service failure, and it was
+    unnecessary: ``start_research_daemon`` already registers the service
+    with ``failure_policy="degrade_with_receipt"``.
+    """
     get_degradation_tracker().reset()
     service_container.register_instance(
         "research_cycle",
@@ -323,7 +339,26 @@ def test_research_degradation_self_heals_stale_fail_closed_descriptor(service_co
     )
 
     desc = service_container._services["research_cycle"]
+    assert desc.failure_policy == "fail-closed", (
+        "the module rewrote a descriptor it does not own"
+    )
     records = get_degradation_tracker().recent(subsystem="research_cycle", limit=1)
-    assert desc.failure_policy == "degrade_with_receipt"
     assert records
     assert records[-1].severity == "warning"
+
+
+def test_the_registration_declares_the_policy_the_module_used_to_self_heal():
+    """Where the policy belongs: stated once, by whoever registers it."""
+    import inspect
+
+    source = inspect.getsource(research_module.start_research_daemon)
+    assert 'failure_policy="degrade_with_receipt"' in source
+
+
+def test_a_lost_initiative_failure_requests_a_receipt():
+    """CP126 ``a12f95c0`` — a required service's failure left no evidence."""
+    assert research_module._needs_receipt(
+        "ended research attempt without integration after the cycle deadline"
+    )
+    assert research_module._needs_receipt("could not return the autotelic intent to the queue")
+    assert not research_module._needs_receipt("continued with a cached result")
