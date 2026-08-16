@@ -6199,10 +6199,15 @@ class InferenceGate:
                 kwargs.get("user_surface_validation_prompt") or ""
             ).strip() or self._visible_user_prompt_from_messages(llm_messages, prompt)
 
+            surface_receipt = self.get_last_surface_control_receipt()
+            generation_stop_reason = str(
+                surface_receipt.get("generation_stop_reason") or ""
+            )
             integrity = assess_model_text_integrity(
                 cleaned,
                 prompt=user_input_for_eval,
                 user_facing=is_user_visible,
+                generation_stop_reason=generation_stop_reason,
             )
             allow_memory_state_thin_status = bool(kwargs.get("memory_state_contract", False))
             if integrity.retryable:
@@ -6266,7 +6271,11 @@ class InferenceGate:
                 )
                 return None
             if is_user_visible:
-                assessment = assess_user_facing_reply(user_input_for_eval, cleaned)
+                assessment = assess_user_facing_reply(
+                    user_input_for_eval,
+                    cleaned,
+                    generation_stop_reason=generation_stop_reason,
+                )
                 if assessment.retryable:
                     reasons = set(assessment.reasons or ())
                     if _should_pass_user_facing_draft_downstream(

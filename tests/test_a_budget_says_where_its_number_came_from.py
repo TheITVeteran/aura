@@ -155,6 +155,8 @@ def test_the_worker_reports_what_it_already_tokenized():
 
     assert "observe_prompt_tokenization" in worker
     assert '"prompt_tokenization"' in worker
+    assert "prompt_token_count = len(tokens)" in worker
+    assert '"tokens": prompt_token_count' in worker
     assert "tokenizer" not in module.split('"""', 2)[2], "the evidence module tokenizes"
 
 

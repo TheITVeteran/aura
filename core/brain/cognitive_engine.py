@@ -396,7 +396,7 @@ def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
     return stripped, False
 
 
-def _truncation_verdict(text: str) -> bool:
+def _truncation_verdict(text: str, *, generation_stop_reason: str = "") -> bool:
     """Ask the gate that will JUDGE this reply whether the tail is truncated."""
 
     try:
@@ -404,7 +404,12 @@ def _truncation_verdict(text: str) -> bool:
     except (ImportError, AttributeError):
         return False
     try:
-        return bool(_has_truncated_tail(text))
+        return bool(
+            _has_truncated_tail(
+                text,
+                generation_stop_reason=generation_stop_reason,
+            )
+        )
     except (RuntimeError, TypeError, ValueError):
         return False
 
@@ -3322,7 +3327,10 @@ class CognitiveEngine:
                             "incomplete_code_response",
                         )
                     )
-                    or _truncation_verdict(full_phase_text)
+                    or _truncation_verdict(
+                        full_phase_text,
+                        generation_stop_reason=generation_stop_reason,
+                    )
                 )
                 latent_metadata = {
                     key: state.response_modifiers.get(key)
@@ -4891,7 +4899,10 @@ class CognitiveEngine:
             "truncated_tail" in surface_reasons
             or generation_stop_reason
             in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
-            or _truncation_verdict(text)
+            or _truncation_verdict(
+                text,
+                generation_stop_reason=generation_stop_reason,
+            )
         )
         if reply_generation_incomplete:
             record_degradation(

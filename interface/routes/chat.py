@@ -12129,6 +12129,9 @@ async def _run_cognitive_engine_chat_turn(
             assessment_text,
             recent_user_messages=recent_user_messages,
             antecedent=antecedent_turn,
+            generation_stop_reason=thought_metadata.get(
+                "reply_generation_stop_reason"
+            ),
             # What she was ENTITLED to have known, so a real recall is not
             # mistaken for an invention. The fabricated-shared-history check
             # asks "does this content appear anywhere in what they said" —

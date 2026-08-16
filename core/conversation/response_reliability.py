@@ -6674,7 +6674,11 @@ def _adds_nothing_to_the_question(user_message: Any, reply_text: Any) -> bool:
     return not contributed
 
 
-def _has_truncated_tail(reply_text: Any) -> bool:
+def _has_truncated_tail(
+    reply_text: Any,
+    *,
+    generation_stop_reason: Any = "",
+) -> bool:
     body = str(reply_text or "").strip()
     # Grammar first, length second. A sentence left hanging on a conjunction
     # is cut whether it is 23 characters or 230, and the floor below is about
@@ -6796,6 +6800,9 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     # clipped tail it was trying to prevent. The repair path in the worker
     # handles list-shaped clipping by dropping the final item instead.
     if _looks_like_structured_output(body):
+        return False
+    terminal_cause = str(generation_stop_reason or "").strip().lower()
+    if terminal_cause in {"eos", "configured_stop", "role_continuation"}:
         return False
     return len(body) >= 80 and _word_count(body) >= 12
 
@@ -7140,6 +7147,7 @@ def _model_text_integrity_reasons(
     user_facing: bool = False,
     antecedent: Any = None,
     sensory_evidence: Any = None,
+    generation_stop_reason: Any = "",
 ) -> list[str]:
     raw = str(reply_text or "").strip()
     reasons: list[str] = []
@@ -7234,7 +7242,7 @@ def _model_text_integrity_reasons(
         # prompt asked for. The autonomous branch above keeps the
         # text-only check, because it has no prompt to judge against.
         reasons.append("internal_task_prompt_leak")
-    if _has_truncated_tail(raw):
+    if _has_truncated_tail(raw, generation_stop_reason=generation_stop_reason):
         reasons.append("truncated_tail")
     if is_status_check_turn(prompt) and _VAGUE_STATUS_DERAILMENT_RE.search(raw):
         reasons.append("vague_status_derailment")
@@ -7347,6 +7355,7 @@ def assess_model_text_integrity(
     *,
     prompt: Any = "",
     user_facing: bool = False,
+    generation_stop_reason: Any = "",
 ) -> ConversationReplyAssessment:
     """Reject malformed model text before it can affect UI, memory, or state.
 
@@ -7358,6 +7367,7 @@ def assess_model_text_integrity(
         reply_text,
         prompt=prompt,
         user_facing=user_facing,
+        generation_stop_reason=generation_stop_reason,
     )
     hard_reasons = {
         "empty_reply",
@@ -7529,6 +7539,7 @@ def assess_user_facing_reply(
     antecedent: Any = None,
     provenance: Any = None,
     sensory_evidence: Any = None,
+    generation_stop_reason: Any = "",
 ) -> ConversationReplyAssessment:
     """Classify a reply, and record the verdict on the turn's candidate ledger.
 
@@ -7598,6 +7609,7 @@ def assess_user_facing_reply(
         grounding=bound_grounding,
         antecedent=antecedent,
         sensory_evidence=bound_sensory_evidence,
+        generation_stop_reason=generation_stop_reason,
     )
     assessment = _apply_reply_provenance(
         user_message, reply_text, assessment, provenance
@@ -7706,6 +7718,7 @@ def _assess_user_facing_reply(
     grounding: Iterable[str] | None = None,
     antecedent: Any = None,
     sensory_evidence: Any = None,
+    generation_stop_reason: Any = "",
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
     # Defense in depth. The ingress now binds the visible request
@@ -7765,6 +7778,7 @@ def _assess_user_facing_reply(
             prompt=user_message,
             user_facing=True,
             sensory_evidence=sensory_evidence,
+            generation_stop_reason=generation_stop_reason,
         )
         if request_is_knowable:
             reasons.extend(_compound_request_coverage_reasons(user_message, raw))
@@ -7818,6 +7832,7 @@ def _assess_user_facing_reply(
             user_facing=True,
             antecedent=antecedent,
             sensory_evidence=sensory_evidence,
+            generation_stop_reason=generation_stop_reason,
         )
     )
     if _GENERIC_ASSISTANT_RE.search(raw):

@@ -1006,6 +1006,36 @@ def _surface_quality_failure_reasons(
     return reasons
 
 
+def _classify_generation_stop_reason(
+    *,
+    soft_cancelled: bool,
+    deadline_hit: bool,
+    sentinel_aborted: bool,
+    role_continuation_hit: bool,
+    configured_stop_hit: bool,
+    hard_token_limit_hit: bool,
+    generated_tokens: int,
+    max_tokens: int,
+) -> str:
+    """Return the exact terminal event that ended one decode attempt."""
+
+    if soft_cancelled:
+        return "soft_cancelled"
+    if deadline_hit:
+        return "deadline_exceeded"
+    if sentinel_aborted:
+        return "sentinel_abort"
+    if role_continuation_hit:
+        return "role_continuation"
+    if configured_stop_hit:
+        return "configured_stop"
+    if hard_token_limit_hit:
+        return "hard_token_limit"
+    if int(generated_tokens) >= max(1, int(max_tokens)):
+        return "max_tokens"
+    return "eos"
+
+
 def _capability_inventory_minimum_grounding(
     response_text: Any,
 ) -> tuple[bool, dict[str, bool]]:
@@ -6283,6 +6313,7 @@ def _mlx_worker_loop(
                                     surface_control_state["text_mutations"] = []
                                     current_response = ""
                                     token_count = 0
+                                    prompt_token_count = 0
                                     final_prompt_cache = None
                                     deadline_hit = False
                                     # Caller production deadline (absolute unix
@@ -6306,6 +6337,8 @@ def _mlx_worker_loop(
                                     sentinel_loop_aborted = False
                                     sentinel_ontology_aborted = False
                                     role_continuation_hit = False
+                                    configured_stop_hit = False
+                                    hard_token_limit_hit = False
                                     job_seq = _safe_int(job.get("seq"), 0)
                                     soft_cancelled = False
                                     clear_stale_soft_cancel(cancel_seq, job_seq)
@@ -6476,6 +6509,7 @@ def _mlx_worker_loop(
                                             f"output_reserve={_output_reserve}:"
                                             f"window={effective_context_window}"
                                         )
+                                    prompt_token_count = len(tokens)
                                     # These live in mlx_lm.models.cache, not
                                     # mlx_lm.utils. Probing the wrong module
                                     # made _can_trim answer False forever, so
@@ -6703,6 +6737,7 @@ def _mlx_worker_loop(
                                             for s in stop_sequences:
                                                 if s in current_response:
                                                     current_response = current_response.split(s)[0]
+                                                    configured_stop_hit = True
                                                     break
                                             break
 
@@ -6766,6 +6801,7 @@ def _mlx_worker_loop(
                                         # an 8193rd token past the documented limit).
                                         if token_count >= 8192:
                                             logger.warning("🏁 [WORKER] Hard token limit (8192) reached. Truncating.")
+                                            hard_token_limit_hit = True
                                             break
 
                                         stop_hit = role_continuation_hit
@@ -6776,6 +6812,7 @@ def _mlx_worker_loop(
                                             # stream path received.
                                             if stop_index >= 0:
                                                 current_response = current_response[:stop_index]
+                                                configured_stop_hit = True
                                                 stop_hit = True
                                                 break
                                         if stop_hit:
@@ -7740,22 +7777,24 @@ def _mlx_worker_loop(
                         )
                         logger.debug("Affective steering post-generation observation failed: %s", steering_obs_exc)
 
-                    # : Tag with action: "generate" so client can distinguish
+                    # Tag with action: "generate" so client can distinguish
                     # from init/heartbeat responses unambiguously.
-                    if soft_cancelled:
-                        generation_stop_reason = "soft_cancelled"
-                    elif deadline_hit:
-                        generation_stop_reason = "deadline_exceeded"
-                    elif total_generated_tokens >= max(
-                        1,
-                        _safe_int(
-                            surface_control_state.get("generation_max_tokens_applied"),
-                            max_tokens,
+                    generation_stop_reason = _classify_generation_stop_reason(
+                        soft_cancelled=soft_cancelled,
+                        deadline_hit=deadline_hit,
+                        sentinel_aborted=sentinel_aborted,
+                        role_continuation_hit=role_continuation_hit,
+                        configured_stop_hit=configured_stop_hit,
+                        hard_token_limit_hit=hard_token_limit_hit,
+                        generated_tokens=total_generated_tokens,
+                        max_tokens=max(
+                            1,
+                            _safe_int(
+                                surface_control_state.get("generation_max_tokens_applied"),
+                                max_tokens,
+                            ),
                         ),
-                    ):
-                        generation_stop_reason = "max_tokens"
-                    else:
-                        generation_stop_reason = "eos_or_stop_sequence"
+                    )
                     surface_control_state["generation_stop_reason"] = generation_stop_reason
                     generate_payload: dict[str, Any] = {
                         "id": job.get("id"),
@@ -7769,7 +7808,8 @@ def _mlx_worker_loop(
                         # process-local evidence singleton nobody else reads.
                         "prompt_tokenization": {
                             "chars": len(str(prompt or "")),
-                            "tokens": len(tokens),
+                            "tokens": prompt_token_count,
+                            "generated_tokens": total_generated_tokens,
                         },
                         # The parent's OOM footprint probe must not cost an IPC
                         # round trip, so the size rides along with every result.
