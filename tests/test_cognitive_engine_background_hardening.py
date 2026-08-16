@@ -462,6 +462,62 @@ async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_desktop_quick_reply_carries_fresh_turn_sight(monkeypatch):
+    from core.senses.turn_evidence import build_camera_turn_evidence
+
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return (
+                "I looked just now. I do not see another person in the current "
+                "camera view, though that view cannot establish the whole room."
+            )
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router()
+            if name == "llm_router"
+            else default
+        ),
+    )
+    evidence = build_camera_turn_evidence(
+        "Is anyone else physically here with me?",
+        ok=True,
+        observation="No other person is visible in the current camera view.",
+        observed_at=1_786_857_523.0,
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        "Is anyone else physically here with me?",
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": "Is anyone else physically here with me?",
+            "turn_sensory_evidence": evidence,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 512,
+        },
+        is_background=False,
+        timeout_s=42.0,
+    )
+
+    assert thought.content.startswith("I looked just now")
+    user_prompt = captured["messages"][-1]["content"]
+    assert "[FRESH TURN SENSORY EVIDENCE]" in user_prompt
+    assert "status: observed" in user_prompt
+    assert "No other person is visible" in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_boundary(monkeypatch):
     engine = CognitiveEngine()
     state = AuraState.default()

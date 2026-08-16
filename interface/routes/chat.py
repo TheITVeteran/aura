@@ -5638,6 +5638,7 @@ async def _reanswer_when_the_runtime_contradicts_her(
     source: str = "chat_api",
     require_engine: bool = False,
     principal_id: str = "",
+    turn_sensory_evidence: Any = None,
 ) -> str:
     """Re-answer a reply that denies something the runtime says she has.
 
@@ -5663,17 +5664,43 @@ async def _reanswer_when_the_runtime_contradicts_her(
     text = str(reply_text or "").strip()
     if not text:
         return reply_text
+    sensory_contradictions: tuple[str, ...] = ()
+    sensory_grounding = ""
+    try:
+        from core.senses.turn_evidence import (
+            sensory_evidence_contradictions,
+            sensory_evidence_grounding_block,
+        )
+
+        sensory_contradictions = sensory_evidence_contradictions(
+            text,
+            turn_sensory_evidence,
+        )
+        if sensory_contradictions:
+            sensory_grounding = sensory_evidence_grounding_block(
+                turn_sensory_evidence
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.sensory_evidence", exc)
+
+    ledger = None
+    claims: list[Any] = []
+    capability_correction_context = None
     try:
         from core.self.capability_ledger import (
-            correction_context,
+            correction_context as _capability_correction_context,
+        )
+        from core.self.capability_ledger import (
             get_capability_ledger,
         )
 
+        capability_correction_context = _capability_correction_context
         ledger = get_capability_ledger()
         claims = ledger.contradicted_claims(text)
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.capability_ledger", exc)
-        return reply_text
+        if not sensory_contradictions:
+            return reply_text
 
     # The same rule, applied to a different instrument. A capability claim is
     # checked against the probe its executor runs; an arithmetic claim is
@@ -5688,6 +5715,17 @@ async def _reanswer_when_the_runtime_contradicts_her(
     # answer and serving neither it nor a correction is the worst of the three
     # available outcomes.
     computed_context = ""
+    if sensory_contradictions and sensory_grounding:
+        computed_context = (
+            f"{sensory_grounding}\n"
+            "[The previous draft contradicted this exact-turn receipt about whether "
+            "the sensor produced a sample. Answer the user's actual question again "
+            "from the observation, in your own words, without reciting status fields.]"
+        )
+        logger.warning(
+            "Reply contradicted fresh turn sensory evidence (%s); re-answering.",
+            ",".join(sensory_contradictions),
+        )
     try:
         from core.conversation.response_reliability import (
             _arithmetic_answer_missing,
@@ -5697,9 +5735,14 @@ async def _reanswer_when_the_runtime_contradicts_her(
         expected = requested_arithmetic_result(user_message)
         if expected is not None and _arithmetic_answer_missing(user_message, text):
             shown = int(expected) if float(expected).is_integer() else expected
-            computed_context = (
+            arithmetic_context = (
                 "[Your reply does not contain the correct result. This runtime "
                 f"computed it directly: {shown}. Answer again from that value.]"
+            )
+            computed_context = (
+                f"{computed_context}\n\n{arithmetic_context}"
+                if computed_context
+                else arithmetic_context
             )
             logger.warning(
                 "🔢 Reply lacked the computed arithmetic result (%s); "
@@ -5846,17 +5889,30 @@ async def _reanswer_when_the_runtime_contradicts_her(
     contradicted = ", ".join(
         sorted({claim.availability.name for claim in claims})
         + (["measured-evidence"] if computed_context else [])
+        + (["fresh-sensory-evidence"] if sensory_contradictions else [])
     )
     logger.warning(
         "🧭 Reply denied capabilities the runtime measured as present (%s); "
         "re-answering with the measurements.",
         contradicted,
     )
-    context = correction_context(claims)
+    context = "\n\n".join(
+        part
+        for part in (
+            (
+                capability_correction_context(claims)
+                if callable(capability_correction_context)
+                else ""
+            ),
+            computed_context,
+        )
+        if str(part or "").strip()
+    )
     try:
         revised = await _run_cognitive_engine_chat_turn(
             f"{context}\n\n{user_message}",
             visible_user_message=user_message,
+            turn_sensory_evidence=turn_sensory_evidence,
             session_id=session_id,
             lane=lane,
             source=source,
@@ -5881,10 +5937,26 @@ async def _reanswer_when_the_runtime_contradicts_her(
     # figure; the revision stopped denying, passed a test that only looked at
     # capability claims, and was served with the fabricated number still in it
     # — twice. A partial re-check licenses exactly the part it does not read.
-    if revised_text and not _still_contradicts_the_runtime(revised_text, ledger):
+    if revised_text and not _still_contradicts_the_runtime(
+        revised_text,
+        ledger,
+        turn_sensory_evidence=turn_sensory_evidence,
+    ):
         logger.info("🧭 Re-answer no longer contradicts the runtime (%s).", contradicted)
         return revised_text
 
+    if sensory_contradictions:
+        try:
+            from core.senses.turn_evidence import TurnSensoryEvidence
+
+            evidence = TurnSensoryEvidence.from_value(turn_sensory_evidence)
+        except _CHAT_RECOVERABLE_ERRORS:
+            evidence = None
+        if evidence is not None and evidence.ok:
+            return (
+                f"I need to correct that: I did receive a fresh {evidence.channel} "
+                f"reading for this turn. {evidence.observation}"
+            )
     corrections = " ".join(claim.correction() for claim in claims)
     if not corrections:
         corrections = (
@@ -5894,10 +5966,22 @@ async def _reanswer_when_the_runtime_contradicts_her(
     return f"{text}\n\n[Correcting myself from my own instruments: {corrections}]"
 
 
-def _still_contradicts_the_runtime(text: str, ledger: Any) -> bool:
+def _still_contradicts_the_runtime(
+    text: str,
+    ledger: Any,
+    *,
+    turn_sensory_evidence: Any = None,
+) -> bool:
     """Whether a revision still fails any check that forced the re-ask."""
-    if ledger.contradicted_claims(text):
+    if ledger is not None and ledger.contradicted_claims(text):
         return True
+    try:
+        from core.senses.turn_evidence import sensory_evidence_contradictions
+
+        if sensory_evidence_contradictions(text, turn_sensory_evidence):
+            return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.sensory_evidence", exc)
     try:
         # Every check that can FORCE a re-ask has to appear here too. A guard
         # that triggers the revision but is not consulted when judging it lets
@@ -9968,6 +10052,7 @@ async def _run_cognitive_engine_chat_turn(
     *,
     visible_user_message: str | None = None,
     preflight_context_message: str | None = None,
+    turn_sensory_evidence: Any = None,
     session_id: str = "",
     origin: str = "user",
     timeout_s: float | None = None,
@@ -10242,6 +10327,24 @@ async def _run_cognitive_engine_chat_turn(
     preflight_context = str(preflight_context_message or "").strip()
     if preflight_context == visible.strip():
         preflight_context = ""
+    try:
+        from core.senses.turn_evidence import TurnSensoryEvidence
+
+        _normalized_sensory_evidence = TurnSensoryEvidence.from_value(
+            turn_sensory_evidence
+        )
+        sensory_evidence_payload = (
+            _normalized_sensory_evidence.to_dict()
+            if _normalized_sensory_evidence is not None
+            else {}
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.sensory_evidence",
+            exc,
+            action="continued without malformed turn sensory evidence",
+        )
+        sensory_evidence_payload = {}
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
     capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
@@ -10521,6 +10624,7 @@ async def _run_cognitive_engine_chat_turn(
         "foreground_request": True,
         "user_facing": True,
         "preflight_context_message": preflight_context[:8000],
+        "turn_sensory_evidence": sensory_evidence_payload,
         "recent_completed_exchanges": recent_exchanges,
         "recent_conversation_context": recent_conversation_context,
         "recent_context_needed": recent_context_needed,
@@ -10912,6 +11016,23 @@ async def _run_cognitive_engine_chat_turn(
             }
         )
     engine_user_message = str(effective_user_message or "")
+    if sensory_evidence_payload:
+        try:
+            from core.senses.turn_evidence import sensory_evidence_grounding_block
+
+            _turn_sensory_block = sensory_evidence_grounding_block(
+                sensory_evidence_payload
+            )
+            if _turn_sensory_block:
+                engine_user_message = (
+                    f"{engine_user_message}\n\n{_turn_sensory_block}"
+                )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "chat.sensory_evidence",
+                exc,
+                action="continued with typed evidence still present in CognitiveEngine context",
+            )
 
     # Her senses travel with her, not just with the turn that captured them.
     #
@@ -24870,6 +24991,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         _shown = _preflight.shown
     if _preflight.status is not _UNSET:
         status = _preflight.status
+    _turn_sensory_evidence = _preflight.turn_sensory_evidence
 
     # Keep user-facing judgment anchored to the text Bryan actually typed.
     # `body.message` may now contain continuity blocks, file payloads, and
@@ -25342,6 +25464,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     recovery_message,
                     visible_user_message=_semantic_user_message,
                     preflight_context_message=preflight_context_message,
+                    turn_sensory_evidence=_turn_sensory_evidence,
                     session_id=_chat_session_id,
                     origin=chat_origin,
                     timeout_s=recovery_budget,
@@ -26843,6 +26966,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     effective_user_message,
                     visible_user_message=_semantic_user_message,
                     preflight_context_message=preflight_context_message,
+                    turn_sensory_evidence=_turn_sensory_evidence,
                     session_id=_chat_session_id,
                     origin=chat_origin,
                     timeout_s=cognitive_budget,
@@ -27970,6 +28094,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             lane=lane,
             source="chat_api",
             require_engine=bool(desktop_requires_cognitive_engine),
+            turn_sensory_evidence=_turn_sensory_evidence,
         )
         if (
             allow_chat_fastpaths
@@ -29246,6 +29371,7 @@ class _ChatPreflight:
     grounded: Any = _UNSET
     shown: Any = _UNSET
     status: Any = _UNSET
+    turn_sensory_evidence: Any = None
 
 
 async def _run_chat_preflight(
@@ -29271,6 +29397,7 @@ async def _run_chat_preflight(
     _grounded = _UNSET
     _shown = _UNSET
     status = _UNSET
+    _turn_sensory_evidence = None
     try:
         from core.conversation.chat_preflight import (
             build_file_context_block,
@@ -29469,6 +29596,31 @@ async def _run_chat_preflight(
                     _seen = await _look(
                         _sight.question,
                         explicit_user_consent=True,
+                    )
+                    from core.conversation.turn_evidence_custody import (
+                        record_turn_grounding,
+                    )
+                    from core.senses.turn_evidence import (
+                        build_camera_turn_evidence,
+                        sensory_evidence_grounding_block,
+                    )
+
+                    _turn_sensory_evidence = build_camera_turn_evidence(
+                        _sight.question,
+                        ok=bool(_seen.ok),
+                        observation=_seen.answer,
+                        cause=_seen.cause,
+                        detail=_seen.detail,
+                        observed_at=(
+                            _seen.frame.captured_at
+                            if _seen.frame is not None
+                            else time.time()
+                        ),
+                    )
+                    record_turn_grounding(
+                        sensory_evidence_grounding_block(
+                            _turn_sensory_evidence
+                        )
                     )
                     if _seen.ok:
                         body.message = (
@@ -29711,4 +29863,5 @@ async def _run_chat_preflight(
         grounded=_grounded,
         shown=_shown,
         status=status,
+        turn_sensory_evidence=_turn_sensory_evidence,
     )

@@ -4417,6 +4417,17 @@ class CognitiveEngine:
                 )
         user_prompt = visible_user_message or objective
         grounding_blocks: list[str] = []
+        try:
+            from core.senses.turn_evidence import sensory_evidence_grounding_block
+
+            turn_sensory_evidence = sensory_evidence_grounding_block(
+                context.get("turn_sensory_evidence")
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Turn sensory evidence unavailable: %s", exc)
+            turn_sensory_evidence = ""
+        if turn_sensory_evidence:
+            grounding_blocks.append(turn_sensory_evidence)
         context_challenge_evidence = str(
             context.get("contextual_relevance_evidence") or ""
         ).strip()
