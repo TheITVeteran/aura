@@ -39,22 +39,38 @@ class TestTheHandoffIsDistinguished:
             r"recovery_handoff\s*=.*last_ready_at", src
         ), "the handoff case must be derived from whether the lane was ever ready"
 
-    def test_the_stuck_load_counter_is_guarded_by_it(self):
+    def test_the_backoff_counter_is_guarded_by_it(self):
         src = _ensure_foreground_ready_source()
         guarded = re.search(
-            r"if not recovery_handoff:\s*\n\s*self\._note_cortex_stuck_kill\(\)", src
+            r"if not recovery_handoff:(?:\s*\n\s*#[^\n]*)*\s*\n\s*self\._note_cortex_\w+\(\)", src
         )
         assert guarded, (
-            "a designed 15s handoff must not feed the stuck-load backoff that "
+            "a designed 15s handoff must not feed the load-setback backoff that "
             "then prevents the load it was waiting for"
         )
 
     def test_a_cold_boot_timeout_still_counts(self):
-        """The backoff must keep working for the case it exists for."""
+        """The backoff must keep working for the case it exists for.
+
+        Matched on the setback family rather than on one method name. The call
+        here was ``_note_cortex_stuck_kill`` and is now
+        ``_note_cortex_warmup_overrun``, which is the more honest of the two —
+        the shielded warmup is left running, so nothing was killed — and both
+        feed the same ``_note_cortex_load_setback`` backoff. Pinning the old
+        name made a rename look like the endurance bug coming back, and a test
+        that cries wolf on a correct refactor is one that gets muted.
+        """
         src = _ensure_foreground_ready_source()
-        assert "_note_cortex_stuck_kill()" in src, (
-            "a cold load that overruns its full budget is still a stuck load"
+        assert re.search(r"self\._note_cortex_(warmup_overrun|stuck_kill|load_setback)\(", src), (
+            "a cold load that overruns its full budget must still feed the backoff"
         )
+
+    def test_the_two_setback_kinds_are_told_apart(self):
+        """An overrun and a kill are different events and must stay distinguishable."""
+        from core.brain.inference_gate import InferenceGate
+
+        assert InferenceGate.LOAD_SETBACK_OVERRUN != InferenceGate.LOAD_SETBACK_KILL
+        assert "not a kill" in (InferenceGate._note_cortex_warmup_overrun.__doc__ or "").lower()
 
     def test_the_handoff_is_visible_in_the_log(self):
         src = _ensure_foreground_ready_source()

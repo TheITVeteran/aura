@@ -510,6 +510,15 @@ class ContextStreamingMixin:
                     )
                 return
 
+            # Token budget first. Everything below this line counts *messages*,
+            # so fifty messages carrying a megabyte of tool output sit under the
+            # limit and blow the window anyway. ChatCompressionService is the
+            # only thing here that measures tokens, spills oversized tool output
+            # to disk behind a pointer, protects her recent turns from being
+            # flattened into the snapshot, and refuses a compression that grew
+            # the context. It was built, registered at boot, and never called.
+            history = await self._compress_to_token_budget(history)
+
             pruned_history = await context_pruner.prune_history(history, self.cognitive_engine)
             if not isinstance(pruned_history, list):
                 raise TypeError("context pruner returned a non-list history payload")
@@ -541,6 +550,36 @@ class ContextStreamingMixin:
                     self.conversation_history[-50:],
                     reason="emergency tail after pruning raised",
                 )
+
+    async def _compress_to_token_budget(self, history: list[dict]) -> list[dict]:
+        """Run the token-budget compressor, returning the history to carry on with.
+
+        Returns ``history`` unchanged when the window is under budget, when no
+        window manager is available, or when compression fails — this is a guard
+        in front of the existing pruner, not a replacement for it, and it must
+        never be the reason a turn cannot proceed.
+
+        The compressor takes a brain whose ``generate`` may return a dict or a
+        bare string depending on which one it is handed; ``chat_compression``
+        normalises both rather than making this call site choose.
+        """
+        manager = getattr(self, "context_window_manager", None)
+        if manager is None or not hasattr(manager, "compress_if_needed"):
+            return history
+        try:
+            compressed = await manager.compress_if_needed(
+                history, brain=getattr(self, "cognitive_engine", None)
+            )
+        except _CONTEXT_STREAMING_ERRORS as exc:
+            _record_context_degradation(
+                exc,
+                action="carried the uncompressed window into message-count pruning",
+            )
+            return history
+        if not isinstance(compressed, list) or compressed == history:
+            return history
+        self._commit_pruned_history(history, compressed, reason="token budget")
+        return compressed
 
     def _commit_pruned_history(
         self,

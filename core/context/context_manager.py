@@ -1,11 +1,19 @@
-"""
-Context window budget manager.
-Tracks token usage and prunes the lowest-value content to stay within limits.
-v2.0: Integrated ChatCompressionService for intelligent history management.
+"""Token-budget guard in front of the message-count pruner.
+
+This class was constructed at boot, registered as a service, and never called.
+:meth:`ContextWindowManager.compress_if_needed` is now reached from
+``_prune_history_async``, where it does the one thing the live pruning path
+could not do: measure *tokens*. Everything else there counts messages, so fifty
+messages carrying a megabyte of tool output sit comfortably under the limit and
+blow the window anyway.
+
+``build_prompt`` and the ``ContextItem`` it took are gone rather than left
+alongside. They were a second, uncalled prompt assembler for a job the live
+turn already does elsewhere, and the danger of dead code on a class that is now
+live is that the next reader takes it for the supported path.
 """
 import functools
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 from core.context.chat_compression import (
@@ -59,18 +67,6 @@ def estimate_tokens(text: str) -> int:
             record_degradation("context_manager", exc)
             logger.debug("tiktoken estimate failed; falling back to char estimate: %s", exc)
     return max(1, len(text) // 4)
-
-
-@dataclass
-class ContextItem:
-    content: str
-    role: str          # 'system' | 'user' | 'assistant' | 'tool'
-    priority: int      # Higher = more important (never drop)
-    tokens: int = 0
-
-    def __post_init__(self):
-        if not self.tokens:
-            self.tokens = estimate_tokens(self.content)
 
 
 class ContextWindowManager:
@@ -129,94 +125,3 @@ class ContextWindowManager:
             )
             return compressed
         return history
-
-    def build_prompt(
-        self,
-        system: str,
-        history: list[ContextItem],
-        current_message: str,
-        memory_context: str = "",
-        tool_context: str = "",
-    ) -> tuple[list[dict[str, str]], int]:
-        """
-        Build a prompt list that fits within the token budget.
-
-        Returns:
-            (messages_list, total_tokens_used)
-        """
-        budget = self._limit
-        messages: list[dict[str, str]] = []
-
-        # MUST include — these are never dropped
-        system_tokens = estimate_tokens(system)
-        current_tokens = estimate_tokens(current_message)
-        reserved = system_tokens + current_tokens + 200  # 200 for response headroom
-
-        if reserved > budget:
-            logger.warning(
-                "System prompt + current message (%d tokens) exceeds budget (%d). "
-                "Truncating system prompt.",
-                reserved, budget,
-            )
-            system = system[: (budget - current_tokens - 200) * 4]
-            system_tokens = estimate_tokens(system)
-            reserved = system_tokens + current_tokens + 200
-
-        messages.append({"role": "system", "content": system})
-        remaining = budget - reserved
-
-        # Memory context (medium priority — truncate before dropping)
-        if memory_context and remaining > 500:
-            mem_tokens = estimate_tokens(memory_context)
-            if mem_tokens > remaining // 3:
-                # Truncate to 1/3 of remaining budget
-                max_chars = (remaining // 3) * 4
-                memory_context = memory_context[:max_chars] + "\n...[memory truncated]"
-                mem_tokens = estimate_tokens(memory_context)
-            messages.append({"role": "system", "content": f"[MEMORY CONTEXT]\n{memory_context}"})
-            remaining -= mem_tokens
-
-        # Tool results (medium priority)
-        if tool_context and remaining > 500:
-            tool_tokens = estimate_tokens(tool_context)
-            if tool_tokens > remaining // 2:
-                max_chars = (remaining // 2) * 4
-                tool_context = tool_context[:max_chars] + "\n...[tool results truncated]"
-                tool_tokens = estimate_tokens(tool_context)
-            messages.append({"role": "system", "content": f"[TOOL CONTEXT]\n{tool_context}"})
-            remaining -= tool_tokens
-
-        # Conversation history — keep most recent, drop oldest first
-        kept_history = []
-        for item in reversed(history):
-            if item.tokens <= remaining:
-                kept_history.insert(0, item)
-                remaining -= item.tokens
-            else:
-                logger.debug("Context pruned: dropping old %s message (%d tokens)", item.role, item.tokens)
-
-        for item in kept_history:
-            messages.append({"role": item.role, "content": item.content})
-
-        # Current message — always last
-        messages.append({"role": "user", "content": current_message})
-
-        # NEW: Always inject latest unified transcript (Fix 3)
-        try:
-            from core.conversation.conversation_loop import get_transcript
-            transcript = get_transcript()
-            recent = transcript.get_context_string(n=12)  # last 12 turns across all channels
-            if recent:
-                # Insert after system prompt (index 1)
-                messages.insert(1, {"role": "system", "content": f"[RECENT CONVERSATION]\n{recent}"})
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('context_manager', e)
-            logger.debug("Failed to inject UnifiedTranscript: %s", e)
-
-        total_used = budget - remaining
-        logger.debug(
-            "Context assembled: %d messages, ~%d tokens (budget: %d, model: %s)",
-            len(messages), total_used, self._limit, self._model,
-        )
-
-        return messages, total_used

@@ -342,6 +342,82 @@ async def test_a_rejected_pruner_result_is_still_recorded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_token_budget_compressor_is_reachable_and_recorded(monkeypatch):
+    """ContextWindowManager was built, registered at boot, and never called."""
+    from core.context import conversation_log as cl
+
+    log = ConversationLog()
+    monkeypatch.setattr(cl, "_log", log)
+
+    class Pruner:
+        async def prune_history(self, history, _engine):
+            return history  # message count is fine; only tokens were the problem
+
+    monkeypatch.setattr("core.memory.context_pruner.context_pruner", Pruner())
+
+    compressed_marker = {"role": "user", "content": "<state_snapshot>compact</state_snapshot>"}
+
+    class WindowManager:
+        def __init__(self):
+            self.calls = 0
+
+        async def compress_if_needed(self, history, brain=None):
+            self.calls += 1
+            return [compressed_marker, *history[-10:]]
+
+    target = _pruned_target(_msgs(40))
+    target.context_window_manager = WindowManager()
+    before = list(target.conversation_history)
+
+    await target._prune_history_async()
+
+    assert target.context_window_manager.calls == 1
+    assert target.conversation_history[0] == compressed_marker
+    assert target.conversation_history == log.live_history()
+    assert log.reconstruct(before_condensation=0) == before
+    assert log.condensations()[0].reason == "token budget"
+
+
+@pytest.mark.asyncio
+async def test_no_window_manager_leaves_the_history_alone(monkeypatch):
+    from core.context import conversation_log as cl
+
+    monkeypatch.setattr(cl, "_log", ConversationLog())
+
+    class Pruner:
+        async def prune_history(self, history, _engine):
+            return history
+
+    monkeypatch.setattr("core.memory.context_pruner.context_pruner", Pruner())
+
+    target = _pruned_target(_msgs(40))
+    await target._prune_history_async()
+    assert len(target.conversation_history) == 40
+
+
+@pytest.mark.asyncio
+async def test_a_failing_compressor_never_blocks_the_turn(monkeypatch):
+    from core.context import conversation_log as cl
+
+    monkeypatch.setattr(cl, "_log", ConversationLog())
+
+    class Pruner:
+        async def prune_history(self, history, _engine):
+            return history
+
+    monkeypatch.setattr("core.memory.context_pruner.context_pruner", Pruner())
+
+    class Exploding:
+        async def compress_if_needed(self, history, brain=None):
+            raise RuntimeError("compressor died")
+
+    target = _pruned_target(_msgs(40))
+    target.context_window_manager = Exploding()
+    await target._prune_history_async()
+    assert len(target.conversation_history) == 40
+
+
+@pytest.mark.asyncio
 async def test_a_broken_recorder_never_blocks_the_pruning(monkeypatch):
     """An audit trail is not worth an out-of-memory conversation."""
     from core.context import conversation_log as cl

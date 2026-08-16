@@ -147,16 +147,48 @@ if __name__ == "__main__":
 import pytest
 
 
+def test_terminal_truncates_a_flood_of_output():
+    """Anti-hang: unbounded stdout is how a skill wedges the runtime.
+
+    This used to run ``seq 1 5000`` through the whole skill and assert on the
+    result. It stopped passing when shell execution became properly governed —
+    first the user-confirmation overlay refused it, and underneath that the
+    authority gateway wants a standing grant, which is correct and must not be
+    waived to keep a test green.
+
+    The property under test never needed a subprocess. ``_smart_truncate`` is
+    the anti-hang mechanism; driving four authority layers to reach it only
+    made the test fail for reasons that were not about truncation.
+    """
+    term = SovereignTerminalSkill()
+    flood = "\n".join(str(i) for i in range(5000))
+    assert len(flood) > 5000
+
+    truncated = term._smart_truncate(flood)
+    assert "TRUNCATED" in truncated
+    assert len(truncated) < len(flood)
+    # Head and tail both survive: the tail is where a traceback's cause lands,
+    # and keeping only the head is how a truncated log loses the error.
+    assert truncated.startswith("0\n1\n")
+    assert truncated.rstrip().endswith("4999")
+
+
+def test_short_output_is_returned_whole():
+    term = SovereignTerminalSkill()
+    assert term._smart_truncate("short") == "short"
+    assert term._smart_truncate("") == ""
+
+
 @pytest.mark.asyncio
-async def test_terminal_truncates_a_flood_of_output():
-    """Anti-hang: unbounded stdout is how a skill wedges the runtime."""
+async def test_a_shell_execution_is_governed():
+    """The refusal that broke the old test is governance working, so it is pinned."""
     term = SovereignTerminalSkill()
     result = await term.safe_execute(
-        {"action": "execute", "command": "seq 1 5000", "timeout": 10},
+        {"action": "execute", "command": "seq 1 5", "timeout": 10},
         {"mode": "headless_test"},
     )
-    assert result.get("ok"), result.get("error")
-    assert "TRUNCATED" in result.get("stdout", "")
+    assert not result.get("ok")
+    assert "Authority refused" in str(result.get("error", ""))
 
 
 @pytest.fixture

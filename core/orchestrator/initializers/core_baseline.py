@@ -49,11 +49,19 @@ async def init_enterprise_layer(orchestrator: Any):
     register_runtime_service("audit", orchestrator.audit)
     orchestrator.audit.record("system_boot", "RobustOrchestrator Enterprise Layer initialized")
 
-    # 8. LLM Guards & Context Manager
+    # 8. LLM Guards & Context Window Manager
+    #
+    # Registered as "context_window_manager", not "context_manager". Two
+    # different objects were sharing the latter name: this one, and the
+    # CognitiveContextManager that boot_cognitive publishes later under the same
+    # key. Which one a caller got depended on how it asked — the attribute set
+    # here resolved to the window manager, while a service lookup returned the
+    # cognitive one. They share no methods, so hasattr checks downstream decided
+    # behaviour by accident.
     from core.context.context_manager import ContextWindowManager
     from core.config import config
-    orchestrator.context_manager = ContextWindowManager(model_name=config.llm.chat_model)
-    register_runtime_service("context_manager", orchestrator.context_manager)
+    orchestrator.context_window_manager = ContextWindowManager(model_name=config.llm.chat_model)
+    register_runtime_service("context_window_manager", orchestrator.context_window_manager)
 
     # 9. Core Messaging
     from core.event_bus import get_event_bus

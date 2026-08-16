@@ -126,15 +126,38 @@ from tools.train_unified_intrinsic_recurrence import (  # noqa: E402
 )
 
 
+from core.learning.recurrent_action_schema import (  # noqa: E402
+    MAX_RECURRENT_OPCODE,
+    OP_FRONTIER_TRAVERSE,
+    OP_PAIR_SET,
+)
+
+# The extension span is a property of the opcode schema, not a snapshot of it.
+#
+# These were literals — 9, 31, 33 — taken when MAX_RECURRENT_OPCODE was
+# OP_PAIR_PRODUCT. Adding OP_CAUSAL_CHAIN moved the exclusive bound to 32 and
+# the test failed as though the migration had regressed, when the migration had
+# correctly followed the schema. A test that has to be edited every time an
+# opcode is added is one that will eventually be edited to match whatever the
+# code does.
+_EXTENSION_START = OP_FRONTIER_TRAVERSE
+_EXTENSION_STOP = MAX_RECURRENT_OPCODE + 1
+#: The guard in _merge_bootstrap_codebook_extension requires strictly more rows
+#: than the exclusive bound, so the codebook always has at least one row past
+#: the last opcode.
+_CODEBOOK_ROWS = _EXTENSION_STOP + 1
+
+
 def _codebook_extension_values() -> tuple[dict, dict]:
-    parent_action = mx.zeros((8, 33, 2), dtype=mx.float32)
+    parent_action = mx.zeros((8, _CODEBOOK_ROWS, 2), dtype=mx.float32)
+    fresh_rows = OP_PAIR_SET - _EXTENSION_START
     child_action = mx.concatenate(
         (
             mx.concatenate(
                 (
-                    parent_action[0:1, :9],
-                    mx.ones((1, 7, 2), dtype=mx.float32),
-                    parent_action[0:1, 16:],
+                    parent_action[0:1, :_EXTENSION_START],
+                    mx.ones((1, fresh_rows, 2), dtype=mx.float32),
+                    parent_action[0:1, OP_PAIR_SET:],
                 ),
                 axis=1,
             ),
@@ -144,9 +167,9 @@ def _codebook_extension_values() -> tuple[dict, dict]:
     )
     shared = {
         "controller.action_slot_embeddings": mx.zeros((8, 2)),
-        "controller.literal_value_embeddings": mx.zeros((33, 2)),
+        "controller.literal_value_embeddings": mx.zeros((_CODEBOOK_ROWS, 2)),
         "controller.state_slot_embeddings": mx.zeros((5, 2)),
-        "controller.state_value_embeddings": mx.zeros((5, 33, 2)),
+        "controller.state_value_embeddings": mx.zeros((5, _CODEBOOK_ROWS, 2)),
         "controller.correction_a": mx.ones((2, 2)),
     }
     return (
@@ -166,18 +189,26 @@ def test_bootstrap_codebook_extension_replaces_only_new_opcode_rows() -> None:
     )
 
     assert receipt is not None
-    assert receipt["value_start_inclusive"] == 9
-    assert receipt["value_stop_exclusive"] == 31
+    assert receipt["value_start_inclusive"] == _EXTENSION_START
+    assert receipt["value_stop_exclusive"] == _EXTENSION_STOP
+    assert receipt["value_stop_exclusive"] > receipt["value_start_inclusive"]
     assert bool(
         mx.array_equal(
-            migrated["controller.action_value_embeddings"][0, 9:31],
-            child["controller.action_value_embeddings"][0, 9:31],
+            migrated["controller.action_value_embeddings"][0, _EXTENSION_START:_EXTENSION_STOP],
+            child["controller.action_value_embeddings"][0, _EXTENSION_START:_EXTENSION_STOP],
         )
     )
     assert bool(
         mx.array_equal(
-            migrated["controller.action_value_embeddings"][0, :9],
-            parent["controller.action_value_embeddings"][0, :9],
+            migrated["controller.action_value_embeddings"][0, :_EXTENSION_START],
+            parent["controller.action_value_embeddings"][0, :_EXTENSION_START],
+        )
+    )
+    # Rows past the last opcode belong to the parent and must not be migrated.
+    assert bool(
+        mx.array_equal(
+            migrated["controller.action_value_embeddings"][0, _EXTENSION_STOP:],
+            parent["controller.action_value_embeddings"][0, _EXTENSION_STOP:],
         )
     )
     assert bool(

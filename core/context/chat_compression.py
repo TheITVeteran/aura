@@ -24,6 +24,25 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("Aura.ChatCompression")
 
+#: What a compression attempt may fail with and still degrade to truncation.
+#:
+#: The tuple used to be ``(OSError, ConnectionError, TimeoutError)`` — network
+#: shapes only. Every failure that actually arrives from a brain call is a type
+#: error: a router returning a string where a mapping was expected, a missing
+#: attribute on a partially-built engine, a malformed options payload. Those
+#: escaped ``compress`` instead of falling back, so a compression bug surfaced
+#: as an exception in whatever was assembling the turn.
+_COMPRESSION_ERRORS = (
+    AttributeError,
+    ConnectionError,
+    KeyError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 
 class CompressionStatus(Enum):
     """Outcome of a compression attempt."""
@@ -280,9 +299,60 @@ Format your response as:
 Be specific — include exact file paths, error messages, and code snippets where relevant.
 Do NOT generalize or abstract away concrete details."""
 
-VERIFICATION_PROMPT = """Critically evaluate the <state_snapshot> you just generated. Did you omit any specific technical details, file paths, tool results, or user constraints mentioned in the history?
+#: The revision pass, with the two things it is judging attached.
+#:
+#: It used to be sent as a bare instruction — "critically evaluate the
+#: <state_snapshot> you just generated" — through ``brain.generate``, which is a
+#: stateless call. No snapshot and no history crossed with it, so the model was
+#: asked to critique something it could not see, and whatever it produced was
+#: assigned straight over the real summary. A conversation's entire compressed
+#: memory could be replaced by a generation about nothing.
+#:
+#: The prompt now carries the snapshot and the history it was drawn from, and
+#: :meth:`ChatCompressionService._verified_summary` refuses a revision that does
+#: not come back in the required form rather than taking any text as an
+#: improvement.
+VERIFICATION_PROMPT = """Critically evaluate the <state_snapshot> below against the conversation history it was drawn from. Did it omit any specific technical details, file paths, tool results, or user constraints present in the history?
 
-If anything is missing or could be more precise, generate a FINAL, improved <state_snapshot>. Otherwise, repeat the exact same <state_snapshot> again."""
+If anything is missing or could be more precise, output a FINAL, improved <state_snapshot>. Otherwise, output the same <state_snapshot> unchanged.
+
+Output only the <state_snapshot> block.
+
+SNAPSHOT UNDER REVIEW:
+{snapshot}
+
+CONVERSATION HISTORY IT MUST COVER:
+{history}"""
+
+#: Marker the compression contract is written around. Used to check that a
+#: revision is a snapshot rather than commentary about one.
+SNAPSHOT_OPEN = "<state_snapshot>"
+
+
+def response_text(result: Any) -> str:
+    """The generated text, whichever shape the brain returned it in.
+
+    There are two live ``generate`` contracts in this codebase.
+    ``LocalBrain.generate`` returns ``{"response": ...}``; ``CognitiveEngine.
+    generate`` returns a bare ``str``. This module assumed the first and called
+    ``.get("response")`` on whatever arrived, so being handed the engine raised
+    ``AttributeError`` — which the surrounding ``except (OSError,
+    ConnectionError, TimeoutError)`` did not catch, so it escaped ``compress``
+    entirely rather than degrading to truncation.
+
+    Accepting both is the fix that does not require every caller to know which
+    brain it is holding.
+    """
+    if isinstance(result, str):
+        return result.strip()
+    if isinstance(result, dict):
+        for key in ("response", "content", "text"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+    content = getattr(result, "content", None)
+    return content.strip() if isinstance(content, str) else ""
 
 
 # ── Main Service ─────────────────────────────────────────────────────────────
@@ -299,6 +369,60 @@ class ChatCompressionService:
         self._has_failed_attempt = False
         self._compression_count = 0
         os.makedirs(self._temp_dir, exist_ok=True)
+
+    async def _verified_summary(self, brain: Any, summary: str, history_text: str) -> str:
+        """Ask for a revision, and keep it only if it is one.
+
+        Three ways this returns the original, and each was a way the old code
+        silently returned something worse:
+
+        * the revision pass fails or comes back empty — previously the ``or
+          summary`` fallback covered this one, and only this one;
+        * the revision is not a snapshot. The contract says the output is a
+          ``<state_snapshot>`` block; a reply that is commentary about the
+          snapshot ("looks good, nothing missing") satisfied the old check and
+          replaced the compressed memory with a note about it;
+        * the revision is drastically shorter than what it reviewed. A revision
+          is supposed to add the details the first pass dropped, so one that
+          collapses to a fraction of the original has summarised the summary,
+          and accepting it compounds the loss the whole verification pass exists
+          to prevent.
+
+        The threshold for that last check is half. It is not a tuned relevance
+        bar: the pass is only ever meant to hold steady or grow, so any loss is
+        already off-contract, and half is the point past which the revision
+        cannot plausibly be the same snapshot with corrections.
+        """
+        try:
+            verify_result = await brain.generate(
+                VERIFICATION_PROMPT.format(snapshot=summary, history=history_text),
+                system_prompt=COMPRESSION_SYSTEM_PROMPT,
+                options={"num_predict": 2048, "num_ctx": 8192, "temperature": 0.1},
+            )
+        except _COMPRESSION_ERRORS as exc:
+            record_degradation(
+                "chat_compression",
+                exc,
+                action="kept the first-pass snapshot after the revision pass failed",
+                severity="warning",
+            )
+            return summary
+
+        revised = response_text(verify_result)
+        if not revised:
+            return summary
+        if SNAPSHOT_OPEN in summary and SNAPSHOT_OPEN not in revised:
+            logger.warning(
+                "Compression revision was not a snapshot; keeping the first pass."
+            )
+            return summary
+        if len(revised) < len(summary) // 2:
+            logger.warning(
+                "Compression revision lost %d%% of the snapshot; keeping the first pass.",
+                100 - int(100 * len(revised) / max(1, len(summary))),
+            )
+            return summary
+        return revised
 
     async def compress(
         self,
@@ -408,7 +532,7 @@ class ChatCompressionService:
                 system_prompt=COMPRESSION_SYSTEM_PROMPT,
                 options={"num_predict": 2048, "num_ctx": 8192, "temperature": 0.3}
             )
-            summary = summary_result.get("response", "").strip()
+            summary = response_text(summary_result)
 
             if not summary:
                 self._has_failed_attempt = True
@@ -418,13 +542,8 @@ class ChatCompressionService:
                     CompressionStatus.FAILED_EMPTY_SUMMARY, duration
                 )
 
-            # Phase 3: Probe verification — self-check the summary
-            verify_result = await brain.generate(
-                VERIFICATION_PROMPT,
-                system_prompt=COMPRESSION_SYSTEM_PROMPT,
-                options={"num_predict": 2048, "num_ctx": 8192, "temperature": 0.1}
-            )
-            final_summary = verify_result.get("response", "").strip() or summary
+            # Phase 3: revision pass, against the snapshot and the history.
+            final_summary = await self._verified_summary(brain, summary, history_text)
 
             # Build new history: snapshot + preserved recent history
             new_history = [
@@ -461,7 +580,7 @@ class ChatCompressionService:
                 CompressionStatus.COMPRESSED, duration
             )
 
-        except (OSError, ConnectionError, TimeoutError) as e:
+        except _COMPRESSION_ERRORS as e:
             record_degradation('chat_compression', e)
             logger.error("Chat compression failed: %s", e, exc_info=True)
             self._has_failed_attempt = True
