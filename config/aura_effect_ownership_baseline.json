@@ -3425,6 +3425,22 @@
       "scope": "<module>.ToolOrchestrator.execute_python"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agi/skill_synthesizer.py",
+      "scope": "<module>.SkillSynthesizer._save_async"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agi/skill_synthesizer.py",
+      "scope": "<module>.SkillSynthesizer._save_async"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3655,6 +3671,14 @@
       "count": 1,
       "path": "core/brain/llm/latent_cortex/verifier_fusion.py",
       "scope": "<module>.VerifierFusionLedger.record_checked"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/semantic_neural_shadow.py",
+      "scope": "<module>.record_semantic_shadow_comparison"
     },
     {
       "callee": "<file_write_gateway>.write_bytes",
@@ -4423,6 +4447,14 @@
       "count": 1,
       "path": "core/memory/black_hole_vault.py",
       "scope": "<module>.BlackHoleVault._save_vault"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/cold_store.py",
+      "scope": "<module>.ColdMemoryStore._initialize"
     },
     {
       "callee": "<file_write_gateway>.ensure_directory",
@@ -5721,6 +5753,38 @@
       "scope": "<module>.CheckpointService.save"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skill_management/forged_artifact.py",
+      "scope": "<module>.ForgeLedger._write_async"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skill_management/forged_artifact.py",
+      "scope": "<module>.ForgeLedger._write_async"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/skill_management/hephaestus.py",
+      "scope": "<module>.HephaestusEngine._install_artifact"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/skill_management/hephaestus.py",
+      "scope": "<module>.HephaestusEngine._install_artifact"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -5777,15 +5841,15 @@
       "scope": "<module>._record_sync"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "callee": "<file_write_gateway>.ensure_directory_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/skills/manifest_to_device.py",
-      "scope": "<module>.ManifestToDeviceSkill.__init__"
+      "scope": "<module>.ManifestToDeviceSkill.execute"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
+      "callee": "<file_write_gateway>.write_bytes_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -6521,7 +6585,7 @@
       "scope": "<module>.InterAgentCommSkill.execute"
     },
     {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
+      "callee": "core.runtime.network_gateway.get_network_gateway().request_async",
       "canonical_owner": false,
       "category": "network_gateway",
       "count": 1,
@@ -11881,6 +11945,22 @@
       "scope": "<module>.FileWriteGateway.copy_path_async._copy"
     },
     {
+      "callee": "os.rename",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
+    },
+    {
+      "callee": "shutil.rmtree",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.delete_owned_readonly_tree"
+    },
+    {
       "callee": "shutil.rmtree",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -13153,14 +13233,6 @@
       "scope": "<module>.HephaestusEngine.__init__"
     },
     {
-      "callee": "skill_file.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skill_management/hephaestus.py",
-      "scope": "<module>.HephaestusEngine.synthesize_skill._synthesize_wrapped"
-    },
-    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13895,6 +13967,14 @@
       "count": 1,
       "path": "core/runtime/network_gateway.py",
       "scope": "<module>.NetworkGateway.request"
+    },
+    {
+      "callee": "urllib.request.build_opener",
+      "canonical_owner": true,
+      "category": "raw_network",
+      "count": 1,
+      "path": "core/runtime/network_gateway.py",
+      "scope": "<module>._build_public_pinned_opener"
     },
     {
       "callee": "socket.create_connection",
@@ -15874,6 +15954,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "ad136fae0fc017bff669a92e59fa477d024d5ccae36206c8ea78de52fb85f2c8",
+  "inventory_sha256": "677dcbd7c0f162fc0ed04b761d57b27676c2afc6480e2d68fc3b31a3f487a9b5",
   "schema_version": 1
 }
