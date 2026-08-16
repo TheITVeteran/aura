@@ -41,6 +41,7 @@ from core.learning.recurrent_action_schema import (
     OP_BOOL_NOT,
     OP_BOOL_OR,
     OP_BOOL_XOR,
+    OP_CAUSAL_CHAIN,
     OP_COPY_VALUE,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_CALIBRATE,
@@ -287,6 +288,7 @@ MICROCODE_IMPLEMENTED_OPCODES: Final = frozenset(
         OP_PAIR_COPY,
         OP_PAIR_EUCLID_STEP,
         OP_PAIR_PRODUCT,
+        OP_CAUSAL_CHAIN,
     }
 )
 _MICROCODE_OPCODE_MASK: Any = None
@@ -3930,6 +3932,217 @@ class UnifiedRecurrentController(nn.Module):
             )
             values[3] = mx.where(commit_selected, arg3, values[3])
             values[4] = mx.where(ranked_commit, 1, values[4])
+
+
+        # ── OP_CAUSAL_CHAIN ────────────────────────────────────────────────
+        # The public intervention edges arrive before the baselines, so the
+        # machine — not the compiler — works out which variable is the root
+        # (two edges), which is the mediator (one) and which is downstream
+        # (none). Six stages, held in values[8].
+        #
+        # This mirrors _semantic_micro_states in
+        # core/learning/frontier_process_supervision.py line for line. Where
+        # the reference raises, this sets semantic_invalid: the microcode has
+        # no exception path, and a row that would have raised must become the
+        # invalid state rather than a plausible-looking wrong one.
+        causal_chain = opcode == OP_CAUSAL_CHAIN
+        if len(values) >= 9:
+            v0, v1, v2, v3, v4, v5, v6, v7, stage = (values[i] for i in range(9))
+            change = arg3 + PROCESS_RADIX * arg4
+
+            # Branch A: an intervention edge between two measured variables.
+            edge = causal_chain & (arg0 <= 2) & (arg1 <= 2)
+            first_edge = edge & (stage == 0)
+            second_edge = edge & (stage == 1)
+            mediator_edge = edge & (stage == 2)
+            semantic_invalid = semantic_invalid | (
+                edge & (stage >= 3)
+            ) | (
+                first_edge & ((arg0 == arg1) | (arg5 != 0))
+            ) | (
+                second_edge
+                & (
+                    (arg0 != v0)
+                    | (arg1 == arg0)
+                    | (arg1 == v1)
+                    | (arg2 != v2)
+                    | (arg5 != 1)
+                )
+            )
+            # The mediator is whichever of the root's two targets this edge
+            # starts from; its recorded change is the one the root produced
+            # in it.
+            arg0_is_first_target = arg0 == v1
+            root_mediator_change = mx.where(
+                arg0_is_first_target,
+                v2 + PROCESS_RADIX * v3,
+                v5 + PROCESS_RADIX * v6,
+            )
+            semantic_invalid = semantic_invalid | (
+                mediator_edge
+                & (
+                    (arg0 == v0)
+                    | ~((arg0 == v1) | (arg0 == v4))
+                    | (arg1 == arg0)
+                    | ~((arg1 == v1) | (arg1 == v4))
+                    | (arg5 != 1)
+                    | (root_mediator_change >= ACTION_NULL)
+                    | (change >= ACTION_NULL)
+                )
+            )
+
+            # Branch B: the downstream variable moves nothing.
+            downstream_null = causal_chain & (arg0 <= 2) & (arg1 == 3)
+            semantic_invalid = semantic_invalid | (
+                downstream_null
+                & (
+                    (stage != 3)
+                    | (arg0 != v2)
+                    | (arg2 != 0)
+                    | (arg3 != 0)
+                    | (arg4 != 0)
+                    | (arg5 != 1)
+                )
+            )
+
+            # Branch C: predict the downstream value at the queried root delta.
+            prediction = causal_chain & (arg0 == 3) & (arg1 == 3)
+            exact_effects = (v4 > 0) & (v6 > 0)
+            safe_v4 = mx.maximum(v4, 1)
+            safe_v6 = mx.maximum(v6, 1)
+            semantic_invalid = semantic_invalid | (
+                prediction
+                & (
+                    (stage != 4)
+                    | (arg2 < 1)
+                    | (arg2 >= ACTION_NULL)
+                    | (arg3 != 0)
+                    | (arg4 != 0)
+                    | (arg5 != 1)
+                    | ~exact_effects
+                    | (v3 % safe_v4 != 0)
+                    | (v5 % safe_v6 != 0)
+                )
+            )
+            effect = arg2 * (v3 // safe_v4) * (v5 // safe_v6)
+
+            # Branch D: add the downstream baseline once its variable arrives.
+            baseline_commit = causal_chain & (arg0 == 4) & (arg1 == 4)
+            semantic_invalid = semantic_invalid | (
+                baseline_commit
+                & (
+                    ((stage != 5) & (stage != 6))
+                    | (arg2 != 0)
+                    | (arg3 != 0)
+                    | (arg4 != 0)
+                    | (arg5 != 1)
+                )
+            )
+            commit_now = baseline_commit & (v7 == v2)
+            committed = (v3 + PROCESS_RADIX * v4) + (v5 + PROCESS_RADIX * v6)
+
+            semantic_invalid = semantic_invalid | (
+                causal_chain & ~(edge | downstream_null | prediction | baseline_commit)
+            )
+
+            # Every slot in one pass, from the PRE-instruction snapshot.
+            values[0] = mx.where(first_edge | second_edge, arg0, values[0])
+            values[1] = mx.where(
+                first_edge, arg1, mx.where(mediator_edge, arg0, values[1])
+            )
+            values[2] = mx.where(
+                first_edge,
+                arg2,
+                mx.where(second_edge, v3, mx.where(mediator_edge, arg1, values[2])),
+            )
+            values[3] = mx.where(
+                first_edge,
+                arg3,
+                mx.where(
+                    second_edge,
+                    v4,
+                    mx.where(
+                        mediator_edge,
+                        root_mediator_change,
+                        mx.where(
+                            prediction,
+                            effect % PROCESS_RADIX,
+                            mx.where(
+                                commit_now, committed % PROCESS_RADIX, values[3]
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            values[4] = mx.where(
+                first_edge,
+                arg4,
+                mx.where(
+                    second_edge,
+                    arg1,
+                    mx.where(
+                        mediator_edge,
+                        v7,
+                        mx.where(
+                            prediction,
+                            effect // PROCESS_RADIX,
+                            mx.where(
+                                commit_now, committed // PROCESS_RADIX, values[4]
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            values[5] = mx.where(
+                first_edge,
+                0,
+                mx.where(
+                    second_edge,
+                    arg3,
+                    mx.where(
+                        mediator_edge, change, mx.where(prediction, 0, values[5])
+                    ),
+                ),
+            )
+            values[6] = mx.where(
+                first_edge,
+                0,
+                mx.where(
+                    second_edge,
+                    arg4,
+                    mx.where(mediator_edge, arg2, mx.where(prediction, 0, values[6])),
+                ),
+            )
+            values[7] = mx.where(
+                first_edge,
+                0,
+                mx.where(
+                    second_edge,
+                    arg2,
+                    mx.where(mediator_edge, 0, mx.where(prediction, 0, values[7])),
+                ),
+            )
+            values[8] = mx.where(
+                first_edge,
+                1,
+                mx.where(
+                    second_edge,
+                    2,
+                    mx.where(
+                        mediator_edge,
+                        3,
+                        mx.where(
+                            downstream_null,
+                            4,
+                            mx.where(
+                                prediction, 5, mx.where(commit_now, 6, values[8])
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        else:
+            semantic_invalid = semantic_invalid | causal_chain
 
         write_value_slot(arg0, arg1, set_scalar)
         next_values = mx.stack((pc, *values, terminal), axis=1)
