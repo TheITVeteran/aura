@@ -55,9 +55,9 @@ async def init_enterprise_layer(orchestrator: Any):
     # different objects were sharing the latter name: this one, and the
     # CognitiveContextManager that boot_cognitive publishes later under the same
     # key. Which one a caller got depended on how it asked — the attribute set
-    # here resolved to the window manager, while a service lookup returned the
-    # cognitive one. They share no methods, so hasattr checks downstream decided
-    # behaviour by accident.
+    # here resolved to the window manager, while `ServiceContainer.get(
+    # "context_manager")` returned the cognitive one. They share no methods, so
+    # hasattr checks downstream decided behaviour by accident.
     from core.context.context_manager import ContextWindowManager
     from core.config import config
     orchestrator.context_window_manager = ContextWindowManager(model_name=config.llm.chat_model)

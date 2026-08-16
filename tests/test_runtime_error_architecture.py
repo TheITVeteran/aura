@@ -1,4 +1,176 @@
+import ast
+import inspect
+
 import pytest
+
+# ── The container-independence gate ──────────────────────────────────────
+#
+# These modules must reach services through core.runtime.service_registry and
+# never through the container directly. That rule was enforced by substring
+# search over the module's source, at twelve sites, which had two problems.
+#
+# It fired on prose. A comment in core_baseline explaining a service-name
+# collision — the word ServiceContainer inside a `#` line — failed the gate,
+# and the only ways out were to delete the explanation or to loosen the check.
+# A rule that punishes documentation gets documentation removed.
+#
+# And it was weaker than it looked. `import core.container as c` was caught by
+# accident (the string appears), while a substring check cannot tell an import
+# from a mention, so nobody could rely on which it was actually testing.
+#
+# What follows parses the module and asks structurally: what does it import,
+# what names does it reference, what does it build strings out of. Comments and
+# docstrings are free. Everything the old check caught in code is still caught,
+# and dynamic access through a string literal — importlib.import_module(
+# "core.container"), getattr(m, "ServiceContainer") — is caught now too, which
+# the structural pass alone would have missed.
+
+#: Import paths that mean "this module reached for the container".
+#:
+#: The bare name is here because a relative ``from .container import x`` reaches
+#: the AST as module="container", which is what the old
+#: ``"from container import"`` check was after.
+_CONTAINER_MODULES = frozenset({"core.container", "container"})
+
+#: What counts as a container reference inside a *string*.
+#:
+#: Only the dotted path. The bare word is an ordinary English noun and is used
+#: as a dict key in the health reports — ``{"container": container_report}`` —
+#: which is not a module reference by any reading. Flagging it would make the
+#: gate fire on health telemetry, and a gate that fires on unrelated code gets
+#: switched off. The dotted form has no innocent use: nothing writes
+#: "core.container" in a string except to import it by name.
+_CONTAINER_PATHS_IN_STRINGS = frozenset({"core.container"})
+
+
+def _facts_from_source(source: str) -> tuple[set[str], set[str], set[str]]:
+    """(imported modules, referenced names, non-docstring string literals)."""
+    tree = ast.parse(source)
+
+    docstrings = {
+        ast.get_docstring(node, clean=False)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    imports: set[str] = set()
+    names: set[str] = set()
+    literals: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import carries no package prefix, so `from .container
+            # import x` arrives as module="container" — which is exactly what
+            # the old `"from container import"` check was after.
+            if node.module:
+                imports.add(node.module)
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value not in docstrings:
+                literals.add(node.value)
+
+    return imports, names, literals
+
+
+def _container_violations(
+    source: str,
+    *,
+    forbid_names: tuple[str, ...] = ("ServiceContainer",),
+    require_import: str | None = "core.runtime.service_registry",
+    require_names: tuple[str, ...] = (),
+) -> list[str]:
+    """Every way this source breaks the rule, named. Empty means it holds.
+
+    Pure, and separate from the assertion, so the gate itself can be tested
+    against sources that are supposed to fail. A gate nobody points at a
+    violation is one that can quietly stop catching anything.
+    """
+    imports, names, literals = _facts_from_source(source)
+    violations: list[str] = []
+
+    for offending in sorted(imports & _CONTAINER_MODULES):
+        violations.append(f"imports {offending}")
+    for forbidden in forbid_names:
+        if forbidden in names:
+            violations.append(f"references {forbidden}")
+    for text in sorted(literals):
+        if text in _CONTAINER_PATHS_IN_STRINGS or text in set(forbid_names):
+            violations.append(f"names {text!r} in a string literal")
+    if require_import is not None and require_import not in imports:
+        violations.append(f"does not import {require_import}")
+    for required in require_names:
+        if required not in names:
+            violations.append(f"never references {required}")
+    return violations
+
+
+def _assert_reaches_services_through_the_registry(
+    module,
+    *,
+    forbid_names: tuple[str, ...] = ("ServiceContainer",),
+    require_import: str | None = "core.runtime.service_registry",
+    require_names: tuple[str, ...] = (),
+) -> None:
+    """The gate. Raises with the module and the offending symbol named.
+
+    ``forbid_names`` varies by site on purpose and is not unified: cognitive_engine
+    publishes its own ``get_container`` shim, so forbidding that name everywhere
+    would fail a module the original gate deliberately permitted it in.
+    """
+    where = getattr(module, "__name__", repr(module))
+    violations = _container_violations(
+        inspect.getsource(module),
+        forbid_names=forbid_names,
+        require_import=require_import,
+        require_names=require_names,
+    )
+    assert not violations, f"{where} " + "; ".join(violations)
+
+
+_REGISTRY_IMPORT = "import core.runtime.service_registry\n"
+
+#: Every bypass the gate must catch. The first four are what the substring
+#: check caught; the last four are what it could not, because a substring
+#: cannot tell an import from a mention or find a name assembled at runtime.
+_MUST_CATCH = {
+    "direct import": "from core.container import ServiceContainer\n" + _REGISTRY_IMPORT,
+    "aliased module import": "import core.container as c\n" + _REGISTRY_IMPORT,
+    "aliased symbol": "from core.container import ServiceContainer as SC\n" + _REGISTRY_IMPORT,
+    "relative import": "from container import thing\n" + _REGISTRY_IMPORT,
+    "bare name": _REGISTRY_IMPORT + "x = ServiceContainer\n",
+    "attribute access": _REGISTRY_IMPORT + "import m\nx = m.ServiceContainer\n",
+    "dynamic import": _REGISTRY_IMPORT + 'import importlib\nm = importlib.import_module("core.container")\n',
+    "getattr by string": _REGISTRY_IMPORT + 'x = getattr(m, "ServiceContainer")\n',
+    "no registry import": "x = 1\n",
+}
+
+#: Patterns that must stay legal. The first two are the reason this gate is
+#: structural: a rule that fires on an explanation gets the explanation
+#: deleted. The third is live code — the health report keys a section
+#: "container", which is a noun, not a module.
+_MUST_ALLOW = {
+    "comment": "# ServiceContainer was the other object under this name\n" + _REGISTRY_IMPORT,
+    "docstring": '"""Explains core.container and ServiceContainer."""\n' + _REGISTRY_IMPORT,
+    "container as a dict key": _REGISTRY_IMPORT + 'report = {"container": {}}\n',
+    "clean module": _REGISTRY_IMPORT,
+}
+
+
+@pytest.mark.parametrize("label", sorted(_MUST_CATCH))
+def test_the_container_gate_catches_the_bypass(label):
+    assert _container_violations(_MUST_CATCH[label]), f"{label} slipped past the gate"
+
+
+@pytest.mark.parametrize("label", sorted(_MUST_ALLOW))
+def test_the_container_gate_allows_legitimate_code(label):
+    assert _container_violations(_MUST_ALLOW[label]) == [], f"{label} was wrongly refused"
 
 
 def test_record_degradation_does_not_import_service_container():
@@ -592,11 +764,11 @@ def test_consciousness_system_publication_uses_runtime_registry():
     import inspect
     import core.consciousness.system as consciousness_system
 
-    source = inspect.getsource(consciousness_system)
-    assert "core.container" not in source
-    assert "ServiceContainer" not in source
-    assert "register_runtime_service" in source
-    assert "get_runtime_service" in source
+    _assert_reaches_services_through_the_registry(
+        consciousness_system,
+        require_import=None,
+        require_names=("register_runtime_service", "get_runtime_service"),
+    )
 
 
 def test_being_runtime_publish_uses_runtime_registry():
@@ -645,10 +817,7 @@ def test_cognitive_engine_service_lookup_uses_runtime_registry_adapter():
     finally:
         install_service_resolver(None)
 
-    source = inspect.getsource(cognitive_engine)
-    assert "core.container" not in source
-    assert "ServiceContainer" not in source
-    assert "core.runtime.service_registry" in source
+    _assert_reaches_services_through_the_registry(cognitive_engine)
 
 
 def test_cryptolalia_decoder_uses_runtime_registry():
@@ -690,10 +859,7 @@ def test_cryptolalia_decoder_uses_runtime_registry():
     assert registered[0][1] is instance
     assert registered[0][2] is True
 
-    source = inspect.getsource(cryptolalia_decoder)
-    assert "core.container" not in source
-    assert "ServiceContainer" not in source
-    assert "core.runtime.service_registry" in source
+    _assert_reaches_services_through_the_registry(cryptolalia_decoder)
 
 
 def test_meta_cognition_structural_review_uses_runtime_registry():
@@ -727,10 +893,7 @@ def test_meta_cognition_structural_review_uses_runtime_registry():
     assert "failure-5" in queued[0][1]
     assert len(loop.error_history) == 2
 
-    source = inspect.getsource(meta_cognition)
-    assert "core.container" not in source
-    assert "ServiceContainer" not in source
-    assert "core.runtime.service_registry" in source
+    _assert_reaches_services_through_the_registry(meta_cognition)
 
 
 def test_startup_boot_validator_uses_runtime_registry_presence():
@@ -765,10 +928,7 @@ def test_startup_boot_validator_uses_runtime_registry_presence():
 
     assert boot_validator.BootValidator.validate_boot(ExplicitContainer()).passed is True
 
-    source = inspect.getsource(boot_validator)
-    assert "core.container" not in source
-    assert "ServiceContainer" not in source
-    assert "core.runtime.service_registry" in source
+    _assert_reaches_services_through_the_registry(boot_validator)
 
 
 def test_small_runtime_service_batch_uses_registry():
@@ -894,9 +1054,7 @@ def test_small_runtime_service_batch_uses_registry():
         latent_distiller,
         hotfix_engine,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "ServiceContainer" not in source
+        _assert_reaches_services_through_the_registry(module, require_import=None)
 
 
 def test_runtime_service_registry_supports_lazy_factory_publication():
@@ -1158,10 +1316,7 @@ def test_runtime_registry_batch_two_service_seams():
         voice_socket_logic,
         affect_coordinator,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "ServiceContainer" not in source
-        assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(module)
 
 
 def test_runtime_registry_batch_three_live_path_service_seams():
@@ -1481,10 +1636,7 @@ def test_runtime_registry_batch_three_live_path_service_seams():
         reflex_engine,
         derived_runtime_context,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "ServiceContainer" not in source
-        assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(module)
 
 
 def test_runtime_registry_batch_four_boot_sensory_health_seams():
@@ -1686,10 +1838,7 @@ def test_runtime_registry_batch_four_boot_sensory_health_seams():
         interface_helpers,
         interaction_signals,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "ServiceContainer" not in source
-        assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(module)
 
 
 def test_runtime_registry_provider_lifetime_bridge_removes_container_imports():
@@ -1858,13 +2007,14 @@ def test_runtime_registry_batch_five_safety_memory_morality_seams():
         ears,
         soul,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "from container import" not in source
-        assert "ServiceContainer" not in source
-        assert "get_container" not in source
-        if module is not repair_phase:
-            assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(
+            module,
+            forbid_names=("ServiceContainer", "get_container"),
+            # repair_phase reaches services another way and always has.
+            require_import=(
+                None if module is repair_phase else "core.runtime.service_registry"
+            ),
+        )
 
 
 def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch, tmp_path):
@@ -2108,13 +2258,10 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch, tmp_pat
         values_engine,
         voice_session,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "from container import" not in source
-        assert "ServiceContainer" not in source
-        assert "ServiceLifetime" not in source
-        assert "get_container" not in source
-        assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(
+            module,
+            forbid_names=("ServiceContainer", "ServiceLifetime", "get_container"),
+        )
 
 
 def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch, tmp_path):
@@ -2402,10 +2549,7 @@ def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch
         causal_world_model,
         narrative_memory,
     ):
-        source = inspect.getsource(module)
-        assert "core.container" not in source
-        assert "from container import" not in source
-        assert "ServiceContainer" not in source
-        assert "ServiceLifetime" not in source
-        assert "get_container" not in source
-        assert "core.runtime.service_registry" in source
+        _assert_reaches_services_through_the_registry(
+            module,
+            forbid_names=("ServiceContainer", "ServiceLifetime", "get_container"),
+        )
