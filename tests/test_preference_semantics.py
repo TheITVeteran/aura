@@ -348,3 +348,129 @@ def test_preferences_for_uncalled_candidates_are_inert():
     b = _open("a", "b")
     b.prohibit("ghost", "a directive about something not on offer")
     assert resolve(["a", "b"], b.build()).winner in {"a", "b"}
+
+# ── the Soar-RL seam: learned values reach the decision procedure ────────
+
+
+class _Estimate:
+    def __init__(self, value, evidence):
+        self.value = value
+        self.evidence = evidence
+        self.is_evidenced = evidence in {"caller", "learned"}
+
+
+class _ValueModel:
+    """Stands in for ActionValueModel with a fixed verdict per action."""
+
+    def __init__(self, table):
+        self.table = table
+
+    def value_for(self, name, _metadata=None, state=""):
+        value, evidence = self.table[name]
+        return _Estimate(value, evidence)
+
+
+def _actions(*names):
+    from core.reasoning.native_system2 import System2Action
+
+    return [System2Action(name=n, prior=0.5) for n in names]
+
+
+def _builder():
+    from core.cognition.preference_semantics import PreferenceBuilder
+
+    return PreferenceBuilder("test")
+
+
+def _assert_values(builder, actions, model):
+    from core.reasoning.native_system2 import NativeSystem2Engine
+
+    NativeSystem2Engine._assert_learned_values(
+        builder, actions, value_model=model, state="s"
+    )
+
+
+def test_learned_values_become_numeric_indifferent_preferences():
+    from core.cognition.preference_semantics import PreferenceType
+
+    builder = _builder()
+    actions = _actions("retry", "escalate")
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.2, "learned"),
+        "escalate": (0.8, "learned"),
+    }))
+    kinds = {p.type for p in builder}
+    assert PreferenceType.NUMERIC_INDIFFERENT in kinds
+
+
+def test_learned_values_decide_the_field():
+    from core.cognition.preference_semantics import resolve
+
+    builder = _builder()
+    actions = _actions("retry", "escalate")
+    for action in actions:
+        builder.acceptable(action.name)
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.2, "learned"),
+        "escalate": (0.8, "learned"),
+    }))
+    resolution = resolve([a.name for a in actions], builder.build())
+    assert resolution.decided
+    assert resolution.winner == "escalate"
+
+
+def test_a_caller_hint_is_not_a_learned_value():
+    """The planner supplies score_hint; promoting it would let the caller decide."""
+    builder = _builder()
+    actions = _actions("retry", "escalate")
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.2, "caller"),
+        "escalate": (0.9, "caller"),
+    }))
+    assert len(builder) == 0
+
+
+def test_a_prior_is_not_a_learned_value():
+    builder = _builder()
+    actions = _actions("retry", "escalate")
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.5, "prior"),
+        "escalate": (0.5, "learned"),
+    }))
+    assert len(builder) == 0
+
+
+def test_a_partial_measurement_asserts_nothing():
+    """Otherwise the measured action beats the unmeasured one for being measured."""
+    builder = _builder()
+    actions = _actions("retry", "escalate", "wait")
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.2, "learned"),
+        "escalate": (0.8, "learned"),
+        "wait": (0.5, "none"),
+    }))
+    assert len(builder) == 0
+
+
+def test_equal_learned_values_stay_a_tie():
+    """A seeded draw presented as a learned result is worse than an honest tie."""
+    from core.cognition.impasse import ImpasseType
+    from core.cognition.preference_semantics import resolve
+
+    builder = _builder()
+    actions = _actions("retry", "escalate")
+    for action in actions:
+        builder.acceptable(action.name)
+    _assert_values(builder, actions, _ValueModel({
+        "retry": (0.5, "learned"),
+        "escalate": (0.5, "learned"),
+    }))
+    resolution = resolve([a.name for a in actions], builder.build())
+    assert not resolution.decided
+    assert resolution.impasse.type is ImpasseType.TIE
+
+
+def test_a_single_candidate_needs_no_learned_values():
+    builder = _builder()
+    _assert_values(builder, _actions("only"), _ValueModel({"only": (0.9, "learned")}))
+    assert len(builder) == 0

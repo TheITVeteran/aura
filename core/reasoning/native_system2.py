@@ -255,6 +255,12 @@ class NativeSearchReceipt:
     #: deliberation over a field that silently excluded something — which is
     #: indistinguishable from one where it was never offered.
     preference_removals: Dict[str, str] = field(default_factory=dict)
+    #: How the preference procedure resolved, when it resolved at all. Set only
+    #: where measured operator values separated the field and the search
+    #: therefore confirmed a decision rather than making one. A receipt that
+    #: did not say so would present a one-candidate confirmation as full
+    #: deliberation — the same thing ``chunk_reused`` exists to prevent.
+    preference_selection: Optional[str] = None
     #: The compiled-resolution key for this decision, when chunking applied.
     chunk_signature: Optional[str] = None
     #: True when a previously learned chunk supplied the answer and the search
@@ -677,7 +683,12 @@ class NativeSystem2Engine:
             _VALUE_EVIDENCE.reset(evidence_token)
 
     async def _resolve_preferences(
-        self, candidate_actions: Sequence[System2Action], context: str
+        self,
+        candidate_actions: Sequence[System2Action],
+        context: str,
+        *,
+        value_model: Any = None,
+        state: str = "",
     ):
         """Translate what Aura already knows about these actions into preferences.
 
@@ -692,11 +703,17 @@ class NativeSystem2Engine:
           written prohibitions and were consulted only at the gateway, after
           deliberation had already committed to the act.
 
-        Nothing here asserts indifference, so a field the preferences do not
-        separate resolves to a tie impasse rather than a winner, and the search
-        below is what breaks it. That is the correct division of labour: the
-        preference layer removes what must not be chosen, and deliberation
-        chooses among what remains.
+        Indifference is asserted only in the one case Soar-RL describes: every
+        surviving candidate has a *measured* value and those values separate
+        them. Then the decision procedure returns a winner and deliberation
+        confirms it rather than re-deriving it — the same trade the chunk store
+        already makes, on evidence rather than on a compiled resolution.
+
+        Absent that, nothing here asserts indifference, so a field the
+        preferences do not separate resolves to a tie impasse and the search
+        below breaks it. That is the correct division of labour: the preference
+        layer removes what must not be chosen, and deliberation chooses among
+        what remains.
         """
         from core.cognition.preference_semantics import PreferenceBuilder, resolve
 
@@ -710,11 +727,77 @@ class NativeSystem2Engine:
         for name, reason in prohibited.items():
             builder.prohibit(name, reason)
 
+        self._assert_learned_values(
+            builder,
+            [
+                a
+                for a in candidate_actions
+                if a.valid and a.name not in prohibited
+            ],
+            value_model=value_model,
+            state=state,
+        )
+
         return resolve(
             [a.name for a in candidate_actions],
             builder.build(),
             context={"goal": "rank_actions", "context": context.strip()[:256]},
         )
+
+    @staticmethod
+    def _assert_learned_values(
+        builder: Any,
+        live: Sequence[System2Action],
+        *,
+        value_model: Any,
+        state: str,
+    ) -> None:
+        """Attach measured operator values, when they are complete and decisive.
+
+        This is where Soar-RL joins Aura's own machinery. Soar learns numeric
+        preferences on operators from reward; ``ActionValueModel`` already
+        learns per-action values from graded outcome receipts, shrunk toward the
+        global mean by the ratio of within-group to between-group variance. The
+        learning was never the missing part. The missing part was that nothing
+        carried it into the decision procedure, so a value the system had
+        measured could only influence the search's scoring and never the
+        selection itself.
+
+        Three conditions, and each is a refusal rather than a threshold.
+
+        The evidence must be ``learned`` specifically, not merely present.
+        ``ActionValue`` also reports ``caller`` for a supplied ``score_hint``
+        and ``prior`` for the ledger's global mean. Accepting those here let the
+        planner's own ``score_hint`` decide the operator — the caller's word
+        promoted to a measured value, which is the exact substitution
+        ``action_value`` exists to prevent. Soar-RL learns from reward; a hint
+        is not reward.
+
+        *Every* live candidate must be learned. Ranking a measured action
+        against an unmeasured one is a judgement about which one somebody
+        happened to have data for — the same defect, one layer up.
+
+        The values must actually separate the field. If the top two are equal
+        there is no decision in the numbers, and asserting indifference would
+        hand the choice to a seeded draw that then looks like a learned result.
+        A genuine tie belongs in the impasse log, where the tie rate is a
+        diagnostic.
+        """
+        if value_model is None or len(live) < 2:
+            return
+        estimates = {
+            action.name: value_model.value_for(action.name, action.metadata, state=state)
+            for action in live
+        }
+        if not all(estimate.evidence == "learned" for estimate in estimates.values()):
+            return
+        ordered = sorted((e.value for e in estimates.values()), reverse=True)
+        if ordered[0] <= ordered[1]:
+            return
+        for name, estimate in estimates.items():
+            builder.numeric_indifferent(
+                name, estimate.value, f"measured outcomes ({estimate.evidence})"
+            )
 
     @staticmethod
     def _standing_prohibitions(
@@ -810,7 +893,9 @@ class NativeSystem2Engine:
         # model runs on what survives, so a standing directive removes an action
         # from the decision instead of taxing it 0.20 of value and losing to a
         # candidate worth 0.25 less.
-        resolution = await self._resolve_preferences(candidate_actions, context)
+        resolution = await self._resolve_preferences(
+            candidate_actions, context, value_model=value_model, state=state_raw
+        )
         preference_removals = {
             name: resolution.why(name)
             for name in (a.name for a in candidate_actions)
@@ -819,6 +904,18 @@ class NativeSystem2Engine:
         if preference_removals:
             survivors = set(resolution.survivors)
             candidate_actions = [a for a in candidate_actions if a.name in survivors]
+
+        # The decision procedure produced a winner, which here can only mean
+        # measured values separated the field (nothing else asserts
+        # indifference). Narrow to it and let the search confirm rather than
+        # re-derive — the same shape as chunk reuse below, and for the same
+        # reason: the expensive part is deciding, and this decision was already
+        # paid for by the outcomes that produced the values.
+        preference_winner = resolution.winner if resolution.decided else None
+        if preference_winner is not None:
+            by_preference = {a.name: a for a in candidate_actions}
+            if preference_winner in by_preference:
+                candidate_actions = [by_preference[preference_winner]]
 
         async def _generator(_state: Any, node: NativePlanNode, cfg: System2SearchConfig) -> Sequence[System2Action]:
             if node.depth == 0:
@@ -1065,6 +1162,8 @@ class NativeSystem2Engine:
         result.receipt.value_evidence = dict(evidence_counts)
         result.receipt.hazard_floored_actions = list(hazard_floored)
         result.receipt.preference_removals = dict(preference_removals)
+        if preference_winner is not None:
+            result.receipt.preference_selection = resolution.selection_reason
 
         committed = result.committed_action
         chosen = (
