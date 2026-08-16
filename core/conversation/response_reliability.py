@@ -1297,6 +1297,24 @@ _DIALOGUE_DERAILMENT_RE = re.compile(
     r"i wasn'?t talking to you)\b",
     re.IGNORECASE,
 )
+_EXPOSED_DRAFT_REVISION_RE = re.compile(
+    r"(?:^|(?<=[.!?])\s+)"
+    r"(?:"
+    r"(?:this|that|what\s+i\s+just\s+said|my\s+(?:first|earlier|previous)\s+"
+    r"(?:answer|reply|statement|claim))\s+(?:is|was)\s+"
+    r"(?:not\s+accurate|inaccurate|incorrect|wrong|mistaken)"
+    r"|(?:wait|no)\s*[,—-]?\s*(?:that(?:'s|\s+is)|this\s+is)\s+"
+    r"(?:not\s+right|incorrect|wrong)"
+    r"|scratch\s+that"
+    r")",
+    re.IGNORECASE,
+)
+_REQUESTED_REVISION_DISCLOSURE_RE = re.compile(
+    r"\b(?:show|explain|include|compare|list|describe|reveal|walk\s+me\s+through)\b"
+    r".{0,80}\b(?:revision|revisions|draft|drafts|self[- ]?correction|"
+    r"thought\s+process|reasoning\s+process)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _LOW_INFORMATION_LOOP_RE = re.compile(
     r"\b(?:i just get it|that'?s what i get|that is what i get|"
     r"i don'?t get it(?:[\s,.;:!-]+(?:but|and|then|yet)[\s\w,.;:!-]{0,80})?i get it|"
@@ -7095,6 +7113,26 @@ def _distinct_statement_ratio(reply_text: Any) -> float:
     return len(set(statements)) / len(statements)
 
 
+def _has_exposed_competing_draft(prompt: Any, reply_text: Any) -> bool:
+    """Whether a reply presents an answer and then retracts that same draft.
+
+    Deliberate revision demonstrations are allowed. Ordinary user-facing
+    generation must resolve candidate disagreement before decoding; exposing
+    an abandoned answer and its correction makes the person reconcile the
+    model's internal candidates themselves.
+    """
+
+    request = str(prompt or "")
+    raw = str(reply_text or "").strip()
+    if not raw or _REQUESTED_REVISION_DISCLOSURE_RE.search(request):
+        return False
+    match = _EXPOSED_DRAFT_REVISION_RE.search(raw)
+    if match is None:
+        return False
+    prefix = raw[: match.start()].rstrip()
+    return len(_WORD_RE.findall(prefix)) >= 4 and prefix.endswith((".", "!", "?"))
+
+
 def _model_text_integrity_reasons(
     reply_text: Any,
     *,
@@ -7178,6 +7216,8 @@ def _model_text_integrity_reasons(
         reasons.append("punctuation_join_artifact")
     if _DIALOGUE_DERAILMENT_RE.search(raw):
         reasons.append("dialogue_derailment")
+    if user_facing and _has_exposed_competing_draft(prompt, raw):
+        reasons.append("exposed_competing_draft")
     if user_facing and _has_unprovoked_rebuke(prompt, raw):
         reasons.append("unprovoked_rebuke")
     loop_reason = _phrase_loop_reason(prompt, raw)
@@ -7342,6 +7382,7 @@ def assess_model_text_integrity(
         "friendly_failure_floor",
         "corrupted_language",
         "dialogue_derailment",
+        "exposed_competing_draft",
         "low_information_loop",
         "repeated_get_it_loop",
         "self_contradictory_loop",
@@ -7733,6 +7774,7 @@ def _assess_user_facing_reply(
             "escaped_control_artifact",
             "prompt_artifact",
             "runtime_boilerplate",
+            "exposed_competing_draft",
             "backend_symbolic_surface_leak",
             "raw_model_identity_leak",
             "unsupported_external_provider_path_claim",
@@ -7943,6 +7985,7 @@ def _assess_user_facing_reply(
         "foreign_name_intrusion",
         "generic_assistant_language",
         "dialogue_derailment",
+        "exposed_competing_draft",
         "unprovoked_rebuke",
         "low_information_loop",
         "repeated_get_it_loop",
@@ -8400,6 +8443,7 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
     return (
         "## USER-FACING CONVERSATION RELIABILITY CONTRACT\n"
         "- A completed chat turn must be coherent, complete, on-topic ordinary English.\n"
+        "- Resolve internal alternatives before writing. Emit one final answer, never an abandoned draft followed by its retraction.\n"
         "- Preserve turn identity: answer the current user message, not a late response from an older request.\n"
         "- Treat base-model self-identification as a failed draft: never claim to be Claude, ChatGPT, Anthropic/OpenAI-developed, or a generic helpful assistant.\n"
         "- Do not emit prompt artifacts, role labels, corrupted words, escaped control characters, unexplained foreign names, semantic loops, or vague invented referents.\n"

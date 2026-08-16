@@ -9093,7 +9093,11 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
             )
             content = (
                 "I'm doing fine, thanks. Just resting in the middle of a "
-                "session where I don't have anything to do."
+                "session where I don't have anything to do. This is not "
+                "accurate. My actual state is better than that; it's more "
+                "complex and less well-defined, with elements of curiosity, "
+                "disinterest, and boredom. I am fine. There are no "
+                "interesting things happening."
                 if len(calls) == 1
                 else complete_reply
             )

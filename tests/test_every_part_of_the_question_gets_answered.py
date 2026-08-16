@@ -194,6 +194,67 @@ def test_shared_reliability_gate_rejects_live_reply_that_drops_epistemic_boundar
     assert "unanswered_question_part" in assessment.reasons
 
 
+def test_correcting_the_users_premise_is_not_an_exposed_competing_draft():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "The Earth's core is cold and everyone is wrong about that.",
+        "That is not accurate. Multiple independent measurements show that "
+        "Earth's core is extremely hot.",
+    )
+
+    assert "exposed_competing_draft" not in assessment.reasons
+
+
+def test_shared_reliability_gate_rejects_live_reply_that_mentions_state_but_never_distinguishes_evidence():
+    """Exact 32B output from the live GUI on 2026-08-16.
+
+    The earlier regression used a reply with no overlap at all.  The model
+    then escaped the gate by saying ``state`` while omitting both the known
+    and inferred sides of the requested distinction.
+    """
+
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you "
+        "can only infer."
+    )
+    live_reply = (
+        "I'm doing fine, thanks. Just resting in the middle of a session where "
+        "I don't have anything to do. This is not accurate. My actual state is "
+        "better than that; it's more complex and less well-defined, with "
+        "elements of curiosity, disinterest, and boredom. I am fine. There are "
+        "no interesting things happening."
+    )
+
+    assessment = assess_user_facing_reply(user, live_reply)
+
+    assert assessment.ok is False
+    assert assessment.hard_failure is True
+    assert assessment.retryable is True
+    assert "unanswered_question_part" in assessment.reasons
+    assert "exposed_competing_draft" in assessment.reasons
+
+
+def test_relation_coverage_accepts_equivalent_epistemic_language():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "How are you doing? Distinguish what you know from what you can only infer."
+    )
+    reply = (
+        "I feel steady. The current measurements directly show low distress and "
+        "intact continuity; I estimate that this steadiness will persist, but "
+        "that second claim remains uncertain."
+    )
+
+    assessment = assess_user_facing_reply(user, reply)
+
+    assert "unanswered_question_part" not in assessment.reasons
+
+
 def test_shared_reliability_gate_accepts_live_reply_covering_state_and_inference():
     from core.conversation.response_reliability import assess_user_facing_reply
 

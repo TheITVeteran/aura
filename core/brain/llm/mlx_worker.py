@@ -1623,6 +1623,11 @@ _SELF_CONDITION_SIGNAL_INSTRUCTION = (
     "evidence. CPU, RAM, host load, and availability are supporting body context "
     "only and must not replace the condition answer."
 )
+_ONE_FINAL_ANSWER_INSTRUCTION = (
+    "Resolve competing internal candidates before writing. Return one coherent "
+    "final answer only; do not expose an abandoned draft, retract an earlier "
+    "paragraph, or make the user choose among revisions."
+)
 
 
 def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
@@ -1664,28 +1669,32 @@ def _with_initial_user_surface_guidance(
     prompt: Any,
     job: dict[str, Any],
 ) -> tuple[Any, Any]:
-    if not _job_needs_concrete_status_signal_guidance(job):
+    if not bool(job.get("clean_user_surface_contract", False)):
         return messages, prompt
+    instructions = [_ONE_FINAL_ANSWER_INSTRUCTION]
+    if _job_needs_concrete_status_signal_guidance(job):
+        instructions.append(_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION)
+    guidance = "\n".join(instructions)
     if isinstance(messages, list):
         guided_messages = copy.deepcopy(messages)
         for message in guided_messages:
             if isinstance(message, dict) and str(message.get("role") or "").lower() == "system":
                 content = str(message.get("content") or "").rstrip()
                 message["content"] = (
-                    f"{content}\n{_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
+                    f"{content}\n{guidance}"
                     if content
-                    else _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION
+                    else guidance
                 )
                 return guided_messages, prompt
         guided_messages.insert(
             0,
-            {"role": "system", "content": _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION},
+            {"role": "system", "content": guidance},
         )
         return guided_messages, prompt
     prompt_text = str(prompt or "").rstrip()
     if not prompt_text:
-        return messages, _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION
-    return messages, f"{prompt_text}\n\n{_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
+        return messages, guidance
+    return messages, f"{prompt_text}\n\n{guidance}"
 
 
 def _repair_live_user_surface_operational_status(
@@ -1795,6 +1804,10 @@ _SURFACE_RETRY_INSTRUCTIONS: dict[str, str] = {
     "question_back_non_answer": (
         "Answer first, in your own words. A question back does not substitute for "
         "the answer."
+    ),
+    "exposed_competing_draft": (
+        "Resolve the alternatives before writing. Return one coherent final answer "
+        "without showing or retracting an abandoned version."
     ),
     "low_signal_acknowledgement_placeholder": (
         "An acknowledgement is not an answer. Say the substance."
