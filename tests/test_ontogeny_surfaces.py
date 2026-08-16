@@ -152,6 +152,15 @@ class TestSelfConditionIntegration:
         assert "observation_rate=0.12" in block
         assert "history, not a current reading" in block
 
+    def test_language_grounding_is_semantic_evidence_not_a_status_card(self):
+        block = self._projection(self._rich()).to_language_grounding()
+
+        assert "direct runtime evidence" in block
+        assert "interpretations or inferences" in block
+        assert "condition=" not in block
+        assert "evidence_id=" not in block
+        assert "## CANONICAL" not in block
+
     def test_history_is_outside_the_evidence_id(self):
         """The id identifies the sample of her state, not her accumulated past."""
         with_history = self._projection(self._rich())

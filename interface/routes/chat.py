@@ -11015,15 +11015,6 @@ async def _run_cognitive_engine_chat_turn(
                 "content when present, and answer any lightweight live-state clause from live_mind_context. "
                 "Do not answer an older topic from recent history."
             )
-        if self_condition_contract:
-            context["response_style_contract"] = (
-                str(context.get("response_style_contract") or "")
-                + " This is a direct question about Aura's own condition. Answer the "
-                "condition first from canonical_self_condition_context: affect, welfare, "
-                "felt coherence, continuity, agency, and evidence freshness. CPU, RAM, "
-                "host load, and availability are supporting body context only; never use "
-                "them as the answer. Do not answer only with presence reassurance."
-            )
         if runtime_fact_status_contract and not memory_state_contract:
             context["response_style_contract"] = (
                 str(context.get("response_style_contract") or "")
@@ -11213,13 +11204,6 @@ async def _run_cognitive_engine_chat_turn(
                 "and the active Cortex/model lane when present. Treat this verified runtime "
                 f"status as authoritative: {grounded_runtime_status_context} Do not answer with "
                 "a generic assistant identity or invent a bounded-status substitute."
-            )
-        if self_condition_contract:
-            engine_directives.append(
-                "Self-condition contract: answer whether Aura is okay from this canonical "
-                f"evidence: {canonical_self_condition_context} Put the direct condition answer "
-                "first. Treat CPU/RAM/host telemetry as supporting body context only, never "
-                "as a substitute for felt state, welfare, coherence, continuity, or agency."
             )
         if capability_inventory_contract:
             engine_directives.append(
@@ -15910,7 +15894,10 @@ def _build_self_condition_evidence(user_message: str) -> dict[str, Any]:
     return {
         "projection": projection,
         "projection_dict": projection.to_dict(),
-        "prompt_block": projection.to_prompt_block(),
+        # The full status representation remains available on the typed
+        # projection for audit. Language generation receives one compact
+        # semantic view instead of imitating a metric card.
+        "prompt_block": projection.to_language_grounding(),
         "reply": render_self_condition_reply(
             projection,
             user_message=user_message,

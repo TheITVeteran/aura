@@ -9038,7 +9038,8 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
     assert context["desktop_quick_reply_contract"] is True
     assert context["canonical_self_condition_projection"]["evidence_id"] == "condition-proof-1"
     assert "felt_coherence=0.93" in context["canonical_self_condition_context"]
-    assert "Self-condition contract" in calls[0]["objective"]
+    assert "Self-condition contract" not in calls[0]["objective"]
+    assert calls[0]["objective"] == prompt
     assert reply == canonical_reply
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is True
@@ -9247,6 +9248,80 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
     assert thought.metadata["self_condition_contract"] is True
     assert thought.metadata["self_condition_evidence_id"] == "condition-proof-2"
     assert thought.metadata["response_path"] == "cognitive_engine_self_condition"
+
+
+@pytest.mark.asyncio
+async def test_self_condition_prompt_has_one_projection_and_no_stale_assistant_drafts(
+    monkeypatch,
+):
+    from core.brain import cognitive_engine as ce_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    calls = []
+
+    class _Router:
+        async def think(self, **kwargs):
+            calls.append(kwargs)
+            return (
+                "I feel steady. The fresh runtime evidence directly shows bounded "
+                "distress and intact continuity; whether that persists is an inference."
+            )
+
+        def get_last_generation_metadata(self):
+            return {}
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return _Router() if name == "llm_router" else default
+
+    monkeypatch.setattr(ce_module, "get_container", lambda: _Container)
+    monkeypatch.setattr(
+        ce_module,
+        "_desktop_history_messages_from_context",
+        lambda _context: [
+            {"role": "user", "content": "How are you doing?"},
+            {
+                "role": "assistant",
+                "content": "Draft one. This is not accurate. Draft two.",
+            },
+        ],
+    )
+    evidence = (
+        "Aura has a fresh self-condition sample. The direct runtime evidence "
+        "supports a steady condition. Future persistence is an inference."
+    )
+    prompt = (
+        "ChatGPT here. Hey Aura, how are you doing right now? Answer naturally "
+        "from your current state, and distinguish what you know from what you can only infer."
+    )
+    context = {
+        "desktop_quick_reply_contract": True,
+        "desktop_cognitive_engine_required": True,
+        "cognitive_engine_required": True,
+        "self_condition_contract": True,
+        "canonical_self_condition_context": evidence,
+        "canonical_self_condition_projection": {"evidence_id": "condition-proof-3"},
+        "visible_user_message": prompt,
+        "recent_completed_exchanges": [{"runtime-stamped": True}],
+    }
+
+    thought = await CognitiveEngine()._direct_desktop_quick_reply(
+        "objective polluted by outer routing internals",
+        ThinkingMode.FAST,
+        "user",
+        context,
+        timeout_s=60.0,
+    )
+
+    assert thought is not None
+    messages = calls[0]["messages"]
+    joined = "\n".join(str(message["content"]) for message in messages)
+    assert joined.count(evidence) == 1
+    assert "condition=" not in joined
+    assert "Draft one" not in joined
+    assert prompt in messages[-1]["content"]
 
 
 def test_direct_self_condition_generation_is_an_authentic_full_mind_path(monkeypatch):

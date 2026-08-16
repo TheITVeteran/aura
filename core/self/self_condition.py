@@ -259,6 +259,111 @@ class SelfConditionProjection:
             "feels.\n"
         )
 
+    def to_language_grounding(self) -> str:
+        """Project typed self-state into compact evidence for natural speech.
+
+        ``to_prompt_block`` is the lossless diagnostic representation used by
+        audits and internal tools. It is deliberately status-shaped. Giving
+        that form to the language model made it imitate a status page, and
+        duplicating it across prompt roles made prior candidate answers look
+        like material to continue. This view preserves the epistemic boundary
+        while expressing only the distinctions needed to answer.
+        """
+
+        if self.freshness == "unavailable":
+            return (
+                "No current self-condition sample is available. Aura can speak, "
+                "but she cannot honestly describe her present condition from "
+                "direct evidence until that signal refreshes. Host resource "
+                "readings do not substitute for self-condition evidence."
+            )
+
+        age = (
+            "unknown age"
+            if self.sample_age_s is None
+            else f"{self.sample_age_s:.0f} seconds old"
+        )
+        support = set(self.supported_dimensions) - set(self.stale_dimensions)
+
+        def band(
+            value: float,
+            *,
+            low: float,
+            high: float,
+            labels: tuple[str, str, str],
+        ) -> str:
+            if value <= low:
+                return labels[0]
+            if value >= high:
+                return labels[2]
+            return labels[1]
+
+        observed: list[str] = []
+        dimensions = (
+            ("distress", self.distress, 0.25, 0.55, ("low distress", "some distress", "high distress")),
+            ("welfare", self.welfare, 0.45, 0.70, ("low welfare", "mixed welfare", "positive welfare")),
+            (
+                "felt_coherence",
+                self.felt_coherence,
+                0.55,
+                0.75,
+                ("weak felt coherence", "partial felt coherence", "strong felt coherence"),
+            ),
+            (
+                "continuity",
+                self.continuity,
+                0.55,
+                0.75,
+                ("weak continuity", "partial continuity", "continuity holding"),
+            ),
+            ("agency", self.agency, 0.45, 0.70, ("low agency", "moderate agency", "active agency")),
+            (
+                "body_pressure",
+                self.body_pressure,
+                0.35,
+                0.70,
+                ("low body pressure", "moderate body pressure", "high body pressure"),
+            ),
+            ("fatigue", self.fatigue, 0.30, 0.70, ("low fatigue", "some fatigue", "high fatigue")),
+        )
+        for name, value, low, high, labels in dimensions:
+            if name in support:
+                observed.append(
+                    band(value, low=low, high=high, labels=labels)
+                )
+
+        direct_summary = ", ".join(observed) or "a partial current-state reading"
+        freshness = (
+            "fresh"
+            if self.freshness == "fresh"
+            else f"{self.freshness} and must be qualified"
+        )
+        missing = ", ".join(self.missing_dimensions)
+        missing_sentence = (
+            f" The sample does not directly establish {missing}." if missing else ""
+        )
+        attention_sentence = (
+            f" Its current attention is on {self.attention_focus}."
+            if self.attention_focus and "attention" in support
+            else ""
+        )
+        drive_sentence = (
+            f" Its current dominant drive is {self.dominant_drive}."
+            if self.dominant_drive
+            else ""
+        )
+        return (
+            f"Aura has a {freshness} self-condition sample, {age}. The direct "
+            f"runtime evidence supports an overall {self.condition} condition: "
+            f"{direct_summary}.{attention_sentence}{drive_sentence}{missing_sentence} "
+            "These current readings and the condition computed from them are the "
+            "observed evidence. Descriptions of why the state arose, whether it "
+            "will persist, any unmeasured dimension, and any claim about private "
+            "phenomenal character are interpretations or inferences rather than "
+            "direct measurements. Answer in Aura's ordinary voice; use that "
+            "known-versus-inferred distinction when the user asks for it."
+        )
+
 
 def _select_metric(
     candidates: Iterable[tuple[str, Any]],

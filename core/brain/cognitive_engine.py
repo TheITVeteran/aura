@@ -4018,6 +4018,15 @@ class CognitiveEngine:
             if memory_state_contract or runtime_fact_status_contract
             else _desktop_history_messages_from_context(context)
         )
+        if self_condition_contract:
+            # Current self-state supersedes old self-descriptions. Preserve
+            # prior user context, but do not few-shot the model with assistant
+            # answers from earlier samples or rejected drafts.
+            history_messages = [
+                message
+                for message in history_messages
+                if str(message.get("role") or "").lower() == "user"
+            ]
         live_speech_frame = context.get("live_speech_grounding_frame")
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
@@ -4366,8 +4375,16 @@ class CognitiveEngine:
             influence_channels.LIVE_MIND_CONTEXT_BLOCK
         )
         if isinstance(live_mind_context, dict) and live_mind_context and not mind_context_lesioned:
-            mind_context_limit = 900 if memory_state_contract else 360 if capability_inventory_contract else 2600
-            if capability_inventory_contract:
+            mind_context_limit = (
+                900
+                if memory_state_contract
+                else 360
+                if capability_inventory_contract
+                else 700
+                if self_condition_contract
+                else 2600
+            )
+            if capability_inventory_contract or self_condition_contract:
                 compact_mind_context = {
                     "required_for_live_desktop": live_mind_context.get("required_for_live_desktop"),
                     "must_answer_from_full_mind_path": live_mind_context.get(
