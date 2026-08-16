@@ -198,10 +198,12 @@ def scan() -> dict[str, object]:
     # `__init__.py` lands here whenever the only explicit `from core.x import`
     # in the tree is in a test — which says nothing about whether the package
     # is live.
+    declared = _declared_experimental()
     test_only = sorted(
         name
         for name, path in core_modules.items()
         if path.name != "__init__.py"
+        and name not in declared
         and importers[name]
         and not _production_importers(importers[name])
     )
@@ -214,6 +216,31 @@ def scan() -> dict[str, object]:
         "test_only": test_only,
         "test_only_count": len(test_only),
     }
+
+
+def _declared_experimental() -> dict[str, str]:
+    """Modules that are a scientific rig, not a runtime path.
+
+    An experiment legitimately has no production consumer: it exists to be run
+    deliberately and to produce a result, and wiring it into the runtime to
+    satisfy a counter would be worse than leaving it out. The test-only rule is
+    right for a module that claims to do something at runtime and wrong for
+    one that does not claim to, so the difference is declared rather than
+    inferred — and each entry has to say why, because an undeclared list is
+    where "experimental" becomes a synonym for "unfinished and forgotten".
+    """
+    path = ROOT / "config" / "experimental_modules.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # Fail closed: an unreadable declaration excludes nothing.
+        return {}
+    modules = data.get("modules", {})
+    if not isinstance(modules, dict):
+        return {}
+    return {str(k): str(v) for k, v in modules.items() if str(v).strip()}
 
 
 def _production_importers(names: set[str]) -> set[str]:
