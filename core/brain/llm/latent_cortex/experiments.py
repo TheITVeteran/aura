@@ -51,6 +51,9 @@ CONJECTURE = "CONJECTURE"
 REFUTED = "REFUTED"
 
 _MIN_N_FOR_VERDICT = 20  # below this, everything is CONJECTURE
+#: Family-wise error rate for factorial attribution, held across every arm the
+#: caller chose to test rather than within each arm separately.
+_FACTORIAL_ARM_ALPHA = 0.05
 _BOOTSTRAP_RESAMPLES = 10_000
 # Significance level a slot must clear AFTER correction across every slot
 # tested in the same run.
@@ -1335,10 +1338,31 @@ def run_factorial_ablations(
             require_compute=False,
             provenance=provenance,
         ).to_dict()
+    # CP126 ba3ffbac: each arm was graded on its own and any arm reaching
+    # PROVEN or SUPPORTED joined the attribution list. Holm ran INSIDE a claim,
+    # across that arm's families, and never across the arms themselves — so
+    # testing seven mechanisms at alpha 0.05 gave roughly a one-in-three chance
+    # of attributing a gain to a mechanism that did nothing, and the caller
+    # chooses the arm tuple, so the error rate is the caller's to inflate.
+    #
+    # An arm's evidence is its strongest family, so its arm-level p is the
+    # smallest within-claim adjusted p it produced. Holm across those controls
+    # the family-wise error over the arms actually tested.
+    arm_pvalues: dict[str, float] = {}
+    for arm in arms:
+        within = claims[arm]["evidence"].get("holm_adjusted_p") or {}
+        finite = [
+            float(value)
+            for value in within.values()
+            if isinstance(value, (int, float)) and math.isfinite(float(value))
+        ]
+        arm_pvalues[arm] = min(finite) if finite else 1.0
+    arm_adjusted = _holm_adjust(arm_pvalues)
     attribution = [
         arm
         for arm in arms
         if claims[arm]["tier"] in {PROVEN, SUPPORTED}
+        and arm_adjusted.get(arm, 1.0) < _FACTORIAL_ARM_ALPHA
     ]
     return {
         "arms": {
@@ -1347,6 +1371,15 @@ def run_factorial_ablations(
         },
         "claims": claims,
         "attribution": attribution,
+        # What attribution survived correction, and what it was corrected
+        # against. A reader who only sees the surviving list cannot tell a
+        # two-arm study from a twenty-arm one.
+        "arm_holm_adjusted_p": {arm: round(value, 9) for arm, value in arm_adjusted.items()},
+        "arm_family_wise_alpha": _FACTORIAL_ARM_ALPHA,
+        "arms_tested": len(arms),
+        "attribution_before_arm_correction": [
+            arm for arm in arms if claims[arm]["tier"] in {PROVEN, SUPPORTED}
+        ],
     }
 
 
