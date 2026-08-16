@@ -78,6 +78,17 @@ VALID_STATUSES = {
     # source supports. Not "wont_fix" (nothing was declined) and not
     # "assessed_no_change" (the assessment CHANGED what the finding claims).
     "analyzed_scope_corrected",
+    # Remediated, with the part that was NOT done named and justified in the
+    # note. Distinct from "remediated" (nothing left) and from
+    # "analyzed_scope_corrected" (the finding overstated the problem): here
+    # the finding was right, most of it is closed, and the residue is a
+    # dependency that does not exist yet — a signing chain, an external
+    # control. Four rows carried this and no reader recognised it, so four
+    # closed findings counted as open. The SECOND time an unrecognised
+    # status silently reopened work, which is why
+    # tests/test_a_status_no_reader_knows.py now fails on the first one
+    # rather than waiting for someone to run `verify`.
+    "remediated_scope_named",
 }
 # Statuses that assert the finding required no code change must explain why;
 # an unexplained "assessed" is indistinguishable from a skipped finding.
@@ -87,6 +98,9 @@ STATUSES_REQUIRING_NOTE = {
     "superseded",
     "verified_already_remediated",
     "analyzed_scope_corrected",
+    # The residue is the whole point of this status, so an unexplained one
+    # is a closure claim with no scope attached.
+    "remediated_scope_named",
 }
 
 
