@@ -21,10 +21,10 @@ from core.learning.frontier_process_supervision import (
 )
 from core.learning.recurrent_action_schema import (
     ACTION_NULL,
+    OP_CAUSAL_CHAIN,
     OP_FRONTIER_AUDIT,
     OP_FRONTIER_CALIBRATE,
     OP_FRONTIER_ENUMERATE,
-    OP_FRONTIER_INFER,
     OP_FRONTIER_SCHEDULE,
     OP_FRONTIER_SIMULATE,
     OP_FRONTIER_TRAVERSE,
@@ -59,7 +59,10 @@ _EXPECTED_OPCODES = {
     "novel_algorithms": {OP_FRONTIER_TRAVERSE},
     "mathematics": {OP_FRONTIER_ENUMERATE},
     "coding": {OP_PAIR_SET, OP_SET_SCALAR, OP_SIGNED_PAIR_ADD_IMMEDIATE},
-    "scientific_inference": {OP_FRONTIER_INFER},
+    # CP557 replaced the single opaque "advance one causal inference stage"
+    # opcode with an executable chain: set up the variable pair and the query
+    # scalar, then integrate one causal-chain observation per step.
+    "scientific_inference": {OP_PAIR_SET, OP_SET_SCALAR, OP_CAUSAL_CHAIN},
     "long_horizon_planning": {OP_FRONTIER_SCHEDULE},
     "calibration": {
         OP_PAIR_SET,

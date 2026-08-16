@@ -71,21 +71,29 @@ _STATEFUL_TRACE_RE = re.compile(
     r"dictionary operations are O\(1\)\.",
     re.DOTALL,
 )
+# The baseline list is NOT in root-mediator-downstream order — the generator
+# shuffles it so the roles cannot be read off the sentence. This regex used to
+# name the three baselines by role, so it matched nothing and the deterministic
+# critic silently declined every scientific-inference task: a check that could
+# never fire. Baselines are captured by position; the roles come from the
+# intervention clauses, which name them, exactly as the action compiler in
+# core/learning/public_frontier_action_compiler.py already did.
 _CAUSAL_CHAIN_RE = re.compile(
     r"\AFresh causal-inference task\. Three measured variables have baseline values "
-    r"(?P<root>[a-z][a-z0-9_]*)=(?P<root_base>-?\d+), "
-    r"(?P<mediator>[a-z][a-z0-9_]*)=(?P<mediator_base>-?\d+), "
-    r"(?P<downstream>[a-z][a-z0-9_]*)=(?P<downstream_base>-?\d+)\. "
+    r"(?P<label_a>[a-z][a-z0-9_]*)=(?P<base_a>-?\d+), "
+    r"(?P<label_b>[a-z][a-z0-9_]*)=(?P<base_b>-?\d+), "
+    r"(?P<label_c>[a-z][a-z0-9_]*)=(?P<base_c>-?\d+)\. "
     r"Independent interventions produced these changes relative to baseline: setting "
-    r"(?P=root) up by (?P<root_delta>\d+) changed (?P=mediator) by "
-    r"(?P<mediator_change>[+-]\d+) and (?P=downstream) by "
-    r"(?P<downstream_change>[+-]\d+); setting (?P=mediator) up by "
-    r"(?P<mediator_delta>\d+) left (?P=root) unchanged and changed (?P=downstream) "
-    r"by (?P<mediator_downstream_change>[+-]\d+); setting (?P=downstream) up by "
+    r"(?P<root>[a-z][a-z0-9_]*) up by (?P<root_delta>\d+) changed "
+    r"(?P<root_target_1>[a-z][a-z0-9_]*) by (?P<root_change_1>[+-]\d+) and "
+    r"(?P<root_target_2>[a-z][a-z0-9_]*) by (?P<root_change_2>[+-]\d+); setting "
+    r"(?P<mediator>[a-z][a-z0-9_]*) up by (?P<mediator_delta>\d+) left (?P=root) "
+    r"unchanged and changed (?P<downstream>[a-z][a-z0-9_]*) by "
+    r"(?P<mediator_downstream_change>[+-]\d+); setting (?P=downstream) up by "
     r"(?P<downstream_delta>\d+) left both other variables unchanged\. Assume "
-    r"deterministic linear effects and no hidden common cause\. Identify root, mediator, "
-    r"and downstream variables, then predict the absolute value of (?P=downstream) when "
-    r"(?P=root) is set (?P<predict_delta>\d+) above baseline\.",
+    r"deterministic linear effects and no hidden common cause\. Identify root, "
+    r"mediator, and downstream variables, then predict the absolute value of "
+    r"(?P=downstream) when (?P=root) is set (?P<predict_delta>\d+) above baseline\.",
 )
 _PLANNING_RE = re.compile(
     r"\AFresh planning task\. One crew executes at most one task at a time, starts at "
@@ -413,26 +421,42 @@ def _causal_chain_expected(
         match.group("downstream"),
     )
     root_delta = int(match.group("root_delta"))
-    mediator_change = int(match.group("mediator_change"))
+    # The root's two effects are listed in either order, so read them by name
+    # rather than by position — the same reason the roles are read from the
+    # clauses instead of from the baseline list.
+    root_effects = {
+        match.group("root_target_1"): int(match.group("root_change_1")),
+        match.group("root_target_2"): int(match.group("root_change_2")),
+    }
+    if set(root_effects) != {match.group("mediator"), match.group("downstream")}:
+        raise ValueError("causal_root_effects_do_not_name_the_roles")
+    mediator_change = root_effects[match.group("mediator")]
     mediator_delta = int(match.group("mediator_delta"))
     mediator_downstream_change = int(match.group("mediator_downstream_change"))
     downstream_delta = int(match.group("downstream_delta"))
     predict_delta = int(match.group("predict_delta"))
-    downstream_base = int(match.group("downstream_base"))
-    downstream_change = int(match.group("downstream_change"))
-    numeric_values = tuple(
-        int(match.group(field))
-        for field in (
-            "root_base",
-            "mediator_base",
-            "downstream_base",
-            "root_delta",
-            "mediator_change",
-            "downstream_change",
-            "mediator_delta",
-            "mediator_downstream_change",
-            "downstream_delta",
-            "predict_delta",
+    # Baselines are listed in an order the generator chooses, so pair each one
+    # with its own label and look the downstream variable up by name.
+    baselines = {
+        match.group(f"label_{slot}"): int(match.group(f"base_{slot}"))
+        for slot in ("a", "b", "c")
+    }
+    if set(baselines) != set(labels):
+        raise ValueError("causal_baselines_do_not_name_the_roles")
+    downstream_base = baselines[match.group("downstream")]
+    downstream_change = root_effects[match.group("downstream")]
+    numeric_values = (
+        tuple(baselines.values())
+        + (mediator_change, downstream_change)
+        + tuple(
+            int(match.group(field))
+            for field in (
+                "root_delta",
+                "mediator_delta",
+                "mediator_downstream_change",
+                "downstream_delta",
+                "predict_delta",
+            )
         )
     )
     if len(set(labels)) != 3 or any(abs(value) > 1_000_000_000 for value in numeric_values):

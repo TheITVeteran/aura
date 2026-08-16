@@ -57,12 +57,12 @@ from core.learning.recurrent_action_schema import (
     OP_PAIR_MUL_IMMEDIATE,
     OP_PAIR_PRODUCT,
     OP_PAIR_SET,
-    OP_PAIR_SUB_IMMEDIATE,
     OP_PAIR_SIGNED_SUB_IMMEDIATE,
+    OP_PAIR_SUB_IMMEDIATE,
     OP_RANKED_COMMIT,
-    OP_REGISTER_AFFINE,
     OP_RATIO_BAND,
     OP_RATIO_CHOICE,
+    OP_REGISTER_AFFINE,
     OP_SET_SCALAR,
     OP_SIGNED_PAIR_ADD_IMMEDIATE,
     OP_SIGNED_RANKED_GREATER,
@@ -245,6 +245,65 @@ def _canonical_sha256(value: Any) -> str:
             allow_nan=False,
         ).encode("ascii")
     ).hexdigest()
+
+
+#: Opcodes the categorical microcode ACTUALLY executes. Recognition used to be
+#: a range check against MAX_RECURRENT_OPCODE, which meant every opcode added
+#: to the schema was declared recognized here before anyone wrote a branch for
+#: it — a check reporting yes when it meant "the number is in range". Adding an
+#: opcode to core/learning/recurrent_action_schema.py now leaves it
+#: unrecognized until it is implemented below AND listed here, so the failure
+#: names the gap instead of surfacing as a wrong next state.
+MICROCODE_IMPLEMENTED_OPCODES: Final = frozenset(
+    {
+        OP_COPY_VALUE,
+        OP_ADD_MOD,
+        OP_MUL_MOD,
+        OP_SUB_MOD,
+        OP_BOOL_NOT,
+        OP_BOOL_AND,
+        OP_BOOL_OR,
+        OP_BOOL_XOR,
+        OP_REGISTER_AFFINE,
+        OP_FRONTIER_TRAVERSE,
+        OP_FRONTIER_ENUMERATE,
+        OP_FRONTIER_SIMULATE,
+        OP_FRONTIER_INFER,
+        OP_FRONTIER_SCHEDULE,
+        OP_FRONTIER_CALIBRATE,
+        OP_FRONTIER_AUDIT,
+        OP_PAIR_SET,
+        OP_PAIR_ADD,
+        OP_PAIR_MUL_IMMEDIATE,
+        OP_PAIR_SUB_IMMEDIATE,
+        OP_PAIR_SIGNED_SUB_IMMEDIATE,
+        OP_PAIR_DIV,
+        OP_RATIO_CHOICE,
+        OP_RATIO_BAND,
+        OP_SIGNED_PAIR_ADD_IMMEDIATE,
+        OP_SIGNED_RANKED_GREATER,
+        OP_RANKED_COMMIT,
+        OP_SET_SCALAR,
+        OP_PAIR_COPY,
+        OP_PAIR_EUCLID_STEP,
+        OP_PAIR_PRODUCT,
+    }
+)
+_MICROCODE_OPCODE_MASK: Any = None
+
+
+def _microcode_implemented_opcode_mask() -> Any:
+    """A 0/1 lookup over the opcode vocabulary, built once."""
+    global _MICROCODE_OPCODE_MASK
+    if _MICROCODE_OPCODE_MASK is None:
+        _MICROCODE_OPCODE_MASK = mx.array(
+            [
+                1 if code in MICROCODE_IMPLEMENTED_OPCODES else 0
+                for code in range(ACTION_NULL + 1)
+            ],
+            dtype=mx.int32,
+        )
+    return _MICROCODE_OPCODE_MASK
 
 
 @dataclass(frozen=True, slots=True)
@@ -2813,11 +2872,13 @@ class UnifiedRecurrentController(nn.Module):
                     mx.int32
                 )
                 opcode = action_values[:, 0]
-                recognized = (
-                    (opcode >= OP_COPY_VALUE)
-                    & (opcode <= MAX_RECURRENT_OPCODE)
-                    & (opcode != ACTION_NULL)
-                )
+                # Same membership rule as microcode_transition_logits: an
+                # opcode is recognized because a branch executes it, not
+                # because its number is inside a range.
+                recognized = mx.take(
+                    _microcode_implemented_opcode_mask(),
+                    mx.minimum(opcode, ACTION_NULL),
+                ).astype(mx.bool_)
                 next_pc = mx.minimum(
                     state_values[:, 0] + 1,
                     self.config.state_cardinality - 1,
@@ -3258,8 +3319,16 @@ class UnifiedRecurrentController(nn.Module):
         opcode = action[:, 0]
         arguments = action[:, 1:7]
         terminal = action[:, 7]
-        recognized = (opcode >= OP_COPY_VALUE) & (opcode <= MAX_RECURRENT_OPCODE)
-        recognized = recognized & (opcode != ACTION_NULL)
+        # RECOGNITION IS MEMBERSHIP, NOT RANGE. This was
+        # `opcode <= MAX_RECURRENT_OPCODE`, so every opcode added to the
+        # schema was declared recognized here the moment the constant moved —
+        # implemented or not. OP_CAUSAL_CHAIN arrived that way: the microcode
+        # reported success, executed no branch, returned the registers
+        # unchanged, and three process-supervision tests failed with a state
+        # mismatch instead of "this opcode is not implemented".
+        recognized = mx.take(
+            _microcode_implemented_opcode_mask(), mx.minimum(opcode, ACTION_NULL)
+        ).astype(mx.bool_)
 
         pc = mx.minimum(state[:, 0] + 1, self.config.state_cardinality - 1)
         values = [state[:, index] for index in range(1, self.config.state_slots - 1)]
