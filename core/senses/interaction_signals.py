@@ -4,7 +4,6 @@ import asyncio
 import base64
 import logging
 import math
-import os
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -68,6 +67,8 @@ class VoiceSignalState:
 @dataclass
 class VisionSignalState:
     updated_at: float = 0.0
+    sample_available: bool = False
+    presence_assessed: bool = False
     face_present: bool = False
     face_count: int = 0
     face_area_ratio: float = 0.0
@@ -80,6 +81,8 @@ class VisionSignalState:
     speaking_active: bool = False
     method: str = "haar_cascade_pupil_threshold"
     reliability: str = "rough_attention_indicator"
+    observation: str = ""
+    reason: str = ""
 
 
 @dataclass
@@ -168,6 +171,37 @@ class InteractionSignalsEngine:
             timeout=0.1,
         )
 
+    def record_explicit_vision_observation(
+        self,
+        observation: str,
+        *,
+        observed_at: float | None = None,
+    ) -> bool:
+        """Make an interpreted one-shot camera reading canonical.
+
+        The one-shot sight lane uses a multimodal model and therefore cannot
+        honestly populate the Haar lane's face count, gaze, or head-pose
+        fields. It can still establish that the camera produced a fresh,
+        interpreted observation. Keeping those two facts separate prevents a
+        successful look from becoming either "never sampled" or "zero faces"
+        when operational self-context is assembled later in the same turn.
+        """
+
+        text = " ".join(str(observation or "").split()).strip()
+        if not text:
+            return False
+        self._vision = VisionSignalState(
+            updated_at=float(observed_at or time.time()),
+            sample_available=True,
+            presence_assessed=False,
+            attention_available=0.5,
+            method="qwen_vl_one_shot",
+            reliability="fresh_interpreted_scene",
+            observation=text[:1200],
+        )
+        self._fused = self._compute_fused_state()
+        return True
+
     def _publish_voice_activity_to_world_state(self, payload: dict[str, Any]) -> None:
         speech_ratio = _safe_float(payload.get("speech_ratio"), 0.0)
         rms = _safe_float(payload.get("rms_avg", payload.get("rms")), 0.0)
@@ -229,8 +263,13 @@ class InteractionSignalsEngine:
         voice_label = self._voice.label if _freshness_weight(self._voice.updated_at, self._VOICE_HALF_LIFE_S) > 0.15 else "unknown"
         typing_label = self._typing.label if _freshness_weight(self._typing.updated_at, self._TYPING_HALF_LIFE_S) > 0.15 else "unknown"
         vision_bits = []
-        if _freshness_weight(self._vision.updated_at, self._VISION_HALF_LIFE_S) > 0.15:
-            if self._vision.face_present:
+        if (
+            self._vision.sample_available
+            and _freshness_weight(self._vision.updated_at, self._VISION_HALF_LIFE_S) > 0.15
+        ):
+            if not self._vision.presence_assessed:
+                vision_bits.append("fresh interpreted scene observation available")
+            elif self._vision.face_present:
                 vision_bits.append(f"face present, gaze={self._vision.gaze_direction}, head={self._vision.head_pose}")
             else:
                 vision_bits.append("no face currently visible")
@@ -377,8 +416,21 @@ class InteractionSignalsEngine:
         )
 
     def _update_vision_state(self, payload: dict[str, Any]) -> VisionSignalState:
+        sample_available = bool(
+            payload.get(
+                "sample_available",
+                "face_present" in payload and payload.get("reliability") != "unavailable",
+            )
+        )
         return VisionSignalState(
             updated_at=_safe_float(payload.get("updated_at"), time.time()),
+            sample_available=sample_available,
+            presence_assessed=bool(
+                payload.get(
+                    "presence_assessed",
+                    sample_available and "face_present" in payload,
+                )
+            ),
             face_present=bool(payload.get("face_present", False)),
             face_count=max(0, int(_safe_float(payload.get("face_count"), 0.0))),
             face_area_ratio=round(_clamp01(_safe_float(payload.get("face_area_ratio"), 0.0)), 4),
@@ -397,13 +449,19 @@ class InteractionSignalsEngine:
             speaking_active=bool(payload.get("speaking_active", False)),
             method=str(payload.get("method") or "haar_cascade_pupil_threshold"),
             reliability=str(payload.get("reliability") or "rough_attention_indicator"),
+            observation=" ".join(str(payload.get("observation") or "").split())[:1200],
+            reason=str(payload.get("reason") or "")[:300],
         )
 
     def _compute_fused_state(self) -> FusedInteractionState:
         now = time.time()
         typing_weight = _freshness_weight(self._typing.updated_at, self._TYPING_HALF_LIFE_S)
         voice_weight = _freshness_weight(self._voice.updated_at, self._VOICE_HALF_LIFE_S)
-        vision_weight = _freshness_weight(self._vision.updated_at, self._VISION_HALF_LIFE_S)
+        vision_weight = (
+            _freshness_weight(self._vision.updated_at, self._VISION_HALF_LIFE_S)
+            if self._vision.sample_available
+            else 0.0
+        )
 
         active_modalities: list[str] = []
         total_weight = 0.0
@@ -427,10 +485,11 @@ class InteractionSignalsEngine:
 
         if vision_weight > 0.15:
             active_modalities.append("vision")
-            total_weight += vision_weight
-            activation_sum += vision_weight * (0.18 if self._vision.face_present else 0.0)
-            steadiness_sum += vision_weight * max(0.15, self._vision.attention_available)
-            engagement_sum += vision_weight * self._vision.attention_available
+            if self._vision.presence_assessed:
+                total_weight += vision_weight
+                activation_sum += vision_weight * (0.18 if self._vision.face_present else 0.0)
+                steadiness_sum += vision_weight * max(0.15, self._vision.attention_available)
+                engagement_sum += vision_weight * self._vision.attention_available
 
         activation = activation_sum / total_weight if total_weight > 0 else 0.0
         steadiness = steadiness_sum / total_weight if total_weight > 0 else 0.5
@@ -442,7 +501,7 @@ class InteractionSignalsEngine:
         )
         hesitation = _clamp01(hesitation)
 
-        if vision_weight > 0.15:
+        if vision_weight > 0.15 and self._vision.presence_assessed:
             attention_available = self._vision.attention_available
         else:
             attention_available = _clamp01(0.42 + (typing_weight * 0.18) + (voice_weight * 0.14) - (hesitation * 0.25))
@@ -471,7 +530,9 @@ class InteractionSignalsEngine:
         if voice_weight > 0.15 and self._voice.label != "quiet":
             summary_bits.append(f"voice sounds {self._voice.label}")
         if vision_weight > 0.15:
-            if self._vision.face_present:
+            if not self._vision.presence_assessed:
+                summary_bits.append("camera has a fresh interpreted scene observation")
+            elif self._vision.face_present:
                 summary_bits.append(f"camera shows attention {self._vision.gaze_direction}")
             else:
                 summary_bits.append("camera does not currently see a face")
@@ -548,10 +609,15 @@ class InteractionSignalsEngine:
 
     def _analyze_vision_frame_sync(self, jpeg_bytes: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
         if not jpeg_bytes:
-            return {"updated_at": time.time()}
+            return {
+                "updated_at": time.time(),
+                "sample_available": False,
+                "reason": "empty camera payload",
+            }
         if not self._ensure_vision_backend():
             return {
                 "updated_at": time.time(),
+                "sample_available": False,
                 "method": "vision_backend_deferred",
                 "reliability": "unavailable",
                 "reason": self._vision_backend_reason,
@@ -561,6 +627,7 @@ class InteractionSignalsEngine:
             if cv2_main_process_blocked():
                 return {
                     "updated_at": time.time(),
+                    "sample_available": False,
                     "method": "vision_backend_deferred",
                     "reliability": "unavailable",
                     "reason": "cv2_blocked_in_main_process_after_pyav_load",
@@ -571,7 +638,11 @@ class InteractionSignalsEngine:
             frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
             frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
             if frame is None:
-                return {"updated_at": time.time()}
+                return {
+                    "updated_at": time.time(),
+                    "sample_available": False,
+                    "reason": "camera payload could not be decoded",
+                }
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.equalizeHist(gray)
@@ -590,6 +661,8 @@ class InteractionSignalsEngine:
                     self._visual_speech_pipeline.process_frame(gray)
                 return {
                     "updated_at": time.time(),
+                    "sample_available": True,
+                    "presence_assessed": True,
                     "face_present": False,
                     "face_count": 0,
                     "attention_available": 0.28,
@@ -677,6 +750,8 @@ class InteractionSignalsEngine:
 
             return {
                 "updated_at": time.time(),
+                "sample_available": True,
+                "presence_assessed": True,
                 "face_present": True,
                 "face_count": int(len(faces)),
                 "face_area_ratio": round(_clamp01(face_area_ratio), 4),
@@ -696,7 +771,11 @@ class InteractionSignalsEngine:
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('interaction_signals', exc)
             logger.debug("Vision frame analysis failed: %s", exc)
-            return {"updated_at": time.time()}
+            return {
+                "updated_at": time.time(),
+                "sample_available": False,
+                "reason": f"{type(exc).__name__}: {exc}"[:300],
+            }
 
 
 def decode_data_url_image(data_url: str) -> bytes:

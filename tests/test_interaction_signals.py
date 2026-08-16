@@ -78,6 +78,34 @@ def test_interaction_signals_voice_and_vision_raise_attention_and_engagement():
     assert "vision" in fused.active_modalities
 
 
+def test_explicit_camera_observation_is_fresh_without_inventing_face_count():
+    engine = InteractionSignalsEngine()
+
+    assert engine.record_explicit_vision_observation(
+        "A person is seated in front of the computer and another person is behind them."
+    )
+
+    vision = engine.get_status()["vision"]
+    assert vision["sample_available"] is True
+    assert vision["presence_assessed"] is False
+    assert vision["method"] == "qwen_vl_one_shot"
+    assert "another person" in vision["observation"]
+    assert "fresh interpreted scene observation" in engine.get_prompt_guidance()
+
+
+def test_failed_camera_analysis_is_not_reported_as_a_valid_sample():
+    engine = InteractionSignalsEngine()
+
+    state = engine._update_vision_state(
+        engine._analyze_vision_frame_sync(b"", {})
+    )
+
+    assert state.updated_at > 0.0
+    assert state.sample_available is False
+    assert state.presence_assessed is False
+    assert state.reason == "empty camera payload"
+
+
 @pytest.mark.asyncio
 async def test_interaction_voice_signal_updates_world_state_without_transcript():
     from core.world_state import get_world_state

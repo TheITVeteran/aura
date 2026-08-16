@@ -62,6 +62,24 @@ def camera_observation_age_seconds() -> float | None:
         return None
     return max(0.0, time.monotonic() - _LAST_CAMERA_OBSERVATION_AT)
 
+
+def _record_canonical_camera_observation(observation: str) -> None:
+    """Converge one-shot sight with the runtime's canonical sense state."""
+
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        engine = get_runtime_service("interaction_signals", default=None)
+        recorder = getattr(engine, "record_explicit_vision_observation", None)
+        if callable(recorder):
+            recorder(observation, observed_at=time.time())
+    except _SIGHT_ERRORS as exc:
+        record_degradation(
+            "senses.sight.canonical_state",
+            exc,
+            action="kept the successful one-shot observation in turn context",
+        )
+
 # How long to wait for a surface to hand back a frame. A browser that has the
 # camera warm answers in tens of milliseconds; one that has to start the
 # device takes noticeably longer, and past this the honest answer is that she
@@ -412,6 +430,7 @@ async def look(
         )
         return Look(ok=False, frame=frame, cause="empty", detail="vision returned nothing")
 
+    _record_canonical_camera_observation(text)
     _note_camera_observation()
     logger.info("look: %d bytes -> %d chars", len(frame.data), len(text))
     return Look(ok=True, answer=text, frame=frame)

@@ -434,6 +434,13 @@ def _signal_reading(channel: str, signals: dict[str, Any], key: str) -> Reading:
             provenance=f"interaction_signals.{key}.updated_at",
             detail="this sense has never produced a sample",
         )
+    if block.get("sample_available") is False:
+        return Reading(
+            channel=channel,
+            state=ReadingState.ABSENT_UNAVAILABLE,
+            provenance=f"interaction_signals.{key}",
+            detail=str(block.get("reason") or "the latest sample could not be interpreted"),
+        )
     return Reading(
         channel=channel,
         state=ReadingState.READ,
@@ -520,7 +527,7 @@ def render_shared_present_answer(bundle: EvidenceBundle) -> str:
                 faces = value.get("face_count")
                 lines.append(
                     f"Camera: {faces} face(s) in view."
-                    if isinstance(faces, int)
+                    if value.get("presence_assessed") and isinstance(faces, int)
                     else "Camera: reading available."
                 )
             else:

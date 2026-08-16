@@ -301,6 +301,58 @@ def test_a_sampled_sense_reads_normally() -> None:
     assert reading.value["face_count"] == 2
 
 
+def test_an_uninterpretable_sample_is_not_promoted_to_a_reading() -> None:
+    from core.introspection.self_evidence import _signal_reading
+
+    reading = _signal_reading(
+        "camera",
+        {
+            "vision": {
+                "updated_at": 1786440000.0,
+                "sample_available": False,
+                "reason": "vision backend unavailable",
+            }
+        },
+        "vision",
+    )
+
+    assert reading.state is ReadingState.ABSENT_UNAVAILABLE
+    assert reading.present is False
+    assert reading.detail == "vision backend unavailable"
+
+
+def test_explicit_camera_observation_reaches_shared_present_evidence(monkeypatch) -> None:
+    from core.container import ServiceContainer
+    from core.conversation.chat_preflight import _sense_availability_summary
+    from core.introspection.self_evidence import resolve_shared_present
+    from core.senses.interaction_signals import InteractionSignalsEngine
+
+    engine = InteractionSignalsEngine()
+    engine.record_explicit_vision_observation("Two people are visible.")
+    original_get = ServiceContainer.get
+
+    def get_service(_cls, name, default=None):
+        if name == "interaction_signals":
+            return engine
+        return original_get(name, default=default)
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(get_service))
+
+    camera = next(
+        reading
+        for reading in resolve_shared_present().readings
+        if reading.channel == "camera"
+    )
+
+    assert camera.present is True
+    assert camera.value["sample_available"] is True
+    assert camera.value["observation"] == "Two people are visible."
+    assert not any(
+        line.lstrip().startswith("camera:")
+        for line in _sense_availability_summary()
+    )
+
+
 def test_missing_sense_service_still_names_every_channel() -> None:
     """Omitting them would rebuild the defect one level up."""
     from core.introspection.self_evidence import resolve_shared_present

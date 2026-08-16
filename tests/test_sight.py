@@ -475,6 +475,50 @@ def test_the_dependency_check_reports_the_real_environment() -> None:
         assert gap == ""
 
 
+@pytest.mark.asyncio
+async def test_successful_look_updates_canonical_camera_evidence(monkeypatch) -> None:
+    from core.runtime import service_registry
+    from core.senses import sight as sight_module
+    from core.senses.interaction_signals import InteractionSignalsEngine
+
+    engine = InteractionSignalsEngine()
+    monkeypatch.setattr(sight_module, "sight_dependency_gap", lambda: "")
+    monkeypatch.setattr(sight_module, "camera_enabled", lambda: True)
+    monkeypatch.setattr(
+        service_registry,
+        "get_runtime_service",
+        lambda name, default=None: engine if name == "interaction_signals" else default,
+    )
+
+    async def request_frame(*, timeout_s: float, explicit_user_consent: bool):
+        assert timeout_s > 0.0
+        return Frame(data=b"interpretable-jpeg", width=1280, height=720)
+
+    class VisionClient:
+        async def see_async(self, prompt: str, image_base64: str) -> str:
+            assert "whether anyone else is here" in prompt.lower()
+            assert image_base64
+            return "Two people are visible in front of the computer."
+
+    monkeypatch.setattr(
+        sight_module.get_capture_broker(),
+        "request_frame",
+        request_frame,
+    )
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_vision_client.get_vision_client",
+        lambda: VisionClient(),
+    )
+
+    result = await sight_module.look("whether anyone else is here")
+    vision = engine.get_status()["vision"]
+
+    assert result.ok is True
+    assert vision["sample_available"] is True
+    assert vision["presence_assessed"] is False
+    assert vision["observation"] == "Two people are visible in front of the computer."
+
+
 # ── the worker actually reads the image ──────────────────────────────────
 
 
