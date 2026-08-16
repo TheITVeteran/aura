@@ -1722,6 +1722,35 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
             **answer_contract_args,
         )
     )
+    tampered_binding = copy.deepcopy(body["receipt"])
+    final_authority = next(
+        node["authority"]
+        for node in tampered_binding["kv_state_tree"]["nodes"]
+        if node.get("final") is True
+    )
+    valid_purposes = {
+        "vanilla_incumbent_output": {
+            "bind_captured_vanilla_incumbent",
+            "final_vanilla_incumbent_decode",
+        },
+        "canonical_ordinary_decode_artifact": {
+            "bind_canonical_incumbent_artifact",
+        },
+    }[final_authority]
+    binding_event = next(
+        event
+        for event in tampered_binding["kv_state_tree"]["events"]
+        if event.get("purpose") in valid_purposes
+        and event.get("disposition") == "committed"
+    )
+    binding_event["purpose"] = "unbound_incumbent_output"
+    assert "decode_incumbent_unproven" in (
+        LatentCortexService._receipt_contract_errors(
+            tampered_binding,
+            contract_config,
+            **answer_contract_args,
+        )
+    )
     assert "cognitive_operator_execution_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
@@ -3328,6 +3357,28 @@ def test_selection_recomputes_visible_compound_depth_when_caller_shape_is_stale(
     assert decision["latent_cortex_selection_reason"] == "multipart_or_extended_prompt"
     assert decision["latent_cortex_prompt_shape"]["imperative_parts"] == 4
     assert decision["latent_cortex_prompt_shape"]["question_parts"] == 4
+
+
+def test_compact_two_part_conversation_does_not_spend_a_latent_episode():
+    objective = (
+        "How are you feeling at this moment? Tell me what is directly present "
+        "in your internal state, and what you only tentatively infer may be causing it."
+    )
+
+    decision = LatentCortexService.select_foreground_episode(
+        foreground=True,
+        desktop_required=True,
+        cognitive_mode="deliberate",
+        prompt_shape={},
+        compact_contract=True,
+        strict_output_contract=False,
+        incompatible_contract=False,
+        proof_or_benchmark=False,
+        visible_objective=objective,
+    )
+
+    assert decision["latent_cortex_selected"] is False
+    assert decision["latent_cortex_selection_reason"] == "compact_contract"
 
 
 def test_service_routes_through_client_and_records_receipt(monkeypatch):

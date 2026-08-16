@@ -1381,8 +1381,6 @@ class AuraState:
 
         if len(new_state.cognition.working_memory) > MAX_WORKING_MEMORY:
             new_state.compact()
-        else:
-            new_state._refresh_cognitive_health()
         
         return new_state
 
@@ -1448,7 +1446,5 @@ class AuraState:
 
         if len(new_state.cognition.working_memory) > MAX_WORKING_MEMORY:
             new_state.compact()
-        else:
-            new_state._refresh_cognitive_health()
         
         return new_state

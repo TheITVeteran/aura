@@ -101,6 +101,8 @@ def select_foreground_episode(
     question_parts = question_parts if type(question_parts) is int else 0
     extended = bool(shape.get("prefers_extended_answer"))
     single_reply_coverage = bool(shape.get("requires_single_reply_coverage"))
+    imperative_parts = shape.get("imperative_parts", 0)
+    imperative_parts = imperative_parts if type(imperative_parts) is int else 0
     mode = str(cognitive_mode or "").strip().lower()
     depth_worthy = bool(
         explicitly_required
@@ -109,12 +111,18 @@ def select_foreground_episode(
         or single_reply_coverage
         or question_parts > 1
     )
+    # A compact conversation contract is an execution decision, not a weak
+    # hint.  Two natural clauses (report state + distinguish inference) do not
+    # justify spending an RLC episode before ordinary speech.  Only genuinely
+    # compound structure may override a stale compact classification; explicit
+    # RLC requests retain authority regardless of shape.
     exclusion = ""
+    compact_shape_override = question_parts >= 3 or imperative_parts >= 3
     if not foreground:
         exclusion = "not_foreground"
     elif not desktop_required:
         exclusion = "desktop_cognitive_engine_not_required"
-    elif compact_contract and not depth_worthy:
+    elif compact_contract and not (explicitly_required or compact_shape_override):
         exclusion = "compact_contract"
     elif strict_output_contract:
         exclusion = "strict_output_contract"

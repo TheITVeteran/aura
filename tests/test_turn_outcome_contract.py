@@ -234,6 +234,83 @@ def test_live_candidates_outrank_suppressed_ones():
     assert outcome.best_recoverable_candidate().text == "newer and accepted"
 
 
+def test_live_unassessed_candidate_outranks_longer_suppressed_unassessed_candidate():
+    outcome = TurnOutcome(origin="test")
+    suppressed = outcome.record_candidate("older " * 200, source="a")
+    outcome.suppress_candidate(suppressed, gate="g", reasons=("meh",))
+    live = outcome.record_candidate("new and live", source="b")
+
+    assert outcome.best_recoverable_candidate().candidate_id == live
+
+
+def test_a_short_failed_retry_cannot_erase_a_substantial_incumbent():
+    outcome = TurnOutcome(origin="user_chat")
+    incumbent = outcome.record_candidate(
+        "A grounded answer with several complete observations. " * 12,
+        source="reliability_gate",
+        metadata={
+            "reliability_assessed": True,
+            "reliability_ok": False,
+            "reliability_reasons": (
+                "truncated_tail",
+                "status_page_self_reflection",
+                "off_topic_self_reflection_reply",
+                "unanswered_question_part",
+            ),
+        },
+    )
+    outcome.suppress_candidate(
+        incumbent,
+        gate="response_reliability",
+        reasons=("truncated_tail", "unanswered_question_part"),
+    )
+    retry = outcome.record_candidate(
+        "Please let me know if you have any other questions or concerns.",
+        source="reliability_gate",
+        metadata={
+            "reliability_assessed": True,
+            "reliability_ok": False,
+            "reliability_reasons": (
+                "status_page_self_reflection",
+                "generic_assistant_language",
+                "unanswered_question_part",
+            ),
+        },
+    )
+    outcome.suppress_candidate(
+        retry,
+        gate="response_reliability",
+        reasons=("generic_assistant_language", "unanswered_question_part"),
+    )
+
+    assert outcome.best_recoverable_candidate().candidate_id == incumbent
+
+
+def test_clean_assessment_outranks_longer_repairable_draft():
+    outcome = TurnOutcome(origin="user_chat")
+    rejected = outcome.record_candidate(
+        "unfinished " * 500,
+        source="reliability_gate",
+        metadata={
+            "reliability_assessed": True,
+            "reliability_ok": False,
+            "reliability_reasons": ("truncated_tail",),
+        },
+    )
+    outcome.suppress_candidate(rejected, gate="response_reliability")
+    accepted = outcome.record_candidate(
+        "The complete answer.",
+        source="reliability_gate",
+        metadata={
+            "reliability_assessed": True,
+            "reliability_ok": True,
+            "reliability_reasons": (),
+        },
+    )
+
+    assert outcome.best_recoverable_candidate().candidate_id == accepted
+
+
 def test_serving_nothing_after_a_terminal_error_is_a_terminal_failure():
     outcome = TurnOutcome(origin="user_chat")
     outcome.record_error("model weights corrupted", retryable=False)

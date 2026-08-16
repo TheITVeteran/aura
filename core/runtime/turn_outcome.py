@@ -260,6 +260,52 @@ class Candidate:
         preview, _ = redact_text(self.text[:limit])
         return preview
 
+    def recovery_rank(self) -> tuple[Any, ...]:
+        """Evidence-based ordering for last-resort answer recovery.
+
+        A retry is a challenger, not the new incumbent merely because it ran
+        later.  Reliability assessments are copied into candidate metadata by
+        the gate that produced them.  This rank keeps a clean assessed answer
+        above an unassessed draft, and both above an assessed-bad draft.  When
+        two recoverable bad drafts remain, fewer semantic defects wins; equal
+        defects are broken by bounded answer substance before recency.
+
+        Length is deliberately only a late tie-breaker.  It cannot make a
+        prompt leak recoverable (``is_recoverable`` already excluded it), and
+        it cannot outvote a cleaner or better verified answer.
+        """
+
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        assessed = metadata.get("reliability_assessed") is True
+        clean = assessed and metadata.get("reliability_ok") is True
+        assessment_rank = 2 if clean else 1 if not assessed else 0
+        reasons = tuple(
+            str(reason or "").strip().lower()
+            for reason in metadata.get("reliability_reasons", ())
+            if str(reason or "").strip()
+        )
+        completion_reasons = {
+            "truncated_tail",
+            "final_answer_missing",
+            "missing_final_answer",
+            "incomplete_code_response",
+        }
+        advisory_reasons = set(metadata.get("reliability_advisory_reasons", ()))
+        blocking = tuple(reason for reason in reasons if reason not in advisory_reasons)
+        semantic_defects = sum(reason not in completion_reasons for reason in blocking)
+        completion_defects = sum(reason in completion_reasons for reason in blocking)
+        bounded_substance = min(len(self.text.strip()), 4_000)
+        return (
+            assessment_rank,
+            self.verification.rank,
+            not self.fallback,
+            self.is_live,
+            -semantic_defects,
+            bounded_substance,
+            -completion_defects,
+            self.created_at,
+        )
+
 
 @dataclass(frozen=True)
 class EffectClaim:
@@ -428,13 +474,8 @@ class TurnOutcome:
     def best_recoverable_candidate(self) -> Candidate | None:
         """The best answer still available, whatever the gates concluded.
 
-        Preference order, strongest first:
-
-        1. live (un-suppressed) over suppressed — a gate's objection is
-           weak evidence, not no evidence;
-        2. higher verification grade;
-        3. non-fallback over fallback;
-        4. most recent.
+        Reliability evidence outranks recency. A later retry must demonstrate
+        a better result; merely existing later cannot erase the incumbent.
 
         Returns None only when the turn genuinely holds nothing servable.
         """
@@ -442,15 +483,7 @@ class TurnOutcome:
             usable = [c for c in self._candidates if c.is_recoverable]
         if not usable:
             return None
-        return max(
-            usable,
-            key=lambda c: (
-                c.is_live,
-                c.verification.rank,
-                not c.fallback,
-                c.created_at,
-            ),
-        )
+        return max(usable, key=lambda candidate: candidate.recovery_rank())
 
     # ------------------------------------------------------------------- effects
 
@@ -1060,6 +1093,7 @@ def note_candidate(
     source: str,
     verification: VerificationGrade = VerificationGrade.NONE,
     fallback: bool = False,
+    metadata: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Record a candidate on the bound turn if there is one.
 
@@ -1072,7 +1106,11 @@ def note_candidate(
         return None
     try:
         return outcome.record_candidate(
-            text, source=source, verification=verification, fallback=fallback
+            text,
+            source=source,
+            verification=verification,
+            fallback=fallback,
+            metadata=metadata,
         )
     except (AlreadyFinalized, TypeError, ValueError) as exc:
         record_degradation(

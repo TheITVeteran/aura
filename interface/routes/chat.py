@@ -7381,11 +7381,15 @@ def _is_compact_desktop_chat_contract(
 
         if is_self_condition_turn(user_message):
             lightweight_live_state_or_recall = True
-        if (
-            is_self_process_question(user_message)
-            or is_live_self_reflection_turn(user_message)
-        ) and not lightweight_live_state_or_recall:
+        if is_self_process_question(user_message) and not lightweight_live_state_or_recall:
             return False
+        # Reporting present state, including a bounded distinction between
+        # observation and inference, is ordinary conversation. It already
+        # receives the live-mind snapshot; routing it through the full phase/RLC
+        # stack adds no evidence and consumed the entire answer deadline live.
+        # Questions about the mechanism itself remain on the deep path above.
+        if is_live_self_reflection_turn(user_message):
+            lightweight_live_state_or_recall = True
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Self-process quick-reply classification skipped: %s", exc)
@@ -9860,18 +9864,7 @@ def _build_cognitive_engine_reply_repair_directive(
                 + "; ".join(obligations)
                 + "."
             )
-    completion_reasons = {
-        "truncated_tail",
-        "final_answer_missing",
-        "missing_final_answer",
-        "incomplete_code_response",
-    }
-    completion_only = bool(
-        reasons
-        and {str(reason or "").strip().lower() for reason in reasons}.issubset(
-            completion_reasons
-        )
-    )
+    completion_only = _reply_needs_continuation(draft, reasons)
     completion_clause = (
         "- Continue the valid partial answer from its exact cutoff; return only the missing continuation, cover every remaining requested part, and end naturally.\n"
         if completion_only
@@ -9939,6 +9932,34 @@ def _merge_reply_continuation(partial: object, continuation: object) -> str:
     if not head[-1].isspace() and not tail[0].isspace():
         separator = "" if tail[0] in ".,;:!?)]}" else " "
     return f"{head}{separator}{tail}"
+
+
+_COMPLETION_REPAIR_REASONS = frozenset(
+    {
+        "truncated_tail",
+        "final_answer_missing",
+        "missing_final_answer",
+        "incomplete_code_response",
+    }
+)
+
+
+def _reply_needs_continuation(rejected_reply: object, reasons: object) -> bool:
+    """Whether a mechanical cutoff must be completed before replacement.
+
+    Semantic defects may coexist with a cutoff because detectors inspect the
+    same partial text. Their presence does not change the physical fact that
+    the generation ended before its answer did.
+    """
+
+    if not str(rejected_reply or "").strip():
+        return False
+    normalized = {
+        str(reason or "").strip().lower()
+        for reason in (reasons or ())
+        if str(reason or "").strip()
+    }
+    return bool(normalized.intersection(_COMPLETION_REPAIR_REASONS))
 
 
 def _desktop_cognitive_failure_repair_target(reason: str) -> str:
@@ -11344,18 +11365,20 @@ async def _run_cognitive_engine_chat_turn(
         *,
         completion_attempt: int = 0,
     ) -> str | None:
-        completion_retry_reasons = {
-            "truncated_tail",
-            "final_answer_missing",
-            "missing_final_answer",
-            "incomplete_code_response",
-        }
+        completion_retry_reasons = _COMPLETION_REPAIR_REASONS
         normalized_reasons = {
             str(reason or "").strip().lower() for reason in (reasons or ())
         }
-        completion_only_retry = bool(
-            normalized_reasons
-            and normalized_reasons.issubset(completion_retry_reasons)
+        # A mechanically interrupted candidate must first be completed before
+        # semantic quality can be judged fairly. Previously a timeout-cut draft
+        # that also triggered any semantic detector was regenerated from zero;
+        # the short replacement then became the incumbent even when it was
+        # worse. Continue whenever incompleteness is among the observed causes.
+        # The merged answer still has to pass the complete semantic assessment
+        # below, so this does not excuse an off-topic or generic completion.
+        completion_only_retry = _reply_needs_continuation(
+            rejected_reply,
+            normalized_reasons,
         )
         if completion_only_retry and completion_attempt >= _MAX_USER_SURFACE_CONTINUATIONS:
             logger.warning(
@@ -15495,11 +15518,10 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat.turn_arbitration", exc, severity="info")
 
-    # In order of preference: the draft handed to this site, the best one any
-    # layer deliberately preserved, the model's own raw answer — the vanilla
-    # floor — and finally the largest thing a gate suppressed. The second
-    # refusal site receives no argument at all, and the raw draft is the one
-    # thing every layer downstream can lose.
+    # These sources have already crossed the route's authorship boundary. The
+    # canonical turn ledger intentionally does not appear here: it also holds
+    # rejected challengers and diagnostic drafts, and quality evidence alone
+    # cannot prove that text was authored by the admitted full-mind path.
     for candidate in (
         str(draft or "").strip(),
         preserved_draft(),

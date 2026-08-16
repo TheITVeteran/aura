@@ -1419,6 +1419,25 @@ class AuraKernel:
 
             close_tick(_provenance)
 
+            # Cognitive health is a materialized projection of the completed
+            # state, not a write owned by every phase that derives a state.
+            # Refresh it once outside phase provenance so contracts attribute
+            # only the transformations each phase actually performed.
+            refresh_cognitive_health = getattr(
+                self.state,
+                "_refresh_cognitive_health",
+                None,
+            )
+            if callable(refresh_cognitive_health):
+                try:
+                    refresh_cognitive_health()
+                except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_kernel_degradation(
+                        exc,
+                        action="completed tick with the prior cognitive-health projection",
+                        severity="warning",
+                    )
+
             # Flush deferred storage side-effects (eternal_append, db_write, etc.)
             # [STABILITY v53] Timeout guard — storage intents can hang on slow I/O
             try:

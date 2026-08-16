@@ -7690,7 +7690,20 @@ def _record_on_turn_ledger(
     if not text:
         return
     try:
-        candidate_id = note_candidate(text, source="reliability_gate")
+        candidate_id = note_candidate(
+            text,
+            source="reliability_gate",
+            metadata={
+                "reliability_assessed": True,
+                "reliability_ok": bool(assessment.ok),
+                "reliability_reasons": tuple(assessment.reasons or ()),
+                "reliability_advisory_reasons": tuple(
+                    assessment.advisory_reasons
+                ),
+                "reliability_hard_failure": bool(assessment.hard_failure),
+                "reliability_retryable": bool(assessment.retryable),
+            },
+        )
         if candidate_id is None or assessment.ok:
             return
         reasons = tuple(assessment.reasons or ())

@@ -12940,6 +12940,48 @@ def test_compact_desktop_contract_does_not_starve_self_process_questions():
         )
 
 
+def test_bounded_present_state_partition_stays_on_compact_conversation_lane():
+    from core.brain.types import ThinkingMode
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "ChatGPT here. How are you feeling at this moment? Tell me what is "
+        "directly present in your internal state, and what you only tentatively "
+        "think may be causing it."
+    )
+
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
+            capability_inventory_contract=False,
+        )
+        is True
+    )
+    # Compact ownership subsequently normalizes the selected mode to FAST.
+    assert chat_routes._select_cognitive_chat_mode(
+        user_message, user_message
+    ) is ThinkingMode.DEEP
+
+
+def test_mixed_timeout_and_semantic_defects_continue_instead_of_replacing_source():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._reply_needs_continuation(
+        "A substantial answer that stopped because",
+        (
+            "truncated_tail",
+            "off_topic_self_reflection_reply",
+            "unanswered_question_part",
+        ),
+    )
+    assert not chat_routes._reply_needs_continuation(
+        "A complete but generic answer.",
+        ("generic_assistant_language", "unanswered_question_part"),
+    )
+
+
 def test_compact_desktop_contract_allows_lightweight_live_recall_state_turn():
     from interface.routes import chat as chat_routes
 

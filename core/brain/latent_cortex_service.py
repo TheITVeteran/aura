@@ -1706,18 +1706,29 @@ class LatentCortexService:
                 ]
                 if (
                     len(finals) != 1
-                    or finals[0].get("authority") != "vanilla_incumbent_output"
                     or finals[0].get("latent_sha256") != ""
                     or receipt.get("first_logits_digest")
                     != prompt_logits_sha256
                 ):
                     raise ValueError("decode incumbent final node is invalid")
+                authority = str(finals[0].get("authority") or "")
+                admitted_purposes = {
+                    "vanilla_incumbent_output": {
+                        "bind_captured_vanilla_incumbent",
+                        "final_vanilla_incumbent_decode",
+                    },
+                    "canonical_ordinary_decode_artifact": {
+                        "bind_canonical_incumbent_artifact",
+                    },
+                }
+                purposes = admitted_purposes.get(authority)
+                if purposes is None:
+                    raise ValueError("decode incumbent authority is invalid")
                 commits = [
                     event
                     for event in tree.get("events", [])
                     if isinstance(event, dict)
-                    and event.get("purpose")
-                    == "final_vanilla_incumbent_decode"
+                    and event.get("purpose") in purposes
                     and event.get("disposition") == "committed"
                 ]
                 if (

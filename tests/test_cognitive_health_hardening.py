@@ -59,6 +59,37 @@ def test_continuity_hash_is_stable_across_semantically_equivalent_derives():
     assert derived.health["cognitive_health"]["cognitive_signature"] == state.affect.get_cognitive_signature()
 
 
+def test_derive_does_not_rewrite_materialized_cognitive_health():
+    state = AuraState()
+    state._refresh_cognitive_health()
+    before = state.health["cognitive_health"].copy()
+
+    state.cognition.pending_initiatives.append({"goal": "inspect the new evidence"})
+    derived = state.derive("cognitive_integration", origin="system")
+
+    assert derived.health["cognitive_health"] == before
+    assert derived.health is not state.health
+
+    derived._refresh_cognitive_health()
+    assert derived.health["cognitive_health"]["pending_initiatives"] == 1
+    assert derived.health["cognitive_health"] != before
+
+
+def test_phase_provenance_does_not_attribute_framework_health_projection():
+    from core.runtime.cognitive_provenance import begin_transformation
+
+    state = AuraState()
+    state._refresh_cognitive_health()
+    transformation = begin_transformation("ProprioceptiveLoop", state)
+
+    derived = state.derive("proprioceptive_loop", origin="system")
+    receipt = transformation.complete(derived, publish_violation=False)
+
+    assert receipt is not None
+    assert "health" not in receipt.observed_writes
+    assert "health" not in receipt.undeclared_writes
+
+
 def test_continuity_hash_changes_when_self_relevant_state_changes():
     state = AuraState()
     state.identity.current_narrative = "I am stable."
