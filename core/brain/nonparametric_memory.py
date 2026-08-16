@@ -20,7 +20,15 @@ Aura-specific novelty:
     confident neighbor ⇒ trust memory more; confident model ⇒ trust the weights;
   * entries carry affect/recency weight (the vault's "gravity") applied at the token level.
 
-Bounded by construction (max entries, weight×recency eviction). Pure numpy; FAISS optional.
+Bounded by construction (max entries, weight×recency eviction). Pure numpy.
+
+Retrieval is an EXACT SCAN, not an approximate index. "FAISS optional" was
+in this line and nowhere in the code: `query` computes two matrix-vector
+products over every visible entry while holding the store lock, so
+decode-time cost is O(entries × hidden width) and it blocks concurrent
+adds and persistence (CP126 ``3ac36b7a``). The principal filter bounds the
+candidate set, and the recall receipt reports the store size and the
+neighbours for every call, so that cost is measurable rather than assumed.
 The datastore + kNN + adaptive-λ interpolation are built and tested here. Populating keys
 from real model hidden states and applying per-token interpolation inside MLX generation is
 the documented seam (`apply_to_logits`), flag-gated (AURA_NONPARAMETRIC_MEMORY).
@@ -687,7 +695,7 @@ class NonParametricMemory:
             FloatingPointError,
             # The docstring promised "an error ANYWHERE in the recall/blend
             # path fails open", and the list stopped short of the ones a
-            # backing index actually raises. A FAISS or numpy-backed query
+            # backing index actually raises. A numpy-backed query
             # can raise RuntimeError, OSError, IndexError or OverflowError,
             # and each of those escaped into the token loop — killing the
             # generation the fail-open contract exists to protect (CP126:
