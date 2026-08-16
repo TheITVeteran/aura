@@ -116,6 +116,42 @@ async def test_state_commit_admission_failure_never_publishes_or_persists(
 
 
 @pytest.mark.asyncio
+async def test_state_commit_deferral_is_not_recorded_as_failure(monkeypatch) -> None:
+    from core.constitution import ProposalOutcome
+    from core.state.aura_state import AuraState
+
+    async def defer_admission(*_args, **_kwargs):
+        decision = SimpleNamespace(
+            outcome=ProposalOutcome.DEFERRED,
+            constraints={"authority_outcome": "deferred"},
+        )
+        return False, "approved|ontogeny:deferred", decision
+
+    gate = SimpleNamespace(approve_state_mutation=defer_admission)
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda: gate)
+    repo = StateRepository(is_vault_owner=True)
+    original = AuraState.default()
+    repo._current = original
+    repo._shm = object()
+    repo._commit_to_db = AsyncMock()
+    repo._sync_to_shm = AsyncMock()
+    candidate = original.derive("deferred", origin="system")
+
+    committed = await repo._process_commit(candidate, "online")
+
+    status = repo.get_runtime_status()
+    assert committed is False
+    assert repo._current is original
+    assert status["failed_commit_count"] == 0
+    assert status["last_commit_error"] == ""
+    assert status["deferred_commit_count"] == 1
+    assert status["last_commit_deferred_reason"] == "approved|ontogeny:deferred"
+    assert status["last_commit_deferred_at"] > 0.0
+    repo._commit_to_db.assert_not_awaited()
+    repo._sync_to_shm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_state_commit_persistence_failure_keeps_previous_visible_state(
     monkeypatch,
 ) -> None:

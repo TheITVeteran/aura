@@ -258,6 +258,9 @@ class StateRepository:
         self._failed_commit_count = 0
         self._last_commit_failure_at = 0.0
         self._last_commit_error = ""
+        self._deferred_commit_count = 0
+        self._last_commit_deferred_at = 0.0
+        self._last_commit_deferred_reason = ""
         self._last_serialization_ms = 0.0
         self._last_consumer_activity_at = 0.0
         self._repair_count = 0
@@ -1137,7 +1140,11 @@ class StateRepository:
         commit_started = time.perf_counter()
         governance_decision = None
         try:
-            from core.constitution import get_constitutional_core, unpack_governance_result
+            from core.constitution import (
+                ProposalOutcome,
+                get_constitutional_core,
+                unpack_governance_result,
+            )
 
             new_state.health = copy.deepcopy(getattr(new_state, "health", {}) or {})
             if hasattr(new_state, "compact"):
@@ -1156,6 +1163,16 @@ class StateRepository:
                 )
             )
             if not approved:
+                if getattr(governance_decision, "outcome", None) == ProposalOutcome.DEFERRED:
+                    self._record_commit_deferral(reason or "unspecified")
+                    logger.info(
+                        "[STATE] ConstitutionalCore deferred state mutation "
+                        "(origin=%s cause=%s reason=%s)",
+                        getattr(new_state, "transition_origin", "system"),
+                        cause,
+                        reason,
+                    )
+                    return False
                 self._record_commit_failure(f"governance_denied:{reason or 'unspecified'}")
                 logger.warning(
                     "🚫 [STATE] ConstitutionalCore blocked state mutation (origin=%s cause=%s reason=%s)",
@@ -1329,6 +1346,11 @@ class StateRepository:
         self._last_commit_failure_at = time.time()
         self._last_commit_error = str(reason or "unknown")[:512]
 
+    def _record_commit_deferral(self, reason: str) -> None:
+        self._deferred_commit_count += 1
+        self._last_commit_deferred_at = time.time()
+        self._last_commit_deferred_reason = str(reason or "unspecified")[:512]
+
     @staticmethod
     def _is_user_facing_origin(origin: Any) -> bool:
         return is_user_facing_origin(origin)
@@ -1386,6 +1408,9 @@ class StateRepository:
             "failed_commit_count": int(self._failed_commit_count),
             "last_commit_failure_at": float(self._last_commit_failure_at or 0.0),
             "last_commit_error": str(self._last_commit_error),
+            "deferred_commit_count": int(self._deferred_commit_count),
+            "last_commit_deferred_at": float(self._last_commit_deferred_at or 0.0),
+            "last_commit_deferred_reason": str(self._last_commit_deferred_reason),
             "last_serialization_ms": float(self._last_serialization_ms or 0.0),
             "last_consumer_activity_at": float(self._last_consumer_activity_at or 0.0),
             "repair_count": int(self._repair_count),

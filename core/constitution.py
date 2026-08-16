@@ -42,6 +42,7 @@ class ProposalOutcome(StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     DEGRADED = "degraded"
+    DEFERRED = "deferred"
     RECORDED = "recorded"
 
 
@@ -618,7 +619,7 @@ class ConstitutionalCore:
                 "approved": ProposalOutcome.APPROVED,
                 "rejected": ProposalOutcome.REJECTED,
                 "degraded": ProposalOutcome.DEGRADED,
-                "deferred": ProposalOutcome.RECORDED,
+                "deferred": ProposalOutcome.DEFERRED,
             }.get(authority_decision.outcome, ProposalOutcome.RECORDED)
             decision = self._record_decision(
                 ConstitutionalDecision(
@@ -890,7 +891,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 will_receipt_id=authority_decision.will_receipt_id,
@@ -983,7 +984,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 will_receipt_id=authority_decision.will_receipt_id,
@@ -1105,7 +1106,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 will_receipt_id=authority_decision.will_receipt_id,
@@ -1227,7 +1228,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 will_receipt_id=authority_decision.will_receipt_id,
@@ -1322,7 +1323,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1367,6 +1368,7 @@ class ConstitutionalCore:
             "suppressed": ProposalOutcome.REJECTED,
             "rejected": ProposalOutcome.REJECTED,
             "degraded": ProposalOutcome.DEGRADED,
+            "deferred": ProposalOutcome.DEFERRED,
         }.get(claimed, ProposalOutcome.RECORDED)
         externally_claimed_approval = claimed in {"approved", "released", "queued"}
         if externally_claimed_approval:
@@ -1434,7 +1436,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1514,7 +1516,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1563,7 +1565,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1630,7 +1632,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1679,7 +1681,7 @@ class ConstitutionalCore:
             ConstitutionalDecision(
                 proposal_id=proposal.proposal_id,
                 kind=proposal.kind,
-                outcome=ProposalOutcome.APPROVED if authority_decision.approved else ProposalOutcome.REJECTED,
+                outcome=self._authority_proposal_outcome(authority_decision),
                 reason=authority_decision.reason,
                 source=proposal.source,
                 intent_id=authority_decision.executive_intent_id,
@@ -1715,14 +1717,33 @@ class ConstitutionalCore:
         self._decision_history.append(decision)
         return decision
 
+    @staticmethod
+    def _authority_proposal_outcome(authority_decision: Any) -> ProposalOutcome:
+        """Preserve an authority result without promoting inconsistent approval."""
+
+        raw_outcome = getattr(authority_decision, "outcome", "")
+        normalized = str(getattr(raw_outcome, "value", raw_outcome) or "").strip().lower()
+        approved = bool(getattr(authority_decision, "approved", False))
+        if normalized == ProposalOutcome.DEFERRED.value:
+            return ProposalOutcome.DEFERRED
+        if normalized == ProposalOutcome.DEGRADED.value and approved:
+            return ProposalOutcome.DEGRADED
+        if approved:
+            return ProposalOutcome.APPROVED
+        return ProposalOutcome.REJECTED
+
     def _authority_constraints(self, authority_decision: Any) -> dict[str, Any]:
         constraints = dict(getattr(authority_decision, "constraints", {}) or {})
+        raw_outcome = getattr(authority_decision, "outcome", None)
+        authority_outcome = str(getattr(raw_outcome, "value", raw_outcome) or "").strip().lower()
         receipt_id = getattr(authority_decision, "substrate_receipt_id", None)
         will_receipt_id = getattr(authority_decision, "will_receipt_id", None)
         governance_domain = getattr(authority_decision, "domain", None)
         capability_token_id = getattr(authority_decision, "capability_token_id", None)
         failure_pressure = getattr(authority_decision, "failure_pressure", None)
         canonical_self_version = getattr(authority_decision, "canonical_self_version", None)
+        if authority_outcome:
+            constraints["authority_outcome"] = authority_outcome
         if receipt_id:
             constraints["substrate_receipt_id"] = receipt_id
         if will_receipt_id:

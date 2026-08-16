@@ -430,6 +430,50 @@ async def test_constitutional_core_blocks_state_mutation_when_executive_required
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("approved", "authority_outcome", "expected"),
+    [
+        (False, "deferred", constitution_module.ProposalOutcome.DEFERRED),
+        (True, "degraded", constitution_module.ProposalOutcome.DEGRADED),
+    ],
+)
+async def test_constitutional_core_preserves_authority_outcome(
+    service_container,
+    monkeypatch,
+    approved,
+    authority_outcome,
+    expected,
+):
+    reset_constitutional_singletons()
+    core = get_constitutional_core()
+
+    async def authorize_state_mutation(*_args, **_kwargs):
+        return SimpleNamespace(
+            approved=approved,
+            outcome=authority_outcome,
+            reason=f"state:{authority_outcome}",
+            constraints={},
+            will_receipt_id=None,
+            executive_intent_id=None,
+        )
+
+    gateway = SimpleNamespace(authorize_state_mutation=authorize_state_mutation)
+    monkeypatch.setattr(core, "_strict_enforcement_active", lambda: False)
+    monkeypatch.setattr(core, "_get_authority_gateway", lambda: gateway)
+
+    allowed, reason, decision = await core.approve_state_mutation(
+        "system",
+        "unit_test",
+        return_decision=True,
+    )
+
+    assert allowed is approved
+    assert reason == f"state:{authority_outcome}"
+    assert decision.outcome == expected
+    assert decision.constraints["authority_outcome"] == authority_outcome
+
+
+@pytest.mark.asyncio
 async def test_constitutional_core_rejects_tool_execution_when_executive_required_but_unavailable(service_container, monkeypatch):
     reset_constitutional_singletons()
     ServiceContainer.lock_registration()
