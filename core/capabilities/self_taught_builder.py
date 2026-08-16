@@ -82,7 +82,7 @@ async def _research(topic: str, *, want_code: bool = True, max_notes: int = 6) -
         try:
             from core.skills.web_search import EnhancedWebSearchSkill
 
-            res = await EnhancedWebSearchSkill().execute(
+            res = await EnhancedWebSearchSkill().safe_execute(
                 {"query": topic, "max_results": 3},
                 {"origin": "self_taught_builder"},
             )

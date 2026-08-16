@@ -11,6 +11,8 @@ All Aura skills inherit from this class. It provides:
 
 import asyncio
 import builtins
+import contextvars
+import functools
 import inspect
 import logging
 import sqlite3
@@ -49,6 +51,16 @@ _SKILL_RECOVERABLE_ERRORS = (
 SKILL_TIMEOUT_CONTEXT_KEY = "_skill_timeout_s"
 
 
+#: True while `safe_execute` is running its own `self.execute(...)` call, so
+#: the guard below knows the governance check has already happened and does not
+#: repeat it. A ContextVar rather than an instance flag: one skill instance is
+#: shared across concurrent tasks, and an attribute would leak one task's
+#: exemption into another's raw call.
+_INSIDE_SAFE_EXECUTE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "aura_skill_inside_safe_execute", default=False
+)
+
+
 def _record_skill_degradation(
     exc: BaseException,
     *,
@@ -57,6 +69,91 @@ def _record_skill_degradation(
 ) -> None:
     """Record degradation inside base skill execution."""
     record_degradation("base_skill", exc, severity=severity, action=action)
+
+
+def _raw_execute_refusal(skill: "BaseSkill") -> dict[str, Any] | None:
+    """Governance verdict for a direct `execute()` call, or None to proceed.
+
+    `safe_execute` was documented as "the PUBLIC entry point that the skill
+    router should call", and the active-runtime governance requirement lived
+    only inside it. Nothing made it the only door. `DesktopPlanner`'s adapter
+    called the computer-use skill's `execute()` directly, and so did
+    `core/tools/computer_use.py` and two capability modules — so the claim that
+    no consequential action runs outside the governed lane was false for every
+    one of those paths.
+
+    Moving the check into `execute` itself is what makes the claim structural
+    rather than conventional: there is no longer a raw door to find. A call
+    from inside `safe_execute` is exempt because that wrapper has already run
+    exactly this check.
+    """
+    if _INSIDE_SAFE_EXECUTE.get():
+        return None
+    try:
+        from core.governance_context import (
+            GovernanceViolation,
+            governance_runtime_active,
+            require_governance,
+        )
+
+        require_governance(
+            f"skill:{skill.name}",
+            strict=governance_runtime_active(),
+            allowed_domains=("tool_execution",),
+        )
+    except GovernanceViolation as exc:
+        logger.warning(
+            "🛡️ Ungoverned direct execute() on skill '%s' refused: %s", skill.name, exc
+        )
+        return {
+            "ok": False,
+            "skill": skill.name,
+            "error": f"Ungoverned skill execution blocked: {exc}",
+            "summary": "blocked: skill executed outside the governed lane",
+            "duration_ms": 0,
+        }
+    except (ImportError, AttributeError, RuntimeError):
+        # Governance is not booted. Same posture `safe_execute` takes: during
+        # boot there is no runtime to be ungoverned against.
+        return None
+    return None
+
+
+def _governed_execute(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a subclass `execute` so a direct call is governed like a routed one.
+
+    Idempotent by marker, because hot-reload re-runs `__init_subclass__` against
+    a class whose `execute` may already be wrapped, and a second layer would
+    check governance twice and log twice.
+    """
+    if getattr(func, "__aura_governed_execute__", False):
+        return func
+
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: "BaseSkill", *args: Any, **kwargs: Any) -> Any:
+            refusal = _raw_execute_refusal(self)
+            if refusal is not None:
+                return refusal
+            return await func(self, *args, **kwargs)
+
+        wrapper: Callable[..., Any] = async_wrapper
+    else:
+
+        @functools.wraps(func)
+        def sync_wrapper(self: "BaseSkill", *args: Any, **kwargs: Any) -> Any:
+            refusal = _raw_execute_refusal(self)
+            if refusal is not None:
+                return refusal
+            return func(self, *args, **kwargs)
+
+        wrapper = sync_wrapper
+
+    wrapper.__aura_governed_execute__ = True  # type: ignore[attr-defined]
+    #: Kept so tests and the raw-execute ratchet can reach the unwrapped body.
+    wrapper.__aura_unwrapped_execute__ = func  # type: ignore[attr-defined]
+    return wrapper
 
 
 
@@ -157,6 +254,22 @@ class BaseSkill(ABC):
         KeyError,
         builtins.NotImplementedError,
     )
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Make every subclass's `execute` govern itself.
+
+        Wrapping here rather than asking call sites to use `safe_execute` is
+        the difference between a convention and an invariant: a skill written
+        next year, or reached through a path nobody enumerated, is governed
+        because it is a skill, not because its caller remembered.
+        """
+        super().__init_subclass__(**kwargs)
+        own_execute = cls.__dict__.get("execute")
+        if own_execute is None or getattr(own_execute, "__isabstractmethod__", False):
+            return
+        if not callable(own_execute):
+            return
+        cls.execute = _governed_execute(own_execute)  # type: ignore[assignment]
 
     def _ensure_stats_initialized(self) -> None:
         if "_total_executions" not in self.__dict__:
@@ -315,6 +428,11 @@ class BaseSkill(ABC):
         effective_timeout = self._effective_timeout_seconds(context)
 
         for attempt in range(max_attempts):
+            # The governance check above covers this call, so the guard on
+            # `execute` must not run it a second time. Reset in `finally`
+            # rather than left set, or a skill that calls another skill's raw
+            # execute would inherit this exemption.
+            inside_token = _INSIDE_SAFE_EXECUTE.set(True)
             try:
                 # Execute with timeout
                 async with asyncio.timeout(effective_timeout):
@@ -325,6 +443,8 @@ class BaseSkill(ABC):
                             Callable[[Any, dict[str, Any]], Any],
                             self.execute,
                         )
+                        # to_thread copies the current context, so the flag
+                        # reaches the worker thread and the guard sees it.
                         result = await asyncio.to_thread(sync_execute, params, context)
                         if inspect.isawaitable(result):
                             result = await result
@@ -352,6 +472,9 @@ class BaseSkill(ABC):
                     logger.error("💥 Skill '%s' crashed with permanent error (attempt %d/%d): %s", self.name, attempt + 1, max_attempts, e, exc_info=attempt==max_attempts-1)
                 else:
                     logger.warning("⚠️ Skill '%s' encountered transient error (attempt %d/%d): %s", self.name, attempt + 1, max_attempts, e)
+
+            finally:
+                _INSIDE_SAFE_EXECUTE.reset(inside_token)
 
             if error_class == "permanent" or attempt == max_attempts - 1:
                 self._total_failures += 1

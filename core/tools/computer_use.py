@@ -195,7 +195,7 @@ class ComputerUseSkill:
             skill = CoreSkill()
             x = action.payload.get("x", 0)
             y = action.payload.get("y", 0)
-            return await skill.execute({"action": "click", "x": x, "y": y}, {})
+            return await skill.safe_execute({"action": "click", "x": x, "y": y}, {})
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
             _record_computer_use_tool_degradation(
                 exc,
@@ -212,7 +212,7 @@ class ComputerUseSkill:
             skill = CoreSkill()
             x = action.payload.get("x", 0)
             y = action.payload.get("y", 0)
-            return await skill.execute({"action": "type", "target": action.target, "x": x, "y": y}, {})
+            return await skill.safe_execute({"action": "type", "target": action.target, "x": x, "y": y}, {})
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
             _record_computer_use_tool_degradation(
                 exc,
@@ -227,7 +227,7 @@ class ComputerUseSkill:
             from core.skills.computer_use import ComputerUseSkill as CoreSkill
 
             skill = CoreSkill()
-            return await skill.execute({"action": "read_screen_text", "target": action.target}, {})
+            return await skill.safe_execute({"action": "read_screen_text", "target": action.target}, {})
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
             _record_computer_use_tool_degradation(
                 exc,

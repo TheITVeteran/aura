@@ -176,6 +176,14 @@ script-targets:
 	@echo "📜 Checking that shell scripts name paths that exist..."
 	@$(PYTHON) tools/check_script_targets.py
 
+raw-skill-execute:
+	@echo "🛡  Checking that skills are entered through safe_execute..."
+	@$(PYTHON) tools/check_raw_skill_execute.py
+
+raw-skill-execute-baseline:
+	@echo "🛡  Rewriting the raw skill execute ratchet (shrink only)..."
+	@$(PYTHON) tools/check_raw_skill_execute.py --baseline
+
 layering:
 	@echo "🏛  Checking architectural layering (DEPS include rules)..."
 	@$(PYTHON) tools/check_layering.py

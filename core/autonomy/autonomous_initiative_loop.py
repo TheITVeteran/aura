@@ -1376,7 +1376,7 @@ class AutonomousInitiativeLoop:
         from core.skills.email_adapter import EmailAdapterSkill, EmailInput
 
         skill = EmailAdapterSkill()
-        return await skill.execute(EmailInput(**payload), {})
+        return await skill.safe_execute(EmailInput(**payload), {})
 
     async def _execute_reddit_adapter(
         self, payload: dict[str, Any], cap_engine: Any = None
@@ -1397,7 +1397,7 @@ class AutonomousInitiativeLoop:
         from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
 
         skill = RedditAdapterSkill()
-        return await skill.execute(
+        return await skill.safe_execute(
             RedditInput(**payload),
             {
                 "origin": "autonomous_initiative_loop",

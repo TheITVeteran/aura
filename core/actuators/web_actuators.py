@@ -168,7 +168,7 @@ class WebFetchActuator(BaseActuator):
         }
 
         async def _run():
-            return await skill.execute({"mode": "browse", "url": validated_url}, skill_context)
+            return await skill.safe_execute({"mode": "browse", "url": validated_url}, skill_context)
 
         try:
             res = run_async_in_sync(_run(), deadline_s=deadline)
