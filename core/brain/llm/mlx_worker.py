@@ -1669,7 +1669,16 @@ def _with_initial_user_surface_guidance(
     prompt: Any,
     job: dict[str, Any],
 ) -> tuple[Any, Any]:
-    if not bool(job.get("clean_user_surface_contract", False)):
+    # ``mlx_client`` deliberately gives health probes the clean-surface flag
+    # so they inherit the safe steering/recurrent clamps. That flag describes
+    # decode controls, not audience. Appending conversational guidance to the
+    # readiness prompt changed ``Reply exactly: ready`` into two competing
+    # instructions and made a healthy resident lane fail boot deterministically.
+    # Keep control-plane measurements clamped, but never prompt-shape them as
+    # user prose.
+    if not bool(job.get("clean_user_surface_contract", False)) or bool(
+        job.get("health_probe", False)
+    ):
         return messages, prompt
     instructions = [_ONE_FINAL_ANSWER_INSTRUCTION]
     if _job_needs_concrete_status_signal_guidance(job):

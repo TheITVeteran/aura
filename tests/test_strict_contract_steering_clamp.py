@@ -386,6 +386,25 @@ def test_initial_live_surface_generation_requires_one_final_answer():
     assert prompt == "fallback"
 
 
+def test_health_probe_keeps_safe_controls_without_user_prompt_guidance():
+    prompt = "Reply exactly: ready"
+
+    messages, guided_prompt = _with_initial_user_surface_guidance(
+        None,
+        prompt,
+        {
+            "clean_user_surface_contract": True,
+            "health_probe": True,
+        },
+    )
+
+    assert messages is None
+    assert guided_prompt == prompt
+    assert _surface_generation_contract_enabled(
+        {"clean_user_surface_contract": True, "health_probe": True}
+    )
+
+
 def test_self_condition_turn_does_not_request_host_telemetry_guidance():
     job = {
         "clean_user_surface_contract": True,
