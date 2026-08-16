@@ -50852,3 +50852,20 @@ Focused augmentor, worker-activation, authority and boot contracts pass
 loaded for this repair. The next step remains the rebuilt signed-app boot and
 CP569 live shadow canary on the resident 32B; the 1.5B remains unnecessary
 unless live evidence isolates a bounded mechanism defect.
+
+## Checkpoint 2026-08-15-571: Keep Resident Token Suppression Finite
+
+The first CP569 live shadow turn reached the resident recurrent decode and then
+failed before its first token. The decoder used `-1e9` as a suppression sentinel
+for EOS, newline and nucleus masks. Resident logits are float16, where that value
+becomes negative infinity; the sampler's non-finite guard therefore rejected a
+numerically valid forward pass. Suppression now uses a dtype-preserving finite
+floor. Nucleus filtering also validates its masked logits before sampling, while
+real NaN or infinite model output remains a hard failure.
+
+Float16 regressions cover token masks and nucleus sampling. The bounded latent
+and failure suite passes `130/130`; canonical smoke passes `110/110`; compile and
+Ruff pass. The live attempt also exposed a separate response-lifecycle defect: a
+cancelled ordinary decode produced a known truncated draft that the chat route
+persisted as complete. That defect remains open for the next checkpoint; no live
+reasoning result is claimed from this failed canary.

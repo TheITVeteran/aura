@@ -230,6 +230,29 @@ class _ActionContinuationCapturedError(Exception):
     """Capture-only execution stopped before selecting the first action."""
 
 
+_FINITE_LOGIT_FLOOR = -10_000.0
+
+
+def _finite_logit_floor(values):
+    """Return a sampling floor that remains finite in the input dtype.
+
+    MLX serving logits may be float16.  Common mask sentinels such as ``-1e9``
+    overflow that dtype to negative infinity, turning a valid forward pass into
+    one the sampler must reject.  ``-1e4`` is representable in every floating
+    dtype Aura serves and is already far below the range where softmax carries
+    measurable probability.
+    """
+    import mlx.core as mx
+
+    return mx.full(values.shape, _FINITE_LOGIT_FLOOR, dtype=values.dtype)
+
+
+def _mask_token_logits(logits, token_ids):
+    """Set selected token logits to the finite, dtype-safe sampling floor."""
+    gathered = logits[token_ids]
+    return logits.at[token_ids].add(_finite_logit_floor(gathered) - gathered)
+
+
 def _logits_digest(logits) -> str:
     """Stable digest of a logits vector — the causal audit fingerprint.
 
@@ -1677,11 +1700,18 @@ class LatentCortexEngine:
                 sorted_probabilities = probabilities[sorted_indices]
                 cumulative = mx.cumsum(sorted_probabilities)
                 keep = (cumulative - sorted_probabilities) < top_p
+                floor = _finite_logit_floor(sorted_probabilities)
+                finite_log_probabilities = mx.where(
+                    sorted_probabilities > 0,
+                    mx.log(sorted_probabilities),
+                    floor,
+                )
                 filtered_logits = mx.where(
                     keep,
-                    mx.log(sorted_probabilities),
-                    mx.full(sorted_probabilities.shape, -1e9),
+                    finite_log_probabilities,
+                    floor,
                 )
+                self._require_finite_logits(filtered_logits, "nucleus_sampling")
                 selected = int(
                     mx.random.categorical(filtered_logits)
                     if random_key is None
@@ -1860,8 +1890,7 @@ class LatentCortexEngine:
                 or (contract_required and not contract_satisfied)
             ):
                 eos_ids = mx.array(sorted(eos))
-                gathered = logits[eos_ids]
-                logits = logits.at[eos_ids].add(mx.full(gathered.shape, -1e9) - gathered)
+                logits = _mask_token_logits(logits, eos_ids)
             random_key = None
             if sample_seed is not None and temp > 0.0:
                 random_key = mx.random.key(
@@ -1884,8 +1913,7 @@ class LatentCortexEngine:
                 return token, sample_logprob(logits, token)
             suppressions += 1
             ids = mx.array(sorted(newline_ids))
-            gathered = logits[ids]
-            masked = logits.at[ids].add(mx.full(gathered.shape, -1e9) - gathered)
+            masked = _mask_token_logits(logits, ids)
             random_key = None
             if sample_seed is not None and temp > 0.0:
                 random_key = mx.random.key(
@@ -1900,7 +1928,8 @@ class LatentCortexEngine:
                 random_key=random_key,
             )
             if self._is_pure_newline_token(token):
-                # Every newline token is masked to -1e9, so one coming back
+                # Every newline token is at the finite suppression floor, so
+                # one coming back
                 # means the rest of the distribution is masked too. There is
                 # no admissible continuation; stopping is the honest move.
                 newline_discipline_exhausted = True

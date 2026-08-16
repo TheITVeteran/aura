@@ -943,6 +943,39 @@ def test_nucleus_sampling_excludes_tokens_outside_probability_mass():
     assert sampled == {0}
 
 
+def test_float16_token_masks_stay_finite_and_suppress_selected_tokens():
+    from core.brain.llm.latent_cortex.engine import (
+        _FINITE_LOGIT_FLOOR,
+        _mask_token_logits,
+    )
+
+    logits = mx.array([9.0, 5.0, -2.0], dtype=mx.float16)
+    masked = _mask_token_logits(logits, mx.array([0]))
+    mx.eval(masked)
+
+    assert bool(mx.all(mx.isfinite(masked)).item())
+    assert float(masked[0].item()) == _FINITE_LOGIT_FLOOR
+    assert int(mx.argmax(masked).item()) == 1
+
+
+def test_float16_nucleus_sampling_never_manufactures_non_finite_logits(monkeypatch):
+    engine = LatentCortexEngine.__new__(LatentCortexEngine)
+    logits = mx.array([12.0, 2.0, 1.0, 0.0], dtype=mx.float16)
+    observed = []
+    original = engine._require_finite_logits
+
+    def record(values, operation):
+        observed.append(operation)
+        original(values, operation)
+
+    monkeypatch.setattr(engine, "_require_finite_logits", record)
+
+    sampled = {engine._sample(logits, temperature=0.7, top_p=0.01) for _ in range(16)}
+
+    assert sampled == {0}
+    assert "nucleus_sampling" in observed
+
+
 def test_latent_computation_is_causal_on_answer(tiny_model):
     """More recurrence ⇒ different refined thoughts ⇒ different answer tokens.
 

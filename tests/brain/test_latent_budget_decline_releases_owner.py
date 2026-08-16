@@ -105,7 +105,7 @@ def test_the_engine_keeps_the_refusal_distinct() -> None:
 
     source = inspect.getsource(engine)
 
-    assert "latent_budget_declined:" in source
+    assert '"latent_budget_declined"' in source
     assert "isinstance(exc, ComputeBudgetUnaffordable)" in source
 
 

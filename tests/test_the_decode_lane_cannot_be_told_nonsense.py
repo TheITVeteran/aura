@@ -40,7 +40,6 @@ from core.brain.llm.latent_cortex.engine import (
     _validated_verifier_result,
 )
 
-
 # ─────────────────────────────── token ids are indices, or they are refused
 
 
@@ -267,6 +266,19 @@ def test_the_sampler_checks_finiteness_before_it_samples():
         assert guard < sample, "the guard runs after the token is drawn"
         return
     raise AssertionError("_sample was not found")
+
+
+def test_token_suppression_cannot_overflow_float16_into_infinity():
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.engine import _mask_token_logits
+
+    logits = mx.array([8.0, 4.0, -3.0], dtype=mx.float16)
+    masked = _mask_token_logits(logits, mx.array([0]))
+    mx.eval(masked)
+
+    assert bool(mx.all(mx.isfinite(masked)).item())
+    assert int(mx.argmax(masked).item()) == 1
 
 
 def test_a_non_finite_forward_pass_cannot_be_fingerprinted():
