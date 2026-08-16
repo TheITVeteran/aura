@@ -41,6 +41,12 @@ PRODUCER_ATTESTATION_SCHEMA = (
 #: claim needs agreement from independently pinned verifiers who do not share
 #: an organization with each other, the producer, or the task issuer.
 MINIMUM_VERIFIER_QUORUM = 2
+#: What backs `params_unchanged`. The measurement is a fixed-stride canary
+#: over the parameter tree taken before and after the episode, not a Merkle
+#: root over every tensor byte — a mutation confined to unsampled elements
+#: would not be seen. The certificate names this rather than implying an
+#: exhaustive comparison, and gates the canary's coverage.
+PARAMETER_INTEGRITY_ATTESTATION = "sampled_canary_over_parameter_tree"
 _COMPARISON_KINDS = {
     "resident_32b_vs_vanilla_same_checkpoint",
     "resident_32b_vs_external_frontier",
@@ -245,6 +251,12 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
     # internally consistent and meaningless.
     if not _is_sha256(prereg.get("compute_profile_sha256")):
         reasons.append("missing_compute_profile_sha256")
+    # CP126 d0f2ae6c: `params_unchanged` rests on a SAMPLED canary. How much
+    # of the parameter tree that sample touches decides what the claim is
+    # worth, and it was neither checked nor reported.
+    coverage_floor = prereg.get("min_parameter_canary_tensor_coverage")
+    if not _finite_number(coverage_floor) or not 0.0 < float(coverage_floor) <= 1.0:
+        reasons.append("invalid_min_parameter_canary_tensor_coverage")
     # CP126 b4dc41d3: eight counters had to be positive and nothing capped
     # them. A forward pass is the whole stack, so the budget is expressed in
     # passes and checked against the architecture's own layer count.
@@ -690,6 +702,38 @@ _CONTROL_DECODE_PARAMETERS: tuple[str, ...] = (
     "decode_top_p",
     "decode_repetition_penalty_applied",
 )
+
+
+def _parameter_canary_coverage(receipt: Any) -> float | None:
+    """Fraction of parameter tensors the before/after canary actually hashed.
+
+    ``params_unchanged`` is proven by hashing a fixed-stride sample of the
+    parameter tree twice. The sample is what makes it affordable on a 32B
+    model and also what makes it partial: a mutation living entirely in
+    unsampled tensors leaves both digests identical. The certificate needs
+    the number, not the boolean.
+    """
+    if not isinstance(receipt, dict):
+        return None
+    integrity = receipt.get("runtime_integrity")
+    if not isinstance(integrity, Mapping):
+        return None
+    parameters = integrity.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return None
+    coverages: list[float] = []
+    for side in ("before", "after"):
+        snapshot = parameters.get(side)
+        if not isinstance(snapshot, Mapping):
+            return None
+        leaves = snapshot.get("parameter_leaf_count")
+        sampled = snapshot.get("sampled_tensor_count")
+        if type(leaves) is not int or leaves <= 0:
+            return None
+        if type(sampled) is not int or sampled < 0 or sampled > leaves:
+            return None
+        coverages.append(sampled / leaves)
+    return min(coverages)
 
 
 def _receipt_integrity_verdict(receipt: Any, claim: str) -> str:
@@ -1602,6 +1646,14 @@ def verify_frontier_gain_bundle(
     #: (treatment, control) scores for admitted trials, for the threshold
     #: sensitivity audit.
     scored_pairs: list[tuple[float, float]] = []
+    #: What fraction of the parameter tree the before/after canary hashed.
+    observed_canary_coverage: list[float] = []
+    raw_canary_floor = prereg.get("min_parameter_canary_tensor_coverage")
+    canary_coverage_floor = (
+        float(raw_canary_floor)
+        if _finite_number(raw_canary_floor) and 0.0 < float(raw_canary_floor) <= 1.0
+        else 0.0
+    )
     success_threshold = (
         float(prereg["success_threshold"])
         if _finite_number(prereg.get("success_threshold"))
@@ -1856,6 +1908,30 @@ def verify_frontier_gain_bundle(
         if control_request_id in seen_control_request_ids:
             trial_reasons.append(f"{trial_id}:duplicate_control_request")
         seen_control_request_ids.add(control_request_id)
+        # `params_unchanged` is proven by hashing a fixed-stride SAMPLE of the
+        # parameter tree before and after. How much of the tree that sample
+        # touches decides what the claim is worth: a mutation living entirely
+        # in unsampled tensors leaves both digests identical. The certificate
+        # now measures the coverage instead of taking the verdict on trust.
+        # The control arm only has a parameter tree to measure when it runs on
+        # the resident model. An external frontier control runs on somebody
+        # else's hardware, so demanding a canary from it would be demanding
+        # evidence that cannot exist.
+        canary_arms = (("treatment", "treatment_receipt"),)
+        if str(prereg.get("comparison_kind") or "") != (
+            "resident_32b_vs_external_frontier"
+        ):
+            canary_arms += (("control", "control_receipt"),)
+        for arm, receipt_key in canary_arms:
+            coverage = _parameter_canary_coverage(trial.get(receipt_key))
+            if coverage is None:
+                trial_reasons.append(f"{trial_id}:{arm}_parameter_canary_unmeasured")
+                continue
+            observed_canary_coverage.append(coverage)
+            if canary_coverage_floor and coverage < canary_coverage_floor:
+                trial_reasons.append(
+                    f"{trial_id}:{arm}_parameter_canary_coverage_below_floor"
+                )
         # CP126 8a56c486: seeds and decoding settings were never paired, so a
         # difference in sampling could be reported as a latent-cortex effect.
         generation_parity_gaps.update(
@@ -2245,6 +2321,15 @@ def verify_frontier_gain_bundle(
         # against safety and calibration budgets. Beating your own ablation
         # says nothing about either.
         "release_readiness": release_summary,
+        # CP126 d0f2ae6c: what actually backs `params_unchanged`, and how much
+        # of the parameter tree the measurement touched. Naming the method
+        # stops a sampled comparison reading as an exhaustive one.
+        "parameter_integrity_attestation": PARAMETER_INTEGRITY_ATTESTATION,
+        "min_parameter_canary_tensor_coverage": (
+            round(min(observed_canary_coverage), 6)
+            if observed_canary_coverage
+            else 0.0
+        ),
         "evidence_payload_sha256": evidence_hash,
         "independent_verifier_id": independent_verifier_id,
         "independent_attestation_sha256": independent_attestation_sha256,

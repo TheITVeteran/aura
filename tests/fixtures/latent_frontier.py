@@ -375,6 +375,10 @@ def _bundle(
         # a whole number of passes, so the fixture charges whole stacks.
         "compute_profile_sha256": _RESIDENT_PROFILE_RECEIPT["profile_sha256"],
         "max_forward_passes_per_trial": 64,
+        # params_unchanged rests on a fixed-stride canary. One tensor in eight
+        # is the weakest sampling this claim may be made on; the fixture's
+        # stride-7 canary covers 19 of 128 leaves.
+        "min_parameter_canary_tensor_coverage": 0.125,
         "treatment_checkpoint_fingerprint": checkpoint,
         "frozen_at": 1000.0,
         "domains": ["math", "coding", "science"],
