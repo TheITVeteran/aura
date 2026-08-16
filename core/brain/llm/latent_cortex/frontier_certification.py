@@ -47,6 +47,16 @@ MINIMUM_VERIFIER_QUORUM = 2
 #: would not be seen. The certificate names this rather than implying an
 #: exhaustive comparison, and gates the canary's coverage.
 PARAMETER_INTEGRITY_ATTESTATION = "sampled_canary_over_parameter_tree"
+#: What an independent verifier's signature proves it DID. The signer binds
+#: the artifact receipt it produced by reading the raw files, so possession of
+#: a trusted key is no longer enough on its own. No measured-boot or enclave
+#: evidence backs the claim that the pinned verifier binary is what ran, and
+#: the name says so rather than implying a measured environment.
+VERIFIER_EXECUTION_ATTESTATION = "signed_over_recomputed_artifact_receipt"
+#: What ties the running binary to source. The builder asserts that rebuilding
+#: the named commit reproduces the worker binary; nobody re-runs the build at
+#: certification time and no release signature is checked.
+BUILD_PROVENANCE_ATTESTATION = "builder_asserted_rebuild_match_unsigned"
 _COMPARISON_KINDS = {
     "resident_32b_vs_vanilla_same_checkpoint",
     "resident_32b_vs_external_frontier",
@@ -658,6 +668,31 @@ def _validate_resident_model(
         reasons.append("installed_app_provenance_unproven")
     if not _is_git_sha(resident.get("source_commit")):
         reasons.append("installed_app_source_commit_invalid")
+    # CP126 f17aa1b8: the four identifiers above were accepted for LOOKING
+    # like hashes. Four well-formed digests with no relationship between them
+    # say nothing about which source produced the binary that ran, so any of
+    # them could name a build that never existed. A release attestation ties
+    # them together: one builder claiming that rebuilding this commit produces
+    # this binary under this provenance record. Nobody re-runs the build here
+    # and no release signature is checked — BUILD_PROVENANCE_ATTESTATION says
+    # so, because "asserted by the builder" and "reproduced independently"
+    # must not read alike.
+    attestation = resident.get("release_attestation")
+    if not isinstance(attestation, dict):
+        reasons.append("release_attestation_missing")
+        return resident
+    if not str(attestation.get("builder_id") or "").strip():
+        reasons.append("release_attestation_unattributed")
+    for field, source in (
+        ("source_commit", "source_commit"),
+        ("rebuild_worker_binary_sha256", "worker_binary_sha256"),
+        ("build_provenance_sha256", "build_provenance_sha256"),
+        ("installed_app_build_sha256", "installed_app_build_sha256"),
+    ):
+        if attestation.get(field) != resident.get(source):
+            reasons.append(f"release_attestation_{field}_unbound")
+    if not _finite_number(attestation.get("attested_at"), positive=True):
+        reasons.append("release_attestation_time_missing")
     return resident
 
 
@@ -1543,6 +1578,7 @@ def _validate_independent_attestation(
     raw: Any,
     *,
     evidence_hash: str,
+    artifact_receipt_sha256: str,
     latest_task_generated_at: float,
     producer_id: str,
     trusted_verifiers: Mapping[str, Mapping[str, str]] | None,
@@ -1588,6 +1624,12 @@ def _validate_independent_attestation(
         "verifier_release_sha256",
         "raw_artifact_manifest_sha256",
         "task_commitment_sha256",
+        # CP126 2528aa7e: the payload repeated values copied straight out of
+        # the trust pin, so a signature proved key possession and nothing
+        # about work. This digest comes from opening the raw artifact files
+        # and recomputing their receipt, which a signer that never ran cannot
+        # produce.
+        "raw_artifact_receipt_sha256",
         "verified_at",
     }
     invalid = (
@@ -1605,6 +1647,8 @@ def _validate_independent_attestation(
         != bundle.get("raw_artifact_manifest_sha256")
         or payload.get("task_commitment_sha256")
         != bundle.get("task_commitment_sha256")
+        or not artifact_receipt_sha256
+        or payload.get("raw_artifact_receipt_sha256") != artifact_receipt_sha256
         or not _finite_number(payload.get("verified_at"), positive=True)
         or float(payload.get("verified_at") or 0.0) <= latest_task_generated_at
     )
@@ -2420,6 +2464,18 @@ def verify_frontier_gain_bundle(
         # postdate the LAST score.
         latest_scoring_completed_at,
     )
+    # The digest of the receipt a verifier gets only by opening the raw
+    # artifact files. Signing it is the closest thing to execution evidence
+    # available without a measured environment.
+    try:
+        artifact_receipt_sha256 = (
+            canonical_sha256(dict(raw_artifact_receipt))
+            if isinstance(raw_artifact_receipt, Mapping)
+            else ""
+        )
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        artifact_receipt_sha256 = ""
+        reasons.append("raw_artifact_receipt_not_canonical_json")
     raw_attestations = bundle.get("independent_verifiers")
     if not isinstance(raw_attestations, list) or not raw_attestations:
         reasons.append("independent_verifier_quorum_missing")
@@ -2433,6 +2489,7 @@ def verify_frontier_gain_bundle(
                 bundle,
                 raw_attestation,
                 evidence_hash=evidence_hash,
+                artifact_receipt_sha256=artifact_receipt_sha256,
                 latest_task_generated_at=attestation_deadline,
                 producer_id=verified_producer_id,
                 trusted_verifiers=trusted_verifiers,
@@ -2622,6 +2679,13 @@ def verify_frontier_gain_bundle(
         "independent_verifier_organizations": sorted(verifier_organizations),
         "verifier_quorum_required": MINIMUM_VERIFIER_QUORUM,
         "verified_producer_id": verified_producer_id,
+        # CP126 2528aa7e: what the signature proves the signer DID, and what
+        # it does not — no measured environment attests that the pinned
+        # verifier binary is the one that ran.
+        "verifier_execution_attestation": VERIFIER_EXECUTION_ATTESTATION,
+        # CP126 f17aa1b8: what ties the running binary to source, and how
+        # far that goes.
+        "build_provenance_attestation": BUILD_PROVENANCE_ATTESTATION,
         "task_issuer_id": task_issuer_id,
         "task_commitment_attestation_sha256": task_commitment_attestation_sha256,
         "preregistration_sha256": expected_prereg_hash,

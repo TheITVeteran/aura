@@ -13,6 +13,8 @@ from core.brain.frontier_evidence_v5 import canonical_json_bytes
 from core.brain.llm.latent_cortex.frontier_artifacts import (
     RAW_ARTIFACT_MANIFEST_SCHEMA,
     TRIAL_VERIFIER_RECEIPT_SCHEMA,
+    FrontierArtifactError,
+    verify_raw_artifact_package,
 )
 from core.brain.llm.latent_cortex.frontier_certification import (
     INDEPENDENT_ATTESTATION_SCHEMA,
@@ -73,6 +75,24 @@ def _publish_store(package: dict, name: str) -> None:
     }
 
 
+def _package_artifact_receipt(package: dict, manifest_bytes: bytes) -> dict | None:
+    """The receipt a verifier gets from the REAL files, when there is one.
+
+    Several tests here corrupt the package on purpose and then assert the
+    standalone verifier refuses it. Signing is not what those tests are about,
+    so a package that cannot be verified simply gets no receipt binding.
+    """
+    try:
+        return verify_raw_artifact_package(
+            package["bundle"],
+            package["manifest"],
+            manifest_bytes,
+            artifact_root=package["root"],
+        )
+    except FrontierArtifactError:
+        return None
+
+
 def _publish_manifest_and_bundle(package: dict, *, signed: bool) -> None:
     manifest_bytes = canonical_json_bytes(package["manifest"])
     package["manifest_path"].write_bytes(manifest_bytes)
@@ -82,7 +102,13 @@ def _publish_manifest_and_bundle(package: dict, *, signed: bool) -> None:
     # means no VERIFIER has attested, not that the producer is anonymous.
     _refresh_producer_attestation(package["bundle"])
     if signed:
-        _refresh_attestation(package["bundle"])
+        # Sign over the receipt a verifier gets by opening the REAL files in
+        # this package, not the in-memory stand-in — that binding is the whole
+        # point of the field.
+        _refresh_attestation(
+            package["bundle"],
+            artifact_receipt=_package_artifact_receipt(package, manifest_bytes),
+        )
     else:
         package["bundle"].pop("independent_verifiers", None)
     _write_json(package["bundle_path"], package["bundle"])
@@ -295,7 +321,14 @@ def test_attestation_prepare_and_external_signature_complete_the_flow(tmp_path: 
         verified_at=3000.0,
     )
     package["bundle"]["independent_verifiers"].append(
-        _signed_attestation(package["bundle"], _SECOND_VERIFIER_ID, 3000.0)
+        _signed_attestation(
+            package["bundle"],
+            _SECOND_VERIFIER_ID,
+            3000.0,
+            _package_artifact_receipt(
+                package, canonical_json_bytes(package["manifest"])
+            ),
+        )
     )
     assert second["signed_payload"]["evidence_payload_sha256"] == payload[
         "evidence_payload_sha256"
@@ -603,7 +636,14 @@ def test_external_attestation_prepare_and_signature_complete_the_flow(tmp_path: 
         verified_at=3000.0,
     )
     package["bundle"]["independent_verifiers"].append(
-        _signed_attestation(package["bundle"], _SECOND_VERIFIER_ID, 3000.0)
+        _signed_attestation(
+            package["bundle"],
+            _SECOND_VERIFIER_ID,
+            3000.0,
+            _package_artifact_receipt(
+                package, canonical_json_bytes(package["manifest"])
+            ),
+        )
     )
     assert second["signed_payload"]["evidence_payload_sha256"] == payload[
         "evidence_payload_sha256"

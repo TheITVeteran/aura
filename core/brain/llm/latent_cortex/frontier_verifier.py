@@ -515,6 +515,9 @@ def prepare_independent_attestation_request(
         "verifier_release_sha256": pin["release_sha256"],
         "raw_artifact_manifest_sha256": bundle.get("raw_artifact_manifest_sha256"),
         "task_commitment_sha256": bundle.get("task_commitment_sha256"),
+        # The receipt this verifier produced by opening the raw files. A
+        # signer that never ran cannot supply it.
+        "raw_artifact_receipt_sha256": canonical_sha256(dict(artifact_receipt)),
         "verified_at": verified_at_value,
     }
     request: dict[str, Any] = {

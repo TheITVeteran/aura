@@ -355,7 +355,19 @@ def _refresh_producer_attestation(bundle: dict, *, produced_at: float = 1900.0) 
     }
 
 
-def _signed_attestation(bundle: dict, verifier_id: str, verified_at: float) -> dict:
+def _signed_attestation(
+    bundle: dict,
+    verifier_id: str,
+    verified_at: float,
+    artifact_receipt: dict | None = None,
+) -> dict:
+    """Sign an attestation over the receipt this verifier actually produced.
+
+    The standalone verifier opens real files and gets a real receipt; the
+    in-memory tests use the stand-in below. Either way the signature has to be
+    over the receipt the certifying call is handed, because binding it is what
+    makes the signature evidence of work rather than of key possession.
+    """
     key, implementation, release = _VERIFIER_KEYS[verifier_id]
     payload = {
         "accepted": True,
@@ -367,6 +379,12 @@ def _signed_attestation(bundle: dict, verifier_id: str, verified_at: float) -> d
         "verifier_release_sha256": release,
         "raw_artifact_manifest_sha256": bundle["raw_artifact_manifest_sha256"],
         "task_commitment_sha256": bundle["task_commitment_sha256"],
+        # The receipt this verifier produced by opening the raw artifacts.
+        "raw_artifact_receipt_sha256": canonical_sha256(
+            dict(artifact_receipt)
+            if artifact_receipt is not None
+            else _raw_artifact_receipt(bundle)
+        ),
         "verified_at": verified_at,
     }
     return {
@@ -388,12 +406,13 @@ def _refresh_attestation(
     *,
     verified_at: float = 2000.0,
     verifier_ids: tuple[str, ...] = (_VERIFIER_ID, _SECOND_VERIFIER_ID),
+    artifact_receipt: dict | None = None,
 ) -> None:
     # The producer signature covers the evidence payload, so it is refreshed
     # first and then excluded from what the verifiers hash.
     _refresh_producer_attestation(bundle)
     bundle["independent_verifiers"] = [
-        _signed_attestation(bundle, verifier_id, verified_at)
+        _signed_attestation(bundle, verifier_id, verified_at, artifact_receipt)
         for verifier_id in verifier_ids
     ]
 
@@ -776,6 +795,17 @@ def _bundle(
             "build_provenance_sha256": "6" * 64,
             "source_commit": "7" * 40,
             "latent_cortex_architecture_sha256": "a" * 64,
+            # One builder tying the four build identifiers together. Four
+            # well-formed digests with no relationship between them said
+            # nothing about which source produced the binary that ran.
+            "release_attestation": {
+                "builder_id": "aura-release-builder",
+                "source_commit": "7" * 40,
+                "rebuild_worker_binary_sha256": "5" * 64,
+                "build_provenance_sha256": "6" * 64,
+                "installed_app_build_sha256": app_build,
+                "attested_at": 800.0,
+            },
             "compute_profile": dict(_RESIDENT_PROFILE_RECEIPT),
         },
         "raw_artifact_manifest_sha256": "9" * 64,
