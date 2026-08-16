@@ -35,7 +35,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from core.utils.injected_blocks import stamp_runtime_payload
 from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
@@ -105,6 +104,7 @@ from core.runtime.shutdown_coordinator import (
 from core.runtime.structured_input import analyze_prompt_shape
 from core.runtime.version import version_string
 from core.self.inner_language import say_focus
+from core.utils.injected_blocks import stamp_runtime_payload
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.task_tracker import get_task_tracker
 from interface.auth import (
@@ -8670,6 +8670,9 @@ def _build_live_turn_contract_payload(
         trace.get("foreground_model_generation_consumed")
     )
     completion_retry_count = int(trace.get("completion_retry_count") or 0)
+    repair_retry_attempt_count = int(
+        trace.get("repair_retry_attempt_count") or 0
+    )
     single_owner_model_generation_proven = bool(
         (
             live_mind_generation_required
@@ -8687,6 +8690,13 @@ def _build_live_turn_contract_payload(
             and foreground_model_generation_consumed
             and 1 <= completion_retry_count <= _MAX_USER_SURFACE_CONTINUATIONS
             and foreground_model_generation_count == 1 + completion_retry_count
+        )
+        or (
+            live_mind_generation_required
+            and response_path == "cognitive_engine_repair_retry"
+            and foreground_model_generation_consumed
+            and repair_retry_attempt_count == 1
+            and foreground_model_generation_count == 2
         )
     )
     # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
@@ -8783,6 +8793,7 @@ def _build_live_turn_contract_payload(
         "foreground_model_generation_consumed": foreground_model_generation_consumed,
         "foreground_model_generation_count": foreground_model_generation_count,
         "completion_retry_count": completion_retry_count,
+        "repair_retry_attempt_count": repair_retry_attempt_count,
         "single_owner_model_generation_proven": single_owner_model_generation_proven,
         "cognitive_engine_reply_accepted": engine_reply_accepted,
         "cognitive_engine_reply_failed": engine_reply_failed,
@@ -10104,6 +10115,7 @@ async def _run_cognitive_engine_chat_turn(
                 "live_mind_controls_worker_applied": False,
                 "foreground_model_generation_consumed": False,
                 "foreground_model_generation_count": 0,
+                "repair_retry_attempt_count": 0,
                 "single_owner_generation_exhausted": False,
                 "response_path": "",
             }
@@ -11304,15 +11316,22 @@ async def _run_cognitive_engine_chat_turn(
         if require_engine:
             if bool(
                 turn_trace
-                and (
-                    turn_trace.get("foreground_model_generation_consumed")
-                    or turn_trace.get("single_owner_generation_exhausted")
-                )
+                and turn_trace.get("model_retry_suppressed")
                 and not completion_only_retry
             ):
                 logger.warning(
-                    "Skipping CognitiveEngine desktop repair retry; the foreground "
-                    "model owner already produced work for this turn."
+                    "Skipping CognitiveEngine desktop repair retry; the worker "
+                    "explicitly suppressed another generation for this turn."
+                )
+                return None
+            if bool(
+                turn_trace
+                and int(turn_trace.get("repair_retry_attempt_count") or 0) >= 1
+                and not completion_only_retry
+            ):
+                logger.warning(
+                    "Skipping CognitiveEngine desktop repair retry; the one bounded "
+                    "same-worker correction has already been attempted."
                 )
                 return None
             repair_reason = (
@@ -11331,6 +11350,11 @@ async def _run_cognitive_engine_chat_turn(
                     block_reason,
                 )
                 return None
+            if turn_trace is not None and not completion_only_retry:
+                turn_trace["repair_retry_attempt_count"] = (
+                    int(turn_trace.get("repair_retry_attempt_count") or 0) + 1
+                )
+                turn_trace["bounded_correction_attempted"] = True
         try:
             from core.conversation.response_reliability import (
                 assess_user_facing_reply,
@@ -12311,35 +12335,6 @@ async def _run_cognitive_engine_chat_turn(
                         response_path="cognitive_engine_memory_state_grounding",
                     )
                     return grounded_memory_reply
-            if require_engine and self_condition_contract:
-                refreshed_condition_reply = _build_grounded_self_condition_reply(visible)
-                if not refreshed_condition_reply:
-                    refreshed_condition_reply = canonical_self_condition_reply
-                if refreshed_condition_reply:
-                    condition_assessment = assess_user_facing_reply(
-                        visible,
-                        refreshed_condition_reply,
-                        recent_user_messages=recent_user_messages,
-                    )
-                    if not _reply_assessment_requires_repair_with_memory_evidence(
-                        condition_assessment,
-                        visible,
-                        refreshed_condition_reply,
-                        canonical_memory_state_evidence=canonical_memory_state_evidence,
-                    ):
-                        logger.warning(
-                            "CognitiveEngine self-condition draft missed canonical inner-state "
-                            "evidence; binding the visible reply to the refreshed projection "
-                            "after the required engine invocation."
-                        )
-                        _mark_turn_trace(
-                            cognitive_engine_reply_accepted=True,
-                            cognitive_engine_reply_failed=False,
-                            bounded_contract_used=False,
-                            response_path="cognitive_engine_self_condition_grounding",
-                            self_condition_contract=True,
-                        )
-                        return refreshed_condition_reply
             if groundable_self_process_miss:
                 grounded_self_process_reply = await _build_grounded_self_process_repair_reply(
                     visible,
@@ -12387,6 +12382,47 @@ async def _run_cognitive_engine_chat_turn(
                             }
                         )
                     return retry_reply
+                if self_condition_contract:
+                    refreshed_condition_reply = _build_grounded_self_condition_reply(visible)
+                    if not refreshed_condition_reply:
+                        refreshed_condition_reply = canonical_self_condition_reply
+                    if refreshed_condition_reply:
+                        condition_assessment = assess_user_facing_reply(
+                            visible,
+                            refreshed_condition_reply,
+                            recent_user_messages=recent_user_messages,
+                        )
+                        if not _reply_assessment_requires_repair_with_memory_evidence(
+                            condition_assessment,
+                            visible,
+                            refreshed_condition_reply,
+                            canonical_memory_state_evidence=canonical_memory_state_evidence,
+                        ):
+                            logger.warning(
+                                "CognitiveEngine self-condition generation and bounded "
+                                "same-worker correction both missed the inner-state contract; "
+                                "serving a clearly bounded canonical projection."
+                            )
+                            _append_turn_text_mutation(
+                                turn_trace,
+                                stage="chat.self_condition_bounded_projection",
+                                method="deterministic_self_condition_projection",
+                                reasons=list(assessment.reasons or ()),
+                                before=text,
+                                after=refreshed_condition_reply,
+                                deterministic=True,
+                                authorship_effect="replaced_by_runtime",
+                            )
+                            _mark_turn_trace(
+                                cognitive_engine_reply_accepted=False,
+                                cognitive_engine_reply_failed=True,
+                                bounded_contract_used=True,
+                                post_generation_repair_applied=True,
+                                deterministic_repair_applied=True,
+                                response_path="cognitive_engine_self_condition_grounding",
+                                self_condition_contract=True,
+                            )
+                            return refreshed_condition_reply
                 expected_recall_reply = await _build_conversation_recall_reply(
                     visible,
                     session_id=session_id,
@@ -27182,6 +27218,28 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                                     ),
                                 )
                                 _live_turn_trace["full_mind_proof_degraded"] = True
+                                lane = contract_lane
+                            elif _bounded_runtime_grounding_can_serve(
+                                candidate_contract
+                            ):
+                                grounded_path = str(
+                                    candidate_contract.get("response_path")
+                                    or "runtime_grounding"
+                                )
+                                logger.warning(
+                                    "Desktop turn retained a bounded runtime projection after "
+                                    "model-authored attempts were exhausted (path=%s).",
+                                    grounded_path,
+                                )
+                                _live_turn_trace.update(
+                                    {
+                                        "cognitive_engine_reply_accepted": False,
+                                        "cognitive_engine_reply_failed": True,
+                                        "bounded_contract_used": True,
+                                        "response_path": grounded_path,
+                                    }
+                                )
+                                reply_source = grounded_path
                                 lane = contract_lane
                             else:
                                 if (

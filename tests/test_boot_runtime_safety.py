@@ -13,6 +13,24 @@ from types import SimpleNamespace
 import pytest
 
 import core.runtime.boot_safety as boot_safety_module
+from core.brain.inference_gate import InferenceGate
+from core.brain.llm_health_router import build_router_from_config
+from core.config import PROJECT_ROOT, config
+from core.container import ServiceContainer
+from core.runtime.boot_safety import main_process_camera_policy, uvloop_allowed
+from core.runtime.desktop_boot_safety import (
+    compute_mlx_cache_limit,
+    compute_mlx_memory_limit,
+    compute_process_rss_limit,
+    desktop_resource_guard_enabled,
+    desktop_safe_boot_enabled,
+    inprocess_mlx_metal_enabled,
+)
+from core.senses.continuous_vision import ContinuousSensoryBuffer
+from core.somatic.sensory_motor_cortex import SensoryMotorCortex
+from core.utils.memory_monitor import AppleSiliconMemoryMonitor
+
+
 @pytest.fixture(autouse=True)
 def _restore_process_environment():
     """Put os.environ back after every test in this file.
@@ -51,23 +69,6 @@ def _restore_process_environment():
         for key, value in snapshot.items():
             if os.environ.get(key) != value:
                 os.environ[key] = value
-
-from core.brain.inference_gate import InferenceGate
-from core.brain.llm_health_router import build_router_from_config
-from core.config import PROJECT_ROOT, config
-from core.container import ServiceContainer
-from core.runtime.boot_safety import main_process_camera_policy, uvloop_allowed
-from core.runtime.desktop_boot_safety import (
-    compute_mlx_cache_limit,
-    compute_mlx_memory_limit,
-    compute_process_rss_limit,
-    desktop_resource_guard_enabled,
-    desktop_safe_boot_enabled,
-    inprocess_mlx_metal_enabled,
-)
-from core.senses.continuous_vision import ContinuousSensoryBuffer
-from core.somatic.sensory_motor_cortex import SensoryMotorCortex
-from core.utils.memory_monitor import AppleSiliconMemoryMonitor
 
 VISION_TEST_ROOT = Path(tempfile.gettempdir()) / "aura-test"
 
@@ -129,6 +130,46 @@ def test_media_safe_imports_allows_cv2_in_sidecar_darwin(monkeypatch):
     monkeypatch.delenv("AURA_ALLOW_INPROCESS_CV2_WITH_STT", raising=False)
 
     assert safe_imports.cv2_main_process_blocked() is False
+
+
+def test_media_safe_imports_blocks_torchcodec_in_primary_darwin(monkeypatch):
+    import core.media.safe_imports as safe_imports
+
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.delenv("AURA_MEDIA_SIDECAR_PROCESS", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_TORCHCODEC_WITH_STT", raising=False)
+
+    assert safe_imports.torchcodec_main_process_blocked() is True
+    assert safe_imports.blocked_native_media_import("torchcodec.decoders") == "torchcodec"
+
+
+def test_media_safe_imports_allows_torchcodec_only_at_safe_boundaries(monkeypatch):
+    import core.media.safe_imports as safe_imports
+
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.setenv("AURA_MEDIA_SIDECAR_PROCESS", "1")
+    assert safe_imports.torchcodec_main_process_blocked() is False
+
+    monkeypatch.delenv("AURA_MEDIA_SIDECAR_PROCESS", raising=False)
+    monkeypatch.setenv("AURA_ALLOW_INPROCESS_TORCHCODEC_WITH_STT", "1")
+    assert safe_imports.torchcodec_main_process_blocked() is False
+
+
+def test_media_guard_rejects_torchcodec_without_importing_it(monkeypatch):
+    import core.media.safe_imports as safe_imports
+
+    monkeypatch.setattr(safe_imports.sys, "platform", "darwin")
+    monkeypatch.delenv("AURA_MEDIA_SIDECAR_PROCESS", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_INPROCESS_TORCHCODEC_WITH_STT", raising=False)
+    monkeypatch.setattr(safe_imports, "_CV2_IMPORT_GUARD_INSTALLED", False)
+    original = builtins.__import__
+    try:
+        safe_imports.install_main_process_cv2_guard()
+        with pytest.raises(ImportError, match="TorchCodec import is blocked"):
+            builtins.__import__("torchcodec.decoders")
+    finally:
+        builtins.__import__ = original
+        safe_imports._CV2_IMPORT_GUARD_INSTALLED = False
 
 
 def test_sensory_sidecar_marks_media_process_boundary(monkeypatch):
@@ -1109,9 +1150,14 @@ async def test_continuous_vision_defers_screen_backend_without_permission(monkey
 
     check_permission = AsyncCallRecorder({"granted": False, "status": "deferred"})
     guard = SimpleNamespace(check_permission=check_permission)
+    privacy_admission = AsyncCallRecorder(SimpleNamespace(allowed=True))
 
     fake_mss = _FakeMSSModule()
     monkeypatch.setitem(sys.modules, "mss", fake_mss)
+    monkeypatch.setattr(
+        "core.senses.continuous_vision.evaluate_screen_capture_admission_async",
+        privacy_admission,
+    )
     monkeypatch.setattr(
         ServiceContainer,
         "get",
@@ -1122,6 +1168,7 @@ async def test_continuous_vision_defers_screen_backend_without_permission(monkey
     ready = await buffer._ensure_screen_backend()
 
     assert ready is False
+    assert len(privacy_admission.calls) == 1
     assert len(check_permission.calls) == 1
     assert fake_mss.mss_calls == 0
     assert buffer.sct is None

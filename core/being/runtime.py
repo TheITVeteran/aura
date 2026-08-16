@@ -79,6 +79,16 @@ NON_CONSEQUENTIAL_ACTION_DOMAINS = frozenset({
 
 KNOWN_ACTION_DOMAINS = CONSEQUENTIAL_ACTION_DOMAINS | NON_CONSEQUENTIAL_ACTION_DOMAINS
 
+_RUNTIME_BOUND_PASSIVE_OBSERVATIONS = frozenset(
+    {
+        (
+            "environment_action",
+            "browser_controller",
+            "browser_controller.get_open_tabs",
+        ),
+    }
+)
+
 
 def is_consequential_domain(domain_name: str) -> bool:
     """Whether this domain must pay body cost and honour consequential defers.
@@ -90,6 +100,34 @@ def is_consequential_domain(domain_name: str) -> bool:
     if name in CONSEQUENTIAL_ACTION_DOMAINS:
         return True
     return name not in NON_CONSEQUENTIAL_ACTION_DOMAINS
+
+
+def is_runtime_bound_passive_observation(
+    domain_name: str,
+    context: dict[str, Any] | None,
+) -> bool:
+    """Recognize an exact read contract stamped by ActionExecutor.
+
+    This does not grant authority. It only prevents a passive observation,
+    already admitted by Will and privacy policy, from inheriting action-only
+    welfare/body defers. The action name and source are stamped after caller
+    context is merged, so payload booleans alone cannot enter this lane.
+    """
+
+    ctx = dict(context or {})
+    contract = (
+        str(domain_name or "").strip().lower(),
+        str(ctx.get("action_executor_source") or "").strip(),
+        str(ctx.get("action_executor_action_name") or "").strip(),
+    )
+    return bool(
+        contract in _RUNTIME_BOUND_PASSIVE_OBSERVATIONS
+        and ctx.get("passive_observation") is True
+        and ctx.get("read_only") is True
+        and str(ctx.get("effect_scope") or "").strip().lower() == "read_only"
+        and ctx.get("no_external_effects") is True
+        and ctx.get("user_visible_desktop_effect") is False
+    )
 
 
 def attested_context_flag(
@@ -647,12 +685,19 @@ class BeingRuntime:
         blocks: list[str] = []
         defers: list[str] = []
 
-        consequential = is_consequential_domain(domain_name)
+        nominally_consequential = is_consequential_domain(domain_name)
+        passive_observation = is_runtime_bound_passive_observation(
+            domain_name,
+            context,
+        )
+        consequential = nominally_consequential and not passive_observation
         unknown_domain = bool(domain_name) and domain_name not in KNOWN_ACTION_DOMAINS
         if unknown_domain:
             constraints.append(
                 f"unknown_action_domain_treated_as_consequential: {domain_name!r}"
             )
+        if passive_observation:
+            constraints.append("runtime_bound_passive_observation:read_only")
         repair_lane = (
             domain_name in {"stabilization", "reflection"}
             or is_internal_recovery_context(domain_name, context)

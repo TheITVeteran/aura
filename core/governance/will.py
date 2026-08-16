@@ -296,7 +296,7 @@ class WillState:
 def _role_attribution_for(
     *,
     source: str,
-    domain: "ActionDomain",
+    domain: ActionDomain,
     context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Who proposed, authorized, set the criterion and read the evidence.
@@ -1393,6 +1393,24 @@ class UnifiedWill:
             return False
         return bool(read_only or tool_name in observation_tools)
 
+    @classmethod
+    def _is_observation_only_action_context(
+        cls,
+        domain: ActionDomain,
+        content: str,
+        context: dict[str, Any],
+    ) -> bool:
+        if domain == ActionDomain.TOOL_EXECUTION:
+            return cls._is_observation_only_tool_context(content, context)
+        if domain != ActionDomain.ENVIRONMENT_ACTION:
+            return False
+        try:
+            from core.being.runtime import is_runtime_bound_passive_observation
+
+            return is_runtime_bound_passive_observation(domain.value, context)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+
     @staticmethod
     def _is_observation_only_memory_context(content: str, context: dict[str, Any]) -> bool:
         """Allow bounded user-provided memory observations during present-state defer.
@@ -1626,8 +1644,11 @@ class UnifiedWill:
 
         if (
             policy_outcome == "defer"
-            and domain == ActionDomain.TOOL_EXECUTION
-            and self._is_observation_only_tool_context(content, dict(context or {}))
+            and self._is_observation_only_action_context(
+                domain,
+                content,
+                dict(context or {}),
+            )
         ):
             constraints.append("aura_now_observation_lane:read_only")
             if outcome == WillOutcome.PROCEED:
@@ -2002,20 +2023,21 @@ class UnifiedWill:
             constraints.append("identity_tension: self-coherence is low")
 
         # ── Substrate gate (embodied constraints) ───────────────────
-        observation_only_tool = (
-            domain == ActionDomain.TOOL_EXECUTION
-            and self._is_observation_only_tool_context(content, context)
+        observation_only_action = self._is_observation_only_action_context(
+            domain,
+            content,
+            context,
         )
         field_crisis_threshold = 0.15 if catatonia_relief else 0.25
         if substrate_coherence < field_crisis_threshold:
             if (
                 domain not in (ActionDomain.STABILIZATION, ActionDomain.RESPONSE)
-                and not observation_only_tool
+                and not observation_only_action
             ):
                 reasons.append(f"field_crisis: coherence={substrate_coherence:.3f}")
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
             constraints.append(f"field_crisis: coherence={substrate_coherence:.3f}")
-            if observation_only_tool:
+            if observation_only_action:
                 constraints.append("observation_only_under_field_crisis")
 
         elif substrate_coherence < 0.25 and catatonia_relief:
@@ -2029,12 +2051,12 @@ class UnifiedWill:
         if somatic_approach < -0.5:
             if (
                 domain not in (ActionDomain.RESPONSE, ActionDomain.STABILIZATION)
-                and not observation_only_tool
+                and not observation_only_action
             ):
                 reasons.append(f"somatic_veto: approach={somatic_approach:.3f}")
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
             constraints.append(f"somatic_caution: approach={somatic_approach:.3f}")
-            if observation_only_tool:
+            if observation_only_action:
                 constraints.append("observation_only_under_somatic_veto")
 
         elif somatic_approach < -0.2:
@@ -2116,7 +2138,7 @@ class UnifiedWill:
             constraints.append(f"causal_closure_collapse: score={causal_closure_score:.3f} missing={missing}")
             if domain == ActionDomain.STABILIZATION:
                 return WillOutcome.CONSTRAIN, "causal_closure_repair_lane", constraints
-            if domain in consequential_domains:
+            if domain in consequential_domains and not observation_only_action:
                 reasons.append("causal_closure_block: consequential action requires one active present and Will-owned receipt path")
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
             if domain == ActionDomain.MEMORY_WRITE:
@@ -2155,13 +2177,13 @@ class UnifiedWill:
                 )
             if domain in {ActionDomain.RESPONSE, ActionDomain.EXPRESSION, ActionDomain.REFLECTION, ActionDomain.MEMORY_WRITE}:
                 constraints.append("qualified_self_report_only")
-            elif domain == ActionDomain.TOOL_EXECUTION:
+            elif domain == ActionDomain.TOOL_EXECUTION and not observation_only_action:
                 if catatonia_relief:
                     constraints.append(f"unity_tool_relief:{unity_level}")
                 else:
                     reasons.append("unity_block: external action blocked until repair completes")
                     return WillOutcome.REFUSE, "; ".join(reasons), constraints
-            elif domain in consequential_domains:
+            elif domain in consequential_domains and not observation_only_action:
                 reasons.append(
                     "unity_block: consequential action blocked until repair completes"
                 )

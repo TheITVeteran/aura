@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import threading
 from collections import OrderedDict
 from typing import Any
@@ -70,14 +69,16 @@ def _build_embed_engine() -> Any:
             _ENGINE_WARM_INFLIGHT = False
             return _EMBED_ENGINE
     try:
-        from core.memory.vector_memory_engine import EmbeddingEngine
+        from core.memory.embedding_runtime import acquire_shared_embedding_engine
 
-        engine = EmbeddingEngine()
+        engine = acquire_shared_embedding_engine("rag")
         # This is the expensive call: it loads SentenceTransformer (~5s) and
         # is why the construction must never happen on the event loop.
         probe = engine.embed("semantic backend probe")
         ok = getattr(engine, "_model", None) is not None and probe is not None
     except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+        if "engine" in locals():
+            engine.close()
         with _SEMANTIC_LOCK:
             _EMBED_ENGINE_FAILED = True
             _ENGINE_WARM_INFLIGHT = False
@@ -88,9 +89,16 @@ def _build_embed_engine() -> Any:
         if not ok:
             _EMBED_ENGINE_FAILED = True
             logger.info("Semantic RAG backend unavailable; TF-IDF only.")
+            engine.close()
             return None
-        _EMBED_ENGINE = engine
-    return engine
+        if _EMBED_ENGINE is None:
+            _EMBED_ENGINE = engine
+            return engine
+        winner = _EMBED_ENGINE
+    # Two non-loop callers may race through the expensive probe. They still
+    # share one underlying model, but only the cached RAG lease remains owned.
+    engine.close()
+    return winner
 
 
 def _get_embed_engine() -> Any:
@@ -155,7 +163,7 @@ def _cached_vector(text: str) -> Any:
 
 def _store_vectors(texts: list[str], vectors: Any) -> None:
     with _SEMANTIC_LOCK:
-        for text, vec in zip(texts, vectors):
+        for text, vec in zip(texts, vectors, strict=False):
             _SEMANTIC_CACHE[_text_key(text)] = vec
             _SEMANTIC_CACHE.move_to_end(_text_key(text))
         while len(_SEMANTIC_CACHE) > _SEMANTIC_CACHE_MAX:
@@ -233,12 +241,17 @@ def _semantic_scores(
 
 
 def reset_semantic_state_for_test() -> None:
-    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED, _WARM_INFLIGHT
+    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED, _WARM_INFLIGHT, _ENGINE_WARM_INFLIGHT
     with _SEMANTIC_LOCK:
         _SEMANTIC_CACHE.clear()
-    _EMBED_ENGINE = None
-    _EMBED_ENGINE_FAILED = False
-    _WARM_INFLIGHT = False
+        engine, _EMBED_ENGINE = _EMBED_ENGINE, None
+        _EMBED_ENGINE_FAILED = False
+        _WARM_INFLIGHT = False
+        _ENGINE_WARM_INFLIGHT = False
+    if engine is not None:
+        close = getattr(engine, "close", None)
+        if callable(close):
+            close()
 
 
 def tokenize(text: str) -> list[str]:
@@ -385,7 +398,9 @@ def retrieve_memories(
     dense = _semantic_scores(query, texts, task=task)
 
     scored: list[dict[str, Any]] = []
-    for position, (memory, tokens) in enumerate(zip(memories, doc_tokens)):
+    for position, (memory, tokens) in enumerate(
+        zip(memories, doc_tokens, strict=False)
+    ):
         if not tokens:
             # An unreadable memory is not a weak match, it is not a match. The
             # dense layer will happily return a small positive cosine for the

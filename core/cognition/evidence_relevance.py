@@ -221,12 +221,12 @@ def _embedder() -> Any | None:
     except (ImportError, AttributeError, RuntimeError, LookupError):
         pass
     try:
-        from core.memory.vector_memory_engine import EmbeddingEngine
+        from core.memory.embedding_runtime import acquire_shared_embedding_engine
 
         with _LOCK:
             engine = _ANCHOR_CACHE.get("__engine__")
             if engine is None:
-                engine = EmbeddingEngine()
+                engine = acquire_shared_embedding_engine("evidence-relevance")
                 _ANCHOR_CACHE["__engine__"] = engine
             return engine
     except (ImportError, AttributeError, RuntimeError):

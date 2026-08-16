@@ -181,6 +181,41 @@ class TestAllDomains:
         assert decision.reason == "aura_now_observation_lane"
         assert "aura_now_observation_lane:read_only" in decision.constraints
 
+    def test_aura_now_defer_allows_exact_passive_browser_observation(
+        self,
+        will,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            will,
+            "_sample_aura_now_evidence",
+            lambda **_kwargs: {
+                "outcome": "defer",
+                "constraints": ["welfare_recovery_required_before_action"],
+                "evidence": {"state_hash": "test", "tick": 1},
+            },
+        )
+
+        decision = will.decide(
+            content="browser_controller.get_open_tabs",
+            source="browser_controller",
+            domain=ActionDomain.ENVIRONMENT_ACTION,
+            priority=0.5,
+            context={
+                "action_executor_source": "browser_controller",
+                "action_executor_action_name": "browser_controller.get_open_tabs",
+                "passive_observation": True,
+                "read_only": True,
+                "effect_scope": "read_only",
+                "no_external_effects": True,
+                "user_visible_desktop_effect": False,
+            },
+        )
+
+        assert decision.outcome == WillOutcome.CONSTRAIN
+        assert decision.is_approved()
+        assert decision.reason == "aura_now_observation_lane"
+
     def test_aura_now_defer_still_defers_consequential_tool(self, will, monkeypatch):
         """The observation lane must not become a bypass for write/control tools."""
 

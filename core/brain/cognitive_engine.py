@@ -4029,54 +4029,12 @@ class CognitiveEngine:
             and live_mind_required_subsystems_ok
         ):
             live_mind_controls_bound = False
-        canonical_self_condition_reply = str(
-            context.get("canonical_self_condition_reply") or ""
-        ).strip()
-        canonical_self_condition_projection = context.get(
-            "canonical_self_condition_projection"
-        )
-        if not isinstance(canonical_self_condition_projection, dict):
-            canonical_self_condition_projection = {}
-        self_condition_evidence_id = str(
-            canonical_self_condition_projection.get("evidence_id") or ""
-        ).strip()
-        if (
-            self_condition_contract
-            and canonical_self_condition_reply
-            and self_condition_evidence_id
-            and live_mind_snapshot_ready
-            and live_mind_required_subsystems_ok
-            and live_mind_controls_bound
-        ):
-            metadata = self._live_mind_structured_floor_metadata(
-                context,
-                source="cognitive_engine_self_condition_grounding",
-            )
-            metadata.update(
-                {
-                    "response_path": "cognitive_engine_self_condition_grounding",
-                    "self_condition_contract": True,
-                    "self_condition_evidence_id": self_condition_evidence_id,
-                    "canonical_self_condition_grounding": True,
-                }
-            )
-            try:
-                confidence = float(
-                    canonical_self_condition_projection.get("confidence") or 0.88
-                )
-            except (TypeError, ValueError):
-                confidence = 0.88
-            return Thought(
-                id=str(uuid.uuid4()),
-                content=canonical_self_condition_reply,
-                mode=mode,
-                confidence=max(0.65, min(0.95, confidence)),
-                reasoning=[
-                    "Current self-condition was rendered from the canonical typed projection inside CognitiveEngine.",
-                    "The projection bound affect, welfare, coherence, continuity, agency, freshness, and uncertainty without substituting host telemetry.",
-                ],
-                metadata=metadata,
-            )
+        # A typed self-condition projection is evidence for Aura's answer, not
+        # Aura's answer.  Returning it here bypassed the resident model entirely
+        # and made an ordinary "how are you?" turn look like a health endpoint.
+        # Keep the projection in the grounded prompt below.  The route may use a
+        # visibly bounded projection only after model generation and one
+        # same-worker corrective attempt have both failed.
         if bool(context.get("bounded_planning_contract")) and not bool(
             context.get("require_full_foreground_mind_reply", False)
         ):

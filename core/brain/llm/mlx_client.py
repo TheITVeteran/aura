@@ -4,8 +4,8 @@ import asyncio
 import concurrent.futures as cfutures
 import contextlib
 import copy
-import functools
 import fcntl
+import functools
 import gc
 import hashlib
 import json
@@ -450,6 +450,19 @@ def _observe_worker_prompt_tokenization(response: Mapping[str, Any]) -> bool:
         return False
 
 
+def _observe_worker_token_budget_calibration(response: Mapping[str, Any]) -> int:
+    """Atomically import a validated tokenizer calibration from worker init."""
+
+    if response.get("status") != "ok" or response.get("action") != "init":
+        return 0
+    try:
+        from core.brain.llm.token_budget_evidence import observe_calibration_batch
+
+        return int(observe_calibration_batch(response.get("token_budget_calibration")))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return 0
+
+
 #: A servable MLX artifact carries a model config, a tokenizer, and weights.
 #: Anything missing means the worker will fail at load time — after the healthy
 #: one has already been torn down.
@@ -726,7 +739,7 @@ def _validate_adapter_artifact(
     )
 
 
-class ModelLoadAdmissionRefused(RuntimeError):
+class ModelLoadAdmissionRefused(RuntimeError):  # noqa: N818 - public API
     """The memory guard declined to load this model. A DECISION, not a fault.
 
     CP126 5ce89b9e: this condition used to be recognised by searching an
@@ -7427,7 +7440,7 @@ class MLXLocalClient:
         if path:
             adapter_verdict = await asyncio.to_thread(
                 _validate_adapter_artifact,
-                Path(path).expanduser(),
+                Path(path).expanduser(),  # noqa: ASYNC240 - executed in to_thread
                 # The resident checkpoint's training-pipeline fingerprint is
                 # not something this client measures — the worker identity
                 # carries a source sha and a model path, not the digest an
@@ -7640,6 +7653,20 @@ class MLXLocalClient:
         the receipt positively establishes both.
         """
         errors: list[str] = []
+
+        try:
+            from core.brain.llm.token_budget_evidence import calibration_batch_errors
+
+            errors.extend(
+                calibration_batch_errors(res.get("token_budget_calibration"))
+            )
+        except ImportError as exc:
+            _record_mlx_degradation(
+                exc,
+                action="token-budget calibration validator unavailable during handshake",
+                severity="error",
+            )
+            errors.append("token_budget_calibration_validator_unavailable")
 
         identity = res.get("worker_identity")
         try:
@@ -11882,6 +11909,15 @@ class MLXLocalClient:
                                 )
                                 readiness_errors.append(
                                     "worker_capture_launch_attestation_invalid"
+                                )
+                        if not readiness_errors:
+                            from core.brain.llm.token_budget_evidence import MIN_OBSERVATIONS
+
+                            calibration_count = _observe_worker_token_budget_calibration(res)
+                            if calibration_count < MIN_OBSERVATIONS:
+                                readiness_errors.append(
+                                    "token_budget_calibration_not_admitted:"
+                                    f"{calibration_count}/{MIN_OBSERVATIONS}"
                                 )
                         if readiness_errors:
                             _record_mlx_degradation(

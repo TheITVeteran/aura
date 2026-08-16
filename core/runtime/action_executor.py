@@ -301,6 +301,11 @@ class ActionExecutor:
             params=resolved_params,
         )
         decision_context.update(ambient_context)
+        # These bindings are written after caller context is merged. Policy
+        # may therefore classify an exact runtime-owned read contract without
+        # trusting payload fields that a generic caller can overwrite.
+        decision_context["action_executor_action_name"] = resolved_name
+        decision_context["action_executor_source"] = str(source or "unknown")[:240]
         decision = authority.decide(
             content=_safe_action_summary(resolved_name, resolved_params),
             source=str(source or "unknown")[:240],

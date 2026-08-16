@@ -1,10 +1,11 @@
-"""core/media/safe_imports.py — macOS Compatibility Layer
-Ensures media stack doesn't crash on macOS when multiple backends collide.
-"""
+"""macOS native-media import boundaries for Aura's primary process."""
+
+from __future__ import annotations
+
 import builtins
-import sys
-import os
 import logging
+import os
+import sys
 
 logger = logging.getLogger("Aura.MediaSafe")
 
@@ -45,14 +46,40 @@ def cv2_main_process_blocked() -> bool:
     return True
 
 
-def install_main_process_cv2_guard() -> None:
-    """Reject accidental OpenCV imports in Aura's primary macOS process.
+def torchcodec_main_process_blocked() -> bool:
+    """Whether TorchCodec's separately linked FFmpeg is unsafe in this process.
 
-    The guard is intentionally narrow: it only blocks top-level ``cv2`` imports
-    in the primary process. The sensory sidecar and an explicit developer
-    override may still import cv2. This turns a crash-prone Objective-C class
-    collision into a deterministic, recoverable ImportError at the unsafe call
-    site.
+    Sentence-transformers imports TorchCodec only to discover optional audio
+    and video input types. In Aura's primary macOS process that probe loads a
+    Homebrew FFmpeg beside faster-whisper's PyAV FFmpeg, producing duplicate
+    Objective-C AVFoundation classes. Text embeddings need none of it, and
+    sentence-transformers already treats ImportError as "modality absent".
+    """
+
+    if sys.platform != "darwin":
+        return False
+    if _env_true("AURA_MEDIA_SIDECAR_PROCESS"):
+        return False
+    return not _env_true("AURA_ALLOW_INPROCESS_TORCHCODEC_WITH_STT")
+
+
+def blocked_native_media_import(name: str) -> str | None:
+    """Return the violated process boundary for one absolute import."""
+
+    top_level = str(name or "").split(".", 1)[0]
+    if top_level == "cv2" and cv2_main_process_blocked():
+        return "cv2"
+    if top_level == "torchcodec" and torchcodec_main_process_blocked():
+        return "torchcodec"
+    return None
+
+
+def install_main_process_cv2_guard() -> None:
+    """Reject native-media imports that collide in the primary process.
+
+    The historic function name is kept because it is part of the boot contract.
+    The guard remains narrow: only top-level ``cv2`` and ``torchcodec`` imports
+    are affected, only on macOS, and only outside the sensory sidecar.
     """
 
     global _CV2_IMPORT_GUARD_INSTALLED
@@ -60,17 +87,30 @@ def install_main_process_cv2_guard() -> None:
         return
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
-        if level == 0 and (name == "cv2" or name.startswith("cv2.")) and cv2_main_process_blocked():
+        blocked = blocked_native_media_import(name) if level == 0 else None
+        if blocked == "cv2":
             raise ImportError(
                 "OpenCV import is blocked in Aura's primary macOS process; "
-                "use the sensory sidecar or set AURA_ALLOW_INPROCESS_CV2_WITH_STT=1 for diagnostics."
+                "use the sensory sidecar or set "
+                "AURA_ALLOW_INPROCESS_CV2_WITH_STT=1 for diagnostics."
+            )
+        if blocked == "torchcodec":
+            raise ImportError(
+                "TorchCodec import is blocked in Aura's primary macOS process "
+                "because its FFmpeg collides with STT/PyAV; use the media "
+                "sidecar or set AURA_ALLOW_INPROCESS_TORCHCODEC_WITH_STT=1 "
+                "for diagnostics."
             )
         return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)
 
     builtins.__import__ = guarded_import
     _CV2_IMPORT_GUARD_INSTALLED = True
 
-def prevent_collisions():
+
+install_main_process_media_guard = install_main_process_cv2_guard
+
+
+def prevent_collisions() -> None:
     """Apply environment and import shims for macOS media stability."""
     if sys.platform != "darwin":
         return

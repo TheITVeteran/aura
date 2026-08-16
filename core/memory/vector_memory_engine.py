@@ -828,10 +828,14 @@ class VectorMemoryEngine:
 
     def __init__(self, db_path: str | None = None):
         from core.config import config
+        from core.memory.embedding_runtime import acquire_shared_embedding_engine
+
         self.db_path = str(
             Path(db_path or config.paths.data_dir / "memory" / "vector_store")
         )
-        self.embedder = EmbeddingEngine()
+        self.embedder = acquire_shared_embedding_engine(
+            f"vector-memory-engine:{id(self)}"
+        )
         self.vault = MemoryVault(self.db_path)
         self.scorer = ImportanceScorer()
         self.consolidator = ConsolidationEngine(self.vault, self.embedder)

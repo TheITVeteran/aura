@@ -10,11 +10,11 @@ structural constraint block.
 """
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import contextlib
-from pathlib import Path
 import queue
+from pathlib import Path
 
 import pytest
 
@@ -53,6 +53,62 @@ def test_enough_observations_make_it_measured():
     assert ratio.measured is True
     assert ratio.ratio == pytest.approx(3.0)
     assert ratio.observations == tbe.MIN_OBSERVATIONS
+
+
+def test_worker_init_calibrates_with_the_already_loaded_tokenizer():
+    from core.brain.llm.mlx_worker import _token_budget_calibration_evidence
+
+    class _Tokenizer:
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return list(range(max(1, len(text) // 3)))
+
+    payload = _token_budget_calibration_evidence(_Tokenizer())
+
+    assert payload["schema"] == tbe.CALIBRATION_SCHEMA
+    assert len(payload["observations"]) == tbe.MIN_OBSERVATIONS
+    assert not tbe.calibration_batch_errors(payload)
+
+
+def test_worker_init_calibration_crosses_before_the_first_prompt():
+    from core.brain.llm.mlx_client import _observe_worker_token_budget_calibration
+    from core.brain.llm.mlx_worker import _token_budget_calibration_evidence
+
+    class _Tokenizer:
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return list(range(max(1, len(text) // 3)))
+
+    admitted = _observe_worker_token_budget_calibration(
+        {
+            "status": "ok",
+            "action": "init",
+            "token_budget_calibration": _token_budget_calibration_evidence(
+                _Tokenizer()
+            ),
+        }
+    )
+
+    assert admitted == tbe.MIN_OBSERVATIONS
+    ratio = tbe.chars_per_token()
+    assert ratio.source is tbe.RatioSource.MEASURED
+    assert ratio.observations == tbe.MIN_OBSERVATIONS
+
+
+def test_malformed_calibration_is_atomic_not_partly_admitted():
+    payload = {
+        "schema": tbe.CALIBRATION_SCHEMA,
+        "observations": [
+            *(
+                {"chars": 300, "tokens": 100}
+                for _ in range(tbe.MIN_OBSERVATIONS - 1)
+            ),
+            {"chars": 100_000, "tokens": 1},
+        ],
+    }
+
+    assert tbe.observe_calibration_batch(payload) == 0
+    assert tbe.chars_per_token().observations == 0
 
 
 def test_one_prompt_is_not_a_measurement():

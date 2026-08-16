@@ -6,11 +6,11 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-
-from core.utils.injected_blocks import stamp_runtime_payload
 from types import SimpleNamespace
 
 import pytest
+
+from core.utils.injected_blocks import stamp_runtime_payload
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
@@ -8952,11 +8952,18 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
                     "kwargs": dict(kwargs),
                 }
             )
-            return SimpleNamespace(
-                content=(
+            if len(calls) == 1:
+                content = (
                     "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
                     "CPU load is 25.8% on this host."
-                ),
+                )
+            else:
+                content = (
+                    "Yes, I am okay. I feel steady, my distress is low, and my "
+                    "continuity is holding while I stay with this thread."
+                )
+            return SimpleNamespace(
+                content=content,
                 metadata=_bound_live_mind_controls_metadata(),
             )
 
@@ -8994,6 +9001,11 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
         "_shape_with_live_substrate",
         lambda text, _user_message="": text,
     )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_same_worker_ready"),
+    )
 
     prompt = "Are you okay though? Feeling fine?"
     reply = await chat_routes._run_cognitive_engine_chat_turn(
@@ -9007,7 +9019,7 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
         turn_trace=trace,
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     context = calls[0]["context"]
     assert context["self_condition_contract"] is True
     assert context["desktop_quick_reply_contract"] is True
@@ -9017,7 +9029,26 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
     assert reply == canonical_reply
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is True
-    assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
+    assert trace["response_path"] == "cognitive_engine_repair_retry"
+    assert trace["repair_retry_attempt_count"] == 1
+    assert trace["foreground_model_generation_count"] == 2
+    assert any(
+        item.get("authorship_effect") == "replaced_by_model"
+        for item in trace["text_mutations"]
+    )
+
+    contract = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={"conversation_ready": True, "state": "ready"},
+        response_confidence="high",
+        status="cognitive_engine_repair_retry",
+        reply_source="cognitive_engine_repair_retry",
+        turn_trace=trace,
+    )
+    assert contract["single_owner_model_generation_proven"] is True
+    assert contract["model_replacement_applied"] is True
+    assert contract["authorship_replacement_applied"] is False
 
 
 @pytest.mark.asyncio
@@ -9096,7 +9127,7 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_self_condition_uses_canonical_projection_without_model_wait(
+async def test_cognitive_engine_self_condition_does_not_impersonate_model_when_router_is_missing(
     monkeypatch,
 ):
     from core.brain import cognitive_engine as ce_module
@@ -9161,43 +9192,7 @@ async def test_cognitive_engine_self_condition_uses_canonical_projection_without
         timeout_s=96.0,
     )
 
-    assert thought is not None
-    assert thought.content == canonical_reply
-    assert thought.metadata["response_path"] == "cognitive_engine_self_condition_grounding"
-    assert thought.metadata["self_condition_evidence_id"] == "condition-proof-structured"
-    assert thought.metadata["live_mind_generation_required"] is False
-    assert thought.metadata["live_mind_controls_worker_applied"] is False
-
-    payload = chat_routes._build_live_turn_contract_payload(
-        desktop_required=True,
-        request_surface="desktop-ui",
-        lane_status={
-            "conversation_ready": True,
-            "state": "ready",
-            "desired_model": "Cortex (32B)",
-            "foreground_endpoint": "Cortex",
-        },
-        response_confidence="high",
-        status="cognitive_engine",
-        reply_source="cognitive_engine_self_condition_grounding",
-        turn_trace={
-            "engine_think_invoked": True,
-            "cognitive_engine_reply_accepted": True,
-            "bounded_contract_used": False,
-            "legacy_fallback_used": False,
-            "live_mind_context_present": True,
-            "live_mind_snapshot_present": True,
-            "response_path": "cognitive_engine_self_condition_grounding",
-            **thought.metadata,
-        },
-    )
-
-    assert payload["live_mind_controls_worker_applied"] is False
-    assert payload["live_mind_controls_application_satisfied"] is True
-    assert payload["model_native_output"] is False
-    assert payload["authentic_cognitive_reply"] is False
-    assert payload["full_mind_path"] is False
-    assert payload["unreceipted_runtime_replacement"] is True
+    assert thought is None
 
 
 @pytest.mark.asyncio
@@ -9206,8 +9201,11 @@ async def test_desktop_cognitive_engine_binds_weak_condition_draft_to_canonical_
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
+    engine_calls = []
+
     class _FakeCognitiveEngine:
         async def think(self, *_args, **_kwargs):
+            engine_calls.append("engine_think")
             return SimpleNamespace(
                 content=(
                     "I still have the previous turn open. I am not going to fake a new "
@@ -9232,6 +9230,11 @@ async def test_desktop_cognitive_engine_binds_weak_condition_draft_to_canonical_
             else default
         ),
     )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_same_worker_ready"),
+    )
 
     trace = {}
     reply = await chat_routes._run_cognitive_engine_chat_turn(
@@ -9249,7 +9252,10 @@ async def test_desktop_cognitive_engine_binds_weak_condition_draft_to_canonical_
     assert assess_user_facing_reply("How are you feeling?", reply).ok
     assert "previous turn open" not in reply
     assert trace["engine_think_invoked"] is True
-    assert trace["cognitive_engine_reply_accepted"] is True
+    assert engine_calls == ["engine_think", "engine_think"]
+    assert trace["cognitive_engine_reply_accepted"] is False
+    assert trace["cognitive_engine_reply_failed"] is True
+    assert trace["bounded_contract_used"] is True
     assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
 
 
@@ -13456,6 +13462,11 @@ async def test_cognitive_engine_desktop_condition_binds_thin_draft_to_canonical_
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FakePool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_same_worker_ready"),
+    )
     social_repair_calls = []
 
     def _unexpected_social_repair(_message):
@@ -13486,10 +13497,12 @@ async def test_cognitive_engine_desktop_condition_binds_thin_draft_to_canonical_
 
     assert result is not None
     assert assess_user_facing_reply("You ok?", result).ok
-    assert engine_calls == ["engine_think"]
+    assert engine_calls == ["engine_think", "engine_think"]
     assert social_repair_calls == []
     assert trace["engine_think_invoked"] is True
-    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["cognitive_engine_reply_accepted"] is False
+    assert trace["cognitive_engine_reply_failed"] is True
+    assert trace["bounded_contract_used"] is True
     assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
 
 

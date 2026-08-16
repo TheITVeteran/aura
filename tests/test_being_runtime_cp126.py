@@ -6,6 +6,7 @@ so the tests here are about what a caller can and cannot grant itself.
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +16,9 @@ from core.being.runtime import (
     BeingRuntime,
     attested_context_flag,
     is_consequential_domain,
+    is_runtime_bound_passive_observation,
 )
+from core.being.welfare_state import WelfareOutputs
 
 
 @pytest.fixture()
@@ -67,6 +70,56 @@ def test_a_known_domain_is_not_flagged_unknown(being):
     assert not any(
         "unknown_action_domain" in constraint for constraint in policy.get("constraints", [])
     )
+
+
+def _browser_observation_context(action: str = "browser_controller.get_open_tabs") -> dict:
+    return {
+        "action_executor_source": "browser_controller",
+        "action_executor_action_name": action,
+        "passive_observation": True,
+        "read_only": True,
+        "effect_scope": "read_only",
+        "no_external_effects": True,
+        "user_visible_desktop_effect": False,
+    }
+
+
+def test_exact_browser_read_is_passive_but_navigation_cannot_claim_the_lane(being):
+    context = _browser_observation_context()
+    assert is_runtime_bound_passive_observation("environment_action", context)
+    assert not is_runtime_bound_passive_observation(
+        "environment_action",
+        _browser_observation_context("browser_controller.open_url"),
+    )
+    assert not is_runtime_bound_passive_observation(
+        "environment_action",
+        {**context, "read_only": False},
+    )
+
+    now = being.sample()
+    being._last_welfare = WelfareOutputs(
+        action_inhibition=0.95,
+        recovery_drive=0.95,
+    )
+    being._last_unified_felt = SimpleNamespace(coherent=False, coherence=0.1)
+
+    passive = being.action_policy(
+        now,
+        domain="environment_action",
+        context=context,
+    )
+    navigation = being.action_policy(
+        now,
+        domain="environment_action",
+        context=_browser_observation_context("browser_controller.open_url"),
+    )
+
+    assert passive["outcome"] == "constrain"
+    assert passive["defers"] == []
+    assert passive["evidence"]["body_cost_estimate"] == {}
+    assert "runtime_bound_passive_observation:read_only" in passive["constraints"]
+    assert navigation["outcome"] in {"defer", "refuse"}
+    assert "welfare_recovery_required_before_action" in navigation["defers"]
 
 
 # --- 3b1a9177 / 310a67ee: caller booleans cannot forge authority ---------

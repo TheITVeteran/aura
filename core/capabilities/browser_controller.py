@@ -16,8 +16,8 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from urllib.parse import quote, quote_plus, urlsplit, urlunsplit, urlparse
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, quote_plus, urlparse, urlsplit, urlunsplit
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -87,7 +87,7 @@ class ArticleExtract:
             f"{fence}\n{fence_safe(self.body, fence)}\n{fence}"
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "url": self.url,
             "final_url": self.final_url,
@@ -103,7 +103,7 @@ class ArticleExtract:
         }
 
 
-class BrowserNavigationRefused(RuntimeError):
+class BrowserNavigationRefused(RuntimeError):  # noqa: N818 - public compatibility
     """A navigation was refused before any AppleScript was built."""
 
 
@@ -248,8 +248,8 @@ class BrowserController:
 
         An unreachable Will is a refusal, not a grant.
         """
-        from core.runtime.action_executor import ActionExecutor
         from core.governance.will import ActionDomain
+        from core.runtime.action_executor import ActionExecutor
 
         try:
             return ActionExecutor.authorize_action(
@@ -261,6 +261,9 @@ class BrowserController:
                     "browser": self._preferred_browser,
                     "read_only": bool(read_only),
                     "user_visible_desktop_effect": not read_only,
+                    "effect_scope": "read_only" if read_only else "environment_action",
+                    "passive_observation": bool(read_only),
+                    "no_external_effects": bool(read_only),
                     **params,
                 },
             )
@@ -273,9 +276,9 @@ class BrowserController:
             )
             return _RefusedAdmission(f"will_unavailable:{type(exc).__name__}")
 
-    async def open_url(self, url: str, new_tab: bool = True) -> "AutomationReceipt":
+    async def open_url(self, url: str, new_tab: bool = True) -> AutomationReceipt:
         """Open a URL in the preferred browser."""
-        from core.capabilities.host_automation import AutomationReceipt, AppleScriptRunner
+        from core.capabilities.host_automation import AppleScriptRunner, AutomationReceipt
 
         url = canonical_navigable_url(url)
         admission = await self._authorize_effect(
@@ -326,7 +329,7 @@ class BrowserController:
         receipt.target = url[:200]
         return receipt
 
-    async def open_multiple_tabs(self, urls: List[str]) -> List["AutomationReceipt"]:
+    async def open_multiple_tabs(self, urls: list[str]) -> list[AutomationReceipt]:
         """Open multiple URLs in separate tabs."""
         from core.capabilities.host_automation import AutomationReceipt
 
@@ -349,7 +352,7 @@ class BrowserController:
                 await asyncio.sleep(0.3)  # Brief delay between tabs
         return receipts
 
-    async def get_open_tabs(self) -> List[Dict[str, str]]:
+    async def get_open_tabs(self) -> list[dict[str, str]]:
         """List all open tabs in the preferred browser."""
         from core.capabilities.host_automation import AppleScriptRunner
 
@@ -408,9 +411,8 @@ class BrowserController:
 
     async def search_and_open(
         self, query: str, count: int = 3
-    ) -> "AutomationReceipt":
+    ) -> AutomationReceipt:
         """Search the web and open top results in browser tabs."""
-        from core.capabilities.host_automation import AutomationReceipt
 
         start = time.time()
         search_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
@@ -463,7 +465,7 @@ class BrowserController:
         receipt.duration_ms = (time.time() - start) * 1000
         return receipt
 
-    async def _fetch_search_results(self, query: str, count: int = 5) -> List[Dict[str, str]]:
+    async def _fetch_search_results(self, query: str, count: int = 5) -> list[dict[str, str]]:
         """Fetch search results from DuckDuckGo Lite (HTML scraping)."""
         url = f"https://lite.duckduckgo.com/lite/?q={quote_plus(query)}"
         try:
@@ -629,7 +631,7 @@ class BrowserController:
         extract = await self.extract_article_text(url)
         return extract.body
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "preferred_browser": self._preferred_browser,
             "started": self._started,
@@ -640,7 +642,7 @@ class BrowserController:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[BrowserController] = None
+_instance: BrowserController | None = None
 
 
 def get_browser_controller() -> BrowserController:

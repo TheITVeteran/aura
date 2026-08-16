@@ -26,6 +26,7 @@ from core.brain.live_mind_contract import (
 from core.brain.llm.latent_cortex.action_state_capture import (
     UnknownActionStateApplicationError,
 )
+from core.brain.llm.token_budget_evidence import CALIBRATION_SCHEMA
 from core.conversation.user_surface_contract import (
     UserSurfacePromptResolution,
     resolve_user_surface_prompt,
@@ -492,6 +493,44 @@ def _admit_sampling_control(job: dict[str, Any], key: str) -> float:
 
 def _admit_max_tokens(value: Any, default: int) -> int:
     return max(1, min(_safe_int(value, default), _ABSOLUTE_MAX_TOKENS))
+
+
+_TOKEN_BUDGET_CALIBRATION_SAMPLES: tuple[tuple[str, str], ...] = (
+    ("prose", "Aura keeps the current conversation coherent while answering directly."),
+    ("python", "def total(values):\n    return sum(value * 2 for value in values)"),
+    ("json", '{"status":"ready","attempts":2,"verified":true,"items":[1,2,3]}'),
+    ("path", "/Users/person/Documents/Aura Demo/research-notes/final_report.pdf"),
+    ("markdown", "## Findings\n- evidence is measured\n- uncertainty remains explicit"),
+    ("url", "https://example.org/research?q=causal+reasoning&year=2026#results"),
+    ("dialogue", "User: Are you okay?\nAura: I feel steady and present with this thread."),
+    ("symbols", "x_t = f(x_{t-1}, action_t); confidence=0.875; delta<=1e-6"),
+)
+
+
+def _token_budget_calibration_evidence(tokenizer: Any) -> dict[str, Any]:
+    """Measure a fixed public prompt mix with the worker's resident tokenizer."""
+
+    observations: list[dict[str, Any]] = []
+    for label, sample in _TOKEN_BUDGET_CALIBRATION_SAMPLES:
+        try:
+            encoded = tokenizer.encode(sample, add_special_tokens=False)
+        except TypeError:
+            encoded = tokenizer.encode(sample)
+        token_count = len(encoded)
+        if token_count <= 0:
+            continue
+        observations.append(
+            {
+                "label": label,
+                "chars": len(sample),
+                "tokens": token_count,
+            }
+        )
+    return {
+        "schema": CALIBRATION_SCHEMA,
+        "sample_set": "aura-runtime-mixed-v1",
+        "observations": observations,
+    }
 
 
 def _render_messages_fallback(messages: Any, prompt: Any) -> str:
@@ -5595,6 +5634,7 @@ def _mlx_worker_loop(
         # recurrent-depth installation. The init receipt must describe the
         # worker that will actually serve, not an earlier boot phase.
         worker_identity = _current_worker_identity()
+        token_budget_calibration = _token_budget_calibration_evidence(tokenizer)
 
         ipc_writer.put(
             {
@@ -5616,6 +5656,7 @@ def _mlx_worker_loop(
                     unified_recurrent_qualified_activation_status
                 ),
                 "personality_adapter": dict(personality_adapter_status),
+                "token_budget_calibration": token_budget_calibration,
                 "worker_identity": dict(worker_identity),
             }
         )

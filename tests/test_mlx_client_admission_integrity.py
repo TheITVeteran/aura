@@ -236,6 +236,23 @@ class TestReadyRequiresAValidatedReceipt:
     def test_a_bare_ok_receipt_is_rejected(self):
         errors = self._client()._init_receipt_errors({"status": "ok"})
         assert errors, "status=ok alone must not establish readiness"
+        assert "token_budget_calibration_not_mapping" in errors
+
+    def test_token_budget_calibration_is_part_of_readiness(self):
+        from core.brain.llm import token_budget_evidence as tbe
+
+        calibration = {
+            "schema": tbe.CALIBRATION_SCHEMA,
+            "observations": [
+                {"chars": 300, "tokens": 100}
+                for _ in range(tbe.MIN_OBSERVATIONS)
+            ],
+        }
+        errors = self._client()._init_receipt_errors(
+            {"status": "ok", "token_budget_calibration": calibration}
+        )
+
+        assert not any("token_budget_calibration" in error for error in errors)
 
     def test_a_malformed_identity_is_rejected(self):
         errors = self._client()._init_receipt_errors(

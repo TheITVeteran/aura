@@ -30,7 +30,6 @@ from core.capabilities.browser_controller import (
     canonical_navigable_url,
 )
 
-
 # ───────────────────────────────────────────── the AppleScript injection
 
 
@@ -181,6 +180,56 @@ def test_tab_enumeration_is_authorized_as_a_passive_read(controller, monkeypatch
     assert asyncio.run(controller.get_open_tabs()) == []
     assert calls[0]["context"]["read_only"] is True
     assert calls[0]["context"]["user_visible_desktop_effect"] is False
+    assert calls[0]["context"]["passive_observation"] is True
+    assert calls[0]["context"]["effect_scope"] == "read_only"
+    assert calls[0]["context"]["no_external_effects"] is True
+
+
+def test_action_executor_stamps_passive_contract_identity_after_caller_context(
+    monkeypatch,
+):
+    from core.governance.will import ActionDomain
+    from core.runtime.action_executor import ActionExecutor
+
+    captured = {}
+
+    class _Decision:
+        receipt_id = "will-passive"
+        reason = ""
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class _Will:
+        def decide(self, **kwargs):
+            captured.update(kwargs)
+            return _Decision()
+
+    monkeypatch.setattr("core.runtime.action_executor.get_will", lambda: _Will())
+
+    admission = ActionExecutor.authorize_action(
+        domain=ActionDomain.ENVIRONMENT_ACTION,
+        action_name="browser_controller.get_open_tabs",
+        params={},
+        source="browser_controller",
+        context={
+            "action_executor_source": "forged",
+            "action_executor_action_name": "browser_controller.open_url",
+            "passive_observation": True,
+            "read_only": True,
+            "effect_scope": "read_only",
+            "no_external_effects": True,
+            "user_visible_desktop_effect": False,
+        },
+    )
+
+    assert admission.approved is True
+    assert captured["context"]["action_executor_source"] == "browser_controller"
+    assert (
+        captured["context"]["action_executor_action_name"]
+        == "browser_controller.get_open_tabs"
+    )
 
 
 def test_an_authorized_open_url_does_run(controller, monkeypatch):
@@ -194,7 +243,7 @@ def test_an_authorized_open_url_does_run(controller, monkeypatch):
         result = ""
         error = ""
 
-    async def _run(script, timeout=0):
+    async def _run(script, timeout=0):  # noqa: ASYNC109 - fake mirrors adapter API
         ran.append(script)
         return _Receipt()
 
