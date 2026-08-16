@@ -142,11 +142,6 @@
       "add_goal"
     ],
     [
-      "core/agi/skill_synthesizer.py",
-      "synthesize_pending",
-      "_save"
-    ],
-    [
       "core/autonomy/autonomous_research_orchestrator.py",
       "_engage",
       "_save_session"

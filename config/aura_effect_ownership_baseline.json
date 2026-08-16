@@ -3433,6 +3433,22 @@
       "scope": "<module>.ToolOrchestrator.execute_python"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agi/skill_synthesizer.py",
+      "scope": "<module>.SkillSynthesizer._save_async"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/agi/skill_synthesizer.py",
+      "scope": "<module>.SkillSynthesizer._save_async"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15922,6 +15938,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "be3939a8bfab007e76babec04e9c6047366d26ec26f086978b6bd635a6022994",
+  "inventory_sha256": "6905193b1838d23366d9d6fd65b9318dafaf199123df51d7d2fffb1dcdc7702f",
   "schema_version": 1
 }

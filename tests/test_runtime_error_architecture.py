@@ -1260,8 +1260,18 @@ def test_runtime_registry_batch_three_live_path_service_seams():
         def __init__(self):
             self.calls = []
 
-        async def execute(self, payload, _context):
+        async def safe_execute(self, payload, _context):
+            # `safe_execute`, not `execute`. DesktopAdapter._dispatch gates on
+            # `hasattr(skill, "safe_execute")` and calls it; a double that only
+            # offers `execute` sends the adapter down its "computer_use
+            # unavailable" branch, where it logs a no-op and returns. The
+            # assertion below then reads an empty list. The double has to speak
+            # the seam the caller actually uses.
             self.calls.append(payload)
+            return {"ok": True}
+
+        async def execute(self, payload, context):
+            return await self.safe_execute(payload, context)
 
     class Vision:
         frame_buffer = [b"frame"]
