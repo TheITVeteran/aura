@@ -46,10 +46,10 @@
     },
     "claim_boundary": "bounded mathematics memory predicate acquisition and autonomous execution; not free-decoded, resident-32B, broad reasoning, or WOW",
     "heldout_task_count": 300,
-    "receipt_sha256": "f57e90fc91b1e84525f0c48e5f96a00e2680e34e14eb6cc220ac3cf38686d2ae",
-    "source_commit": "fda4b9f8c963a73d33496b96ad61a136a9c9acda",
+    "receipt_sha256": "797fd9fa93acaed80b2f68a621c44bc40ebf7ed03ab97608acc62a1334164970",
+    "source_commit": "d86436d0f8b483096b9dbe7e648cbceee7417954",
     "source_sha256s": {
-      "core/learning/frontier_process_supervision.py": "ff4db1e22842dbcbd17448858445ab8ac9b855359a5fcde4423886d727699528",
+      "core/learning/frontier_process_supervision.py": "f4beb455da1c3cb8e77a3c17afd2a3f5c6cee8d127b60e47c4e99e038d7902bf",
       "core/learning/recurrent_work_memory.py": "75ce15cc90cab444da5d9d5c51d55bfefa9320abee244b4e0939ed772eb3fc2a",
       "core/learning/recurrent_work_memory_tissue.py": "07e5728c4df332650f619bf42fc1ef12a52b69f6b25a18c24e11998b53087f3d",
       "core/learning/recurrent_work_memory_training.py": "8ee9bfbefac5caab33cb854e5843cc844ce2d069a30b51928960324d3cdae8a0",
@@ -64,7 +64,7 @@
     "seed": 2026081507,
     "write_feature_count": 10
   },
-  "manifest_sha256": "2177b6c03c87d05252a07a5c5ebab539e95cec42807cb77f3aefba5d1c0481ad",
+  "manifest_sha256": "72060875e48f06c4d2510665046e0dae5414403c2ea634cae06264a353419790",
   "schema": "aura.mathematics_memory_artifact.v1",
   "teacher_removed_runtime": true,
   "training_receipt": {
