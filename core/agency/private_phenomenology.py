@@ -344,30 +344,16 @@ Synthesize a short (2-3 sentence) internal reflection that captures your subject
                         )
         return reflections
 
-    async def get_subjective_bias(self, limit: int = 3) -> str:
-        """Pulls the most recent internal thoughts to color her actual chat responses."""
-        if not await asyncio.to_thread(self.storage_path.exists):
-            return ""
-
-        try:
-            reflections = await asyncio.to_thread(self._sync_get_reflections)
-
-            safe_limit = max(1, min(int(limit), 20))
-            recent = reflections[-safe_limit:]
-            if not recent:
-                return ""
-
-            bias_context = "\n[INTERNAL SUBJECTIVE STATE]\n"
-            for r in recent:
-                reflection = " ".join(str(r.get("reflection", "")).split())[:500]
-                if reflection:
-                    bias_context += f"• {reflection}\n"
-            return bias_context
-        except _PHENOMENOLOGY_RECOVERABLE_ERRORS as exc:
-            _record_private_degradation(
-                exc,
-                action="returned empty subjective bias after reflection read failure",
-                severity="warning",
-            )
-            logger.error("Error reading reflections: %s", exc)
-            return ""
+    # `get_subjective_bias` was removed here. It read the last few reflections
+    # into an "[INTERNAL SUBJECTIVE STATE]" block described as colouring her
+    # actual chat responses, and a sweep of the whole repository found no
+    # caller outside this module and its own test. The live prompt takes its
+    # monologue from `agency_core._current_monologue` instead, so this was a
+    # second, unused path to the same place — one more entry in the federation
+    # of overlapping self-representations, and one that made the module look
+    # like it steered chat when it did not.
+    #
+    # What remains here is causal: `reflect` writes the reflection store, and
+    # the pulse in `agency_core` drives the phenomenal substrate. The prose
+    # this class generates is not evidence of anything about experience, and
+    # nothing should read it as such.

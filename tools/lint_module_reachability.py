@@ -59,6 +59,47 @@ def _iter_sources() -> list[Path]:
     return sorted(out)
 
 
+def _catalog_reachable(core_modules: dict[str, Path]) -> set[str]:
+    """Skills the live catalog loads by scanning the filesystem.
+
+    `CapabilityEngine.reload_skills` builds its catalog from
+    `core.skills.discovery.build_skill_catalog`, which walks the skill source
+    roots and accepts what it finds. Nothing imports those modules and nothing
+    names them as dotted strings, so both of this tool's notions of
+    reachability miss them — and it reported ten skills that the running
+    system loads and serves as reached by nothing.
+
+    That is the dangerous direction for this tool to be wrong in. Its output
+    is read as a retirement list, and a retirement pass built on it once
+    proposed deleting 57 modules of which 21 were live. Asking the catalog is
+    the fix; globbing `core/skills/*.py` is not, because it would also cover
+    skill files the catalog rejects, which are exactly the ones worth seeing.
+
+    If the catalog cannot be built, nothing is added. An unavailable loader
+    must not silently promote every skill to reachable.
+    """
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from core.skills.discovery import build_skill_catalog
+
+        catalog = build_skill_catalog()
+    except Exception as exc:  # noqa: BLE001 - any failure means "no evidence"
+        print(
+            f"note: skill catalog unavailable ({type(exc).__name__}: {exc}); "
+            "catalog-discovered skills are not counted as reachable",
+            file=sys.stderr,
+        )
+        return set()
+
+    reachable = {
+        str(declaration.module_path)
+        for declaration in getattr(catalog, "accepted", ())
+        if str(getattr(declaration, "module_path", "")) in core_modules
+    }
+    return reachable
+
+
 def scan() -> dict[str, object]:
     sources = _iter_sources()
     core_modules = {
@@ -125,6 +166,8 @@ def scan() -> dict[str, object]:
                     referenced.add(name)
                     importers[name].add(me)
 
+    referenced |= _catalog_reachable(core_modules)
+
     orphans = sorted(set(core_modules) - referenced)
     lines = 0
     for name in orphans:
@@ -135,11 +178,57 @@ def scan() -> dict[str, object]:
         except OSError:
             continue
 
+    # Reached by tests and by nothing else. Not orphans — something imports
+    # them — and not safe either, which is why they get their own number.
+    #
+    # `core/brain/prompt_builder.py` is the case that motivated this. It
+    # builds the system prompt, withholds PERSON MODEL and INTERNAL SUBJECTIVE
+    # STATE when the prompt may leave the host (the CP126 e18ed993 fix), and
+    # emits a provenance manifest recording which components were injected.
+    # Its only importer in the repository is its own test file. The live
+    # prompt comes from `ContextAssembler.build_system_prompt`, which has none
+    # of that — so a privacy protection and a provenance channel both read as
+    # present, with twenty green tests behind them, while neither is in force.
+    #
+    # A test-only module is not automatically wrong: some are fixtures or
+    # staged work. What is wrong is not being able to tell, and the count only
+    # falls.
+    # Packages are excluded. `core.adaptation` is imported implicitly by every
+    # submodule import and this scan only sees the explicit ones, so an
+    # `__init__.py` lands here whenever the only explicit `from core.x import`
+    # in the tree is in a test — which says nothing about whether the package
+    # is live.
+    test_only = sorted(
+        name
+        for name, path in core_modules.items()
+        if path.name != "__init__.py"
+        and importers[name]
+        and not _production_importers(importers[name])
+    )
+
     return {
         "core_modules": len(core_modules),
         "orphans": orphans,
         "orphan_count": len(orphans),
         "orphan_lines": lines,
+        "test_only": test_only,
+        "test_only_count": len(test_only),
+    }
+
+
+def _production_importers(names: set[str]) -> set[str]:
+    """Importers that are not themselves tests."""
+    return {
+        name
+        for name in names
+        if not (
+            name.startswith("tests.")
+            or name.startswith("test_")
+            or ".test_" in name
+            or name.endswith("_test")
+            or name.startswith("conftest")
+            or ".conftest" in name
+        )
     }
 
 
@@ -171,6 +260,8 @@ def main() -> int:
                     "orphan_count": report["orphan_count"],
                     "orphan_lines": report["orphan_lines"],
                     "orphans": orphans,
+                    "test_only_count": report["test_only_count"],
+                    "test_only": report["test_only"],
                 },
                 indent=2,
             )
@@ -237,6 +328,24 @@ def main() -> int:
             counts[key] = counts.get(key, 0) + 1
         summary = ", ".join(f"{v} {k.lower()}" for k, v in sorted(counts.items()))
         print(f"   dispositions: {summary}")
+
+    test_only: list[str] = report["test_only"]  # type: ignore[assignment]
+    known_test_only = set(baseline.get("test_only", []))
+    new_test_only = sorted(set(test_only) - known_test_only)
+    print(
+        f"🧪 {report['test_only_count']} core module(s) are reached only by tests"
+    )
+    if new_test_only:
+        print(f"\n❌ {len(new_test_only)} module(s) became test-only:")
+        for name in new_test_only:
+            print(f"   {name}")
+        print(
+            "\nA module whose only importer is its own test is not exercised by "
+            "anything that runs. core/brain/prompt_builder.py sat like this with "
+            "a privacy protection and a provenance manifest that were never in "
+            "force, behind twenty passing tests."
+        )
+        return 1
 
     print("✅ no new unreachable modules")
     return 0
