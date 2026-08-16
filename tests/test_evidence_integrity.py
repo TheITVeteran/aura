@@ -350,16 +350,41 @@ def test_the_rsi_bundle_carries_its_withdrawal():
     record = json.loads(path.read_text(encoding="utf-8"))
     assert record["schema"] == RETRACTION_SCHEMA
     assert record["status"] == "retracted"
-    assert record["retracted_files"] == ["UNDENIABLE_RSI.json"]
+    assert record["retracted_files"] == ["UNDENIABLE_RSI.retracted.json"]
     assert record["current_verdict"] == "BOUNDED_SELF_OPTIMIZATION"
 
 
 def test_the_retracted_rsi_measurement_was_left_intact():
-    """The improver curve stays on the record exactly as it was published."""
+    """The published improver curve stays on the record, exactly as it was.
+
+    Regenerating the bundle overwrites UNDENIABLE_RSI.json, so the withdrawn
+    one is preserved beside it. Rewriting the measurement to look correct
+    would also erase the evidence that the counter was ever in the formula.
+    """
+    bundle = json.loads(
+        (
+            ROOT / "artifacts" / "proof_bundle" / "latest" / "UNDENIABLE_RSI.retracted.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert bundle["lineage_verdict"]["improver_curve"] == [0.578, 0.8696, 0.9536, 1.0]
+    assert bundle["lineage_verdict"]["verdict"] == "UNDENIABLE_RSI"
+
+
+def test_the_regenerated_bundle_is_honest_about_what_it_shows():
+    """The live bundle carries the measured verdict, not the authored one."""
     bundle = json.loads(
         (ROOT / "artifacts" / "proof_bundle" / "latest" / "UNDENIABLE_RSI.json").read_text(
             encoding="utf-8"
         )
     )
-    assert bundle["lineage_verdict"]["improver_curve"] == [0.578, 0.8696, 0.9536, 1.0]
-    assert bundle["lineage_verdict"]["verdict"] == "UNDENIABLE_RSI"
+    assert bundle["lineage_verdict"]["verdict"] == "BOUNDED_SELF_OPTIMIZATION"
+    assert bundle["l3_rsi_claim"] is False
+    assert bundle["status"] == "not_l3_evidence"
+    assert set(bundle["improver_provenance"]) == {"measured"}
+    assert bundle["improver_order_invariance_violation"] == ""
+    # Capability is the custodian's hidden-eval score, unblended.
+    assert bundle["lineage_verdict"]["capability_curve"][0] == 0.5
+    assert bundle["lineage_verdict"]["capability_curve"][-1] == 1.0
+    # A run that booted no model may not report one.
+    assert bundle["runtime"]["started_runtime"] is False
+    assert bundle["runtime"]["llm_codegen_enabled"] is False

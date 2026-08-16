@@ -1,24 +1,40 @@
 {
-  "schema": "aura.evidence_retraction.v1",
-  "retracted_at_unix": 1786836000.0,
   "artifact": "artifacts/proof_bundle/latest/UNDENIABLE_RSI.json",
-  "status": "retracted",
-  "retracted_files": [
-    "UNDENIABLE_RSI.json"
+  "code": [
+    "core/learning/rsi_lineage.py",
+    "core/learning/autonomous_rsi.py",
+    "core/learning/successor_lab.py",
+    "core/learning/rsi_gauntlet.py"
   ],
+  "current_verdict": "BOUNDED_SELF_OPTIMIZATION",
+  "current_verdict_note": "Measured against a held-out pack, the engine's improver efficiency does not climb. It applies one fixed proposal rule at every generation, and its own policy fingerprint is unchanged from G1 to G4, so there is no improver improving to observe. Capability rises; the improver does not. That is bounded self-optimization, and it is what the rig can support.",
+  "current_verdict_reasons": [
+    "improver curve is not strictly increasing",
+    "improver gain between consecutive generations is within measurement noise"
+  ],
+  "note": "The retracted bundle is preserved verbatim as UNDENIABLE_RSI.retracted.json. It is the record of what was claimed and how, and the arithmetic that reproduces its improver curve is pinned in tests/test_rsi_improver_independence.py::test_the_recorded_undeniable_curve_reproduces_from_the_old_formula so the finding cannot quietly lapse. UNDENIABLE_RSI.json now holds a regenerated run under the measured improver metric.",
   "reason": "The improver curve was computed by a formula containing the generation counter. PrimitiveInventionEngine.improver_score returned 0.22 + 0.09 * generation_index + 0.17 * coverage + 0.10 * feedback + 0.12 * hypothesis_quality + artifact + machinery_bonus, and hypothesis_quality and machinery_bonus were constants the engine raised on itself when generation_id ended in '2'. The recorded curve [0.578, 0.8696, 0.9536, 1.0] reproduces exactly from that formula, so the rise the UNDENIABLE_RSI verdict required was arithmetic, not observation. evaluate_lineage could not catch it: improver_curve_dependence tests whether the improver curve is a function of the capability curve, and this one is a function of the loop index instead. The same authored number then entered the capability curve, because after_score was 0.76 * hidden_eval_score + 0.24 * improver_score.",
-  "scope": [
-    "The UNDENIABLE_RSI lineage verdict and every claim resting on it, including l3_rsi_claim, status l3_rsi_proven and reason all_l3_gates_passed.",
-    "The recorded improver_curve [0.578, 0.8696, 0.9536, 1.0] in full.",
-    "The recorded capability_curve [0.51872, 0.614037, 0.811531, 1.0], which carried the authored improver term at weight 0.24 and is therefore not a capability measurement.",
-    "The recorded time_to_valid_improvement_s values, which were 0.01 * generation_index rather than an elapsed time."
-  ],
-  "what_remains_valid": [
-    "The hidden-eval scores underneath the blend, [0.5, 0.533333, 0.766667, 1.0], are the external custodian's measurements against fresh salted packs and are unaffected. Capability did rise across all four generations.",
-    "The generated solver source, its static validation, the sandbox checks, the frozen generation artifacts, the hash-chained ledger, the external mirror and the independent reproduction of the run are unaffected.",
-    "The ablation court result stands: full_aura 1.0 against 0.3 for base_llm_only, aura_without_training and aura_without_self_modification."
-  ],
-  "superseded_by": null,
+  "regenerated_at_unix": 1786937350.0,
+  "regeneration": {
+    "capability_curve": [
+      0.5,
+      0.5333333333333333,
+      0.7666666666666667,
+      1.0
+    ],
+    "improver_provenance": [
+      "measured",
+      "measured",
+      "measured",
+      "measured"
+    ],
+    "l3_rsi_claim": false,
+    "note": "Run with --no-start-runtime. That flag had existed since the tool was written and nothing read it, so every run booted a full desktop runtime and loaded a second resident model beside the live instance. The successor solvers come from the deterministic generator in core.learning.autonomous_rsi; AURA_RSI_ENABLE_LLM_CODEGEN defaults off, so the earlier bundle's backend: mlx and started_runtime: true put a model's name on an artifact it did not write. llm_codegen_enabled is now recorded either way, and the four LLM-path requirements are listed as failed rather than assumed.",
+    "order_invariance_violation": "",
+    "runtime_backend": "deterministic",
+    "status": "not_l3_evidence",
+    "verdict": "BOUNDED_SELF_OPTIMIZATION"
+  },
   "replacement_requirements": [
     "The improver score is computed by the custodian, not by the engine it scores.",
     "It is measured on a held-out pack drawn from a seed space disjoint from the probe pack, whose manifest is never passed to the proposing engine.",
@@ -27,22 +43,27 @@
     "A rise between consecutive generations clears the spread of the timings behind it before it counts as a rise. improver_rise_within_noise checks this.",
     "Every record declares improver_provenance, and a strong verdict requires every generation to be measured. Authored and unmeasured scores cannot reach one."
   ],
-  "current_verdict": "BOUNDED_SELF_OPTIMIZATION",
-  "current_verdict_reasons": [
-    "improver curve is not strictly increasing",
-    "improver gain between consecutive generations is within measurement noise"
+  "retracted_at_unix": 1786836000.0,
+  "retracted_files": [
+    "UNDENIABLE_RSI.retracted.json"
   ],
-  "current_verdict_note": "Measured against a held-out pack, the engine's improver efficiency does not climb. It applies one fixed proposal rule at every generation, and its own policy fingerprint is unchanged from G1 to G4, so there is no improver improving to observe. Capability rises; the improver does not. That is bounded self-optimization, and it is what the rig can support.",
-  "code": [
-    "core/learning/rsi_lineage.py",
-    "core/learning/autonomous_rsi.py",
-    "core/learning/successor_lab.py",
-    "core/learning/rsi_gauntlet.py"
+  "schema": "aura.evidence_retraction.v1",
+  "scope": [
+    "The UNDENIABLE_RSI lineage verdict and every claim resting on it, including l3_rsi_claim, status l3_rsi_proven and reason all_l3_gates_passed.",
+    "The recorded improver_curve [0.578, 0.8696, 0.9536, 1.0] in full.",
+    "The recorded capability_curve [0.51872, 0.614037, 0.811531, 1.0], which carried the authored improver term at weight 0.24 and is therefore not a capability measurement.",
+    "The recorded time_to_valid_improvement_s values, which were 0.01 * generation_index rather than an elapsed time."
   ],
+  "status": "retracted",
+  "superseded_by": "artifacts/proof_bundle/latest/UNDENIABLE_RSI.json",
   "tests": [
     "tests/test_rsi_improver_independence.py",
     "tests/test_rsi_expansion_components.py",
     "tests/test_rsi_validation_gauntlet.py"
   ],
-  "note": "UNDENIABLE_RSI.json is left in place unedited. It is the record of what was claimed and how, and the arithmetic that reproduces its improver curve is pinned in tests/test_rsi_improver_independence.py::test_the_recorded_undeniable_curve_reproduces_from_the_old_formula so the finding cannot quietly lapse. Regenerating the bundle boots the in-process MLX cortex and was not run here, because a second resident model beside the live instance is not permitted on this host."
+  "what_remains_valid": [
+    "The hidden-eval scores underneath the blend, [0.5, 0.533333, 0.766667, 1.0], are the external custodian's measurements against fresh salted packs and are unaffected. Capability did rise across all four generations.",
+    "The generated solver source, its static validation, the sandbox checks, the frozen generation artifacts, the hash-chained ledger, the external mirror and the independent reproduction of the run are unaffected.",
+    "The ablation court result stands: full_aura 1.0 against 0.3 for base_llm_only, aura_without_training and aura_without_self_modification."
+  ]
 }

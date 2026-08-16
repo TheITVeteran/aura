@@ -1,0 +1,32 @@
+{
+  "after_score": 0.7666666666666667,
+  "baseline_score": 0.5333333333333333,
+  "candidate_improved_over_baseline": true,
+  "fresh_hidden_pack": "sha256:e58627d1914b010b2",
+  "generation_id": "Aura-G3",
+  "heldout_pack": "sha256:6713eada121a7197d",
+  "hidden_eval_score": 0.7666666666666667,
+  "improver_measurement": {
+    "efficiency": 7262.603643,
+    "efficiency_interval": [
+      7189.855765,
+      7309.327557
+    ],
+    "feedback_queries": 1,
+    "generation_id": "Aura-G3",
+    "heldout_after": 0.8833333333333333,
+    "heldout_before": 0.7,
+    "heldout_delta": 0.18333333333333335,
+    "heldout_pack_id": "sha256:6713eada121a7197d",
+    "wall_clock_s": 0.0908765000058338,
+    "wall_clock_samples": [
+      0.0908765000058338,
+      0.09179600002244115,
+      0.09035041695460677,
+      0.09029558394104242,
+      0.09103570797014982
+    ]
+  },
+  "improver_score": 7262.603643,
+  "promoted": true
+}

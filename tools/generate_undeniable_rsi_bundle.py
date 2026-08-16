@@ -142,6 +142,22 @@ def l3_claim_summary(
     }
 
 
+def _llm_codegen_enabled() -> bool:
+    """Whether a model actually writes the successor solvers.
+
+    The bundle recorded `backend: mlx` and `started_runtime: true` regardless,
+    while `AURA_RSI_ENABLE_LLM_CODEGEN` defaults off and the deterministic
+    generator writes the solver. Booting a cortex the run never consults put a
+    model's name on an artifact it did not produce.
+    """
+    return os.getenv("AURA_RSI_ENABLE_LLM_CODEGEN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
     """Boot the canonical in-process MLX runtime — the exact cortex path the
     final-proof cert certifies green — and expose its real llm_router /
@@ -152,6 +168,23 @@ async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
     all that's needed — no custom router. Mirrors
     tools/agi/run_dnu_agi_proof_battery.py's boot.
     """
+    # `--start-runtime` has existed since this tool was written and nothing
+    # read it, so `--no-start-runtime` booted a full desktop runtime anyway.
+    # That matters here more than it would elsewhere: this boot loads a second
+    # resident model beside a live instance, which the host cannot hold.
+    if not getattr(args, "start_runtime", True):
+        return {
+            "backend": "deterministic",
+            "runtime_url": "",
+            "model": "",
+            "started_runtime": False,
+            "llm_codegen_enabled": _llm_codegen_enabled(),
+            "note": (
+                "no model runtime was booted; the successor solvers came from "
+                "the deterministic generator in core.learning.autonomous_rsi"
+            ),
+        }
+
     os.environ.setdefault("AURA_LOCAL_BACKEND", "mlx")
     os.environ["AURA_PROOF_MODEL_TIER"] = "primary"
     from aura_main import boot_aura_runtime
@@ -177,6 +210,9 @@ async def prepare_mlx_runtime(args: argparse.Namespace) -> dict[str, Any]:
         "runtime_url": "in-process://mlx-cortex",
         "model": str(getattr(orch, "active_model", "") or "MLX-Cortex"),
         "started_runtime": True,
+        # Booting the cortex is not the same as using it. Recorded so a reader
+        # can tell whether the model wrote the solvers or only stood by.
+        "llm_codegen_enabled": _llm_codegen_enabled(),
     }
 
 
@@ -195,7 +231,10 @@ async def _shutdown_mlx_runtime() -> None:
 
 async def run_generation(args: argparse.Namespace) -> tuple[Any, dict[str, Any]]:
     runtime_info = await prepare_mlx_runtime(args)
-    print(f"In-process MLX cortex ready: {runtime_info['model']}")
+    if runtime_info.get("started_runtime"):
+        print(f"In-process MLX cortex ready: {runtime_info['model']}")
+    else:
+        print("No model runtime booted; deterministic successor generation.")
     print(f"Starting Autonomous RSI Generation ({args.generations} generations)...")
 
     # Each run gets its own directory. Every run used to write straight into
@@ -224,8 +263,11 @@ def _point_latest_at(runs_root: Path, artifact_dir: Path) -> None:
     try:
         if latest.is_symlink() or latest.exists():
             latest.unlink()
+        # Relative, so the link still resolves in another checkout. An
+        # absolute one points into whichever worktree happened to run the tool.
         latest.symlink_to(
-            artifact_dir.resolve(), target_is_directory=True
+            os.path.relpath(artifact_dir.resolve(), latest.parent.resolve()),
+            target_is_directory=True,
         )
     except OSError as exc:
         # A missing convenience link must not fail a completed proof run; the

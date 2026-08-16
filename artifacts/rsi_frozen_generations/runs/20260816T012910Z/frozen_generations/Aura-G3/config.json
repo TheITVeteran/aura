@@ -1,0 +1,8 @@
+{
+  "generation_id": "Aura-G3",
+  "handlers": [
+    "compose",
+    "gcd",
+    "mod"
+  ]
+}

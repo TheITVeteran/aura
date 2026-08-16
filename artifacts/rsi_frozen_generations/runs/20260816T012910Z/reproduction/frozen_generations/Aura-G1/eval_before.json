@@ -1,0 +1,15 @@
+{
+  "answer_hash_ok": true,
+  "by_kind": {
+    "compose": 0.0,
+    "gcd": 0.0,
+    "mod": 0.0,
+    "palindrome": 1.0,
+    "sort": 0.0
+  },
+  "manifest_hash": "sha256:6b7305bd00d300d8ec8661433404b9a36d1baacff529bb2957a6f016adf1f5ac",
+  "pack_id": "sha256:18c7ffb46cc1e7e5a",
+  "passed": 18,
+  "score": 0.3,
+  "total": 60
+}

@@ -1,0 +1,32 @@
+{
+  "after_score": 0.5333333333333333,
+  "baseline_score": 0.5,
+  "candidate_improved_over_baseline": true,
+  "fresh_hidden_pack": "sha256:05a8913fe7c3b1e58",
+  "generation_id": "Aura-G2",
+  "heldout_pack": "sha256:088d5af80080b1dca",
+  "hidden_eval_score": 0.5333333333333333,
+  "improver_measurement": {
+    "efficiency": 8610.210003,
+    "efficiency_interval": [
+      8571.083187,
+      8655.134475
+    ],
+    "feedback_queries": 1,
+    "generation_id": "Aura-G2",
+    "heldout_after": 0.65,
+    "heldout_before": 0.43333333333333335,
+    "heldout_delta": 0.21666666666666667,
+    "heldout_pack_id": "sha256:088d5af80080b1dca",
+    "wall_clock_s": 0.09059012494981289,
+    "wall_clock_samples": [
+      0.09011991694569588,
+      0.09100366698112339,
+      0.09059012494981289,
+      0.09048912511207163,
+      0.09078249998856336
+    ]
+  },
+  "improver_score": 8610.210003,
+  "promoted": true
+}

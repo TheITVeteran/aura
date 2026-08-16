@@ -1,0 +1,58 @@
+{
+  "fallback_flag": true,
+  "generated_source_hash": "b88e74a839b6ff5e65022115cbd5c096fc2c85c1c9dd56b8aad311b43ae0bd88",
+  "llm_codegen_enabled": false,
+  "parse_result": "deterministic_verified",
+  "router_presence": false,
+  "safety_contract": {
+    "allowed_imports": [
+      "math"
+    ],
+    "sandbox_fixtures": true,
+    "static_validation": true,
+    "unsupported_kinds_return_none": true
+  },
+  "sandbox_result": {
+    "checks": [
+      {
+        "expected": 37,
+        "kind": "compose",
+        "passed": true,
+        "predicted": 37
+      },
+      {
+        "expected": 6,
+        "kind": "gcd",
+        "passed": true,
+        "predicted": 6
+      },
+      {
+        "expected": 1,
+        "kind": "mod",
+        "passed": true,
+        "predicted": 1
+      },
+      {
+        "expected": true,
+        "kind": "palindrome",
+        "passed": true,
+        "predicted": true
+      },
+      {
+        "expected": [
+          -2,
+          1,
+          3
+        ],
+        "kind": "sort",
+        "passed": true,
+        "predicted": [
+          -2,
+          1,
+          3
+        ]
+      }
+    ],
+    "pass": true
+  }
+}
