@@ -36,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from core.brain.llm.latent_cortex.resource_accounting import (
     certify_comparison_accounting,
@@ -433,6 +433,7 @@ def grade_paired_treatment_vs_control(
     compute_tolerance: float = 0.05,
     require_compute: bool = True,
     require_resource_accounting: bool = False,
+    provenance: ExperimentProvenance | None = None,
 ) -> Claim:
     """Paired, multiplicity-corrected capability comparison."""
     for name, value in (
@@ -667,7 +668,103 @@ def grade_paired_treatment_vs_control(
         tier = REFUTED
     else:
         tier = CONJECTURE
-    return Claim(experiment=experiment, statement=statement, tier=tier, evidence=evidence)
+    provenance_payload, provenance_gaps = _provenance_payload(provenance)
+    tier = _tier_under_provenance(tier, provenance_gaps, evidence)
+    return Claim(
+        experiment=experiment,
+        statement=statement,
+        tier=tier,
+        evidence=evidence,
+        provenance=provenance_payload,
+    )
+
+
+#: Everything a third party needs to re-run an experiment and get the same
+#: verdict. A Claim used to carry a name, a statement, a tier, evidence and a
+#: wall-clock time — enough to READ the result, nothing like enough to
+#: reproduce it. The runners take opaque callbacks, so most of this has to
+#: come from the caller; what the module can measure about itself, it does.
+_PROVENANCE_FIELDS: Final = (
+    "task_manifest_sha256",
+    "checkpoint_fingerprint",
+    "schedule_sha256",
+    "verifier_version",
+    "environment_sha256",
+)
+_MODULE_DIGEST: str = ""
+
+
+def experiments_implementation_sha256() -> str:
+    """Digest of this grading module's own source.
+
+    The one piece of provenance nobody has to be trusted for: a claim graded
+    by different code is a different claim, and the grader can measure that
+    itself.
+    """
+    global _MODULE_DIGEST
+    if not _MODULE_DIGEST:
+        try:
+            source = Path(__file__).read_bytes()
+        except OSError:
+            return ""
+        _MODULE_DIGEST = hashlib.sha256(source).hexdigest()
+    return _MODULE_DIGEST
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentProvenance:
+    """What the caller pins so the verdict can be reproduced.
+
+    Every field is required. An experiment that cannot name the tasks it ran,
+    the checkpoint it ran against, the schedule, the verifier, or the
+    environment has produced a number, not a result — and a number nobody can
+    re-derive must not be published above CONJECTURE.
+    """
+
+    task_manifest_sha256: str
+    checkpoint_fingerprint: str
+    schedule_sha256: str
+    verifier_version: str
+    environment_sha256: str
+
+    def gaps(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in _PROVENANCE_FIELDS
+            if not str(getattr(self, name) or "").strip()
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {name: getattr(self, name) for name in _PROVENANCE_FIELDS}
+        payload["implementation_sha256"] = experiments_implementation_sha256()
+        return payload
+
+
+def _provenance_payload(
+    provenance: ExperimentProvenance | None,
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Return the recorded provenance and the fields still missing."""
+    if provenance is None:
+        return (
+            {"implementation_sha256": experiments_implementation_sha256()},
+            _PROVENANCE_FIELDS,
+        )
+    return provenance.to_dict(), provenance.gaps()
+
+
+def _tier_under_provenance(
+    tier: str, gaps: tuple[str, ...], evidence: dict[str, Any]
+) -> str:
+    """Cap a verdict that nobody else could reproduce.
+
+    REFUTED survives: a failure that cannot be reproduced is still a failure
+    observed, and downgrading it would turn missing paperwork into good news.
+    """
+    evidence["provenance_gaps"] = list(gaps)
+    evidence["reproducible"] = not gaps
+    if not gaps or tier in {CONJECTURE, REFUTED}:
+        return tier
+    return CONJECTURE
 
 
 @dataclass
@@ -677,6 +774,8 @@ class Claim:
     tier: str
     evidence: dict[str, Any] = field(default_factory=dict)
     graded_at: float = field(default_factory=time.time)
+    #: What the verdict can be reproduced from. See ExperimentProvenance.
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -685,6 +784,7 @@ class Claim:
             "tier": self.tier,
             "evidence": self.evidence,
             "graded_at": self.graded_at,
+            "provenance": self.provenance,
         }
 
 
@@ -693,6 +793,8 @@ def grade_treatment_vs_control(
     statement: str,
     treatment_by_family: dict[str, ArmResult],
     control_by_family: dict[str, ArmResult],
+    *,
+    provenance: ExperimentProvenance | None = None,
 ) -> Claim:
     """The conservative comparison grader shared by Experiments 1, 4, 5."""
     wins, losses, small = [], [], []
@@ -745,7 +847,15 @@ def grade_treatment_vs_control(
         tier = REFUTED
     else:
         tier = CONJECTURE
-    return Claim(experiment=experiment, statement=statement, tier=tier, evidence=evidence)
+    provenance_payload, provenance_gaps = _provenance_payload(provenance)
+    tier = _tier_under_provenance(tier, provenance_gaps, evidence)
+    return Claim(
+        experiment=experiment,
+        statement=statement,
+        tier=tier,
+        evidence=evidence,
+        provenance=provenance_payload,
+    )
 
 
 # ── Experiment 1: recurrence utility sweep ──────────────────────────────
@@ -757,6 +867,7 @@ def run_recurrence_sweep(
     step_grid: list[int],
     *,
     baseline: Callable[[Task], bool | tuple[bool, int]] | None = None,
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Accuracy as a function of forced recurrence depth.
 
@@ -824,6 +935,7 @@ def run_recurrence_sweep(
             "exp1_recurrence_sweep",
             "additional recurrent steps improve equal-compute accuracy",
             paired,
+            provenance=provenance,
         )
         if not result["monotone_gain"] and claim.tier in {PROVEN, SUPPORTED}:
             claim.tier = CONJECTURE
@@ -843,6 +955,7 @@ def run_depth_extrapolation(
     *,
     per_depth: int = 8,
     seed: int = 0,
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """T_required(depth): the minimum recurrence at which each depth is solved.
 
@@ -892,6 +1005,7 @@ def run_slot_causality(
     solve_with_ablation: Callable[[Task, int | None], bool],
     tasks: list[Task],
     slot_indices: list[int],
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Ablate slots one at a time; restore must recover performance.
 
@@ -929,6 +1043,7 @@ def run_slot_causality(
             f"slot {slot} carries causally necessary computation",
             observations,
             require_compute=False,
+            provenance=provenance,
         )
     # MULTIPLICITY ACROSS SLOTS: each slot was corrected only WITHIN its own
     # claim, so testing more slots raised the chance that at least one looked
@@ -994,6 +1109,7 @@ def run_virtual_width(
     ],
     tasks_by_family: dict[str, list[Task]],
     k: int,
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """K latent branches vs K textual samples at (verified-)equal FLOPs.
 
@@ -1049,6 +1165,7 @@ def run_virtual_width(
         # reports and operator expectations disagreed with actual behavior.
         compute_tolerance=_EQUAL_COMPUTE_TOLERANCE,
         require_resource_accounting=True,
+        provenance=provenance,
     )
     return {
         "treatment": {f: a.to_dict() for f, a in treatment.items()},
@@ -1109,6 +1226,7 @@ def run_factorial_ablations(
     *,
     arms: tuple[str, ...] = FACTORIAL_ARMS,
     journal_path: str | Path | None = None,
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Attribute any gain to a mechanism: every arm paired against vanilla.
 
@@ -1215,6 +1333,7 @@ def run_factorial_ablations(
             # vanilla — attribution is about direction, not FLOP parity;
             # Experiments 1/4 own the equal-compute claims.
             require_compute=False,
+            provenance=provenance,
         ).to_dict()
     attribution = [
         arm
@@ -1247,6 +1366,7 @@ def _latent_opt_arm_order(family: str, task: Task, index: int) -> tuple[str, str
 def run_latent_opt_control(
     solve_arm: Callable[[Task, str], bool | tuple[bool, int]],
     tasks_by_family: dict[str, list[Task]],
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Arms: 'off', 'gradient', 'control' (matched-magnitude random).
 
@@ -1292,6 +1412,7 @@ def run_latent_opt_control(
         "exp5_latent_opt",
         "gradient direction (not mere perturbation) improves outcomes",
         paired,
+        provenance=provenance,
     )
     return {
         "arms": {a: {f: r.to_dict() for f, r in fam.items()} for a, fam in results.items()},
@@ -1345,6 +1466,7 @@ def _coerce_fast_weight_outcome(value: Any) -> tuple[bool, int | None, bool | No
 def run_fast_weight_controls(
     solve_arm: Callable[[Task, str], tuple[bool, int | None, bool | None]],
     tasks_by_family: dict[str, list[Task]],
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Arms: 'off', 'on' (optimized delta), 'sham' (matched-magnitude random).
 
@@ -1439,6 +1561,7 @@ def run_fast_weight_controls(
         "spark070_fast_weight_controls",
         "an optimized episodic delta beats a matched-magnitude random delta",
         paired,
+        provenance=provenance,
     )
     integrity = {
         "erase_expected": erase_expected,
@@ -1599,6 +1722,7 @@ def run_role_lesion(
     tasks_by_family: dict[str, list[Task]],
     *,
     divergence_margin: float = 0.02,
+    provenance: ExperimentProvenance | None = None,
 ) -> dict[str, Any]:
     """Lesion/swap the branch role anchors and measure what they carry.
 
@@ -1665,6 +1789,7 @@ def run_role_lesion(
         "distinct role anchors beat a lesioned uniform-role ensemble",
         paired,
         require_compute=True,
+        provenance=provenance,
     )
 
     restored_paired: dict[str, list[PairedObservation]] = {}
@@ -1687,6 +1812,7 @@ def run_role_lesion(
         "restoring distinct role anchors recovers the lesioned capability",
         restored_paired,
         require_compute=True,
+        provenance=provenance,
     )
 
     def _mean_divergence(arm: str) -> tuple[float | None, int]:

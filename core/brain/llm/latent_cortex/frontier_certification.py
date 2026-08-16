@@ -16,6 +16,7 @@ from core.brain.frontier_evidence_v5 import verify_signed_envelope
 from core.brain.llm.latent_cortex.experiments import (
     CONJECTURE,
     PROVEN,
+    ExperimentProvenance,
     PairedObservation,
     grade_paired_treatment_vs_control,
 )
@@ -2577,6 +2578,17 @@ def verify_frontier_gain_bundle(
         minimum_effect=minimum_effect,
         compute_tolerance=tolerance,
         require_compute=True,
+        # CP126 3f561b15: the grader used to emit a tier with nothing behind
+        # it but a wall-clock time. The certificate already pins every one of
+        # these, so the statistical claim inherits them and a reader can
+        # re-derive the verdict rather than take it.
+        provenance=ExperimentProvenance(
+            task_manifest_sha256=str(bundle.get("task_commitment_sha256") or ""),
+            checkpoint_fingerprint=checkpoint,
+            schedule_sha256=str(bundle.get("preregistration_sha256") or ""),
+            verifier_version=str(prereg.get("scorer_implementation_sha256") or ""),
+            environment_sha256=installed_app_build_sha256,
+        ),
     )
     positive = claim.evidence.get("positive_families") or []
     required_positive = math.ceil(len(domains) * 2 / 3) if domains else 1

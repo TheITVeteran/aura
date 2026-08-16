@@ -15,6 +15,7 @@ from core.brain.llm.latent_cortex.experiments import (
     SUPPORTED,
     ArmResult,
     Claim,
+    ExperimentProvenance,
     PairedObservation,
     Task,
     extract_final_numeric_claim,
@@ -23,7 +24,6 @@ from core.brain.llm.latent_cortex.experiments import (
     record_claim_to_foundry,
     task_battery,
 )
-
 
 # ── the verifier must grade the FINAL answer ───────────────────────────────
 
@@ -158,6 +158,16 @@ def test_complete_comparison_can_still_be_supported():
         "treatment beats control",
         treatment_by_family={"math": _arm(40, 40)},
         control_by_family={"math": _arm(40, 5)},
+        # CP126 3f561b15: a verdict nobody can re-derive is capped at
+        # CONJECTURE, so a test claiming SUPPORTED has to describe a
+        # reproducible run.
+        provenance=ExperimentProvenance(
+            task_manifest_sha256="a" * 64,
+            checkpoint_fingerprint="b" * 64,
+            schedule_sha256="c" * 64,
+            verifier_version="verifier-1.0.0",
+            environment_sha256="d" * 64,
+        ),
     )
 
     assert claim.evidence["families_missing_from_treatment"] == []

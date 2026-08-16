@@ -21,6 +21,7 @@ from core.brain.llm.latent_cortex.experiments import (
     REFUTED,
     SUPPORTED,
     ArmResult,
+    ExperimentProvenance,
     PairedObservation,
     grade_paired_treatment_vs_control,
     grade_treatment_vs_control,
@@ -41,6 +42,18 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     policy_sha256,
 )
 from tools.latent_cortex_lab import _positive_float
+
+# A claim nobody can re-derive must not be published above CONJECTURE, so any
+# test asserting PROVEN or SUPPORTED has to describe a reproducible run. These
+# are the five things a third party needs: which tasks, which weights, which
+# schedule, which verifier, which environment.
+_PROVENANCE = ExperimentProvenance(
+    task_manifest_sha256="a" * 64,
+    checkpoint_fingerprint="b" * 64,
+    schedule_sha256="c" * 64,
+    verifier_version="verifier-1.0.0",
+    environment_sha256="d" * 64,
+)
 
 
 def _accounted_outcome(success: bool, layer_apps: int):
@@ -144,7 +157,7 @@ def test_grader_underpowered_is_conjecture():
         "x", "s",
         {"khop": _arm("t", 5, 5)},
         {"khop": _arm("c", 5, 0)},
-    )
+     provenance=_PROVENANCE)
     assert claim.tier == CONJECTURE
 
 
@@ -153,7 +166,7 @@ def test_grader_single_family_separation_is_supported():
         "x", "s",
         {"khop": _arm("t", 40, 36)},
         {"khop": _arm("c", 40, 10)},
-    )
+     provenance=_PROVENANCE)
     assert claim.tier == SUPPORTED
 
 
@@ -162,7 +175,7 @@ def test_aggregate_grader_cannot_claim_proven_without_pairs():
         "x", "s",
         {"khop": _arm("t", 40, 36), "modular": _arm("t", 40, 34)},
         {"khop": _arm("c", 40, 10), "modular": _arm("c", 40, 12)},
-    )
+     provenance=_PROVENANCE)
     assert claim.tier == SUPPORTED
     assert claim.evidence["aggregate_only"] is True
 
@@ -182,7 +195,7 @@ def test_paired_grader_can_prove_replicated_compute_matched_gain():
         ]
         for family in ("khop", "modular")
     }
-    claim = grade_paired_treatment_vs_control("x", "s", observations)
+    claim = grade_paired_treatment_vs_control("x", "s", observations, provenance=_PROVENANCE)
     assert claim.tier == PROVEN
     assert set(claim.evidence["positive_families"]) == {"khop", "modular"}
 
@@ -193,14 +206,14 @@ def test_paired_grader_voids_missing_or_mismatched_compute():
             PairedObservation(f"t-{i}", "khop", True, False) for i in range(30)
         ]
     }
-    assert grade_paired_treatment_vs_control("x", "s", missing).tier == CONJECTURE
+    assert grade_paired_treatment_vs_control("x", "s", missing, provenance=_PROVENANCE).tier == CONJECTURE
     mismatch = {
         "khop": [
             PairedObservation(f"t-{i}", "khop", True, False, 2000, 1000)
             for i in range(30)
         ]
     }
-    claim = grade_paired_treatment_vs_control("x", "s", mismatch)
+    claim = grade_paired_treatment_vs_control("x", "s", mismatch, provenance=_PROVENANCE)
     assert claim.tier == CONJECTURE
     assert claim.evidence["invalid_compute_families"] == ["khop"]
 
@@ -210,7 +223,7 @@ def test_paired_grader_voids_missing_or_mismatched_compute():
             for i in range(30)
         ]
     }
-    zero_claim = grade_paired_treatment_vs_control("x", "s", zero)
+    zero_claim = grade_paired_treatment_vs_control("x", "s", zero, provenance=_PROVENANCE)
     assert zero_claim.tier == CONJECTURE
     assert zero_claim.evidence["invalid_compute_families"] == ["khop"]
 
@@ -220,14 +233,14 @@ def test_paired_grader_rejects_duplicate_or_malformed_rows():
     with pytest.raises(ValueError, match="unique"):
         grade_paired_treatment_vs_control(
             "x", "s", {"khop": [duplicate, duplicate]}, require_compute=False
-        )
+        , provenance=_PROVENANCE)
     malformed = PairedObservation("bad", "khop", 1, False, 100, 100)
     with pytest.raises(ValueError, match="boolean"):
         grade_paired_treatment_vs_control(
             "x", "s", {"khop": [malformed]}, require_compute=False
-        )
+        , provenance=_PROVENANCE)
     with pytest.raises(ValueError, match="alpha"):
-        grade_paired_treatment_vs_control("x", "s", {}, alpha=float("nan"))
+        grade_paired_treatment_vs_control("x", "s", {}, alpha=float("nan"), provenance=_PROVENANCE)
 
 
 def test_paired_effect_bound_tracks_alpha_and_blocks_weak_strict_claims():
@@ -250,14 +263,14 @@ def test_paired_effect_bound_tracks_alpha_and_blocks_weak_strict_claims():
         observations,
         alpha=0.05,
         minimum_effect=0.53,
-    )
+     provenance=_PROVENANCE)
     strict = grade_paired_treatment_vs_control(
         "x",
         "s",
         observations,
         alpha=0.01,
         minimum_effect=0.53,
-    )
+     provenance=_PROVENANCE)
 
     ordinary_stats = ordinary.evidence["families"]["khop"]
     strict_stats = strict.evidence["families"]["khop"]
@@ -283,7 +296,7 @@ def test_paired_proven_requires_two_thirds_domain_breadth():
         ]
         for family in ("a", "b", "c", "d")
     }
-    claim = grade_paired_treatment_vs_control("x", "s", observations)
+    claim = grade_paired_treatment_vs_control("x", "s", observations, provenance=_PROVENANCE)
     assert claim.tier == SUPPORTED
     assert claim.evidence["required_positive_families"] == 3
 
@@ -293,7 +306,7 @@ def test_grader_losses_are_refuted():
         "x", "s",
         {"khop": _arm("t", 40, 12)},
         {"khop": _arm("c", 40, 20)},
-    )
+     provenance=_PROVENANCE)
     assert claim.tier == REFUTED
 
 
@@ -305,22 +318,22 @@ def test_recurrence_sweep_grades_monotone_gain():
         tasks,
         [1, 2, 4],
         baseline=lambda t: (t.depth == 1, 1000),
-    )
+     provenance=_PROVENANCE)
     assert result["monotone_gain"] is True
     assert result["claim"]["tier"] == SUPPORTED
-    flat = run_recurrence_sweep(lambda t, s: t.seed % 2 == 0, tasks, [1, 2, 4])
+    flat = run_recurrence_sweep(lambda t, s: t.seed % 2 == 0, tasks, [1, 2, 4], provenance=_PROVENANCE)
     assert flat["claim"]["tier"] in (REFUTED, CONJECTURE)
 
 
 def test_depth_extrapolation_detects_scaling_and_flat():
     scaling = run_depth_extrapolation(
         lambda t, s: s >= t.depth, "modular", [2, 4, 8], [2, 4, 8], per_depth=8
-    )
+    , provenance=_PROVENANCE)
     assert scaling["claim"]["tier"] == SUPPORTED
     assert scaling["t_required"] == {2: 2, 4: 4, 8: 8}
     flat = run_depth_extrapolation(
         lambda t, s: True, "modular", [2, 4, 8], [2, 4, 8], per_depth=8
-    )
+    , provenance=_PROVENANCE)
     assert flat["claim"]["tier"] == REFUTED  # solvable but T does not scale
 
 
@@ -330,10 +343,10 @@ def test_slot_causality_requires_real_damage():
         lambda t, slot: slot != 1,  # slot 1 is load-bearing
         tasks,
         slot_indices=[0, 1, 2],
-    )
+     provenance=_PROVENANCE)
     assert hit["causally_necessary_slots"] == [1]
     assert hit["claim"]["tier"] == SUPPORTED
-    miss = run_slot_causality(lambda t, slot: True, tasks, slot_indices=[0, 1])
+    miss = run_slot_causality(lambda t, slot: True, tasks, slot_indices=[0, 1], provenance=_PROVENANCE)
     assert miss["claim"]["tier"] == REFUTED
 
 
@@ -344,14 +357,14 @@ def test_virtual_width_voids_unequal_compute():
         lambda t, k: _accounted_outcome(t.seed % 3 == 0, 1000),
         tasks,
         k=4,
-    )
+     provenance=_PROVENANCE)
     assert honest["claim"]["tier"] == SUPPORTED
     cheat = run_virtual_width(
         lambda t, k: _accounted_outcome(True, 5000),
         lambda t, k: _accounted_outcome(t.seed % 3 == 0, 1000),
         tasks,
         k=4,
-    )
+     provenance=_PROVENANCE)
     assert cheat["claim"]["tier"] == CONJECTURE
     assert cheat["claim"]["evidence"]["invalid_compute_families"] == ["khop"]
 
@@ -364,11 +377,11 @@ def test_latent_opt_control_only_rewards_direction():
             1000,
         ),
         tasks,
-    )
+     provenance=_PROVENANCE)
     assert directional["claim"]["tier"] == SUPPORTED
     indiscriminate = run_latent_opt_control(
         lambda t, arm: (arm in ("gradient", "control"), 1000), tasks
-    )
+    , provenance=_PROVENANCE)
     assert indiscriminate["claim"]["tier"] in (REFUTED, CONJECTURE)
 
 
@@ -380,7 +393,7 @@ def test_latent_opt_control_counterbalances_and_reports_execution_order():
         observed_calls.append((task.seed, arm))
         return arm == "gradient", 1000
 
-    result = run_latent_opt_control(solve, tasks)
+    result = run_latent_opt_control(solve, tasks, provenance=_PROVENANCE)
     reported = result["execution_order"]
     flattened = [
         (tasks["modular"][index].seed, arm)
@@ -490,7 +503,7 @@ def test_factorial_ablations_attribute_gain_to_the_right_mechanism():
         # everything; vanilla and the others solve nothing.
         winners = {"recurrence_only", "recurrence_branches", "full_stack"}
         return (arm in winners), 100
-    result = run_factorial_ablations(solve_arm, by_family)
+    result = run_factorial_ablations(solve_arm, by_family, provenance=_PROVENANCE)
 
     assert set(result["claims"]) == set(FACTORIAL_ARMS)
     assert set(result["attribution"]) == {
@@ -515,7 +528,7 @@ def test_factorial_ablations_underpowered_stays_conjecture():
         lambda task, arm: (arm != "vanilla", 10),
         {"modular": tasks},
         arms=("full_stack",),
-    )
+     provenance=_PROVENANCE)
     assert result["claims"]["full_stack"]["tier"] == "CONJECTURE"
 
 
@@ -605,7 +618,7 @@ def test_run_role_lesion_grades_diversity_and_divergence():
         lesioned_calls["n"] += 1
         return (lesioned_calls["n"] % 2 == 0), 100, 0.05
 
-    report = run_role_lesion(solve_arm, by_family)
+    report = run_role_lesion(solve_arm, by_family, provenance=_PROVENANCE)
     assert set(report["arms"]) == set(ROLE_ARMS)
     assert report["behavioral_claim"]["tier"] in {"PROVEN", "SUPPORTED"}
     assert report["restoration_claim"]["tier"] in {"PROVEN", "SUPPORTED"}
@@ -629,7 +642,7 @@ def test_run_role_lesion_refutes_when_lesion_changes_nothing():
     def solve_arm(task, arm):
         return True, 100, 0.10  # identical everywhere: roles carry nothing
 
-    report = run_role_lesion(solve_arm, by_family)
+    report = run_role_lesion(solve_arm, by_family, provenance=_PROVENANCE)
     assert report["behavioral_claim"]["tier"] in {"CONJECTURE", "REFUTED"}
     assert report["divergence_claim"]["tier"] == "REFUTED"
     assert report["role_causality"]["tier"] == "CONJECTURE"
@@ -646,7 +659,7 @@ def test_run_role_lesion_conjectures_without_telemetry():
     def solve_arm(task, arm):
         return True, 100, None  # no exchange telemetry recorded
 
-    report = run_role_lesion(solve_arm, {"boolean": battery})
+    report = run_role_lesion(solve_arm, {"boolean": battery}, provenance=_PROVENANCE)
     assert report["divergence_claim"]["tier"] == "CONJECTURE"
     assert report["divergence_claim"]["evidence"]["distinct_mean_divergence"] is None
 
@@ -666,6 +679,6 @@ def test_run_role_lesion_cannot_claim_causality_with_compute_mismatch():
             return calls[arm] % 2 == 0, 100, 0.05
         return True, 101 if arm == "distinct_roles" else 100, 0.30
 
-    report = run_role_lesion(solve_arm, {"boolean": battery})
+    report = run_role_lesion(solve_arm, {"boolean": battery}, provenance=_PROVENANCE)
     assert report["role_causality"]["compute_parity"] is False
     assert report["role_causality"]["tier"] == "CONJECTURE"
