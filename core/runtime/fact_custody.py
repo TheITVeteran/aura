@@ -344,7 +344,14 @@ class CustodySet:
 
     # ── checking ───────────────────────────────────────────────────────────
 
-    def inspect(self, stage: str, before: Any, after: Any) -> tuple[CustodyBreak, ...]:
+    def inspect(
+        self,
+        stage: str,
+        before: Any,
+        after: Any,
+        *,
+        emit_log: bool = True,
+    ) -> tuple[CustodyBreak, ...]:
         """Check one stage's rewrite against everything the turn is holding.
 
         Called from the seam every text mutation already passes through, so a
@@ -393,8 +400,9 @@ class CustodySet:
             self._breaks.extend(found)
             if len(self._breaks) > _MAX_BREAKS:
                 del self._breaks[_MAX_BREAKS:]
-        for item in found:
-            logger.warning("🔗 [CUSTODY] %s", item.describe())
+        if emit_log:
+            for item in found:
+                logger.warning("🔗 [CUSTODY] %s", item.describe())
         return tuple(found)
 
     def breaks(self) -> tuple[CustodyBreak, ...]:
@@ -427,7 +435,7 @@ class CustodySet:
 
     # ── enforcing ──────────────────────────────────────────────────────────
 
-    def restore(self, text: Any) -> Restoration:
+    def restore(self, text: Any, *, emit_log: bool = True) -> Restoration:
         """Put back what the pipeline lost, on the exact text about to be sent.
 
         A contradicted fact has its offending sentence REPLACED by the held
@@ -460,7 +468,7 @@ class CustodySet:
                 # way.
             rendered = (rendered.rstrip() + "\n\n" + replacement).strip()
             restored.append(item)
-        if restored:
+        if restored and emit_log:
             logger.warning(
                 "🔗 [CUSTODY] restored %d fact(s) the pipeline lost: %s",
                 len(restored),
@@ -564,22 +572,28 @@ def hold_fact(
     return custody.hold(fact)
 
 
-def inspect_mutation(stage: str, before: Any, after: Any) -> tuple[CustodyBreak, ...]:
+def inspect_mutation(
+    stage: str,
+    before: Any,
+    after: Any,
+    *,
+    emit_log: bool = True,
+) -> tuple[CustodyBreak, ...]:
     """Check a stage's rewrite against the current turn's custody set."""
 
     custody = current_custody()
     if custody is None:
         return ()
-    return custody.inspect(stage, before, after)
+    return custody.inspect(stage, before, after, emit_log=emit_log)
 
 
-def restore_held_facts(text: Any) -> Restoration:
+def restore_held_facts(text: Any, *, emit_log: bool = True) -> Restoration:
     """Enforce custody on outgoing text. Safe to call with no turn bound."""
 
     custody = current_custody()
     if custody is None:
         return Restoration(text=str(text or ""), changed=False)
-    return custody.restore(text)
+    return custody.restore(text, emit_log=emit_log)
 
 
 def custody_report(turn_id: str | None = None) -> dict[str, Any]:

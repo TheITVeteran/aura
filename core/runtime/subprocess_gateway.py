@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, Protocol, cast
 
 from core import governance_context as _governance_context
 from core.runtime.process_privilege import Privilege, ProcessRole, check_spawn
@@ -36,6 +36,23 @@ from core.utils.task_tracker import (
 )
 
 GovernanceViolation = _governance_context.GovernanceViolation
+
+
+class _PythonProcessFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        target: Callable[..., Any],
+        args: tuple[Any, ...],
+        name: str,
+        daemon: bool,
+    ) -> Any: ...
+
+
+class _PythonProcessContext(Protocol):
+    Process: _PythonProcessFactory
+
+    def get_start_method(self, allow_none: bool = False) -> str | None: ...
 
 _EFFECT_DOMAINS = (
     "environment_action",
@@ -880,7 +897,10 @@ class SubprocessGateway:
         start_method = str(spec.start_method or "").strip().lower()
         if start_method not in {"spawn", "forkserver"}:
             raise ValueError("Python process start_method must be spawn or forkserver")
-        selected_context = context if context is not None else mp.get_context(start_method)
+        selected_context = cast(
+            _PythonProcessContext,
+            context if context is not None else mp.get_context(start_method),
+        )
         try:
             actual_start_method = str(selected_context.get_start_method()).lower()
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:

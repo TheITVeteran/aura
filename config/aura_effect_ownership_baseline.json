@@ -1949,14 +1949,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/memory/knowledge/curriculum.py",
-      "scope": "<module>.CurriculumManager._save_data"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/memory/learning/tool_learning.py",
       "scope": "<module>.ToolLearningSystem._save"
     },
@@ -4519,6 +4511,22 @@
       "count": 1,
       "path": "core/memory/interpersonal_store.py",
       "scope": "<module>.InterpersonalStore.save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/knowledge/curriculum.py",
+      "scope": "<module>.CurriculumManager._save_data"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/knowledge/curriculum.py",
+      "scope": "<module>.CurriculumManager._save_data"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
@@ -15954,6 +15962,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "677dcbd7c0f162fc0ed04b761d57b27676c2afc6480e2d68fc3b31a3f487a9b5",
+  "inventory_sha256": "9b3138fd1699111460f007fe9753c05b0394bc241775d91be18a76fd5cc4f092",
   "schema_version": 1
 }

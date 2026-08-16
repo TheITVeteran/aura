@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 import core.state.state_repository as state_module
-from core.state.state_repository import StateRepository, _schedule_state_task
 from core.runtime.sqlite_support import connecting
+from core.state.state_repository import StateRepository, _schedule_state_task
 
 
 class ClosingAwaitable:
@@ -459,7 +459,7 @@ async def test_state_vault_actor_closes_repository_on_shutdown(monkeypatch):
 
         async def initialize(self):
             self.initialized = True
-            actor._is_running = False
+            actor.request_shutdown("signal_SIGTERM")
 
         async def close(self):
             self.closed = True
@@ -484,6 +484,8 @@ async def test_state_vault_actor_closes_repository_on_shutdown(monkeypatch):
     actor._heartbeat_interval = 0.01
     actor._heartbeat_task = None
     actor._background_tasks = set()
+    actor._shutdown_requested = False
+    actor._shutdown_reason = ""
 
     await StateVaultActor.run(actor, pipe=None)
 
@@ -491,6 +493,69 @@ async def test_state_vault_actor_closes_repository_on_shutdown(monkeypatch):
     assert actor.repo.closed is True
     assert actor._bus.stopped is True
     assert shm.closed is True
+    assert actor._shutdown_reason == "signal_SIGTERM"
+
+
+def test_state_vault_request_shutdown_is_idempotent_and_sticky_before_run():
+    from core.state.vault import StateVaultActor
+
+    actor = StateVaultActor.__new__(StateVaultActor)
+    actor._is_running = True
+    actor._stop_event = None
+    actor._shutdown_requested = False
+    actor._shutdown_reason = ""
+
+    assert actor.request_shutdown("signal_SIGTERM") is True
+    actor._stop_event = asyncio.Event()
+    assert actor.request_shutdown("signal_SIGHUP") is False
+
+    assert actor._is_running is False
+    assert actor._stop_event.is_set() is True
+    assert actor._shutdown_requested is True
+    assert actor._shutdown_reason == "signal_SIGTERM"
+
+
+def test_state_vault_signal_handlers_use_event_loop_and_release_ownership():
+    import core.state.vault as vault_module
+
+    registered = {}
+    removed = []
+
+    class FakeLoop:
+        def add_signal_handler(self, signum, callback, *args):
+            registered[signum] = (callback, args)
+
+        def remove_signal_handler(self, signum):
+            removed.append(signum)
+            return True
+
+    actor = vault_module.StateVaultActor.__new__(vault_module.StateVaultActor)
+    actor._is_running = True
+    actor._stop_event = asyncio.Event()
+    actor._shutdown_requested = False
+    actor._shutdown_reason = ""
+    loop = FakeLoop()
+
+    installed = vault_module._install_vault_signal_handlers(loop, actor)
+    expected = [vault_module.signal.SIGTERM]
+    if hasattr(vault_module.signal, "SIGHUP"):
+        expected.append(vault_module.signal.SIGHUP)
+
+    assert list(installed) == expected
+    assert list(registered) == expected
+
+    callback, args = registered[vault_module.signal.SIGTERM]
+    callback(*args)
+    if hasattr(vault_module.signal, "SIGHUP"):
+        callback, args = registered[vault_module.signal.SIGHUP]
+        callback(*args)
+
+    assert actor._shutdown_requested is True
+    assert actor._shutdown_reason == "signal_SIGTERM"
+    assert actor._stop_event.is_set() is True
+
+    vault_module._remove_vault_signal_handlers(loop, installed)
+    assert removed == expected
 
 
 @pytest.mark.asyncio
@@ -500,12 +565,15 @@ async def test_state_vault_stop_handler_wakes_actor_loop_immediately():
     actor = StateVaultActor.__new__(StateVaultActor)
     actor._is_running = True
     actor._stop_event = asyncio.Event()
+    actor._shutdown_requested = False
+    actor._shutdown_reason = ""
 
     result = await StateVaultActor._process_stop_bus(actor, {}, "trace-stop")
 
     assert result == {"ok": True, "stopping": True}
     assert actor._is_running is False
     assert actor._stop_event.is_set() is True
+    assert actor._shutdown_reason == "bus_stop"
 
 
 def test_state_vault_hard_exit_guard_is_disabled_for_tests(monkeypatch):

@@ -3390,6 +3390,12 @@ class CognitiveEngine:
                 severity="warning",
                 action="recorded sustained objective friction",
                 extra=self.autopoiesis.pressure_report(),
+                # Friction is a durable learning/diagnostic observation, not
+                # an exception from the service contract. Letting the generic
+                # fail-closed policy enforce this warning turned a useful
+                # signal into CRITICAL SERVICE FAILURE and killed the repair
+                # pass that was supposed to resolve it.
+                enforce_failure_policy=False,
             )
         self._learn_spiking_active_inference_outcome(
             context,

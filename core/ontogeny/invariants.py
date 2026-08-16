@@ -84,15 +84,13 @@ def _authority_implies_observation() -> Iterator[Violation]:
     core = _organ()
     if core is None:
         return
-    resolution = core.resolvers.report()
-    swept = int(resolution.get("swept") or 0)
-    rate = float(resolution.get("observation_rate") or 0.0)
-    if swept < _MIN_SWEPT:
-        return
-    for control_point in core.control_points():
-        if not core.authority.has_authority(control_point):
+    report = core.authority_observation_report(min_closed=_MIN_SWEPT)
+    for control_point, stats in report.get("control_points", {}).items():
+        if not stats.get("eligible"):
             continue
-        if rate < _MIN_OBSERVATION_RATE:
+        swept = int(stats.get("closed") or 0)
+        rate = float(stats.get("observation_rate") or 0.0)
+        if rate <= _MIN_OBSERVATION_RATE:
             yield Violation(
                 subject=control_point,
                 message=(

@@ -534,6 +534,17 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/run_mathematics_memory_decode_canary.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/run_native_transition_discriminator.py",
       "purpose": "training"
     },
@@ -600,6 +611,17 @@
         "mlx_lm"
       ],
       "ownership_mode": "standalone_process",
+      "path": "tools/run_semantic_neural_decode_canary.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
       "path": "tools/run_semantic_output_transfer_canary.py",
       "purpose": "evaluation"
     },
@@ -612,6 +634,17 @@
       ],
       "ownership_mode": "standalone_process",
       "path": "tools/run_state_causality_semantic.py",
+      "purpose": "evaluation"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/run_unified_recurrent_broad_canary.py",
       "purpose": "evaluation"
     },
     {

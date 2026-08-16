@@ -6,6 +6,7 @@ every upstream verification has already passed.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -129,6 +130,18 @@ def test_env_override_outside_the_repo_is_marked_external(tmp_path, monkeypatch)
 def test_directory_path_is_not_loaded_as_a_profile(tmp_path):
     adapter = PersonaAdapter(tmp_path, trust=TRUST_EXTERNAL)
     assert adapter.list_personas() == ["aura"]
+
+
+def test_canonical_builtin_source_is_not_reported_as_a_missing_file(
+    tmp_path,
+    caplog,
+):
+    with caplog.at_level(logging.WARNING, logger="Core.PersonaAdapter"):
+        adapter = PersonaAdapter(tmp_path / "absent.json", trust=TRUST_BUILTIN)
+
+    assert adapter.list_personas() == ["aura"]
+    assert adapter.load_faults == {}
+    assert not any("profile file missing" in record.message for record in caplog.records)
 
 
 # --- cf3ccae3: no generic-assistant identity fallback ----------------------

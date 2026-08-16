@@ -3603,6 +3603,9 @@ class LatentCortexEngine:
         decode_limit = (
             decode_max_tokens if decode_max_tokens is not None else self.config.decode_max_tokens
         )
+        captured_incumbent_tokens: list[int] | None = None
+        captured_incumbent_termination = ""
+        captured_incumbent_logprobs: list[float] = []
         bridge_tokens = self._decode_bridge_tokens()
         terminal_instruction_reserve = self._terminal_instruction_reserve()
         terminal_instruction_tokens: list[int] = []
@@ -3813,6 +3816,54 @@ class LatentCortexEngine:
         )
         self._episode_kv_state_tree = kv_state_tree
         runner.attach_kv_state_tree(kv_state_tree)
+        if (
+            self.config.decode_incumbent_policy == "vanilla_incumbent"
+            and incumbent_artifact is None
+        ):
+            # Materialize the ordinary answer while both the model function
+            # and prompt cache are still pristine. Reconstructing it after
+            # recurrence required a mutable KV rewind and a merely-detached
+            # fast-weight stack; a live 32B turn produced finite prompt logits
+            # and then NaNs on the first post-rewind token. The floor is now a
+            # real pre-adaptation artifact, not a promise that late mutable
+            # state can recreate one.
+            incumbent_capture = kv_state_tree.begin_speculation(
+                cache,
+                start=0,
+                end=self.n_layers,
+                purpose="capture_vanilla_incumbent",
+                branch_index=None,
+                parent_sha256=kv_state_tree.root_sha256,
+            )
+            capture_failed = True
+            try:
+                (
+                    captured_incumbent_tokens,
+                    captured_incumbent_termination,
+                ) = self._decode(
+                    cache,
+                    budget,
+                    prompt_tail_logits,
+                    max_tokens=decode_max_tokens,
+                    cancel_check=cancel_check,
+                    progress=progress,
+                    token_logprobs_out=(
+                        captured_incumbent_logprobs
+                        if token_logprobs_out is not None
+                        else None
+                    ),
+                    sentence_grace_tokens=decode_sentence_grace_tokens,
+                    sample_seed=sample_seed,
+                )
+                capture_failed = False
+            finally:
+                incumbent_capture.observe_mutation(
+                    cache,
+                    execution_failed=capture_failed,
+                )
+                incumbent_capture.restore_parent(cache)
+                incumbent_capture.reject_after_restore(cache)
+            receipt.flag("vanilla_incumbent_captured_before_adaptation")
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,
@@ -8251,14 +8302,27 @@ class LatentCortexEngine:
                             "fast weights remained attached before incumbent decode"
                         )
                 kv_state_tree.restore_boundary(cache, kv_state_tree.root_sha256)
-                if incumbent_artifact is not None:
-                    out_tokens = list(incumbent_artifact.tokens)
-                    decode_termination = str(incumbent_artifact.receipt["output"]["termination"])
+                if incumbent_artifact is not None or captured_incumbent_tokens is not None:
+                    if incumbent_artifact is not None:
+                        out_tokens = list(incumbent_artifact.tokens)
+                        decode_termination = str(
+                            incumbent_artifact.receipt["output"]["termination"]
+                        )
+                        binding_purpose = "bind_canonical_incumbent_artifact"
+                        binding_authority = "canonical_ordinary_decode_artifact"
+                    else:
+                        out_tokens = list(captured_incumbent_tokens or ())
+                        decode_termination = captured_incumbent_termination
+                        binding_purpose = "bind_captured_vanilla_incumbent"
+                        binding_authority = "vanilla_incumbent_output"
+                        if token_logprobs_out is not None:
+                            token_logprobs_out.clear()
+                            token_logprobs_out.extend(captured_incumbent_logprobs)
                     final_decode_transaction = kv_state_tree.begin_speculation(
                         cache,
                         start=0,
                         end=self.n_layers,
-                        purpose="bind_canonical_incumbent_artifact",
+                        purpose=binding_purpose,
                         branch_index=winner.index,
                         parent_sha256=kv_state_tree.root_sha256,
                     )
@@ -8268,7 +8332,7 @@ class LatentCortexEngine:
                     final_decode_transaction.observe_mutation(cache)
                     winner.kv_boundary_sha256 = final_decode_transaction.commit(
                         label="bound_vanilla_incumbent_output",
-                        authority="canonical_ordinary_decode_artifact",
+                        authority=binding_authority,
                         latent_sha256="",
                         final=True,
                     )
@@ -8354,7 +8418,11 @@ class LatentCortexEngine:
                     )
             elif latent_decode_authorized:
                 decode_logits = slot_logits
-            if not heterogeneous_decode_applied and incumbent_artifact is None:
+            if (
+                not heterogeneous_decode_applied
+                and incumbent_artifact is None
+                and captured_incumbent_tokens is None
+            ):
                 out_tokens, decode_termination = self._decode(
                     cache,
                     budget,

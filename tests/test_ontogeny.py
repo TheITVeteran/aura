@@ -233,6 +233,65 @@ class TestResolution:
         spine.flush()
         assert registry.sweep(spine)["observed"] == 1
 
+    def test_durable_observation_window_is_bounded_and_control_point_local(
+        self,
+        spine: ExperienceSpine,
+    ):
+        episodes = [
+            _episode(
+                features={"a": float(index), "b": 2.0},
+                decided_at=float(index + 1),
+            )
+            for index in range(80)
+        ]
+        for episode in episodes:
+            spine.record(episode)
+        spine.flush()
+        for index, episode in enumerate(episodes):
+            outcome = (
+                Outcome.from_utility(1.0, "test")
+                if index < 30 or index >= 70
+                else Outcome.unobserved("test")
+            )
+            spine.resolve(episode.episode_id, outcome)
+        spine.flush()
+
+        report = spine.observation_stats("test.cp", recent_limit=50)
+
+        assert report["available"] is True
+        assert report["closed"] == 50
+        assert report["observed"] == 10
+        assert report["unobserved"] == 40
+        assert report["observation_rate"] == pytest.approx(0.2)
+        assert spine.observation_stats("other.cp", recent_limit=50)["closed"] == 0
+
+    def test_durable_observation_window_tracks_latest_resolutions(
+        self,
+        spine: ExperienceSpine,
+    ):
+        older_decision = _episode(
+            features={"a": 1.0, "b": 2.0},
+            decided_at=1.0,
+        )
+        newer_decision = _episode(
+            features={"a": 2.0, "b": 2.0},
+            decided_at=2.0,
+        )
+        spine.record(older_decision)
+        spine.record(newer_decision)
+        spine.flush()
+        spine.resolve(newer_decision.episode_id, Outcome.unobserved("test"))
+        spine.flush()
+        spine.resolve(older_decision.episode_id, Outcome.from_utility(1.0, "test"))
+        spine.flush()
+
+        report = spine.observation_stats("test.cp", recent_limit=1)
+
+        assert report["closed"] == 1
+        assert report["observed"] == 1
+        assert report["observation_rate"] == pytest.approx(1.0)
+        assert report["window_started_at"] == report["window_ended_at"]
+
 
 # ── L3: state and heads ─────────────────────────────────────────────────────
 
@@ -618,6 +677,76 @@ class TestOrganEndToEnd:
         )
         assert verdict.choice == "proceed"
         assert verdict.decider == "incumbent"
+        core.stop()
+
+    def test_authority_observation_comes_from_persisted_control_point_evidence(
+        self,
+        sandbox: Path,
+    ):
+        core = self._core(sandbox)
+        episodes = [
+            _episode(
+                control_point="executive.admission",
+                features={"a": float(index), "b": 3.0},
+                decided_at=float(index + 1),
+            )
+            for index in range(60)
+        ]
+        for episode in episodes:
+            core._spine.record(episode)
+        core._spine.flush()
+        for index, episode in enumerate(episodes):
+            outcome = (
+                Outcome.from_utility(1.0, "test")
+                if index >= 54
+                else Outcome.unobserved("test")
+            )
+            core._spine.resolve(episode.episode_id, outcome)
+        core._spine.flush()
+        core.authority.set_stage(
+            "executive.admission",
+            AuthorityStage.AUTHORITY,
+            reason="test",
+        )
+
+        report = core.authority_observation_report()
+
+        stats = report["control_points"]["executive.admission"]
+        assert stats["eligible"] is True
+        assert stats["closed"] == 60
+        assert stats["observation_rate"] == pytest.approx(0.1)
+        assert report["minimum_rate"] == pytest.approx(0.1)
+        core.stop()
+
+    def test_collapsed_durable_observation_revokes_deciding_authority(
+        self,
+        sandbox: Path,
+    ):
+        core = self._core(sandbox)
+        episodes = [
+            _episode(
+                control_point="executive.admission",
+                features={"a": float(index), "b": 4.0},
+                decided_at=float(index + 1),
+            )
+            for index in range(60)
+        ]
+        for episode in episodes:
+            core._spine.record(episode)
+        core._spine.flush()
+        for episode in episodes:
+            core._spine.resolve(episode.episode_id, Outcome.unobserved("test"))
+        core._spine.flush()
+        core.authority.set_stage(
+            "executive.admission",
+            AuthorityStage.AUTHORITY,
+            reason="test",
+        )
+
+        revoked = core._enforce_authority_observation()
+
+        assert revoked == ("executive.admission",)
+        assert core.authority.stage("executive.admission") is AuthorityStage.ADVISORY
         core.stop()
 
     def test_collapsed_episode_keeps_original_pending_calibration(

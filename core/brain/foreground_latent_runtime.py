@@ -197,6 +197,12 @@ def latent_owner_exhausted(reason: str, receipt: dict[str, Any]) -> bool:
     ):
         return True
 
+    if (
+        receipt.get("resident_owner_released") is True
+        and receipt.get("resident_state_reusable") is True
+    ):
+        return False
+
     terminal_stage = str(receipt.get("last_stage") or "").strip().lower()
     if normalized.startswith("receipt_contract_failed:") and terminal_stage in {
         "complete",

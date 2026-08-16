@@ -200,6 +200,48 @@ def _controller_outcome(
     return best_score, checked, passed, reason
 
 
+def _resident_state_reusable(receipt: dict[str, Any]) -> bool:
+    """Prove that a completed worker episode left the resident model reusable."""
+
+    if receipt.get("params_unchanged") is not True:
+        return False
+    worker_identity = receipt.get("worker_identity")
+    runtime_integrity = receipt.get("runtime_integrity")
+    if not isinstance(worker_identity, dict) or not isinstance(runtime_integrity, dict):
+        return False
+    try:
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            runtime_integrity_safe,
+        )
+
+        return runtime_integrity_safe(
+            runtime_integrity,
+            require_worker=True,
+            expected_episode_id=str(receipt.get("episode_id") or ""),
+            expected_input_tokens_sha256=str(
+                receipt.get("input_tokens_sha256") or ""
+            ),
+            expected_worker_identity=worker_identity,
+            expected_fast_weights_applied=(
+                receipt.get("fast_weights_applied") is True
+            ),
+            expected_fast_weights_attach_attempted=(
+                receipt.get("fast_weights_attach_attempted") is True
+            ),
+            expected_checkpoint_fingerprint=str(
+                receipt.get("checkpoint_fingerprint") or ""
+            ),
+            expected_checkpoint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+            expected_checkpoint_file_count=int(
+                receipt.get("checkpoint_file_count") or 0
+            ),
+        )
+    except (ImportError, TypeError, ValueError, OverflowError):
+        return False
+
+
 # What to assume when the body cannot be read. 0.0 means "maximum headroom"
 # on this scale, so unknown must never map to it. High enough to damp heavy
 # allocation, low enough that a body which never reports does not freeze the
@@ -5242,6 +5284,16 @@ class LatentCortexService:
             return self._record_failure("invalid_client_response")
         raw_receipt = result.get("receipt")
         result_receipt = dict(raw_receipt) if isinstance(raw_receipt, dict) else {}
+        # This code runs only after the client RPC returned and the process-wide
+        # generation lease's finally block released. The worker's integrity
+        # receipt independently proves whether temporary model state was erased.
+        # Callers may open the ordinary lane only when both facts are explicit;
+        # an episode id or a terminal stage alone is not ownership evidence.
+        result_receipt["resident_owner_released"] = True
+        result_receipt["resident_state_reusable"] = _resident_state_reusable(
+            result_receipt
+        )
+        result["receipt"] = result_receipt
         action_policy_matches = action_policy_evidence is None
         if action_policy_evidence is not None:
             try:
@@ -5831,6 +5883,8 @@ class LatentCortexService:
                     "epistemic_state",
                     "adaptive_compute",
                     "adaptive_acquisition",
+                    "resident_owner_released",
+                    "resident_state_reusable",
                 )
                 if key in self._last_failure_receipt
             },

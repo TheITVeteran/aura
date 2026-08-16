@@ -74,8 +74,8 @@ class CuriositySkill(BaseSkill):
             params = {"topic": str(params)} if params else {}
 
         if action == "get_suggestion":
-            return {"ok": True, "result": self.get_suggestion(params.get("category")),
-                    "summary": self.get_suggestion(params.get("category"))}
+            suggestion = self.get_suggestion(params.get("category"))
+            return {"ok": True, "result": suggestion, "summary": suggestion}
         elif action == "mark_complete":
             return {"ok": True, "result": self.mark_complete(params.get("title")),
                     "summary": f"Marked '{params.get('title')}' as complete."}

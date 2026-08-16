@@ -313,12 +313,20 @@ def test_vanilla_incumbent_runs_latent_episode_but_preserves_ordinary_decode(
     final_events = [
         event
         for event in result.receipt.kv_state_tree["events"]
-        if event["purpose"] == "final_vanilla_incumbent_decode"
+        if event["purpose"] == "bind_captured_vanilla_incumbent"
     ]
     assert len(final_events) == 1
     assert (
         final_events[0]["parent_node_sha256"] == (result.receipt.kv_state_tree["root_node_sha256"])
     )
+    capture_events = [
+        event
+        for event in result.receipt.kv_state_tree["events"]
+        if event["purpose"] == "capture_vanilla_incumbent"
+    ]
+    assert len(capture_events) == 1
+    assert capture_events[0]["disposition"] == "rejected_pruned"
+    assert capture_events[0]["parent_restored"] is True
 
 
 def test_verifier_probe_cost_uses_receipted_profile_and_bridge(tiny_model):

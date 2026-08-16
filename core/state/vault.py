@@ -50,6 +50,8 @@ class StateVaultActor:
         self._heartbeat_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
         self._stop_event: asyncio.Event | None = None
+        self._shutdown_requested = False
+        self._shutdown_reason = ""
 
     def _track_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task:
         task = get_task_tracker().create_task(coro, name=name)
@@ -66,6 +68,23 @@ class StateVaultActor:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._background_tasks.clear()
 
+    def request_shutdown(self, reason: str = "") -> bool:
+        """Request actor cleanup once and wake the run loop immediately."""
+        first_request = not bool(getattr(self, "_shutdown_requested", False))
+        self._shutdown_requested = True
+        if reason and not getattr(self, "_shutdown_reason", ""):
+            self._shutdown_reason = reason
+        self._is_running = False
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        if first_request:
+            logger.info(
+                "StateVaultActor shutdown requested: %s",
+                self._shutdown_reason or "unspecified",
+            )
+        return first_request
+
     async def run(self, pipe):
         """Main actor loop."""
         from ..bus.local_pipe_bus import LocalPipeBus
@@ -73,6 +92,8 @@ class StateVaultActor:
         # This prevents head-of-line blocking (e.g. slow commit vs fast ping)
         self._bus = LocalPipeBus(is_child=True, connection=pipe, start_reader=True)
         self._stop_event = asyncio.Event()
+        if getattr(self, "_shutdown_requested", False):
+            self._stop_event.set()
         try:
             # Register handlers
             self._bus.register_handler("commit", self._process_commit_bus)
@@ -82,6 +103,9 @@ class StateVaultActor:
 
             self._bus.start()
             logger.info("Starting State Vault Actor with concurrent bus handlers...")
+            if getattr(self, "_shutdown_requested", False):
+                logger.info("State Vault Actor stopping before repository startup.")
+                return
             self._is_running = True
             self._heartbeat_task = self._track_task(
                 self._heartbeat_loop(),
@@ -146,10 +170,7 @@ class StateVaultActor:
         return {"type": "pong", "ts": time.time()}
 
     async def _process_stop_bus(self, payload: Any, trace_id: str | None):
-        self._is_running = False
-        stop_event = getattr(self, "_stop_event", None)
-        if stop_event is not None:
-            stop_event.set()
+        self.request_shutdown("bus_stop")
         return {"ok": True, "stopping": True}
 
     async def _process_commit_bus(self, payload: Any, trace_id: str | None):
@@ -264,6 +285,49 @@ class StateVaultActor:
             )
             logger.error("SHM publish refused (state too large): %s", exc)
 
+
+def _install_vault_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    actor: StateVaultActor,
+) -> tuple[signal.Signals, ...]:
+    """Route process-stop signals through the actor's event loop."""
+    shutdown_signals = [signal.SIGTERM]
+    sighup = getattr(signal, "SIGHUP", None)
+    if sighup is not None and sighup not in shutdown_signals:
+        shutdown_signals.append(sighup)
+
+    installed: list[signal.Signals] = []
+    for signum in shutdown_signals:
+        try:
+            loop.add_signal_handler(
+                signum,
+                actor.request_shutdown,
+                f"signal_{signum.name}",
+            )
+            installed.append(signum)
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "vault",
+                exc,
+                severity="warning",
+                action=f"continued vault startup without a {signum.name} cleanup handler",
+            )
+            logger.error("StateVaultActor could not install %s handler: %s", signum.name, exc)
+    return tuple(installed)
+
+
+def _remove_vault_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    installed: tuple[signal.Signals, ...],
+) -> None:
+    """Release event-loop signal ownership after actor cleanup."""
+    for signum in installed:
+        try:
+            loop.remove_signal_handler(signum)
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("StateVaultActor signal cleanup skipped for %s: %s", signum.name, exc)
+
+
 def vault_process_entry(db_path: str, pipe):
     """Entry point for the vault process."""
     exit_code = 0
@@ -295,6 +359,7 @@ def vault_process_entry(db_path: str, pipe):
         logger.debug("StateVaultActor instantiated. Running asyncio loop...")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        installed_signal_handlers = _install_vault_signal_handlers(loop, actor)
         try:
             loop.run_until_complete(actor.run(pipe))
             pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
@@ -319,6 +384,7 @@ def vault_process_entry(db_path: str, pipe):
                     )
             loop.run_until_complete(loop.shutdown_asyncgens())
         finally:
+            _remove_vault_signal_handlers(loop, installed_signal_handlers)
             asyncio.set_event_loop(None)
             loop.close()
         logger.debug("StateVaultActor asyncio loop exited gracefully.")

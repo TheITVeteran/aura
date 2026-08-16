@@ -172,6 +172,11 @@ def test_the_engine_actually_reads_it():
         "cognitive_engine still only writes to the friction graph"
     )
     assert "pressure_report()" in source
+    pressure_block = source[source.index("if self.autopoiesis.is_under_pressure(") :]
+    pressure_block = pressure_block[: pressure_block.index(")\n        self._learn_spiking")]
+    assert "enforce_failure_policy=False" in pressure_block, (
+        "diagnostic friction can still invoke CognitiveEngine's fail-closed policy"
+    )
 
 
 # ───────────────────────────────────────── the claim matches the code

@@ -230,14 +230,15 @@ def sample(report: dict[str, Any]) -> None:
 
     _put(CHANNEL_EPISODES, int(report.get("episodes_seen") or 0))
     _put(CHANNEL_NOVELTY, float(report.get("novelty") or 0.0))
-    resolution = report.get("resolution") or {}
     authority_rank = _authority_rank(report)
     # A low observation rate is operationally dangerous when a learned head
     # is making decisions. Historical backlog sweeps while every head remains
     # observe/shadow/advisory are still visible in the report, but must not
     # manufacture an alarm for a surface that has no authority.
-    if resolution.get("swept") and authority_rank >= 3:
-        _put(CHANNEL_OBSERVATION_RATE, float(resolution.get("observation_rate") or 0.0))
+    authority_observation = report.get("authority_observation") or {}
+    durable_rate = authority_observation.get("minimum_rate")
+    if durable_rate is not None and authority_rank >= 3:
+        _put(CHANNEL_OBSERVATION_RATE, float(durable_rate))
 
     _put(CHANNEL_AUTHORITY_STAGE, authority_rank)
 

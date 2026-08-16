@@ -5232,6 +5232,24 @@ class CapabilityEngine(AuraBaseModule):
                 },
             }
 
+        outcome = str(getattr(decision, "outcome", "")).strip().lower()
+        if outcome == "deferred":
+            payload: dict[str, Any] = {
+                "ok": False,
+                "deferred": True,
+                "retryable": True,
+                "error": f"Execution deferred: {reason}",
+                "reason": reason,
+                "status": "deferred_by_executive",
+            }
+            retry_after = constraints.get("retry_after_s")
+            if retry_after is not None:
+                try:
+                    payload["retry_after_s"] = max(0.0, float(retry_after))
+                except (TypeError, ValueError):
+                    pass
+            return payload
+
         failure_markers = ("gate_failed", "required", "unavailable")
         status = (
             "blocked_by_executive_gate_failure"
@@ -5653,12 +5671,20 @@ class CapabilityEngine(AuraBaseModule):
                 )
                 if not tool_handle.approved:
                     reason = str(getattr(tool_handle.decision, "reason", "blocked"))
-                    self.logger.warning(
-                        "🚫 CapabilityEngine: Tool execution '%s' blocked by Constitution: %s",
-                        skill_name,
-                        reason,
-                    )
-                    return self._constitutional_denial_payload(tool_handle)
+                    denial = self._constitutional_denial_payload(tool_handle)
+                    if denial.get("deferred"):
+                        self.logger.info(
+                            "CapabilityEngine: Tool execution '%s' deferred by Constitution: %s",
+                            skill_name,
+                            reason,
+                        )
+                    else:
+                        self.logger.warning(
+                            "🚫 CapabilityEngine: Tool execution '%s' blocked by Constitution: %s",
+                            skill_name,
+                            reason,
+                        )
+                    return denial
 
                 constraints = dict(getattr(tool_handle, "constraints", {}) or {})
                 if constraints:

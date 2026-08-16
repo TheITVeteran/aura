@@ -1,0 +1,40 @@
+{
+  "schema": "aura.security.screen_capture_privacy_policy.v1",
+  "private_window_markers": [
+    "incognito",
+    "private browsing",
+    "private window",
+    "inprivate",
+    "guest",
+    "1password",
+    "bitwarden",
+    "keychain access",
+    "keeper",
+    "lastpass",
+    "dashlane",
+    "authenticator",
+    "banking",
+    "password"
+  ],
+  "private_apps": [
+    "1password",
+    "1password 7",
+    "bitwarden",
+    "keychain access",
+    "keeper password manager",
+    "lastpass",
+    "dashlane",
+    "gpg keychain",
+    "secretive"
+  ],
+  "private_browsing_apps": [
+    "arc",
+    "brave browser",
+    "firefox",
+    "google chrome",
+    "microsoft edge",
+    "opera",
+    "safari",
+    "vivaldi"
+  ]
+}

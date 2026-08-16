@@ -504,6 +504,26 @@ async def test_activated_qualified_failure_suppresses_uncertified_fallback(monke
         ),
         ("latent_timeout:TimeoutError", {}, True),
         ("worker_failure", {"episode_id": "e", "last_stage": "branch_select"}, True),
+        (
+            "latent_and_fallback_failed:NonFiniteLogitsError",
+            {
+                "episode_id": "e",
+                "last_stage": "incumbent_restore",
+                "resident_owner_released": True,
+                "resident_state_reusable": True,
+            },
+            False,
+        ),
+        (
+            "latent_and_fallback_failed:NonFiniteLogitsError",
+            {
+                "episode_id": "e",
+                "last_stage": "incumbent_restore",
+                "resident_owner_released": True,
+                "resident_state_reusable": False,
+            },
+            True,
+        ),
     ],
 )
 def test_latent_owner_disposition_is_explicit(reason, receipt, expected):

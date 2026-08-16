@@ -30,13 +30,13 @@ worse failure than a full disk.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 __all__ = [
     "DISK_AMBER_PERCENT",
@@ -128,11 +128,14 @@ def free_space(path: Any = "/") -> FreeSpace:
     target = Path(str(path or "/")).expanduser()
     while not target.exists() and target != target.parent:
         target = target.parent
-    usage = shutil.disk_usage(str(target))
+    usage = get_resource_observer().disk(target)
+    if not usage.available:
+        detail = usage.error or "disk observation unavailable"
+        raise OSError(f"cannot observe disk usage for {target}: {detail}")
     return FreeSpace(
-        path=str(target),
-        free_gb=usage.free / float(1024**3),
-        total_gb=usage.total / float(1024**3),
+        path=str(usage.path or target),
+        free_gb=usage.free_bytes / float(1024**3),
+        total_gb=usage.total_bytes / float(1024**3),
     )
 
 

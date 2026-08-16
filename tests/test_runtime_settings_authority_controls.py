@@ -409,6 +409,31 @@ def test_capability_boundary_preserves_actionable_confirmation_contract():
     assert "Executive veto" not in payload["error"]
 
 
+def test_capability_boundary_preserves_deferred_as_retryable_state():
+    handle = SimpleNamespace(
+        decision=SimpleNamespace(
+            outcome="deferred",
+            reason="temporal_safe_autonomous_tool|ontogeny:deferred",
+        ),
+        constraints={"retry_after_s": 12},
+    )
+
+    payload = CapabilityEngine._constitutional_denial_payload(handle)
+
+    assert payload == {
+        "ok": False,
+        "deferred": True,
+        "retryable": True,
+        "error": (
+            "Execution deferred: "
+            "temporal_safe_autonomous_tool|ontogeny:deferred"
+        ),
+        "reason": "temporal_safe_autonomous_tool|ontogeny:deferred",
+        "status": "deferred_by_executive",
+        "retry_after_s": 12.0,
+    }
+
+
 @pytest.mark.asyncio
 async def test_none_mode_still_reaches_standing_authority_denial(
     _isolated_runtime_settings,

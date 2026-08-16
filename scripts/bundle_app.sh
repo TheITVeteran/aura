@@ -91,6 +91,8 @@ PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
 INFO_PLIST="${CONTENTS_DIR}/Info.plist"
 ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"
 LAUNCHER_SOURCE="${ROOT_DIR}/scripts/AuraLauncher.swift"
+SCREEN_CAPTURE_POLICY_SOURCE="${ROOT_DIR}/config/screen_capture_privacy_policy.json"
+SCREEN_CAPTURE_POLICY_RESOURCE="${RESOURCES_DIR}/screen_capture_privacy_policy.json"
 
 cd "${ROOT_DIR}"
 
@@ -102,6 +104,11 @@ fi
 
 if [ ! -f "${LAUNCHER_SOURCE}" ]; then
     echo "❌ Missing launcher source: ${LAUNCHER_SOURCE}"
+    exit 1
+fi
+
+if [ ! -f "${SCREEN_CAPTURE_POLICY_SOURCE}" ]; then
+    echo "❌ Missing screen-capture privacy policy: ${SCREEN_CAPTURE_POLICY_SOURCE}"
     exit 1
 fi
 
@@ -121,6 +128,7 @@ rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 printf '%s\n' "${ROOT_DIR}" > "${ROOT_PATH_FALLBACK}"
+cp "${SCREEN_CAPTURE_POLICY_SOURCE}" "${SCREEN_CAPTURE_POLICY_RESOURCE}"
 
 PYTHON_FOR_VERSION="${ROOT_DIR}/.venv/bin/python3"
 if [ ! -x "${PYTHON_FOR_VERSION}" ]; then

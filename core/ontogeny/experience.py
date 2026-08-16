@@ -301,6 +301,9 @@ class ExperienceSpine:
         # slowly and nothing reads them for control, so serve them from a
         # short TTL and let a write invalidate.
         self._stats_cache: dict[str | None, tuple[float, dict[str, Any]]] = {}
+        self._observation_stats_cache: dict[
+            tuple[str, int], tuple[float, dict[str, Any]]
+        ] = {}
         self._init_schema()
         if autoflush:
             self._start_flusher()
@@ -529,6 +532,7 @@ class ExperienceSpine:
                     )
             self._written += len(batch)
             self._stats_cache.clear()
+            self._observation_stats_cache.clear()
             return len(batch)
         except sqlite3.Error as exc:
             record_degradation(
@@ -678,6 +682,74 @@ class ExperienceSpine:
         self._stats_cache[control_point] = (time.time(), scanned)
         return self._stats_with_live_counters(scanned)
 
+    def observation_stats(
+        self,
+        control_point: str,
+        *,
+        recent_limit: int = 500,
+    ) -> dict[str, Any]:
+        """Observed share in a bounded, durable window for one control point.
+
+        ResolverRegistry counters describe only this process. They restart at
+        zero and therefore cannot govern persisted authority after a reboot.
+        This query reads the latest closed episodes from the corpus that
+        granted that authority. It uses the control-point/time index and a
+        strict row bound, so health sampling never scans the full ledger.
+        """
+
+        name = str(control_point or "").strip()
+        if not name:
+            raise ValueError("control_point is required")
+        limit = max(1, min(5_000, int(recent_limit)))
+        cache_key = (name, limit)
+        cached = self._observation_stats_cache.get(cache_key)
+        if cached is not None and (time.time() - cached[0]) < _STATS_TTL_S:
+            return dict(cached[1])
+        try:
+            with connecting(self._connect()) as conn:
+                rows = conn.execute(
+                    "SELECT outcome_kind, decided_at, resolved_at "
+                    "FROM episodes "
+                    "WHERE control_point = ? AND outcome_kind IS NOT NULL "
+                    "ORDER BY resolved_at DESC, decided_at DESC LIMIT ?",
+                    (name, limit),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            record_degradation(
+                "ontogeny_experience",
+                exc,
+                severity="warning",
+                action="authority observation window unavailable",
+            )
+            return {
+                "available": False,
+                "control_point": name,
+                "window_limit": limit,
+            }
+
+        observed_kinds = {str(OutcomeKind.SUCCESS), str(OutcomeKind.FAILURE)}
+        observed = sum(1 for kind, _decided, _resolved in rows if kind in observed_kinds)
+        unobserved = sum(
+            1
+            for kind, _decided, _resolved in rows
+            if kind == str(OutcomeKind.UNOBSERVED)
+        )
+        closed = len(rows)
+        resolved = [float(row[2]) for row in rows if row[2] is not None]
+        report = {
+            "available": True,
+            "control_point": name,
+            "window_limit": limit,
+            "closed": closed,
+            "observed": observed,
+            "unobserved": unobserved,
+            "observation_rate": observed / closed if closed else None,
+            "window_started_at": min(resolved) if resolved else None,
+            "window_ended_at": max(resolved) if resolved else None,
+        }
+        self._observation_stats_cache[cache_key] = (time.time(), report)
+        return dict(report)
+
     def _stats_with_live_counters(self, scanned: dict[str, Any]) -> dict[str, Any]:
         """Cached aggregates plus the in-memory counters, which are always current."""
         return {
@@ -704,6 +776,7 @@ class ExperienceSpine:
                     (excess,),
                 )
                 self._stats_cache.clear()
+                self._observation_stats_cache.clear()
                 return int(cur.rowcount or 0)
         except sqlite3.Error as exc:
             record_degradation("ontogeny_experience", exc, severity="warning",

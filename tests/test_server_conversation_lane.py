@@ -11228,6 +11228,111 @@ async def test_truncated_foreground_answer_gets_one_same_worker_continuation(mon
 
 
 @pytest.mark.asyncio
+async def test_route_level_truncated_draft_enters_same_worker_continuation(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    metadata = _bound_live_mind_controls_metadata()
+    metadata.update(
+        {
+            "reply_generation_incomplete": False,
+            "reply_generation_stop_reason": "eos_or_stop_sequence",
+            "reply_generation_failure_reasons": [],
+        }
+    )
+    metadata["live_mind_surface_control_receipt"].update(
+        {
+            "surface_quality_gate_passed": True,
+            "surface_quality_gate_reasons": [],
+            "generation_stop_reason": "eos_or_stop_sequence",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, objective, context=None, **_kwargs):
+            self.calls.append((objective, dict(context or {})))
+            return SimpleNamespace(
+                content=(
+                    " dictionary, records each position tied for the maximum, "
+                    "and returns those positions."
+                ),
+                metadata=metadata,
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    trace = {}
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "completion_retry_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    partial = (
+        "The function updates each balance and removes names whose balance "
+        "reaches zero from the"
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Internal repair directive",
+        visible_user_message="Explain what this code does and give the final result.",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui_recovery",
+        require_engine=True,
+        turn_trace=trace,
+        continuation_partial=partial,
+        continuation_reasons=("truncated_tail",),
+    )
+
+    assert reply is not None
+    assert reply.endswith("positions.")
+    assert len(engine.calls) == 1
+    assert engine.calls[0][0] == "Explain what this code does and give the final result."
+    assert engine.calls[0][1]["user_surface_continuation_contract"] is True
+    assert engine.calls[0][1]["user_surface_continuation_partial"] == partial
+    assert trace["response_path"] == "cognitive_engine_completion_retry"
+
+
+def test_released_reusable_latent_episode_does_not_exhaust_foreground_owner():
+    from interface.routes import chat as chat_routes
+
+    metadata = {
+        "latent_cortex_attempted": True,
+        "latent_cortex_receipt": {
+            "resident_owner_released": True,
+            "resident_state_reusable": True,
+        },
+    }
+
+    assert chat_routes._generation_metadata_consumed_foreground_owner(metadata) is False
+    metadata["latent_cortex_receipt"]["resident_state_reusable"] = False
+    assert chat_routes._generation_metadata_consumed_foreground_owner(metadata) is True
+
+
+@pytest.mark.asyncio
 async def test_truncated_completion_replacement_cannot_become_authoritative(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes

@@ -15,6 +15,8 @@ detected, attributed to the stage that caused it, and repaired at the boundary.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from core.runtime.fact_custody import (
@@ -258,6 +260,25 @@ def test_the_health_report_names_the_stages_that_broke_custody() -> None:
     report = custody_report()
     assert report["turns_with_breaks"] == 1
     assert "chat.reply_shaping" in report["stages_that_broke_custody"]
+
+
+def test_validation_can_exercise_custody_without_emitting_production_events(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with bind_turn(TurnOutcome("t-validation", origin="validation")):
+        _hold_the_count()
+        with caplog.at_level(logging.WARNING, logger="core.runtime.fact_custody"):
+            breaks = inspect_mutation(
+                "validation.strip",
+                _RECORDED,
+                "Gone.",
+                emit_log=False,
+            )
+            result = restore_held_facts("Gone.", emit_log=False)
+
+    assert len(breaks) == 1
+    assert result.changed
+    assert not any("[CUSTODY]" in record.message for record in caplog.records)
 
 
 def test_the_producer_takes_custody_when_it_answers_from_receipts() -> None:

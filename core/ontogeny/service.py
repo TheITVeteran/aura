@@ -46,6 +46,7 @@ import numpy as np
 
 from core.ontogeny import telemetry
 from core.ontogeny.authority import AuthorityLedger, AuthorityStage, get_authority_ledger
+from core.ontogeny.authority_observation import AuthorityObservationMixin
 from core.ontogeny.calibration import (
     CANDIDATE_VALIDATION,
     OPERATIONAL_SHADOW,
@@ -218,7 +219,7 @@ class Verdict:
         }
 
 
-class OntogenyCore:
+class OntogenyCore(AuthorityObservationMixin):
     """The whole organ. One instance per process, alive for the life of the runtime."""
 
     def __init__(
@@ -786,6 +787,7 @@ class OntogenyCore:
                     self._last_checkpoint = now
                 if cycles == 1:
                     self.rehydrate_operational_calibration()
+                self._enforce_authority_observation()
                 telemetry.sample(self.report())
                 if cycles % 10 == 0:
                     # Slow, authoritative rebuild of the tallies from the
@@ -926,6 +928,7 @@ class OntogenyCore:
             ),
             "control_points": heads,
             "authority": self._authority.report(),
+            "authority_observation": self.authority_observation_report(),
             "reservation": self._reservation.report(),
             "resolution": self._resolvers.report(),
             "sweeper": self._sweeper.report() if self._sweeper else None,

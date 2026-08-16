@@ -10029,7 +10029,14 @@ def _generation_metadata_consumed_foreground_owner(metadata: Any) -> bool:
     if bool(metadata.get("model_retry_suppressed")):
         return True
     if bool(metadata.get("latent_cortex_attempted")):
-        return True
+        latent_receipt = metadata.get("latent_cortex_receipt")
+        latent_released = bool(
+            isinstance(latent_receipt, dict)
+            and latent_receipt.get("resident_owner_released") is True
+            and latent_receipt.get("resident_state_reusable") is True
+        )
+        if not latent_released:
+            return True
     for receipt_key in (
         "live_mind_surface_control_receipt",
         "surface_control_receipt",
@@ -10063,6 +10070,8 @@ async def _run_cognitive_engine_chat_turn(
     conversation_only_surface: bool = False,
     principal_id: str = "",
     turn_trace: dict[str, Any] | None = None,
+    continuation_partial: str = "",
+    continuation_reasons: tuple[str, ...] | list[str] | None = None,
 ) -> str | None:
     """Run a live desktop/user chat turn through CognitiveEngine.
 
@@ -11688,6 +11697,25 @@ async def _run_cognitive_engine_chat_turn(
                 )
         return None
     
+    if str(continuation_partial or "").strip():
+        continued = await _attempt_repair_retry(
+            str(continuation_partial).strip(),
+            tuple(continuation_reasons or ("truncated_tail",)),
+        )
+        if continued:
+            _mark_turn_trace(
+                cognitive_engine_reply_accepted=True,
+                cognitive_engine_reply_failed=False,
+                response_path="cognitive_engine_completion_retry",
+            )
+            return continued
+        _mark_turn_trace(
+            cognitive_engine_reply_accepted=False,
+            cognitive_engine_reply_failed=True,
+            response_path="cognitive_engine_completion_retry_failed",
+        )
+        return None
+
     async def engine_think_operation():
         from core.runtime.principal_context import relational_principal_scope
 
@@ -25489,10 +25517,53 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             nonlocal pending_exchange_id
             if not desktop_requires_cognitive_engine:
                 return None
+            completion_failure_reasons = {
+                "truncated_tail",
+                "final_answer_missing",
+                "missing_final_answer",
+                "incomplete_code_response",
+            }
+            reason_tuple = tuple(
+                str(reason).strip()
+                for reason in (reasons or ())
+                if str(reason or "").strip()
+            )
+            if rejected_reply:
+                try:
+                    from core.conversation.response_reliability import (
+                        assess_user_facing_reply,
+                    )
+
+                    rejected_assessment = assess_user_facing_reply(
+                        _semantic_user_message,
+                        rejected_reply,
+                    )
+                    assessed_reasons = tuple(
+                        str(reason or "").strip()
+                        for reason in getattr(rejected_assessment, "reasons", ())
+                        if str(reason or "").strip()
+                    )
+                    reason_tuple = tuple(dict.fromkeys((*reason_tuple, *assessed_reasons)))
+                except _CHAT_RECOVERABLE_ERRORS as assessment_exc:
+                    record_degradation(
+                        "chat",
+                        assessment_exc,
+                        severity="warning",
+                        action="retained caller-supplied recovery reasons",
+                    )
+            if not reason_tuple:
+                reason_tuple = (str(response_path or "desktop_reply_not_proven"),)
+            normalized_recovery_reasons = {
+                reason.lower() for reason in reason_tuple
+            }
+            completion_recovery = bool(
+                rejected_reply
+                and normalized_recovery_reasons & completion_failure_reasons
+            )
             if bool(
                 _live_turn_trace.get("single_owner_generation_exhausted")
                 or _live_turn_trace.get("foreground_model_generation_consumed")
-            ):
+            ) and not completion_recovery:
                 logger.warning(
                     "Skipping duplicate desktop recovery generation after the "
                     "CognitiveEngine owner exhausted this turn."
@@ -25532,9 +25603,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 return None
 
-            reason_tuple = tuple(str(reason) for reason in (reasons or ()) if str(reason or "").strip())
-            if not reason_tuple:
-                reason_tuple = (str(response_path or "desktop_reply_not_proven"),)
             recovery_message = _build_cognitive_engine_reply_repair_directive(
                 _semantic_user_message,
                 rejected_reply,
@@ -25556,6 +25624,16 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     conversation_only_surface=conversation_only_surface,
                     principal_id=_profile_user_id,
                     turn_trace=recovery_trace,
+                    continuation_partial=(rejected_reply if completion_recovery else ""),
+                    continuation_reasons=(
+                        tuple(
+                            reason
+                            for reason in reason_tuple
+                            if reason.lower() in completion_failure_reasons
+                        )
+                        if completion_recovery
+                        else None
+                    ),
                 )
             except _CHAT_RECOVERABLE_ERRORS as rec_exc:
                 record_degradation("chat", rec_exc)

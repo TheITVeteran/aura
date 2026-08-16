@@ -88,33 +88,107 @@ private func bridgeAutomationProbe() -> [String: Any] {
     ]
 }
 
-private func bridgeScreenCaptureAdmission() -> (Bool, String) {
+private let bridgeScreenCapturePolicySchema = "aura.security.screen_capture_privacy_policy.v1"
+
+private struct BridgeScreenCapturePrivacyPolicyFile: Decodable {
+    let schema: String
+    let privateWindowMarkers: [String]
+    let privateApps: [String]
+    let privateBrowsingApps: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case schema
+        case privateWindowMarkers = "private_window_markers"
+        case privateApps = "private_apps"
+        case privateBrowsingApps = "private_browsing_apps"
+    }
+}
+
+private struct BridgeScreenCapturePrivacyPolicy {
+    let privateWindowMarkers: [String]
+    let privateApps: Set<String>
+    let privateBrowsingApps: Set<String>
+}
+
+private struct BridgeScreenCaptureAdmission {
+    let allowed: Bool
+    let reason: String
+    let contextKnown: Bool
+
+    var receipt: [String: Any] {
+        [
+            "schema": "aura.security.screen_capture_admission.v1",
+            "allowed": allowed,
+            "reason": reason,
+            "context_known": contextKnown,
+            "authority": "resident_bridge",
+        ]
+    }
+}
+
+private let bridgeScreenCapturePrivacyPolicy: BridgeScreenCapturePrivacyPolicy? = {
+    guard let resource = Bundle.main.url(
+        forResource: "screen_capture_privacy_policy",
+        withExtension: "json"
+    ), let data = try? Data(contentsOf: resource),
+       let decoded = try? JSONDecoder().decode(
+           BridgeScreenCapturePrivacyPolicyFile.self,
+           from: data
+       ), decoded.schema == bridgeScreenCapturePolicySchema else {
+        return nil
+    }
+
+    func normalized(_ values: [String]) -> [String]? {
+        let result = values.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        guard !result.isEmpty,
+              !result.contains(where: { $0.isEmpty }),
+              Set(result).count == result.count else {
+            return nil
+        }
+        return result
+    }
+
+    guard let markers = normalized(decoded.privateWindowMarkers),
+          let privateApps = normalized(decoded.privateApps),
+          let privateBrowsingApps = normalized(decoded.privateBrowsingApps) else {
+        return nil
+    }
+    return BridgeScreenCapturePrivacyPolicy(
+        privateWindowMarkers: markers,
+        privateApps: Set(privateApps),
+        privateBrowsingApps: Set(privateBrowsingApps)
+    )
+}()
+
+private func bridgeScreenCaptureAdmission() -> BridgeScreenCaptureAdmission {
+    guard let policy = bridgeScreenCapturePrivacyPolicy else {
+        return BridgeScreenCaptureAdmission(
+            allowed: false,
+            reason: "policy_unavailable",
+            contextKnown: false
+        )
+    }
     guard let application = NSWorkspace.shared.frontmostApplication else {
-        return (false, "foreground_unknown")
+        return BridgeScreenCaptureAdmission(
+            allowed: false,
+            reason: "foreground_unknown",
+            contextKnown: false
+        )
     }
     let appName = (application.localizedName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     guard !appName.isEmpty else {
-        return (false, "foreground_unknown")
+        return BridgeScreenCaptureAdmission(
+            allowed: false,
+            reason: "foreground_unknown",
+            contextKnown: false
+        )
     }
 
-    let privateApps: Set<String> = [
-        "1password", "1password 7", "bitwarden", "keychain access",
-        "keeper password manager", "lastpass", "dashlane", "gpg keychain",
-        "secretive",
-    ]
-    let privateMarkers = [
-        "incognito", "private browsing", "private window", "inprivate", "guest",
-        "1password", "bitwarden", "keychain access", "keeper", "lastpass",
-        "dashlane", "authenticator", "banking", "password",
-    ]
-    let privateBrowsingApps: Set<String> = [
-        "arc", "brave browser", "firefox", "google chrome", "microsoft edge",
-        "opera", "safari", "vivaldi",
-    ]
-
-    var title = ""
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    var title = ""
     for window in windows {
         let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
         let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
@@ -126,14 +200,56 @@ private func bridgeScreenCaptureAdmission() -> (Bool, String) {
     }
 
     let loweredApp = appName.lowercased()
-    let combined = "\(appName) \(title)".lowercased()
-    if privateApps.contains(loweredApp) || privateMarkers.contains(where: combined.contains) {
-        return (false, "private_foreground")
+    for window in windows {
+        let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+        guard layer == 0 else { continue }
+        let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+        let owner = (window[kCGWindowOwnerName as String] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let windowTitle = (window[kCGWindowName as String] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let loweredOwner = owner.lowercased()
+        let combined = "\(owner) \(windowTitle)".lowercased()
+        if policy.privateApps.contains(loweredOwner)
+            || policy.privateWindowMarkers.contains(where: combined.contains) {
+            return BridgeScreenCaptureAdmission(
+                allowed: false,
+                reason: ownerPID == application.processIdentifier
+                    ? "private_foreground"
+                    : "private_visible",
+                contextKnown: true
+            )
+        }
+        if policy.privateBrowsingApps.contains(loweredOwner) && windowTitle.isEmpty {
+            return BridgeScreenCaptureAdmission(
+                allowed: false,
+                reason: "browser_title_unknown",
+                contextKnown: false
+            )
+        }
     }
-    if privateBrowsingApps.contains(loweredApp) && title.isEmpty {
-        return (false, "browser_title_unknown")
+    if policy.privateBrowsingApps.contains(loweredApp) && title.isEmpty {
+        return BridgeScreenCaptureAdmission(
+            allowed: false,
+            reason: "browser_title_unknown",
+            contextKnown: false
+        )
     }
-    return (true, "none")
+    return BridgeScreenCaptureAdmission(
+        allowed: true,
+        reason: "none",
+        contextKnown: true
+    )
+}
+
+private func bridgeScreenCaptureRefusal(
+    _ admission: BridgeScreenCaptureAdmission
+) -> ([String: Any], Int32) {
+    return ([
+        "ok": false,
+        "error": "screen_capture_refused",
+        "capture_admission": admission.receipt,
+    ], 2)
 }
 
 private func bridgeActivateForPermissionPrompt() {
@@ -210,18 +326,16 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
     case "position":
         let location = CGEvent(source: nil)?.location ?? .zero
         return (["ok": true, "x": location.x, "y": location.y], 0)
+    case "foreground_capture_admission":
+        let admission = bridgeScreenCaptureAdmission()
+        return ([
+            "ok": true,
+            "capture_admission": admission.receipt,
+        ], 0)
     case "screenshot":
         let admission = bridgeScreenCaptureAdmission()
-        guard admission.0 else {
-            return ([
-                "ok": false,
-                "error": "screen_capture_refused",
-                "capture_admission": [
-                    "schema": "aura.security.screen_capture_admission.v1",
-                    "allowed": false,
-                    "reason": admission.1,
-                ],
-            ], 2)
+        guard admission.allowed else {
+            return bridgeScreenCaptureRefusal(admission)
         }
         guard let path = payload["path"] as? String, !path.isEmpty else {
             return (["ok": false, "error": "screen_capture_unavailable"], 2)
@@ -236,6 +350,10 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
         capture.arguments = ["-x", "-t", "png", path]
         capture.standardOutput = FileHandle.nullDevice
         capture.standardError = FileHandle.nullDevice
+        let finalAdmission = bridgeScreenCaptureAdmission()
+        guard finalAdmission.allowed else {
+            return bridgeScreenCaptureRefusal(finalAdmission)
+        }
         do {
             try capture.run()
             capture.waitUntilExit()

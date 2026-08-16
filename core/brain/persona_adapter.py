@@ -127,7 +127,7 @@ def _get_profiles_path() -> tuple[Path, str]:
         try:
             resolved = resolved.resolve()
         except (OSError, RuntimeError, ValueError):
-            return _repo_root() / "data" / "personality_profiles.json", TRUST_REPO
+            return resolved, TRUST_EXTERNAL
         # A path inside the repo's own data directory is as trusted as the
         # shipped file; anywhere else is an external override.
         try:
@@ -150,7 +150,7 @@ def _get_profiles_path() -> tuple[Path, str]:
     for candidate in candidates:
         if candidate.exists():
             return candidate, TRUST_REPO
-    return candidates[0], TRUST_REPO
+    return candidates[0], TRUST_BUILTIN
 
 
 DEFAULT_PATH, DEFAULT_TRUST = _get_profiles_path()
@@ -392,11 +392,15 @@ class PersonaAdapter:
             if not isinstance(loaded, dict):
                 raise ValueError("persona profile payload must be a JSON object")
         except FileNotFoundError:
-            logger.warning(
-                "PersonaAdapter: profile file missing at %s; using built-in profile",
-                self.profiles_path,
-            )
-            self._install_builtin("profile_file_missing")
+            if self.source_trust == TRUST_BUILTIN:
+                logger.info("PersonaAdapter: using canonical built-in profile")
+                self._install_builtin("")
+            else:
+                logger.warning(
+                    "PersonaAdapter: profile file missing at %s; using built-in profile",
+                    self.profiles_path,
+                )
+                self._install_builtin("profile_file_missing")
             return
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             record_degradation("persona_adapter", exc)

@@ -40,6 +40,26 @@ def test_free_space_reads_the_real_volume() -> None:
     assert 0.0 <= space.used_fraction <= 1.0
 
 
+def test_free_space_uses_the_canonical_resource_observer(tmp_path: Path) -> None:
+    from core.runtime.resource_observation import (
+        SimulatedResourceObserver,
+        resource_observer_scope,
+    )
+
+    gib = 1024**3
+    observer = SimulatedResourceObserver(
+        disk_total_bytes=200 * gib,
+        disk_free_bytes=50 * gib,
+    )
+
+    with resource_observer_scope(observer):
+        space = free_space(tmp_path)
+
+    assert space.total_gb == pytest.approx(200.0)
+    assert space.free_gb == pytest.approx(50.0)
+    assert space.percent == pytest.approx(75.0)
+
+
 def test_a_write_that_fits_is_allowed() -> None:
     ensure_headroom_for(1024, purpose="a tiny file", path=Path.home())
 

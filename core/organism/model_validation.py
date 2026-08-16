@@ -2190,19 +2190,29 @@ def _held_facts_survive_the_reply_path() -> bool:
                 grade=VerificationGrade.OBSERVED,
                 kind=ValueKind.NUMBER,
             )
-            dropped = inspect_mutation("validation.strip", stated, "Nothing to report.")
+            dropped = inspect_mutation(
+                "validation.strip",
+                stated,
+                "Nothing to report.",
+                emit_log=False,
+            )
             if not (
                 len(dropped) == 1
                 and dropped[0].kind is BreakKind.DROPPED
                 and dropped[0].stage == "validation.strip"
             ):
                 return False
-            repaired = restore_held_facts("Nothing to report.")
+            repaired = restore_held_facts("Nothing to report.", emit_log=False)
             if not (repaired.changed and "9" in repaired.text):
                 return False
             # An unrelated number is not a contradiction, or the mechanism
             # would rewrite ordinary sentences.
-            return inspect_mutation("validation.append", stated, stated + " It took 42s.") == ()
+            return inspect_mutation(
+                "validation.append",
+                stated,
+                stated + " It took 42s.",
+                emit_log=False,
+            ) == ()
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return False
 

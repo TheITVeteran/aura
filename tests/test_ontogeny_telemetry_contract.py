@@ -31,6 +31,10 @@ def test_observation_alarm_boundary_requires_actual_authority(monkeypatch):
         "episodes_seen": 50_000,
         "novelty": 0.2,
         "resolution": {"swept": 500, "observed": 0, "observation_rate": 0.0},
+        "authority_observation": {
+            "minimum_rate": 0.12,
+            "eligible_control_points": 1,
+        },
         "calibration": {},
         "world_model": {},
     }
@@ -58,4 +62,31 @@ def test_observation_alarm_boundary_requires_actual_authority(monkeypatch):
             }
         }
     )
-    assert (telemetry.CHANNEL_OBSERVATION_RATE, 0.0) in writes
+    assert (telemetry.CHANNEL_OBSERVATION_RATE, 0.12) in writes
+
+
+def test_process_local_resolution_counters_cannot_manufacture_boot_alarm(monkeypatch):
+    writes: list[tuple[str, float | int]] = []
+    monkeypatch.setattr(telemetry, "_declared", True)
+    monkeypatch.setattr(telemetry, "_DEFERRED_SPECS", {})
+
+    import core.fsw.telemetry_dictionary as dictionary
+
+    monkeypatch.setattr(dictionary, "write", lambda name, value: writes.append((name, value)))
+
+    telemetry.sample(
+        {
+            "episodes_seen": 0,
+            "novelty": 0.0,
+            "resolution": {"swept": 500, "observed": 0, "observation_rate": 0.0},
+            "authority_observation": {
+                "minimum_rate": None,
+                "eligible_control_points": 0,
+            },
+            "control_points": {
+                "executive.admission": {"stage": "authority", "corpus": {}}
+            },
+        }
+    )
+
+    assert not any(name == telemetry.CHANNEL_OBSERVATION_RATE for name, _ in writes)

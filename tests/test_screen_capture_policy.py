@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import queue
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -83,6 +86,193 @@ def test_ordinary_foreground_is_admitted(monkeypatch):
     )
     assert admission.allowed is True
     assert admission.to_receipt()["reason"] == "none"
+
+
+def test_shared_privacy_policy_is_valid_and_bundled_once():
+    from core.security import screen_capture_policy as policy
+
+    policy._load_privacy_policy.cache_clear()
+    loaded = policy._load_privacy_policy()
+    assert loaded is not None
+    assert "incognito" in loaded.private_window_markers
+    assert "1password" in loaded.private_apps
+    assert "google chrome" in loaded.private_browsing_apps
+
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads(
+        (root / "config" / "screen_capture_privacy_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["schema"] == "aura.security.screen_capture_privacy_policy.v1"
+
+    swift = (root / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+    bundle = (root / "scripts" / "bundle_app.sh").read_text(encoding="utf-8")
+    assert '"incognito"' not in swift
+    assert '"1password"' not in swift
+    assert "screen_capture_privacy_policy.json" in bundle
+    assert 'cp "${SCREEN_CAPTURE_POLICY_SOURCE}" "${SCREEN_CAPTURE_POLICY_RESOURCE}"' in bundle
+    assert "kCGWindowOwnerName" in swift
+    assert '"private_visible"' in swift
+
+
+def test_resident_bridge_is_authoritative_and_receipt_does_not_leak_metadata(
+    monkeypatch,
+):
+    from core.security import native_desktop_bridge as bridge
+    from core.security import screen_capture_policy as policy
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _invoke(command, **kwargs):
+        calls.append((command, kwargs))
+        return {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "frontmost_app": "1Password",
+            "window_title": "Protected material",
+            "capture_admission": {
+                "schema": "aura.security.screen_capture_admission.v1",
+                "allowed": False,
+                "reason": "private_foreground",
+                "context_known": True,
+                "authority": "resident_bridge",
+            },
+        }
+
+    monkeypatch.setattr(policy.sys, "platform", "darwin")
+    monkeypatch.setattr(bridge, "invoke_native_desktop_bridge", _invoke)
+    admission = policy._resident_bridge_capture_admission()
+
+    assert admission is not None
+    assert admission.allowed is False
+    assert admission.reason is policy.ScreenCaptureDenial.PRIVATE_FOREGROUND
+    assert admission.authority == "resident_bridge"
+    assert calls == [
+        (
+            "foreground_capture_admission",
+            {
+                "read_only": True,
+                "timeout": 0.75,
+                "allow_one_shot": False,
+            },
+        )
+    ]
+    rendered = str(admission.to_receipt()) + admission.public_error
+    assert "1Password" not in rendered
+    assert "Protected material" not in rendered
+
+
+def test_production_admission_prefers_resident_bridge_over_python_probe(monkeypatch):
+    from core.security import screen_capture_policy as policy
+
+    resident = policy.ScreenCaptureAdmission(
+        allowed=True,
+        context_known=True,
+        authority="resident_bridge",
+    )
+    monkeypatch.setattr(policy, "screen_allowed", lambda: True)
+    monkeypatch.setattr(policy, "_resident_bridge_capture_admission", lambda: resident)
+    monkeypatch.setattr(
+        "core.senses.screen_context.frontmost_window_hint",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Python foreground probe should not override resident bridge")
+        ),
+    )
+
+    assert policy.evaluate_screen_capture_admission() is resident
+
+
+def test_unavailable_resident_bridge_fails_closed_without_weaker_macos_fallback(
+    monkeypatch,
+):
+    from core.security import screen_capture_policy as policy
+
+    monkeypatch.setattr(policy, "screen_allowed", lambda: True)
+    monkeypatch.setattr(policy.sys, "platform", "darwin")
+    monkeypatch.setattr(policy, "_resident_bridge_capture_admission", lambda: None)
+    monkeypatch.setattr(
+        "core.senses.screen_context.frontmost_window_hint",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("macOS cannot downgrade to a frontmost-only privacy probe")
+        ),
+    )
+
+    admission = policy.evaluate_screen_capture_admission()
+
+    assert admission.allowed is False
+    assert admission.reason is policy.ScreenCaptureDenial.FOREGROUND_UNKNOWN
+    assert admission.authority == "resident_bridge_unavailable"
+
+
+def test_resident_bridge_can_refuse_private_content_visible_off_foreground(
+    monkeypatch,
+):
+    from core.security import native_desktop_bridge as bridge
+    from core.security import screen_capture_policy as policy
+
+    monkeypatch.setattr(policy.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        bridge,
+        "invoke_native_desktop_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "capture_admission": {
+                "schema": "aura.security.screen_capture_admission.v1",
+                "allowed": False,
+                "reason": "private_visible",
+                "context_known": True,
+                "authority": "resident_bridge",
+            },
+        },
+    )
+
+    admission = policy._resident_bridge_capture_admission()
+
+    assert admission is not None
+    assert admission.allowed is False
+    assert admission.reason is policy.ScreenCaptureDenial.PRIVATE_VISIBLE
+    assert "private content is visible" in admission.public_error
+
+
+def test_malformed_resident_receipt_is_not_authoritative(monkeypatch):
+    from core.security import native_desktop_bridge as bridge
+    from core.security import screen_capture_policy as policy
+
+    monkeypatch.setattr(policy.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        bridge,
+        "invoke_native_desktop_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "bridge_transport": "resident_ipc",
+            "capture_admission": {
+                "schema": "aura.security.screen_capture_admission.v0",
+                "allowed": True,
+                "reason": "none",
+                "context_known": True,
+                "authority": "resident_bridge",
+            },
+        },
+    )
+
+    assert policy._resident_bridge_capture_admission() is None
+
+
+def test_missing_shared_policy_fails_closed(monkeypatch):
+    from core.security import screen_capture_policy as policy
+
+    monkeypatch.setattr(policy, "screen_allowed", lambda: True)
+    monkeypatch.setattr(policy, "_load_privacy_policy", lambda: None)
+
+    admission = policy.evaluate_screen_capture_admission(
+        context=("Terminal", "Public work")
+    )
+
+    assert admission.allowed is False
+    assert admission.reason is policy.ScreenCaptureDenial.POLICY_UNAVAILABLE
+    assert "Terminal" not in str(admission.to_receipt()) + admission.public_error
 
 
 def test_complete_native_foreground_avoids_subprocess(monkeypatch):
@@ -224,6 +414,222 @@ async def test_continuous_vision_does_not_initialize_backend_while_denied(monkey
 
     assert await buffer._ensure_screen_backend() is False
     assert _MSS.called is False
+    assert buffer._screen_backend_state.value == "privacy_deferred"
+    assert buffer._screen_backend_reason == "private_foreground"
+    assert buffer._screen_retry_delay_s == 2.0
+
+
+@pytest.mark.asyncio
+async def test_continuous_vision_retries_transient_unknown_context_quickly(monkeypatch):
+    from core.container import ServiceContainer
+    from core.security import screen_capture_policy as policy
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    unknown = _denied(policy.ScreenCaptureDenial.FOREGROUND_UNKNOWN)
+    admitted = policy.ScreenCaptureAdmission(
+        allowed=True,
+        context_known=True,
+        authority="resident_bridge",
+    )
+    decisions = iter((unknown, admitted))
+
+    async def _evaluate():
+        return next(decisions)
+
+    class _Guard:
+        @staticmethod
+        async def check_permission(_permission):
+            return {"granted": True, "status": "active_native_bridge"}
+
+    class _Capture:
+        monitors = [{}, {"width": 1728, "height": 1117}]
+
+        def close(self):
+            return None
+
+    class _MSS:
+        calls = 0
+
+        @classmethod
+        def mss(cls):
+            cls.calls += 1
+            return _Capture()
+
+    monkeypatch.setattr(
+        "core.senses.continuous_vision.evaluate_screen_capture_admission_async",
+        _evaluate,
+    )
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(
+            lambda cls, name, default=None: _Guard()
+            if name == "permission_guard"
+            else default
+        ),
+    )
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer.sct = None
+    buffer.monitor = None
+    buffer._mss_module = _MSS
+    buffer._vision_executor = ThreadPoolExecutor(max_workers=1)
+    buffer._screen_probe_cooldown_until = 0.0
+    buffer._screen_permission_notice_at = 0.0
+    buffer._screen_permission_notice_interval_s = 300.0
+    try:
+        assert await buffer._ensure_screen_backend() is False
+        assert buffer._screen_backend_state.value == "privacy_deferred"
+        assert buffer._screen_backend_reason == "foreground_unknown"
+        assert buffer._screen_retry_delay_s == 0.75
+        assert _MSS.calls == 0
+
+        buffer._screen_probe_cooldown_until = 0.0
+        assert await buffer._ensure_screen_backend() is True
+        assert buffer._screen_backend_state.value == "ready"
+        assert _MSS.calls == 1
+    finally:
+        buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_continuous_vision_reports_true_monitor_enumeration_failure(monkeypatch):
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    class _Capture:
+        monitors = []
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    candidate = _Capture()
+
+    class _MSS:
+        @staticmethod
+        def mss():
+            return candidate
+
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer.sct = None
+    buffer.monitor = None
+    buffer._mss_module = _MSS
+    buffer._vision_executor = ThreadPoolExecutor(max_workers=1)
+    buffer._screen_probe_cooldown_until = 0.0
+
+    async def _permission_active():
+        return True
+
+    monkeypatch.setattr(buffer, "_screen_permission_active", _permission_active)
+    try:
+        assert await buffer._ensure_screen_backend() is False
+        assert buffer._screen_backend_state.value == "no_monitors"
+        assert buffer._screen_backend_reason == "monitor_enumeration_empty"
+        assert buffer._screen_retry_delay_s == 30.0
+        assert candidate.closed is True
+    finally:
+        buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+
+@pytest.mark.asyncio
+async def test_continuous_vision_reopens_backend_after_live_grab_failure(monkeypatch):
+    from core.senses.continuous_vision import (
+        ContinuousSensoryBuffer,
+        ScreenBackendState,
+    )
+
+    class _Capture:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    capture = _Capture()
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer.sct = capture
+    buffer.monitor = {"width": 100, "height": 100}
+    buffer._screen_backend_state = ScreenBackendState.READY
+    buffer._screen_backend_reason = "capture_ready"
+    buffer._screen_retry_delay_s = 0.75
+    buffer._screen_probe_cooldown_until = 0.0
+    buffer._vision_executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        await buffer._invalidate_screen_backend("OSError")
+    finally:
+        buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+    assert capture.closed is True
+    assert buffer.sct is None
+    assert buffer.monitor is None
+    assert buffer._screen_backend_state is ScreenBackendState.BACKEND_ERROR
+    assert buffer._screen_backend_reason == "OSError"
+    assert buffer._screen_probe_cooldown_until > 0.0
+
+
+@pytest.mark.asyncio
+async def test_continuous_vision_final_recheck_blocks_grab_and_clears_frames(
+    monkeypatch,
+):
+    from core.security import screen_capture_policy as policy
+    from core.senses.continuous_vision import ContinuousSensoryBuffer
+
+    denied = _denied(policy.ScreenCaptureDenial.PRIVATE_FOREGROUND)
+    grabbed = False
+
+    class _Capture:
+        def grab(self, _monitor):
+            nonlocal grabbed
+            grabbed = True
+            raise AssertionError("capture ran after the final privacy denial")
+
+    async def _evaluate():
+        return denied
+
+    async def _stop_after_tick(_delay):
+        buffer._is_active = False
+
+    monkeypatch.setattr(
+        "core.senses.continuous_vision.evaluate_screen_capture_admission_async",
+        _evaluate,
+    )
+    monkeypatch.setattr(
+        "core.senses.continuous_vision.asyncio.sleep",
+        _stop_after_tick,
+    )
+    buffer = ContinuousSensoryBuffer.__new__(ContinuousSensoryBuffer)
+    buffer.sct = _Capture()
+    buffer.monitor = {"width": 1, "height": 1}
+    buffer._capture_lock = __import__("asyncio").Lock()
+    buffer._vision_executor = ThreadPoolExecutor(max_workers=1)
+    buffer.frame_buffer = __import__("collections").deque(
+        [("image/png", b"stale-public-frame")],
+        maxlen=6,
+    )
+    buffer.camera_capture_enabled = False
+    buffer._camera_lease = None
+    buffer._is_active = True
+    buffer._last_backend_fail_log = 0.0
+    buffer._compute_budget = lambda: SimpleNamespace(
+        interval_s=0.1,
+        foreground_active=False,
+        effective_hz=0.1,
+    )
+    try:
+        await buffer._capture_loop()
+    finally:
+        buffer._vision_executor.shutdown(wait=True, cancel_futures=True)
+
+    assert grabbed is False
+    assert not buffer.frame_buffer
+    assert buffer._screen_backend_state.value == "privacy_deferred"
+
+
+def test_swift_screenshot_rechecks_privacy_immediately_before_capture():
+    root = Path(__file__).resolve().parents[1]
+    swift = (root / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+    screenshot = swift[swift.index('case "screenshot":') : swift.index('case "move":')]
+
+    assert screenshot.count("bridgeScreenCaptureAdmission()") == 2
+    assert screenshot.index("let finalAdmission") < screenshot.index("try capture.run()")
 
 
 def test_sensory_sidecar_denies_before_importing_capture_backend(monkeypatch):
