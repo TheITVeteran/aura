@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from fractions import Fraction
 from typing import Any
 
@@ -356,6 +356,125 @@ def _validate_preregistration(prereg: Any, reasons: list[str]) -> dict[str, Any]
 #: preregistration pins a taxonomy and the domains have to land in distinct
 #: capability classes within it.
 MINIMUM_CAPABILITY_CLASSES = 3
+
+
+#: RFC 6962 domain separation. Hashing leaves and interior nodes with
+#: different prefixes is what stops a leaf being passed off as a subtree.
+_MERKLE_LEAF_PREFIX = b"\x00"
+_MERKLE_NODE_PREFIX = b"\x01"
+
+
+def _merkle_leaf_hash(data: bytes) -> str:
+    return hashlib.sha256(_MERKLE_LEAF_PREFIX + data).hexdigest()
+
+
+def _merkle_root_from_proof(
+    leaf_hash: str, *, leaf_index: int, tree_size: int, proof: Sequence[str]
+) -> str:
+    """Recompute the log root a leaf and its audit path imply (RFC 6962)."""
+    if leaf_index < 0 or tree_size <= 0 or leaf_index >= tree_size:
+        raise ValueError("inclusion proof indices are outside the tree")
+    node = leaf_hash
+    index = leaf_index
+    size = tree_size
+    for sibling in proof:
+        if not _is_sha256(sibling):
+            raise ValueError("inclusion proof contains a non-digest")
+        if size <= 1:
+            raise ValueError("inclusion proof is longer than the tree is deep")
+        if index % 2 == 1 or index == size - 1:
+            while index % 2 == 0:
+                index //= 2
+                size = (size + 1) // 2
+            left, right = sibling, node
+        else:
+            left, right = node, sibling
+        node = hashlib.sha256(
+            _MERKLE_NODE_PREFIX + bytes.fromhex(left) + bytes.fromhex(right)
+        ).hexdigest()
+        index //= 2
+        size = (size + 1) // 2
+    if size > 1:
+        raise ValueError("inclusion proof is shorter than the tree is deep")
+    return node
+
+
+def _validate_timestamp_anchor(
+    anchor: Any,
+    *,
+    event: str,
+    committed_data: str,
+    trusted_logs: Mapping[str, Mapping[str, Any]] | None,
+    reasons: list[str],
+) -> float | None:
+    """Prove an event was recorded BEFORE the run, not merely dated before it.
+
+    CP126 89ca4271 + 9cccfcb5: frozen_at, task_generated_at,
+    evaluation_started_at and committed_at were ordinary numbers inside signed
+    payloads. A signature proves who wrote a value, never when the event
+    happened, so a producer and issuer holding their own keys could assemble a
+    flawless chronology after the results were in and sign it.
+
+    An append-only log breaks that. The event's digest is submitted as a leaf;
+    the log returns an index and an audit path; anyone can recompute the root
+    those imply and compare it against a root pinned out of band. Backdating
+    then requires forging a hash chain against a root nobody controls.
+
+    Returns the logged time when the anchor holds.
+    """
+    if not isinstance(anchor, dict):
+        reasons.append(f"{event}_timestamp_anchor_missing")
+        return None
+    log_id = str(anchor.get("log_id") or "")
+    try:
+        pin = trusted_logs.get(log_id) if trusted_logs is not None else None
+    except (AttributeError, TypeError, ValueError):
+        pin = None
+    if not isinstance(pin, Mapping):
+        reasons.append(f"{event}_transparency_log_untrusted")
+        return None
+    pinned_root = str(pin.get("root_sha256") or "")
+    pinned_size = pin.get("tree_size")
+    if not _is_sha256(pinned_root) or type(pinned_size) is not int or pinned_size <= 0:
+        reasons.append(f"{event}_transparency_log_pin_invalid")
+        return None
+    if anchor.get("leaf_data_sha256") != committed_data:
+        # The log entry has to be about THIS event.
+        reasons.append(f"{event}_anchor_commits_other_data")
+        return None
+    leaf_index = anchor.get("leaf_index")
+    tree_size = anchor.get("tree_size")
+    proof = anchor.get("inclusion_proof")
+    if (
+        type(leaf_index) is not int
+        or type(tree_size) is not int
+        or not isinstance(proof, list)
+    ):
+        reasons.append(f"{event}_inclusion_proof_malformed")
+        return None
+    if tree_size != pinned_size:
+        # A proof against a different tree size is a proof about a different
+        # log state than the one that was pinned.
+        reasons.append(f"{event}_anchor_tree_size_unpinned")
+        return None
+    try:
+        root = _merkle_root_from_proof(
+            _merkle_leaf_hash(bytes.fromhex(committed_data)),
+            leaf_index=leaf_index,
+            tree_size=tree_size,
+            proof=[str(item) for item in proof],
+        )
+    except (TypeError, ValueError):
+        reasons.append(f"{event}_inclusion_proof_invalid")
+        return None
+    if root != pinned_root:
+        reasons.append(f"{event}_inclusion_proof_does_not_reach_pinned_root")
+        return None
+    logged_at = anchor.get("logged_at")
+    if not _finite_number(logged_at, positive=True):
+        reasons.append(f"{event}_anchor_time_missing")
+        return None
+    return float(logged_at)
 
 
 def _validate_domain_taxonomy(
@@ -1667,6 +1786,7 @@ def verify_frontier_gain_bundle(
     trusted_verifiers: Mapping[str, Mapping[str, str]] | None = None,
     trusted_task_issuers: Mapping[str, Mapping[str, str]] | None = None,
     trusted_producers: Mapping[str, Mapping[str, str]] | None = None,
+    trusted_transparency_logs: Mapping[str, Mapping[str, Any]] | None = None,
     raw_artifact_receipt: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic certificate; never infer missing evidence.
@@ -1747,6 +1867,7 @@ def verify_frontier_gain_bundle(
         else 0.0
     )
     latest_task_generated_at = 0.0
+    earliest_task_generated_at = float("inf")
     earliest_evaluation_started_at = float("inf")
     latest_evaluation_started_at = 0.0
     #: The moment the last piece of evidence actually existed. Everything the
@@ -2061,6 +2182,9 @@ def verify_frontier_gain_bundle(
             )
         )
         if _finite_number(trial.get("task_generated_at"), positive=True):
+            earliest_task_generated_at = min(
+                earliest_task_generated_at, float(trial["task_generated_at"])
+            )
             latest_task_generated_at = max(
                 latest_task_generated_at, float(trial["task_generated_at"])
             )
@@ -2248,6 +2372,41 @@ def verify_frontier_gain_bundle(
     except (TypeError, ValueError, OverflowError, RecursionError):
         evidence_hash = ""
         reasons.append("evidence_payload_not_canonical_json")
+    # CP126 89ca4271 + 9cccfcb5: a signature says who wrote a timestamp, never
+    # when the event happened. Both the preregistration and the task
+    # commitment have to be in an append-only log whose root was pinned out of
+    # band, and logged before the work they claim to precede.
+    anchors = bundle.get("timestamp_anchors")
+    anchors = anchors if isinstance(anchors, dict) else {}
+    prereg_logged_at = _validate_timestamp_anchor(
+        anchors.get("preregistration"),
+        event="preregistration",
+        committed_data=str(bundle.get("preregistration_sha256") or ""),
+        trusted_logs=trusted_transparency_logs,
+        reasons=reasons,
+    )
+    if (
+        prereg_logged_at is not None
+        and math.isfinite(earliest_task_generated_at)
+        and prereg_logged_at > earliest_task_generated_at
+    ):
+        # The preregistration reached the log after tasks already existed, so
+        # it could have been written to fit them.
+        reasons.append("preregistration_logged_after_task_generation")
+    commitment_logged_at = _validate_timestamp_anchor(
+        anchors.get("task_commitment"),
+        event="task_commitment",
+        committed_data=str(bundle.get("task_commitment_sha256") or ""),
+        trusted_logs=trusted_transparency_logs,
+        reasons=reasons,
+    )
+    if (
+        commitment_logged_at is not None
+        and math.isfinite(earliest_evaluation_started_at)
+        and commitment_logged_at > earliest_evaluation_started_at
+    ):
+        reasons.append("task_commitment_logged_after_evaluation_started")
+
     verified_producer_id, producer_organization = _validate_producer_identity(
         bundle,
         evidence_hash=evidence_hash,
@@ -2443,6 +2602,10 @@ def verify_frontier_gain_bundle(
         # of the parameter tree the measurement touched. Naming the method
         # stops a sampled comparison reading as an exhaustive one.
         "parameter_integrity_attestation": PARAMETER_INTEGRITY_ATTESTATION,
+        # CP126 89ca4271 + 9cccfcb5: when the log says these existed, as
+        # opposed to when the producer says they did.
+        "preregistration_logged_at": prereg_logged_at,
+        "task_commitment_logged_at": commitment_logged_at,
         "min_parameter_canary_tensor_coverage": (
             round(min(observed_canary_coverage), 6)
             if observed_canary_coverage

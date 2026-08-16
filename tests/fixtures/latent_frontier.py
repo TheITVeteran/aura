@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -17,6 +18,7 @@ from core.brain.llm.latent_cortex.frontier_certification import (
     SCHEMA,
     TASK_COMMITMENT_ATTESTATION_SCHEMA,
     _expected_arm_identifier,
+    _merkle_leaf_hash,
     _task_manifest_sha256,
     canonical_sha256,
     evidence_payload_sha256,
@@ -167,6 +169,33 @@ _DOMAIN_TAXONOMY = {
 }
 
 
+_TRANSPARENCY_LOG_ID = "aura-frontier-evidence-log"
+
+
+def _anchor_log(leaves: list[str]) -> tuple[str, dict[str, dict]]:
+    """A two-leaf append-only log, with an audit path for each leaf.
+
+    Small enough to read, real enough to verify: the certificate recomputes
+    the root from the leaf and its sibling and compares it against the root
+    pinned in the trust config.
+    """
+    leaf_hashes = [_merkle_leaf_hash(bytes.fromhex(leaf)) for leaf in leaves]
+    root = hashlib.sha256(
+        b"\x01" + bytes.fromhex(leaf_hashes[0]) + bytes.fromhex(leaf_hashes[1])
+    ).hexdigest()
+    anchors = {
+        leaves[index]: {
+            "log_id": _TRANSPARENCY_LOG_ID,
+            "leaf_data_sha256": leaves[index],
+            "leaf_index": index,
+            "tree_size": 2,
+            "inclusion_proof": [leaf_hashes[1 - index]],
+        }
+        for index in (0, 1)
+    }
+    return root, anchors
+
+
 def _trust_config() -> dict:
     return {
         "schema": TRUST_CONFIG_SCHEMA,
@@ -174,6 +203,38 @@ def _trust_config() -> dict:
         "producers": _TRUSTED_PRODUCERS,
         "task_issuers": _TRUSTED_TASK_ISSUERS,
         "verifiers": _TRUSTED_VERIFIERS,
+        "transparency_logs": dict(_TRANSPARENCY_LOG_PINS),
+    }
+
+
+#: Roots pinned out of band, one entry per log this fixture has ever built.
+#: A producer-supplied root would prove nothing — the point of the anchor is
+#: that the root is not the producer's to choose. Entries ACCUMULATE and each
+#: log id embeds its own root, so bundles built in any order stay verifiable
+#: no matter when they are certified.
+_TRANSPARENCY_LOG_PINS: dict[str, dict] = {}
+
+
+def _refresh_timestamp_anchors(bundle: dict) -> None:
+    """Log the preregistration and the task commitment, then pin the root."""
+    root, anchors = _anchor_log(
+        [bundle["preregistration_sha256"], bundle["task_commitment_sha256"]]
+    )
+    log_id = f"{_TRANSPARENCY_LOG_ID}-{root[:12]}"
+    _TRANSPARENCY_LOG_PINS[log_id] = {"root_sha256": root, "tree_size": 2}
+    bundle["timestamp_anchors"] = {
+        "preregistration": {
+            **anchors[bundle["preregistration_sha256"]],
+            "log_id": log_id,
+            # Logged before the first task was generated (1001.0).
+            "logged_at": 900.0,
+        },
+        "task_commitment": {
+            **anchors[bundle["task_commitment_sha256"]],
+            "log_id": log_id,
+            # Logged before the first evaluation started (1201.0).
+            "logged_at": 1200.5,
+        },
     }
 
 
@@ -260,6 +321,10 @@ def _refresh_task_commitment(bundle: dict) -> None:
             ).decode("ascii"),
         },
     }
+    # The commitment digest just changed and the anchor commits to it, so the
+    # log entry has to be rebuilt alongside.
+    if "timestamp_anchors" in bundle:
+        _refresh_timestamp_anchors(bundle)
 
 
 def _refresh_producer_attestation(bundle: dict, *, produced_at: float = 1900.0) -> None:
@@ -360,6 +425,7 @@ def _certify(bundle: dict, *, raw_artifact_receipt: dict | None = None) -> dict:
         trusted_verifiers=_TRUSTED_VERIFIERS,
         trusted_task_issuers=_TRUSTED_TASK_ISSUERS,
         trusted_producers=_TRUSTED_PRODUCERS,
+        trusted_transparency_logs=_TRANSPARENCY_LOG_PINS,
         raw_artifact_receipt=(
             _raw_artifact_receipt(bundle)
             if raw_artifact_receipt is None
@@ -766,6 +832,7 @@ def _bundle(
         },
     }
     _refresh_task_commitment(bundle)
+    _refresh_timestamp_anchors(bundle)
     # The producer signature is not part of the verifier quorum: an unsigned
     # bundle is one nobody has attested to yet, and its producer is still a
     # pinned identity.
@@ -794,8 +861,10 @@ __all__ = [
     "_certify",
     "_raw_artifact_receipt",
     "_refresh_attestation",
+    "_TRANSPARENCY_LOG_PINS",
     "_rebind_trial_identifiers",
     "_refresh_producer_attestation",
+    "_refresh_timestamp_anchors",
     "_refresh_task_commitment",
     "_trust_config",
 ]

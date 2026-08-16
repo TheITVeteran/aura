@@ -125,6 +125,7 @@ def validate_trust_config(raw: Any) -> dict[str, Any]:
         "producers",
         "task_issuers",
         "verifiers",
+        "transparency_logs",
     }:
         _fail("trust_config_schema_invalid")
     if raw.get("schema") != TRUST_CONFIG_SCHEMA:
@@ -172,8 +173,35 @@ def validate_trust_config(raw: Any) -> dict[str, Any]:
             _fail("trust_role_organization_reused")
     if len(orgs_by_role["verifiers"]) < MINIMUM_VERIFIER_QUORUM:
         _fail("trust_verifier_quorum_unreachable")
+    # An append-only log's root is only a trust anchor if it arrives out of
+    # band. Pinning it here is what stops a producer supplying the root its
+    # own inclusion proofs happen to reach.
+    logs = raw.get("transparency_logs")
+    if not isinstance(logs, dict) or not logs:
+        _fail("transparency_log_trust_set_missing")
+    validated_logs: dict[str, dict[str, Any]] = {}
+    for log_id, pin in logs.items():
+        if (
+            not isinstance(log_id, str)
+            or not log_id
+            or log_id != log_id.strip()
+            or len(log_id) > 200
+        ):
+            _fail("transparency_log_id_invalid")
+        if not isinstance(pin, dict) or set(pin) != {"root_sha256", "tree_size"}:
+            _fail("transparency_log_pin_invalid")
+        tree_size = pin.get("tree_size")
+        if not _is_sha256(pin.get("root_sha256")) or type(
+            tree_size
+        ) is not int or tree_size <= 0:
+            _fail("transparency_log_pin_invalid")
+        validated_logs[log_id] = {
+            "root_sha256": pin["root_sha256"],
+            "tree_size": tree_size,
+        }
     return {
         **role_maps,
+        "transparency_logs": validated_logs,
         "verification_kernel_sha256": observed_kernel,
     }
 
@@ -324,6 +352,7 @@ def verify_frontier_evidence_package(
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
             trusted_producers=trust["producers"],
+            trusted_transparency_logs=trust["transparency_logs"],
             # BIND the artifact verification to the certificate. Verifying
             # both independently and AND-ing the results left the core API
             # able to certify a bundle whose raw artifacts were never opened.
@@ -435,6 +464,7 @@ def prepare_independent_attestation_request(
             trusted_verifiers=trust["verifiers"],
             trusted_task_issuers=trust["task_issuers"],
             trusted_producers=trust["producers"],
+            trusted_transparency_logs=trust["transparency_logs"],
             raw_artifact_receipt=artifact_receipt,
         )
     except FrontierArtifactError as exc:
