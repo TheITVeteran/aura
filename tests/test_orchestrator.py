@@ -1234,6 +1234,13 @@ async def test_publish_telemetry(orchestrator):
         mock_bus_getter.return_value = mock_bus
         orchestrator._publish_telemetry({"test": "data"})
         assert mock_bus.publish_threadsafe.called
+        telemetry_calls = [
+            call.args
+            for call in mock_bus.publish_threadsafe.call_args_list
+            if call.args and call.args[0] == "telemetry"
+        ]
+        assert telemetry_calls
+        assert telemetry_calls[0][1]["test"] == "data"
 
         # Test publish_status
         orchestrator.status.initialized = True

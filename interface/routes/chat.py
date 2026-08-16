@@ -29479,6 +29479,19 @@ async def _run_chat_preflight(
                             "a frame, and do not add anything you cannot see.]\n\n"
                             f"{body.message}"
                         )
+                    else:
+                        body.message = (
+                            "[you understood that they asked you to inspect the "
+                            "physical scene and you attempted a fresh camera "
+                            "observation. It did not complete. The concrete "
+                            f"failure was {_seen.cause}: {_seen.detail}. "
+                            "You therefore do not know whether another person "
+                            "is physically present. Absence of a frame is not "
+                            "evidence that nobody is there. Say what you can and "
+                            "cannot establish naturally, without reciting sensor "
+                            "status fields or pretending you observed the room.]\n\n"
+                            f"{body.message}"
+                        )
                 elif _sight.kind in ("camera_on", "camera_off"):
                     _camera_state = await _apply_camera_control(
                         _sight.kind == "camera_on"

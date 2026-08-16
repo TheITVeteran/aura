@@ -5692,6 +5692,21 @@ _DESKTOP_ACTION_CLAIM_RE = re.compile(
 #: How stale a frame may be and still back a claim about the screen.
 _SCREEN_FRAME_MAX_AGE_SECONDS = 30.0
 
+# Physical-presence claims are perception too, but they are backed by the
+# camera rather than the continuous screen feed. A timed-out capture proves
+# only that Aura did not observe the room; it does not prove the room empty.
+_CAMERA_PERCEPTION_CLAIM_RE = re.compile(
+    r"(?:"
+    r"\b(?:no\s+one|nobody|somebody|someone|anybody|anyone|another\s+person|"
+    r"anyone\s+else|someone\s+else)\b[^.!?]{0,90}\b(?:physically\s+)?"
+    r"(?:here|in\s+(?:the|your)\s+room|behind\s+you|beside\s+you)\b"
+    r"|\bi\s+(?:can\s+)?see\b[^.!?]{0,90}\b(?:person|people|face|faces|"
+    r"fingers?|what\s+you(?:'re|\s+are)\s+holding)\b"
+    r")",
+    re.IGNORECASE,
+)
+_CAMERA_OBSERVATION_MAX_AGE_SECONDS = 30.0
+
 
 def _screen_perception_is_live() -> bool:
     """Is there a recent screen frame behind a claim about the screen?"""
@@ -5704,6 +5719,19 @@ def _screen_perception_is_live() -> bool:
     if age is None:
         return False
     return age <= _SCREEN_FRAME_MAX_AGE_SECONDS
+
+
+def _camera_perception_is_live() -> bool:
+    """Is there a recent interpreted camera frame behind this claim?"""
+    try:
+        from core.senses.sight import camera_observation_age_seconds
+
+        age = camera_observation_age_seconds()
+    except (ImportError, RuntimeError, AttributeError):
+        return False
+    if age is None:
+        return False
+    return age <= _CAMERA_OBSERVATION_MAX_AGE_SECONDS
 
 
 #: Framing that makes an execution word hypothetical rather than a claim.
@@ -5748,6 +5776,15 @@ def _has_unfounded_tool_execution_claim(
     match = _SCREEN_PERCEPTION_CLAIM_RE.search(raw)
     if match:
         if _screen_perception_is_live() or tool_receipts:
+            return False
+        start = max(0, raw.rfind(".", 0, match.start()) + 1)
+        end = raw.find(".", match.end())
+        clause = raw[start : end if end != -1 else len(raw)]
+        return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
+
+    match = _CAMERA_PERCEPTION_CLAIM_RE.search(raw)
+    if match:
+        if _camera_perception_is_live():
             return False
         start = max(0, raw.rfind(".", 0, match.start()) + 1)
         end = raw.find(".", match.end())

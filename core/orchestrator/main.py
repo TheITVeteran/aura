@@ -2869,9 +2869,21 @@ class RobustOrchestrator(
     def _publish_telemetry(self, data: dict[str, Any]):
         """
         ZENITH LOCKDOWN: Fast-path telemetry delivery.
-        Bypasses the EventBus for critical status/activity updates to ensure UI responsiveness.
+        Keep the actor fast path and the canonical EventBus/UI path in sync.
+
+        This later method shadows the older EventBus publisher above. Sending
+        only to ActorBus made request/reply control messages disappear: a
+        camera_capture_request reached SensoryGate while the desktop WebSocket
+        (fed by EventBus -> event_bridge -> broadcast_bus) never saw it.
         """
         try:
+            from core.event_bus import get_event_bus
+
+            get_event_bus().publish_threadsafe(
+                "telemetry",
+                {"timestamp": time.time(), **data},
+            )
+
             # Direct pipe broadcast to UI
             bus = ServiceContainer.get("actor_bus", default=None)
             if bus:

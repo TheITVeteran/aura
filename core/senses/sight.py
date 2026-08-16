@@ -46,6 +46,22 @@ from core.runtime.lockdep import LockRank, checked_async_lock
 
 logger = logging.getLogger("Aura.Senses.Sight")
 
+# Successful camera interpretation is perceptual evidence, not a tool
+# receipt. Retain only its monotonic age; no pixels or descriptions live here.
+_LAST_CAMERA_OBSERVATION_AT = 0.0
+
+
+def _note_camera_observation() -> None:
+    global _LAST_CAMERA_OBSERVATION_AT
+    _LAST_CAMERA_OBSERVATION_AT = time.monotonic()
+
+
+def camera_observation_age_seconds() -> float | None:
+    """Seconds since a frame was successfully interpreted, or None."""
+    if _LAST_CAMERA_OBSERVATION_AT <= 0.0:
+        return None
+    return max(0.0, time.monotonic() - _LAST_CAMERA_OBSERVATION_AT)
+
 # How long to wait for a surface to hand back a frame. A browser that has the
 # camera warm answers in tens of milliseconds; one that has to start the
 # device takes noticeably longer, and past this the honest answer is that she
@@ -396,6 +412,7 @@ async def look(
         )
         return Look(ok=False, frame=frame, cause="empty", detail="vision returned nothing")
 
+    _note_camera_observation()
     logger.info("look: %d bytes -> %d chars", len(frame.data), len(text))
     return Look(ok=True, answer=text, frame=frame)
 
@@ -409,6 +426,7 @@ __all__ = [
     "Frame",
     "Look",
     "camera_enabled",
+    "camera_observation_age_seconds",
     "decode_frame",
     "get_capture_broker",
     "look",

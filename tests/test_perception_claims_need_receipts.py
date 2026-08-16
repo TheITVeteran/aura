@@ -27,6 +27,7 @@ a fabricated screen with no frames behind it is still caught.
 import pytest
 
 import core.senses.continuous_vision as continuous_vision
+import core.senses.sight as sight
 from core.conversation.response_reliability import (
     _has_unfounded_tool_execution_claim,
 )
@@ -89,3 +90,26 @@ class TestTheOriginalGuardStillHolds:
     )
     def test_ordinary_speech_is_untouched(self, reply, no_frames):
         assert not _has_unfounded_tool_execution_claim(reply, tool_receipts=())
+
+
+class TestPhysicalPerceptionNeedsAnInterpretedCameraFrame:
+    @pytest.fixture(autouse=True)
+    def reset_camera_receipt(self, monkeypatch):
+        monkeypatch.setattr(sight, "_LAST_CAMERA_OBSERVATION_AT", 0.0)
+
+    def test_camera_timeout_cannot_become_an_empty_room_claim(self):
+        assert _has_unfounded_tool_execution_claim(
+            "No one else is physically here with you.", tool_receipts=()
+        )
+
+    def test_an_honest_unknown_survives_without_a_frame(self):
+        assert not _has_unfounded_tool_execution_claim(
+            "I cannot tell whether anyone else is physically here because I could not look.",
+            tool_receipts=(),
+        )
+
+    def test_a_successful_camera_observation_backs_the_claim(self):
+        sight._note_camera_observation()
+        assert not _has_unfounded_tool_execution_claim(
+            "I can see two people in front of me.", tool_receipts=()
+        )
