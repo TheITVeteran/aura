@@ -94,20 +94,36 @@ class Condensation:
     summary_offset: int
     reason: str = ""
     tokens_reclaimed: int = 0
+    #: Identity of the stand-in event this condensation inserts.
+    #:
+    #: Every summary used to be born as ``event_id=-1``, on the reasoning that a
+    #: derived event should not be forgettable by a later condensation keyed on
+    #: ids. The cost of that was steeper than the benefit. Two condensations
+    #: produced two events with the same id, so a summary could not be referred
+    #: to, could not be told apart from its predecessor, and — because
+    #: ``_forgettable`` also skips ``kind == "condensation"`` — could never be
+    #: subsumed. Summaries accumulated for the life of the conversation and the
+    #: window filled with immortal ones.
+    #:
+    #: Distinct ids make re-summarization expressible: a later condensation can
+    #: name an earlier summary among its ``forgotten_ids`` and fold it into a new
+    #: one, which is what "integrate the previous snapshot" has always meant.
+    #: Ids stay negative so they cannot collide with the source log.
+    summary_id: int = -1
 
     def __post_init__(self) -> None:
         if self.summary_offset < 0:
             raise ValueError("summary_offset must be non-negative")
+        if self.summary_id >= 0:
+            raise ValueError(
+                "summary_id must be negative so it cannot collide with a source event id"
+            )
 
     @property
     def summary_event(self) -> ContextEvent:
-        """The stand-in event inserted where the forgotten span used to be.
-
-        Negative id: it is derived, never part of the source log, and giving it
-        a real id would let it be forgotten by a later condensation keyed on ids.
-        """
+        """The stand-in event inserted where the forgotten span used to be."""
         return ContextEvent(
-            event_id=-1,
+            event_id=self.summary_id,
             kind="condensation",
             content=self.summary,
             pinned=False,
@@ -218,6 +234,7 @@ class _RollingCondenser(Condenser):
         keep_first: int = 4,
         voice_anchors: int = 6,
         voice_kind: str = "assistant",
+        subsume_summaries: bool = False,
     ) -> None:
         if max_size < 2:
             raise ValueError("max_size must be at least 2")
@@ -235,6 +252,14 @@ class _RollingCondenser(Condenser):
         self.keep_first = keep_first
         self.voice_anchors = voice_anchors
         self.voice_kind = voice_kind
+        #: Whether an earlier summary may be folded into a new one.
+        #:
+        #: Only safe when the summarizer is given the prior summaries and
+        #: actually integrates them — which is why it is off by default and why
+        #: :class:`AmortizedForgettingCondenser` refuses it outright: that
+        #: strategy writes no summary at all, so subsuming one would delete the
+        #: only remaining trace of the span it stood for.
+        self.subsume_summaries = bool(subsume_summaries)
 
     def _voice_anchor_ids(self, view: View) -> frozenset[int]:
         """Her most recent turns, kept verbatim wherever they sit.
@@ -291,7 +316,7 @@ class _RollingCondenser(Condenser):
         return [
             e for e in middle
             if not e.pinned
-            and e.kind != "condensation"
+            and (self.subsume_summaries or e.kind != "condensation")
             and e.event_id not in anchors
         ]
 
@@ -314,6 +339,15 @@ class AmortizedForgettingCondenser(_RollingCondenser):
     disposable — long tool-output runs, retry storms. It is lossy in the window
     but not in the log, which is the distinction the whole module rests on.
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        if kwargs.pop("subsume_summaries", False):
+            raise ValueError(
+                "AmortizedForgettingCondenser writes no summary, so subsuming an "
+                "earlier one would drop the only remaining trace of the span it "
+                "stood for"
+            )
+        super().__init__(*args, **kwargs)
 
     def condense(self, view: View) -> View | Condensation:
         if not self._should_condense(view):
@@ -356,12 +390,14 @@ class LLMSummarizingCondenser(_RollingCondenser):
         keep_first: int = 4,
         voice_anchors: int = 6,
         voice_kind: str = "assistant",
+        subsume_summaries: bool = False,
     ) -> None:
         super().__init__(
             max_size=max_size,
             keep_first=keep_first,
             voice_anchors=voice_anchors,
             voice_kind=voice_kind,
+            subsume_summaries=subsume_summaries,
         )
         self._summarize = summarize
 

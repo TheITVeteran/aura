@@ -268,18 +268,79 @@ class SkillLibrary:
                 resolved[k] = v
         return resolved
 
-    def get_available_skills_prompt(self) -> str:
-        """Returns a formatted string of available skills for the LLM to use."""
+    def _reliable_skills(self) -> list[LearnedSkill]:
+        """Skills worth offering: proven, or too new to have been disproven."""
+        return [
+            s
+            for s in self.skills.values()
+            if s.reliability > 0.4 or (s.successes + s.failures) < 3
+        ]
+
+    def documents(self) -> list[Any]:
+        """This library's skills, as retrieval documents.
+
+        Registered with the process-wide retriever so a learned macro can be
+        found by what it does. Until this existed the library was write-only:
+        ``learn_skill`` persisted macros and the only way to read them back
+        listed every one of them, which is why nothing called it.
+        """
+        from core.skills.skill_retrieval import SkillDocument
+
+        return [
+            SkillDocument(
+                name=s.name,
+                description=f"{s.description} parameters: {', '.join(s.parameters)}",
+                source="macro",
+            )
+            for s in self._reliable_skills()
+        ]
+
+    def retrieve(self, objective: str, *, k: int = 3) -> list[LearnedSkill]:
+        """The macros most relevant to ``objective``, best first.
+
+        Voyager retrieves the top few skills for the task at hand rather than
+        showing the agent its whole library, and the reason is a budget one: a
+        library that grows is a prompt that grows, until the skills crowd out
+        the problem. Retrieval is what makes learning more skills cheap.
+        """
+        if not self.skills:
+            return []
+        try:
+            from core.skills.skill_retrieval import get_skill_retriever
+
+            retriever = get_skill_retriever()
+            retriever.register_provider("learned_macros", self.documents)
+            hits = retriever.retrieve(objective, k=k)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:
+            _record_skill_degradation(
+                "skill_library_retrieval",
+                e,
+                action="offered no macro skills because retrieval failed",
+                severity="warning",
+            )
+            return []
+        return [
+            self.skills[hit.name]
+            for hit in hits
+            if hit.source == "macro" and hit.name in self.skills
+        ]
+
+    def get_available_skills_prompt(self, objective: str = "", *, k: int = 3) -> str:
+        """The macros worth showing for this objective, as prompt text.
+
+        With no objective this still lists everything, because a caller that
+        cannot say what it is doing has no basis for a subset — but the ranked
+        path is the one the live context uses.
+        """
         if not self.skills:
             return ""
 
-        lines = []
-        # Only show reliable skills
-        reliable_skills = [
-            s for s in self.skills.values() if s.reliability > 0.4 or (s.successes + s.failures) < 3
-        ]
+        selected = self.retrieve(objective, k=k) if objective.strip() else self._reliable_skills()
+        if not selected:
+            return ""
 
-        for s in reliable_skills:
+        lines = []
+        for s in selected:
             params = ", ".join(s.parameters)
             lines.append(
                 f"- **{s.name}**({params}): {s.description} (Reliability: {s.reliability:.2f})"

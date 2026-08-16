@@ -116,6 +116,26 @@ class ContextStreamingMixin:
                 )
                 logger.debug("Suppressed Exception: %s", _exc)
 
+        # Learned macros, retrieved for this message.
+        #
+        # SkillLibrary.learn_skill has persisted macros since it was written and
+        # the only reader — get_available_skills_prompt — had no callers, so
+        # every macro Aura learned was invisible to the turn that could have
+        # used it. It is retrieved rather than listed: a library that grows is a
+        # prompt that grows until the skills crowd out the problem.
+        ctx["learned_skills"] = ""
+        try:
+            from core.container import ServiceContainer as _Services
+
+            library = _Services.get("skill_library", default=None)
+            if library is not None and hasattr(library, "get_available_skills_prompt"):
+                ctx["learned_skills"] = library.get_available_skills_prompt(message)
+        except _CONTEXT_STREAMING_ERRORS as e:
+            _record_context_degradation(
+                e,
+                action="continued agentic context build without learned macro skills",
+            )
+
         # Cortana Cognitive State Injection
         from core.container import ServiceContainer
         cortana = ServiceContainer.get("cortana", default=None)
@@ -464,7 +484,14 @@ class ContextStreamingMixin:
         self.conversation_history = deduped
 
     async def _prune_history_async(self):
-        """Asynchronously prune history via context pruner."""
+        """Asynchronously prune history via context pruner.
+
+        Every path that shortens the window routes its result through
+        :meth:`_commit_pruned_history`, so the forgetting is recorded rather
+        than only performed. What the model sees is unchanged — the recorder
+        derives the window back out of its own log and compares before it
+        believes itself.
+        """
         try:
             from core.memory.context_pruner import context_pruner
             from core.runtime.safe_mode import runtime_feature_enabled, runtime_mode_value
@@ -478,7 +505,9 @@ class ContextStreamingMixin:
 
             if not runtime_feature_enabled(self, "context_pruning", default=True):
                 if len(history) > max_history:
-                    self.conversation_history = history[-max_history:]
+                    self._commit_pruned_history(
+                        history, history[-max_history:], reason="bounded tail (pruning disabled)"
+                    )
                 return
 
             pruned_history = await context_pruner.prune_history(history, self.cognitive_engine)
@@ -492,10 +521,14 @@ class ContextStreamingMixin:
                     len(history),
                     len(pruned_history),
                 )
-                self.conversation_history = history[-max_history:]
+                self._commit_pruned_history(
+                    history, history[-max_history:], reason="bounded tail (pruner result rejected)"
+                )
                 return
 
-            self.conversation_history = pruned_history[-max_history:]
+            self._commit_pruned_history(
+                history, pruned_history[-max_history:], reason="context pruner"
+            )
         except _CONTEXT_STREAMING_ERRORS as e:
             _record_context_degradation(
                 e,
@@ -503,7 +536,37 @@ class ContextStreamingMixin:
             )
             logger.debug("History pruning failed: %s", e)
             if isinstance(self.conversation_history, list) and len(self.conversation_history) > 50:
-                self.conversation_history = self.conversation_history[-50:]
+                self._commit_pruned_history(
+                    list(self.conversation_history),
+                    self.conversation_history[-50:],
+                    reason="emergency tail after pruning raised",
+                )
+
+    def _commit_pruned_history(
+        self,
+        before: list[dict],
+        after: list[dict],
+        *,
+        reason: str,
+    ) -> None:
+        """Install the shortened window and record what left it.
+
+        The assignment is the same one that was here before; the recording is
+        new. Failure to record is never allowed to block the assignment — a
+        window that cannot be shortened is an out-of-memory conversation, and
+        an audit trail is not worth that.
+        """
+        self.conversation_history = after
+        try:
+            from core.context.conversation_log import get_conversation_log
+
+            get_conversation_log().record_pruning(before, after, reason=reason)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            _record_context_degradation(
+                exc,
+                action="pruned the conversation window but failed to record the forgetting",
+                severity="warning",
+            )
 
     async def _consolidate_long_term_memory(self):
         """Summarize and move important session highlights to long-term vector memory."""

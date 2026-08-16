@@ -2255,6 +2255,48 @@ class CapabilityEngine(AuraBaseModule):
         )
         return any(marker in msg for marker in reasoning_markers)
 
+    def _retrieved_tool_candidates(self, objective: str, max_tools: int) -> list[str]:
+        """Skills the retriever finds relevant that the trigger patterns missed.
+
+        Registers the catalog with the retriever on first use — a provider
+        rather than a push, so the index re-reads the catalog when it changes
+        instead of every registration site having to remember to update it.
+
+        Never raises. Retrieval is an enrichment of tool selection, and a
+        selection path that can fail because a ranking helper failed is worse
+        than one that occasionally proposes fewer candidates.
+        """
+        if not objective.strip():
+            return []
+        try:
+            from core.skills.skill_retrieval import SkillDocument, get_skill_retriever
+
+            retriever = get_skill_retriever()
+            retriever.register_provider(
+                "capability_catalog",
+                lambda: [
+                    SkillDocument(
+                        name=name,
+                        description=str(getattr(meta, "description", "") or ""),
+                        source="catalog",
+                    )
+                    for name, meta in self.skills.items()
+                ],
+            )
+            return [
+                hit.name
+                for hit in retriever.retrieve(objective, k=max_tools)
+                if hit.name in self.skills
+            ]
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "capability_engine",
+                exc,
+                severity="debug",
+                action="ranked tools without semantic retrieval",
+            )
+            return []
+
     def _rank_tool_candidates(
         self,
         *,
@@ -2378,6 +2420,14 @@ class CapabilityEngine(AuraBaseModule):
                     ),
                 )
 
+        # Retrieval runs last and only adds. The trigger patterns above are
+        # authored per skill and only fire on phrasings somebody anticipated; a
+        # capability asked for in unlisted words was not ranked low, it never
+        # entered the list. Appending here widens the field without displacing
+        # anything the existing path would have chosen, so it cannot regress a
+        # working turn — see core/skills/skill_retrieval.py.
+        retrieved_candidates = self._retrieved_tool_candidates(objective_text, max_tools)
+
         ordered: list[str] = []
 
         def _push(name: str | None) -> None:
@@ -2405,6 +2455,11 @@ class CapabilityEngine(AuraBaseModule):
         for name in matched:
             _push(name)
         for name in heuristic_candidates:
+            _push(name)
+        # After the authored paths, before the cost-ordered filler below. A
+        # skill the objective is actually about should outrank one chosen for
+        # being cheap.
+        for name in retrieved_candidates:
             _push(name)
 
         if not ordered:
