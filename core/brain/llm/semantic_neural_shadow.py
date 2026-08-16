@@ -11,7 +11,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
 
-from core.runtime.atomic_writer import atomic_append_text
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
 
@@ -135,7 +134,16 @@ async def record_semantic_shadow_comparison(
     destination = Path(ledger_path) if ledger_path is not None else _default_ledger_path()
     line = json.dumps(comparison, sort_keys=True, separators=(",", ":")) + "\n"
     try:
-        await asyncio.to_thread(atomic_append_text, destination, line)
+        # Through the gateway rather than straight to the atomic writer. This is
+        # a durable ledger, so it is a consequential write and the gateway is
+        # where consequential writes are governed and receipted; the async lane
+        # keeps the fsync off the event loop, which is what the bare
+        # ``to_thread`` was achieving on its own.
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        await get_file_write_gateway().append_text_async(
+            destination, line, source="latent_cortex.semantic_neural_shadow"
+        )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
             "latent_cortex.semantic_neural_shadow_ledger",

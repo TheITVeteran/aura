@@ -3665,6 +3665,14 @@
       "scope": "<module>.VerifierFusionLedger.record_checked"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/semantic_neural_shadow.py",
+      "scope": "<module>.record_semantic_shadow_comparison"
+    },
+    {
       "callee": "<file_write_gateway>.write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -5727,6 +5735,38 @@
       "count": 1,
       "path": "core/session/checkpointing.py",
       "scope": "<module>.CheckpointService.save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skill_management/forged_artifact.py",
+      "scope": "<module>.ForgeLedger._write_async"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skill_management/forged_artifact.py",
+      "scope": "<module>.ForgeLedger._write_async"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/skill_management/hephaestus.py",
+      "scope": "<module>.HephaestusEngine._install_artifact"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/skill_management/hephaestus.py",
+      "scope": "<module>.HephaestusEngine._install_artifact"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -13169,14 +13209,6 @@
       "scope": "<module>.HephaestusEngine.__init__"
     },
     {
-      "callee": "skill_file.write_text",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skill_management/hephaestus.py",
-      "scope": "<module>.HephaestusEngine.synthesize_skill._synthesize_wrapped"
-    },
-    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15890,6 +15922,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "810fbbe3df9889fa971e50744509fefbad875d11d638efca05e6b671f2357270",
+  "inventory_sha256": "be3939a8bfab007e76babec04e9c6047366d26ec26f086978b6bd635a6022994",
   "schema_version": 1
 }

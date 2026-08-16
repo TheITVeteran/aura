@@ -158,7 +158,12 @@ def _validate_private_directory(path: Path) -> None:
 def create_private_channel_directory(root: Path | None = None) -> Path:
     """Create an owner-only random channel namespace outside shared ``/tmp``."""
 
-    base = Path(root) if root is not None else Path.home() / ".aura" / "runtime" / "external_chat"
+    # state_root() rather than Path.home(): a test run, a worktree or an
+    # alternate profile sets the root explicitly, and resolving it here put the
+    # external chat channel under the live instance's directory regardless.
+    from core.runtime.state_ownership import state_root
+
+    base = Path(root) if root is not None else state_root() / "runtime" / "external_chat"
     if base.exists() and base.is_symlink():
         raise ExternalChatIPCError(f"external chat runtime root may not be a symlink: {base}")
     ensure_private_directory(base)

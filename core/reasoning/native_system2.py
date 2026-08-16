@@ -249,6 +249,12 @@ class NativeSearchReceipt:
     #: declared none. Named so a reviewer can see that a safety brake was
     #: applied on the strength of spelling alone.
     hazard_floored_actions: List[str] = field(default_factory=list)
+    #: Candidates the preference procedure removed before the search ran, each
+    #: with the stage and the preference that removed it. A prohibited action
+    #: never reaches the value model, so without this the receipt would show a
+    #: deliberation over a field that silently excluded something — which is
+    #: indistinguishable from one where it was never offered.
+    preference_removals: Dict[str, str] = field(default_factory=dict)
     #: The compiled-resolution key for this decision, when chunking applied.
     chunk_signature: Optional[str] = None
     #: True when a previously learned chunk supplied the answer and the search
@@ -670,6 +676,81 @@ class NativeSystem2Engine:
         finally:
             _VALUE_EVIDENCE.reset(evidence_token)
 
+    async def _resolve_preferences(
+        self, candidate_actions: Sequence[System2Action], context: str
+    ):
+        """Translate what Aura already knows about these actions into preferences.
+
+        Three sources, and each was already a fact the deliberation had access
+        to and could not act on symbolically:
+
+        * every candidate is ``acceptable`` — something proposed it;
+        * ``valid=False`` is a ``reject``, which previously only reached the
+          impasse classifier while the action stayed in the search and could
+          still be committed on a good enough score;
+        * a standing directive is a ``prohibit``. Directives are the owner's
+          written prohibitions and were consulted only at the gateway, after
+          deliberation had already committed to the act.
+
+        Nothing here asserts indifference, so a field the preferences do not
+        separate resolves to a tie impasse rather than a winner, and the search
+        below is what breaks it. That is the correct division of labour: the
+        preference layer removes what must not be chosen, and deliberation
+        chooses among what remains.
+        """
+        from core.cognition.preference_semantics import PreferenceBuilder, resolve
+
+        builder = PreferenceBuilder("native_system2.rank_actions")
+        for action in candidate_actions:
+            builder.acceptable(action.name)
+            if not action.valid:
+                builder.reject(action.name, "the caller marked this action invalid")
+
+        prohibited = await asyncio.to_thread(self._standing_prohibitions, candidate_actions)
+        for name, reason in prohibited.items():
+            builder.prohibit(name, reason)
+
+        return resolve(
+            [a.name for a in candidate_actions],
+            builder.build(),
+            context={"goal": "rank_actions", "context": context.strip()[:256]},
+        )
+
+    @staticmethod
+    def _standing_prohibitions(
+        candidate_actions: Sequence[System2Action],
+    ) -> Dict[str, str]:
+        """Which candidates the owner's standing directives forbid.
+
+        Runs off the loop because the store stats and may read its file. A
+        directive store that cannot be read yields no prohibitions and says so
+        through its own degradation channel; it must not take the deliberation
+        down with it, and it must not silently permit either — the gateway check
+        downstream is unchanged and still refuses.
+        """
+        try:
+            from core.governance.standing_directives import get_standing_directives
+        except ImportError:
+            return {}
+
+        store = get_standing_directives()
+        found: Dict[str, str] = {}
+        for action in candidate_actions:
+            try:
+                match, _loaded = store.check(
+                    tool_name=action.name,
+                    args=dict(action.metadata or {}),
+                    effect_scope="external" if action.external_side_effect else "",
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if match is not None:
+                found[action.name] = (
+                    f"standing directive {match.directive.directive_id} "
+                    f"({match.matched_on}): {match.directive.reason or 'no reason recorded'}"
+                )
+        return found
+
     async def rank_actions(
         self,
         *,
@@ -724,6 +805,20 @@ class NativeSystem2Engine:
                 hazard_floored.append(action.name)
             floored_actions.append(action)
         candidate_actions = floored_actions
+
+        # Soar's preference semantics, before any number is computed. The value
+        # model runs on what survives, so a standing directive removes an action
+        # from the decision instead of taxing it 0.20 of value and losing to a
+        # candidate worth 0.25 less.
+        resolution = await self._resolve_preferences(candidate_actions, context)
+        preference_removals = {
+            name: resolution.why(name)
+            for name in (a.name for a in candidate_actions)
+            if name not in set(resolution.survivors)
+        }
+        if preference_removals:
+            survivors = set(resolution.survivors)
+            candidate_actions = [a for a in candidate_actions if a.name in survivors]
 
         async def _generator(_state: Any, node: NativePlanNode, cfg: System2SearchConfig) -> Sequence[System2Action]:
             if node.depth == 0:
@@ -969,6 +1064,7 @@ class NativeSystem2Engine:
 
         result.receipt.value_evidence = dict(evidence_counts)
         result.receipt.hazard_floored_actions = list(hazard_floored)
+        result.receipt.preference_removals = dict(preference_removals)
 
         committed = result.committed_action
         chosen = (

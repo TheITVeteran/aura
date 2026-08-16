@@ -133,9 +133,12 @@ def class_name_for(skill_name: str) -> str:
     if not parts:
         raise ArtifactError("skill name has no usable characters")
     camel = "".join(p[:1].upper() + p[1:] for p in parts)
-    if not camel[0].isalpha():
-        camel = f"Skill{camel}"
-    return f"{camel}Skill" if not camel.endswith("Skill") else camel
+    if not camel.endswith("Skill"):
+        camel = f"{camel}Skill"
+    # A leading digit is the case that matters: ``3d_render`` yields
+    # ``3dRenderSkill``, which is not an identifier and would have failed at
+    # import — after the file was written and the catalog reloaded.
+    return camel if camel[0].isalpha() else f"Forged{camel}"
 
 
 def digest_of(verified_source: str) -> str:
@@ -390,14 +393,44 @@ class ForgeLedger:
         )
 
     async def record_async(self, entry: LedgerEntry) -> None:
-        """Add or replace an entry and persist it through the write gateway."""
+        """Add or replace an entry and persist it through the write gateway.
+
+        The version and the reliability counts both belong to a *digest*, not to
+        a name, and the two cases are opposites.
+
+        Re-recording the same digest — a re-verification of unchanged code —
+        keeps both. Without that, verifying a skill again resets its version to
+        one and erases every success and failure it has accumulated, so the
+        record would say the skill is new and untried each time anyone checked
+        it.
+
+        A new digest is different code. Its version increments and the counts
+        start at zero, because the successes belonged to the implementation that
+        was just replaced and carrying them over would credit new code with the
+        old code's record.
+        """
         with self._lock:
             self._load_locked()
             previous = self._entries.get(entry.skill_name)
-            if previous is not None and previous.digest != entry.digest:
-                entry = LedgerEntry(
-                    **{**entry.to_dict(), "version": previous.version + 1}  # type: ignore[arg-type]
-                )
+            if previous is not None:
+                if previous.digest == entry.digest:
+                    entry = LedgerEntry(
+                        **{
+                            **entry.to_dict(),  # type: ignore[arg-type]
+                            "version": previous.version,
+                            "successes": previous.successes,
+                            "failures": previous.failures,
+                        }
+                    )
+                else:
+                    entry = LedgerEntry(
+                        **{
+                            **entry.to_dict(),  # type: ignore[arg-type]
+                            "version": previous.version + 1,
+                            "successes": 0,
+                            "failures": 0,
+                        }
+                    )
             self._entries[entry.skill_name] = entry
             payload = self._payload_locked()
         await self._write_async(payload)
