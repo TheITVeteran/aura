@@ -131,6 +131,10 @@ from core.security.structural_redaction import (  # noqa: E402
 from core.skills.base_skill import (  # noqa: E402
     SKILL_TIMEOUT_CONTEXT_KEY as _SKILL_TIMEOUT_CONTEXT_KEY,
 )
+from core.skill_management.forged_artifact import ArtifactError  # noqa: E402
+from core.skill_management.skill_verification import (  # noqa: E402
+    ENTRYPOINT as FORGED_ENTRYPOINT,
+)
 from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
 from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
 
@@ -2611,6 +2615,76 @@ class CapabilityEngine(AuraBaseModule):
         if failures:
             raise RuntimeError(
                 "skill instance shutdown failures: " + "; ".join(failures[:12])
+            )
+
+    async def _execute_forged(
+        self, meta: Any, skill_name: str, params: dict[str, Any], sandbox: Any
+    ) -> dict[str, Any]:
+        """Run a forged skill's verified region under the kernel boundary.
+
+        Three things changed here and each was a defect on its own.
+
+        The callable is now the module-level ``run`` rather than the class name.
+        ``call_untrusted_function`` looks the name up in the executed module and
+        calls it, so passing a class constructed the class and never reached any
+        method — with the skill's parameters spliced in as constructor keywords.
+
+        The source is the *verified region*, recovered by
+        :func:`~core.skill_management.forged_artifact.load_verified_region` and
+        checked against the digest the forge recorded. The whole file cannot run
+        under the boundary: it imports ``BaseSkill``, and the repository is not
+        readable from inside the sandbox.
+
+        A skill in the writable tree with no ledger entry is refused. Its
+        provenance is unknown, there is no digest to check it against, and
+        running it would mean the directory's contents decide what executes.
+        """
+        from core.skill_management.forged_artifact import get_forge_ledger, load_verified_region
+
+        source_path = str(getattr(meta, "source_path", "") or "")
+        if not source_path:
+            raise RuntimeError(f"forged skill '{skill_name}' has no source file on record")
+
+        entry = get_forge_ledger().entry_for(skill_name)
+        if entry is None:
+            return {
+                "ok": False,
+                "error": (
+                    f"Refusing to run '{skill_name}': it is in the forged skill tree "
+                    "but has no verification record."
+                ),
+                "status": "forged_unverified",
+            }
+
+        resolved = Path(source_path)
+        if not resolved.is_absolute():
+            resolved = Path(config.paths.base_dir) / source_path
+        code = await asyncio.to_thread(
+            load_verified_region, resolved, expected_digest=entry.digest
+        )
+        result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: sandbox.execute(code, FORGED_ENTRYPOINT, params)
+        )
+        return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    async def _record_forge_outcome(self, skill_name: str, result: dict[str, Any]) -> None:
+        """Fold a real call into the forge ledger's reliability counts.
+
+        Verification says a skill worked once, under probes its own drafter
+        chose. This is the only channel that says whether it keeps working on
+        the inputs it actually meets.
+        """
+        from core.skill_management.forged_artifact import get_forge_ledger
+
+        try:
+            await get_forge_ledger().record_outcome_async(
+                skill_name, succeeded=bool(result.get("ok"))
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="executed a forged skill but failed to record its outcome",
+                severity="warning",
             )
 
     def reload_skills(self) -> None:
@@ -5293,7 +5367,7 @@ class CapabilityEngine(AuraBaseModule):
                     "ok": False,
                     "error": f"Skill '{skill_name}' left the registry during resolution.",
                 }
-            is_forged = meta.module_path and "skills/" in meta.module_path
+            is_forged = _is_forged_skill(meta)
 
             # Harmonize and self-heal parameters before gates and execution
             if meta.input_model and isinstance(params, dict):
@@ -6000,22 +6074,35 @@ class CapabilityEngine(AuraBaseModule):
             # 3. Adaptation & Security (Rosetta Stone / Sandbox)
             exec_params = params
             sandbox = self.sandbox
-            if is_forged and sandbox is not None:
+            if is_forged:
+                if sandbox is None:
+                    # Forged code without a sandbox is the one case that must not
+                    # degrade into ordinary execution. The old branch simply fell
+                    # through to the in-process path when the sandbox was absent.
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"Refusing to run forged skill '{skill_name}': "
+                            "no sandbox is available."
+                        ),
+                        "status": "forged_sandbox_unavailable",
+                    }
                 self.logger.info("🛡️ Executing FORGED skill '%s' in Sandbox 2.0", skill_name)
                 try:
-                    module_path = meta.module_path
-                    class_name = meta.class_name
-                    if not module_path or not class_name:
-                        raise RuntimeError("forged skill is missing its source or class identity")
-                    code = await asyncio.to_thread(
-                        Path(module_path).read_text, encoding="utf-8"
-                    )
-                    # Run in executor to be non-blocking
-                    result = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: sandbox.execute(code, class_name, exec_params)
-                    )
-                    return result if isinstance(result, dict) else {"ok": True, "result": result}
-                except (sqlite3.Error, OSError) as e:
+                    result = await self._execute_forged(meta, skill_name, exec_params, sandbox)
+                except (
+                    ArtifactError,
+                    OSError,
+                    RuntimeError,
+                    SyntaxError,
+                    TypeError,
+                    ValueError,
+                    sqlite3.Error,
+                ) as e:
+                    # The previous tuple was ``(sqlite3.Error, OSError)`` and the
+                    # sandbox raises none of those, so every real sandbox failure
+                    # escaped ``execute_skill`` as an unhandled exception instead
+                    # of the refusal dict its callers branch on.
                     _record_capability_degradation(
                         e,
                         action="returned sandbox execution failure for forged skill",
@@ -6023,6 +6110,8 @@ class CapabilityEngine(AuraBaseModule):
                     )
                     self.logger.error("Sandbox execution failed for %s: %s", skill_name, e)
                     return {"ok": False, "error": f"Sandbox failed: {e}"}
+                await self._record_forge_outcome(skill_name, result)
+                return result
 
             if self.rosetta_stone:
                 params_or_error = self._apply_security(skill_name, exec_params)
@@ -7324,6 +7413,31 @@ class CapabilityEngine(AuraBaseModule):
             and metadata.dependency_ready
             for name, metadata in skills.items()
         )
+
+
+def _is_forged_skill(meta: Any) -> bool:
+    """Whether this skill is code Aura wrote for herself.
+
+    The predicate used to be ``"skills/" in meta.module_path``. Module paths are
+    dotted — ``skills.word_count`` — so the substring never matched and the
+    answer was always no. Everything downstream of it was therefore dead: the
+    Sandbox 2.0 branch never ran, and model-authored code executed in-process
+    like any hand-written skill, under a log line announcing that it was
+    confined.
+
+    ``source_kind`` is the catalog's own answer to the same question, set by
+    :func:`core.skills.discovery.default_skill_roots` when it walks the writable
+    ``skills/`` tree rather than ``core/skills``. It is a fact about where the
+    file came from instead of a guess from how a string is spelled.
+    """
+    if str(getattr(meta, "source_kind", "") or "").strip().lower() == "project":
+        return True
+    # A skill registered at runtime carries no catalog provenance. Fall back to
+    # the module's real file, which is a path and can be compared as one.
+    module_path = str(getattr(meta, "source_path", "") or "")
+    if not module_path:
+        return False
+    return Path(module_path).as_posix().startswith("skills/")
 
 
 def _gates_required_for(effect_scope: Any, *, is_forged: bool) -> bool:

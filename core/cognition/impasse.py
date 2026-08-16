@@ -76,6 +76,13 @@ class ImpasseType(StrEnum):
     REJECTION = "rejection"
     #: Something was chosen and applying it changed nothing.
     NO_CHANGE = "no_change"
+    #: Two assertions cannot both hold: several candidates are each required, or
+    #: a required candidate is also prohibited. Soar's fifth type, and the one
+    #: that matters most here — the others say a choice could not be made, this
+    #: one says the constraints themselves are inconsistent, so no amount of
+    #: further deliberation in a substate can resolve it. It is not resolvable
+    #: by learning and must reach a human.
+    CONSTRAINT_FAILURE = "constraint_failure"
 
 
 @dataclass(frozen=True)
