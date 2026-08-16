@@ -38,6 +38,12 @@ _SKILL_LIBRARY_RECOVERABLE_ERRORS = (
     json.JSONDecodeError,
 )
 
+#: Publication additionally meets the catalog's own refusals — an unrecognised
+#: effect scope, a name clash, a malformed declaration — all of which
+#: ``register_skill`` raises as ValueError or TypeError. Named separately so the
+#: publication path cannot quietly widen into swallowing something else.
+_SKILL_LIBRARY_RECOVABLE_OR_REGISTRATION_ERRORS = _SKILL_LIBRARY_RECOVERABLE_ERRORS
+
 
 def _record_skill_degradation(
     subsystem: str,
@@ -144,7 +150,62 @@ class SkillLibrary:
         self.skills[name] = skill
         self._save()
         self._update_system_health()
+        self.publish_as_tool(skill)
         logger.info("🧠 Learned new skill: %s (Reliability: pending)", name)
+
+    def publish_as_tool(self, skill: LearnedSkill) -> bool:
+        """Register a macro into the live catalog so the model can call it.
+
+        Until this existed a learned macro could be described to a turn and not
+        invoked — it reached the model as prose and not as a tool, so the only
+        way to use one was to re-derive its steps, which is what learning it was
+        meant to avoid.
+
+        Failure is never fatal. A macro that cannot be published is still a
+        macro: it stays in the library, still executes through
+        :meth:`execute_skill`, and the next reload can try again.
+        """
+        try:
+            from core.agency.macro_skill import MacroSkill, derive_effect_scope
+            from core.container import ServiceContainer
+
+            engine = ServiceContainer.get("capability_engine", default=None)
+            if engine is None or not hasattr(engine, "register_skill"):
+                return False
+
+            def _scope_for(tool: str) -> str:
+                meta = getattr(engine, "skills", {}).get(tool)
+                return str(getattr(meta, "effect_scope", "") or "")
+
+            scope = derive_effect_scope([s.tool_name for s in skill.steps], _scope_for)
+            engine.register_skill(
+                MacroSkill(
+                    macro_name=skill.name,
+                    description=skill.description,
+                    parameters=list(skill.parameters),
+                    effect_scope=scope,
+                ),
+                replace=True,
+            )
+            logger.info("🔧 Macro '%s' published as a tool (scope: %s)", skill.name, scope)
+            return True
+        except _SKILL_LIBRARY_RECOVABLE_OR_REGISTRATION_ERRORS as e:
+            _record_skill_degradation(
+                "skill_library_publication",
+                e,
+                action="kept the macro in the library but did not publish it as a tool",
+                severity="warning",
+            )
+            return False
+
+    def publish_all(self) -> int:
+        """Publish every reliable macro. Called after the catalog reloads.
+
+        A catalog reload rebuilds ``skills`` from source discovery, which drops
+        every runtime registration — so without re-publishing here, macros
+        would silently stop being callable the first time anything reloaded.
+        """
+        return sum(1 for skill in self._reliable_skills() if self.publish_as_tool(skill))
 
     async def execute_skill(self, name: str, kwargs: dict[str, Any]) -> list[Any]:
         """
@@ -390,4 +451,8 @@ class SkillLibrary:
 def register_skill_library(orchestrator=None):
     lib = SkillLibrary(orchestrator)
     ServiceContainer.register_instance("skill_library", lib)
+    # Macros loaded from disk are as callable as ones learned this session.
+    # Without this, a restart turned every previously learned macro back into
+    # prose the model could read and not invoke.
+    lib.publish_all()
     return lib

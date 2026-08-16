@@ -2747,6 +2747,33 @@ class CapabilityEngine(AuraBaseModule):
 
         with self._catalog_mutation_guard():
             self._reload_skills_transaction()
+        self._republish_runtime_macros()
+
+    def _republish_runtime_macros(self) -> None:
+        """Put learned macros back after a reload rebuilt the catalog from source.
+
+        ``_reload_skills_transaction`` reconstructs ``_skills`` from discovery,
+        which drops every runtime registration. Macros are registered rather
+        than declared in source, so without this they stop being callable the
+        first time anything reloads the catalog — a forge, a hot update, a
+        health probe — and nothing would report it, because the library still
+        holds them and still describes them.
+
+        Outside the mutation guard: publication calls back into
+        ``register_skill``, which takes that guard itself.
+        """
+        try:
+            library = optional_service("skill_library", default=None)
+            if library is not None and hasattr(library, "publish_all"):
+                published = library.publish_all()
+                if published:
+                    self.logger.info("🔧 Republished %d learned macro(s)", published)
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="reloaded the catalog without republishing learned macros",
+                severity="warning",
+            )
 
     def _reload_skills_transaction(self) -> None:
         """Build, probe, and atomically publish the governed live skill catalog."""
