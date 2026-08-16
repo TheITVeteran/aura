@@ -209,3 +209,137 @@ def test_concern_verdict_uses_trailing_window_not_lifetime_counts(monkeypatch):
         assert any("stormy_subsystem" in c for c in report["concerns"])
     finally:
         tracker.reset()
+
+
+def test_concern_verdict_excludes_records_from_previous_process_epoch(monkeypatch):
+    """A clean runtime cannot inherit a prior runtime's recent concern count."""
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    process_started_at = time.time() - 30.0
+    monkeypatch.setattr(ia, "_PROCESS_STARTED_AT", process_started_at)
+    try:
+        for i in range(ia._DEGRADATION_CONCERN + 5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem="cognitive_contract",
+                    severity="warning",
+                    error_type="RuntimeError",
+                    error_message=f"prior runtime violation {i}",
+                    action="recorded contract violation",
+                    timestamp=process_started_at - 1.0,
+                )
+            )
+
+        report = ia.run_integrity_audit(log=False)
+
+        assert report["healthy"] is True
+        assert report["degradations"]["recent_counts_by_subsystem"] == {}
+        assert report["degradations"]["recent_scope"]["process_started_at"] == (
+            process_started_at
+        )
+        assert not any("cognitive_contract" in item for item in report["concerns"])
+    finally:
+        tracker.reset()
+
+
+def test_concern_verdict_keeps_current_process_contract_violations(monkeypatch):
+    """Epoch scoping must preserve real violations produced by this runtime."""
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    process_started_at = time.time() - 30.0
+    monkeypatch.setattr(ia, "_PROCESS_STARTED_AT", process_started_at)
+    try:
+        for i in range(ia._DEGRADATION_CONCERN):
+            tracker.record(
+                DegradationRecord(
+                    subsystem="cognitive_contract",
+                    severity="warning",
+                    error_type="RuntimeError",
+                    error_message=f"current runtime violation {i}",
+                    action="recorded contract violation",
+                    timestamp=process_started_at + 1.0,
+                )
+            )
+
+        report = ia.run_integrity_audit(log=False)
+
+        assert report["healthy"] is False
+        assert report["degradations"]["recent_counts_by_subsystem"] == {
+            "cognitive_contract": {"warning": ia._DEGRADATION_CONCERN}
+        }
+        assert any(
+            f"cognitive_contract: {ia._DEGRADATION_CONCERN} degradations" in item
+            for item in report["concerns"]
+        )
+    finally:
+        tracker.reset()
+
+
+def test_unavailable_process_epoch_does_not_hide_recent_violations(monkeypatch):
+    """Missing epoch evidence falls back to the real trailing window."""
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    monkeypatch.setattr(ia, "_PROCESS_STARTED_AT", 0.0)
+    try:
+        for i in range(ia._DEGRADATION_CONCERN):
+            tracker.record(
+                DegradationRecord(
+                    subsystem="cognitive_contract",
+                    severity="warning",
+                    error_type="RuntimeError",
+                    error_message=f"unscoped current violation {i}",
+                    action="recorded contract violation",
+                    timestamp=time.time() - 1.0,
+                )
+            )
+
+        report = ia.run_integrity_audit(log=False)
+
+        assert report["healthy"] is False
+        assert report["degradations"]["recent_scope"]["kind"] == (
+            "trailing_window_epoch_unavailable"
+        )
+        assert any("cognitive_contract" in item for item in report["concerns"])
+    finally:
+        tracker.reset()
+
+
+def test_integrity_session_epoch_advances_only_after_lifespan_restart(monkeypatch):
+    class ReadModel:
+        def __init__(self):
+            self.starts = 0
+            self.closes = 0
+
+        def start(self):
+            self.starts += 1
+            return True
+
+        def close(self):
+            self.closes += 1
+
+    model = ReadModel()
+    monkeypatch.setattr(ia, "_INTEGRITY_READ_MODEL", model)
+    monkeypatch.setattr(ia, "_PROCESS_STARTED_AT", 100.0)
+    monkeypatch.setattr(ia, "_SESSION_STARTED_AT", None)
+    monkeypatch.setattr(ia, "_SESSION_ACTIVE", False)
+    monkeypatch.setattr(ia, "_SESSION_GENERATION", 0)
+
+    assert ia.start_integrity_read_model() is True
+    assert ia._runtime_epoch_started_at() == 100.0
+
+    # A duplicate prewarm belongs to the same lifespan and keeps its evidence.
+    assert ia.start_integrity_read_model() is True
+    assert ia._runtime_epoch_started_at() == 100.0
+
+    ia.stop_integrity_read_model()
+    monkeypatch.setattr(ia.time, "time", lambda: 250.0)
+    assert ia.start_integrity_read_model() is True
+    assert ia._runtime_epoch_started_at() == 250.0
+    assert model.starts == 3
+    assert model.closes == 1

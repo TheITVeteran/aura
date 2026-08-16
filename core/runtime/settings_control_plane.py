@@ -254,6 +254,16 @@ class RuntimeSettingsStore:
         if not self._load_error:
             self._reconcile_protected_invariants()
 
+    def _publish_reader_snapshot(self, snapshot: SettingsSnapshot) -> None:
+        """Make a verified durable revision visible to memory-only readers."""
+
+        try:
+            from core.runtime.runtime_settings import publish_runtime_settings_snapshot
+
+            publish_runtime_settings_snapshot(self.path, snapshot.values)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Runtime settings reader publication failed: %s", exc)
+
     def _reconcile_protected_invariants(self) -> None:
         """Audit-repair legacy values that predate protected settings."""
 
@@ -755,6 +765,7 @@ class RuntimeSettingsStore:
             self._snapshot = snapshot
             self._load_error = ""
 
+        self._publish_reader_snapshot(snapshot)
         application = self._notify_subscribers(changed)
         with self._thread_lock, interprocess_file_lock(self.lock_path):
             response_snapshot = self._load_verified_snapshot_locked()

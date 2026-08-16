@@ -2,8 +2,10 @@
 
 The authenticated settings API commits a strict, revisioned envelope at
 ``~/.aura/data/settings/runtime.json``. Core subsystems read that contract here
-without importing the interface layer. Nanosecond mtime and size caching keeps
-hot paths cheap while still reflecting a committed change on the next read.
+without importing the interface layer. Hot-path reads use an immutable memory
+snapshot. The transactional writer publishes committed revisions directly,
+while a daemon refresh lane detects out-of-band file changes without putting
+filesystem calls on an asyncio event loop.
 
 A never-created file represents first boot and uses each caller's documented
 default. Corruption, incompatible state, permission loss, or deletion after a
@@ -25,6 +27,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +47,18 @@ _RECOVERABLE = (OSError, RuntimeError, ValueError, TypeError, json.JSONDecodeErr
 
 _lock = threading.Lock()
 _cache: dict[str, Any] = {}
-_cache_key: tuple[str, int, int] | None = None
+_cache_path = ""
+_cache_identity: tuple[int, int] | None = None
 _cache_error_key: tuple[str, str] | None = None
+_cache_initialized = False
+_cache_file_seen = False
+_cache_epoch = 0
+_cache_last_checked = 0.0
+_refresh_started = False
+_refresh_wakeup = threading.Event()
+
+_WATCH_INTERVAL_SECONDS = 0.5
+_STALE_FAIL_CLOSED_SECONDS = 5.0
 
 _PROTECTED_DEFAULTS = {
     definition.key: definition.default
@@ -88,93 +101,211 @@ def _settings_path() -> Path:
     return Path(override) if override else _DEFAULT_SETTINGS_PATH
 
 
-def _failed_settings_snapshot(path: Path, error: BaseException) -> dict[str, Any]:
+def _normalized_path(path: str | Path) -> str:
+    return os.path.abspath(os.path.expanduser(str(path)))
+
+
+def _failed_settings_snapshot(
+    path: Path,
+    error: BaseException,
+    *,
+    prior: dict[str, Any],
+    had_valid_snapshot: bool,
+) -> dict[str, Any]:
     global _cache_error_key
     error_key = (str(path), f"{type(error).__name__}:{error}")
-    with _lock:
-        base = dict(_cache) if _cache_key and _cache_key[0] == str(path) else {}
-        base.update(_FAIL_CLOSED_OVERRIDES)
-        if _cache_error_key != error_key:
-            logger.error(
-                "Runtime settings unavailable; conservative overrides active: %s",
-                error_key[1],
-            )
-            _cache_error_key = error_key
-        return base
+    base = dict(prior) if had_valid_snapshot else {}
+    base.update(_FAIL_CLOSED_OVERRIDES)
+    if _cache_error_key != error_key:
+        logger.error(
+            "Runtime settings unavailable; conservative overrides active: %s",
+            error_key[1],
+        )
+        _cache_error_key = error_key
+    return base
 
 
-def _load_settings() -> dict[str, Any]:
-    """Return the persisted settings dict, cached by (path, mtime).
+def _read_settings_file(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError("settings state must be a JSON object")
+    if "schema" in data or "schema_version" in data:
+        if data.get("schema") != SETTINGS_SCHEMA_NAME:
+            raise ValueError("settings schema is incompatible")
+        version = data.get("schema_version")
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version > SETTINGS_SCHEMA_VERSION
+        ):
+            raise ValueError("settings schema version is incompatible")
+        if version == SETTINGS_SCHEMA_VERSION:
+            from core.runtime.settings_control_plane import RuntimeSettingsStore
 
-    Re-reads only when the file changes, so a user toggling a setting is
-    reflected on the next call without a restart.
-    """
-    global _cache, _cache_error_key, _cache_key
+            verified = RuntimeSettingsStore(path).snapshot(refresh=True)
+            return dict(verified.values)
+        migrated, _unknown = migrated_settings_snapshot(data.get("payload"))
+        return migrated
+
+    # Legacy flat-map compatibility. The control plane migrates it into the
+    # versioned envelope on the first mutation.
+    migrated, _unknown = migrated_settings_snapshot(data)
+    return migrated
+
+
+def _refresh_settings_from_disk() -> None:
+    """Refresh the process snapshot from disk outside the reader lock."""
+
+    global _cache, _cache_epoch, _cache_error_key, _cache_file_seen
+    global _cache_identity, _cache_initialized, _cache_last_checked, _cache_path
     path = _settings_path()
+    normalized_path = _normalized_path(path)
+    with _lock:
+        epoch = _cache_epoch
+        same_path = _cache_path == normalized_path
+        prior = dict(_cache) if same_path else {}
+        prior_identity = _cache_identity if same_path else None
+        had_valid_snapshot = _cache_file_seen and same_path
+    file_seen = had_valid_snapshot
+    refresh_failed = False
+
     try:
         stat_result = path.stat()
     except FileNotFoundError as exc:
-        if _cache_key and _cache_key[0] == str(path):
-            return _failed_settings_snapshot(path, exc)
-        return {}
-    except _RECOVERABLE as exc:
-        return _failed_settings_snapshot(path, exc)
-    key = (
-        str(path),
-        int(
-            getattr(
-                stat_result,
-                "st_mtime_ns",
-                int(stat_result.st_mtime * 1_000_000_000),
+        settings = (
+            _failed_settings_snapshot(
+                path,
+                exc,
+                prior=prior,
+                had_valid_snapshot=had_valid_snapshot,
             )
-        ),
-        int(stat_result.st_size),
-    )
-    with _lock:
-        if key != _cache_key:
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
-                    raise TypeError("settings state must be a JSON object")
-                if "schema" in data or "schema_version" in data:
-                    if data.get("schema") != SETTINGS_SCHEMA_NAME:
-                        raise ValueError("settings schema is incompatible")
-                    version = data.get("schema_version")
-                    if (
-                        isinstance(version, bool)
-                        or not isinstance(version, int)
-                        or version > SETTINGS_SCHEMA_VERSION
-                    ):
-                        raise ValueError("settings schema version is incompatible")
-                    if version == SETTINGS_SCHEMA_VERSION:
-                        from core.runtime.settings_control_plane import (
-                            RuntimeSettingsStore,
-                        )
+            if had_valid_snapshot
+            else {}
+        )
+        identity = None
+    except _RECOVERABLE as exc:
+        refresh_failed = True
+        settings = _failed_settings_snapshot(
+            path,
+            exc,
+            prior=prior,
+            had_valid_snapshot=had_valid_snapshot,
+        )
+        identity = None
+    else:
+        identity = (
+            int(
+                getattr(
+                    stat_result,
+                    "st_mtime_ns",
+                    int(stat_result.st_mtime * 1_000_000_000),
+                )
+            ),
+            int(stat_result.st_size),
+        )
+        if identity == prior_identity and had_valid_snapshot:
+            with _lock:
+                if epoch == _cache_epoch and _cache_path == normalized_path:
+                    _cache_last_checked = time.monotonic()
+            return
+        try:
+            settings = _read_settings_file(path)
+            file_seen = True
+        except (*_RECOVERABLE, KeyError) as exc:
+            refresh_failed = True
+            settings = _failed_settings_snapshot(
+                path,
+                exc,
+                prior=prior,
+                had_valid_snapshot=had_valid_snapshot,
+            )
 
-                        verified = RuntimeSettingsStore(path).snapshot(refresh=True)
-                        _cache = dict(verified.values)
-                    else:
-                        _cache, _unknown = migrated_settings_snapshot(
-                            data.get("payload")
-                        )
-                else:
-                    # Legacy flat-map compatibility. The control plane migrates
-                    # it into the versioned envelope on the first mutation.
-                    _cache, _unknown = migrated_settings_snapshot(data)
-                _cache_error_key = None
-            except (*_RECOVERABLE, KeyError) as exc:
-                base = dict(_cache) if _cache_key and _cache_key[0] == str(path) else {}
-                base.update(_FAIL_CLOSED_OVERRIDES)
-                _cache = base
-                error_key = (str(path), f"{type(exc).__name__}:{exc}")
-                if _cache_error_key != error_key:
-                    logger.error(
-                        "Runtime settings invalid; conservative overrides active: %s",
-                        error_key[1],
-                    )
-                    _cache_error_key = error_key
-            _cache_key = key
-        return _cache
+    with _lock:
+        # A durable control-plane publication may have landed while this file
+        # read was in flight. Never replace that newer snapshot with stale I/O.
+        if epoch != _cache_epoch:
+            return
+        _cache = dict(settings)
+        _cache_path = normalized_path
+        _cache_identity = identity
+        _cache_initialized = True
+        _cache_file_seen = file_seen
+        _cache_last_checked = time.monotonic()
+        if not refresh_failed:
+            _cache_error_key = None
+        _cache_epoch += 1
+
+
+def _refresh_worker() -> None:
+    while True:
+        try:
+            _refresh_settings_from_disk()
+        except (*_RECOVERABLE, ImportError, KeyError) as exc:
+            logger.error("Runtime settings refresh lane failed: %s", exc)
+        _refresh_wakeup.wait(_WATCH_INTERVAL_SECONDS)
+        _refresh_wakeup.clear()
+
+
+def _ensure_refresh_worker() -> None:
+    global _refresh_started
+    with _lock:
+        if _refresh_started:
+            return
+        _refresh_started = True
+        worker = threading.Thread(
+            target=_refresh_worker,
+            name="aura-runtime-settings-refresh",
+            daemon=True,
+        )
+    worker.start()
+
+
+def publish_runtime_settings_snapshot(
+    path: str | Path,
+    values: dict[str, Any],
+) -> bool:
+    """Publish one verified durable snapshot to process-local readers.
+
+    The control plane calls this after its atomic commit. The path check keeps
+    test stores and unrelated state from replacing the resident configuration.
+    """
+
+    global _cache, _cache_epoch, _cache_error_key, _cache_file_seen
+    global _cache_identity, _cache_initialized, _cache_last_checked, _cache_path
+    normalized_path = _normalized_path(path)
+    if normalized_path != _normalized_path(_settings_path()):
+        return False
+    with _lock:
+        _cache = dict(values)
+        _cache_path = normalized_path
+        _cache_identity = None
+        _cache_initialized = True
+        _cache_file_seen = True
+        _cache_last_checked = time.monotonic()
+        _cache_error_key = None
+        _cache_epoch += 1
+    _refresh_wakeup.set()
+    return True
+
+
+def _load_settings() -> dict[str, Any]:
+    """Return a memory snapshot; never perform filesystem I/O here."""
+
+    _ensure_refresh_worker()
+    normalized_path = _normalized_path(_settings_path())
+    now = time.monotonic()
+    with _lock:
+        same_path = _cache_initialized and _cache_path == normalized_path
+        if not same_path:
+            settings = dict(_FAIL_CLOSED_OVERRIDES)
+        elif now - _cache_last_checked > _STALE_FAIL_CLOSED_SECONDS:
+            settings = dict(_cache)
+            settings.update(_FAIL_CLOSED_OVERRIDES)
+        else:
+            settings = dict(_cache)
+    if not same_path:
+        _refresh_wakeup.set()
+    return settings
 
 
 def get_runtime_setting(key: str, default: Any = None) -> Any:
@@ -242,9 +373,22 @@ def additional_confirmation_required(
 
 
 def clear_runtime_settings_cache() -> None:
-    """Drop the in-memory cache (forces a re-read next call). For tests."""
-    global _cache, _cache_error_key, _cache_key
+    """Reset and synchronously prime the cache for non-async tests."""
+    global _cache, _cache_epoch, _cache_error_key, _cache_file_seen
+    global _cache_identity, _cache_initialized, _cache_last_checked, _cache_path
     with _lock:
         _cache = {}
-        _cache_key = None
+        _cache_path = ""
+        _cache_identity = None
+        _cache_initialized = False
+        _cache_file_seen = False
+        _cache_last_checked = 0.0
         _cache_error_key = None
+        _cache_epoch += 1
+    _refresh_wakeup.set()
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _refresh_settings_from_disk()

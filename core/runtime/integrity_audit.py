@@ -19,6 +19,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Iterable
 from typing import Any
 
 from core.health.read_model import HealthReadModelConfig, HealthSnapshotReadModel
@@ -28,12 +29,114 @@ logger = logging.getLogger("Aura.IntegrityAudit")
 _last_run = 0.0
 _last_report: dict[str, Any] | None = None
 _lock = threading.Lock()
+_PROCESS_STARTED_AT: float | None = None
+_SESSION_LOCK = threading.Lock()
+_SESSION_STARTED_AT: float | None = None
+_SESSION_ACTIVE = False
+_SESSION_GENERATION = 0
 
 # Degradations above this for a single subsystem are flagged as a concern.
 _DEGRADATION_CONCERN = 10
 # Concern verdicts look at a trailing window so the runtime can recover after
 # a degradation storm instead of staying "unhealthy" for its whole lifetime.
 _DEGRADATION_CONCERN_WINDOW_S = 1800.0
+
+
+def _process_started_at() -> float:
+    """Return the wall-clock start of this process incarnation.
+
+    A trailing wall-clock window alone cannot distinguish records from an old
+    runtime when a tracker is retained by an embedded host. Process identity is
+    the lower bound for evidence attributed to this runtime.
+    """
+
+    global _PROCESS_STARTED_AT
+    if _PROCESS_STARTED_AT is not None:
+        return _PROCESS_STARTED_AT
+    try:
+        from core.runtime.resource_psutil import Process
+
+        observed = float(Process(os.getpid()).create_time())
+        if observed <= 0.0:
+            raise ValueError("process start time must be positive")
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        # Keep the established trailing-window behavior when epoch evidence is
+        # unavailable. Guessing "now" would erase valid records from this boot.
+        observed = 0.0
+    _PROCESS_STARTED_AT = observed
+    return observed
+
+
+def _runtime_epoch_started_at() -> float:
+    with _SESSION_LOCK:
+        session_started_at = _SESSION_STARTED_AT
+    if session_started_at is not None:
+        return session_started_at
+    return _process_started_at()
+
+
+def _begin_integrity_session(*, now: float | None = None) -> float:
+    """Advance the evidence epoch only for a new runtime lifespan."""
+
+    global _SESSION_ACTIVE, _SESSION_GENERATION, _SESSION_STARTED_AT
+    with _SESSION_LOCK:
+        if _SESSION_ACTIVE:
+            return float(_SESSION_STARTED_AT or 0.0)
+        if _SESSION_GENERATION == 0:
+            _SESSION_STARTED_AT = _process_started_at()
+        else:
+            _SESSION_STARTED_AT = float(time.time() if now is None else now)
+        _SESSION_GENERATION += 1
+        _SESSION_ACTIVE = True
+        return float(_SESSION_STARTED_AT or 0.0)
+
+
+def _end_integrity_session() -> None:
+    global _SESSION_ACTIVE
+    with _SESSION_LOCK:
+        _SESSION_ACTIVE = False
+
+
+def _epoch_scoped_degradation_counts(
+    records: Iterable[Any],
+    *,
+    window_s: float,
+    now: float,
+    process_started_at: float,
+) -> tuple[dict[str, dict[str, int]], dict[str, float | str]]:
+    """Count degradation records attributable to the current process epoch."""
+
+    observed_at = float(now)
+    epoch_started_at = max(0.0, float(process_started_at))
+    window_started_at = max(
+        epoch_started_at,
+        observed_at - max(0.0, float(window_s)),
+    )
+    counts: dict[str, dict[str, int]] = {}
+    for record in records:
+        try:
+            timestamp = float(record.timestamp)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if timestamp < window_started_at or timestamp > observed_at:
+            continue
+        subsystem = str(getattr(record, "subsystem", "") or "").strip()
+        severity = str(getattr(record, "severity", "") or "").strip()
+        if not subsystem or not severity:
+            continue
+        counts.setdefault(subsystem, {}).setdefault(severity, 0)
+        counts[subsystem][severity] += 1
+    scope: dict[str, float | str] = {
+        "kind": (
+            "process_epoch_trailing_window"
+            if epoch_started_at > 0.0
+            else "trailing_window_epoch_unavailable"
+        ),
+        "process_started_at": epoch_started_at,
+        "window_started_at": window_started_at,
+        "observed_at": observed_at,
+    }
+    return counts, scope
 
 
 def strict_mode() -> bool:
@@ -63,11 +166,19 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
 
         tracker = get_degradation_tracker()
         degradations = tracker.status()
-        # Health verdicts use a trailing window, not lifetime counters — a
-        # long-lived runtime must be able to RECOVER once a storm passes.
-        recent_counts = tracker.recent_counts_by_subsystem(_DEGRADATION_CONCERN_WINDOW_S)
+        # Health verdicts use the intersection of a trailing window and this
+        # process incarnation. A host that retains a tracker across a runtime
+        # restart must not attribute the old runtime's records to the new one.
+        observed_at = time.time()
+        recent_counts, recent_scope = _epoch_scoped_degradation_counts(
+            tracker.recent(limit=1_000_000),
+            window_s=_DEGRADATION_CONCERN_WINDOW_S,
+            now=observed_at,
+            process_started_at=_runtime_epoch_started_at(),
+        )
         degradations["recent_window_s"] = _DEGRADATION_CONCERN_WINDOW_S
         degradations["recent_counts_by_subsystem"] = recent_counts
+        degradations["recent_scope"] = recent_scope
         for sub, sevs in recent_counts.items():
             total = sum(sevs.values())
             if total >= _DEGRADATION_CONCERN:
@@ -201,15 +312,22 @@ _INTEGRITY_READ_MODEL = _new_integrity_read_model()
 def start_integrity_read_model() -> bool:
     """Prewarm integrity evidence without joining the collector."""
 
+    _begin_integrity_session()
     return _INTEGRITY_READ_MODEL.start()
 
 
 def stop_integrity_read_model() -> None:
     _INTEGRITY_READ_MODEL.close()
+    _end_integrity_session()
 
 
 def reset_integrity_read_model_for_test() -> None:
+    global _SESSION_ACTIVE, _SESSION_GENERATION, _SESSION_STARTED_AT
     _INTEGRITY_READ_MODEL.reset_for_test()
+    with _SESSION_LOCK:
+        _SESSION_STARTED_AT = None
+        _SESSION_ACTIVE = False
+        _SESSION_GENERATION = 0
 
 
 def read_integrity_audit() -> dict[str, Any]:

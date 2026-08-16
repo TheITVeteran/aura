@@ -2,6 +2,9 @@
 setting wired through it: voice.output_enabled (docs/SETTINGS_WIRING_AUDIT.md)."""
 import asyncio
 import json
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -80,6 +83,12 @@ def test_deleted_settings_after_valid_read_fail_closed(tmp_path):
     assert rs.get_runtime_setting("autonomy.actions_enabled", False) is True
     (tmp_path / "runtime.json").unlink()
 
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if rs.get_runtime_setting("governance.approval_mode", "none") == "all":
+            break
+        time.sleep(0.01)
+
     assert rs.get_runtime_setting("autonomy.actions_enabled", True) is True
     assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
 
@@ -113,6 +122,61 @@ def test_live_update_reflected(tmp_path):
     assert rs.get_runtime_setting("voice.output_enabled", True) is True
     _write_settings(tmp_path, {"voice.output_enabled": False})
     assert rs.get_runtime_setting("voice.output_enabled", True) is False
+
+
+def test_out_of_band_update_is_refreshed_off_thread(tmp_path):
+    path = tmp_path / "runtime.json"
+    _write_settings(tmp_path, {"voice.output_enabled": True})
+    assert rs.get_runtime_setting("voice.output_enabled", False) is True
+
+    path.write_text(
+        json.dumps({"voice.output_enabled": False}),
+        encoding="utf-8",
+    )
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if rs.get_runtime_setting("voice.output_enabled", True) is False:
+            break
+        time.sleep(0.01)
+
+    assert rs.get_runtime_setting("voice.output_enabled", True) is False
+
+
+def test_control_plane_commit_publishes_without_waiting_for_poll(tmp_path):
+    from core.runtime.settings_control_plane import RuntimeSettingsStore
+
+    path = tmp_path / "runtime.json"
+    store = RuntimeSettingsStore(path)
+    store.patch(
+        {"voice.output_enabled": False},
+        expected_revision=0,
+        request_id="publish-reader-snapshot",
+    )
+
+    assert rs.get_runtime_setting("voice.output_enabled", True) is False
+
+
+def test_background_policy_read_never_stats_on_event_loop(tmp_path, monkeypatch):
+    from core.runtime import background_policy
+
+    _write_settings(tmp_path, {"voice.output_enabled": True})
+    main_thread = threading.current_thread()
+    main_thread_stats: list[Path] = []
+    original_stat = Path.stat
+
+    def observed_stat(path, *args, **kwargs):
+        if threading.current_thread() is main_thread:
+            main_thread_stats.append(path)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", observed_stat)
+
+    async def exercise_policy() -> None:
+        for _ in range(1_000):
+            assert background_policy.foreground_only_runtime() is False
+
+    asyncio.run(exercise_policy())
+    assert main_thread_stats == []
 
 
 def test_voice_output_predicate_default_on(tmp_path):
