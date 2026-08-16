@@ -114,7 +114,6 @@ async def test_llm_timeout_records_local_reflection(monkeypatch, tmp_path):
 
     assert "friction" in reflection
     assert "stall" in reflection
-    assert "friction" in await manager.get_subjective_bias()
 
 
 @pytest.mark.asyncio

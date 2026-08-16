@@ -1,8 +1,13 @@
 """CP126 contract tests for the ontology genesis engine.
 
 The headline finding was that "autonomous formation of cognitive laws" was a
-sixty-second sleep. These pin that the module says so, and that the admission
-gates around the absent step are real.
+sixty-second sleep, reporting `active: true` the whole time. The module was
+made to say so, and these pinned that it did.
+
+The step is written now, so the four tests that pinned its absence pin its
+presence instead — including the part of the CP126 protection that still
+matters most: a cycle that discovers nothing must never look like one that
+did. The admission-gate tests below are unchanged.
 """
 from __future__ import annotations
 
@@ -48,32 +53,58 @@ class _Kernel:
 # --- c0a3c26e: the module does not claim discovery it cannot do ---------
 
 
-def test_discovery_is_declared_unimplemented():
-    assert module.DISCOVERY_IMPLEMENTED is False
+def test_discovery_is_declared_implemented():
+    """And the flag is not the evidence — the step it names has to be there."""
+    assert module.DISCOVERY_IMPLEMENTED is True
+    assert callable(getattr(module.OntologyGenesisEngine, "run_discovery_cycle", None))
+    assert callable(getattr(module, "degradation_observations", None))
 
 
-def test_start_refuses_because_nothing_is_implemented(engine, services):
+def test_start_is_admitted_once_the_step_exists(engine, services):
     services["homeostasis"] = _Homeostasis(0.0)
     services["aura_kernel"] = _Kernel(5)
 
-    assert asyncio.run(engine.start_discovery()) is False
-    assert engine.get_status()["last_refusal"] == "not_implemented"
+    assert asyncio.run(engine.start_discovery()) is True
+    assert engine.get_status()["last_refusal"] == ""
+    asyncio.run(engine.stop_discovery())
 
 
-def test_status_reports_implemented_false(engine):
+def test_status_reports_implemented_with_separate_counters(engine):
     status = engine.get_status()
 
-    assert status["implemented"] is False
+    assert status["implemented"] is True
     assert status["active"] is False
     assert status["discoveries"] == 0
+    # Cycles and discoveries are separate numbers. Most cycles find nothing,
+    # so a single "discoveries: 0" cannot distinguish an engine that is
+    # working from one that never ran, which is the CP126 confusion in a new
+    # costume.
+    assert status["cycles"] == 0
+    assert status["integrated"] == 0
+    assert status["last_law"] is None
 
 
-def test_no_idle_loop_can_report_itself_active(engine, services):
-    """Even with the flag forced, `active` is gated on implementation."""
+def test_active_is_still_gated_on_implementation(engine, services):
     services["homeostasis"] = _Homeostasis(0.0)
     engine._active = True
+    monkey = module.DISCOVERY_IMPLEMENTED
+    try:
+        module.DISCOVERY_IMPLEMENTED = False
+        assert engine.get_status()["active"] is False
+    finally:
+        module.DISCOVERY_IMPLEMENTED = monkey
 
-    assert engine.get_status()["active"] is False
+
+def test_an_empty_cycle_records_a_refusal_and_no_discovery(engine):
+    """The CP126 defect in its most dangerous form: nothing, reported as work."""
+    outcome = asyncio.run(engine.run_discovery_cycle(observations=[]))
+
+    assert outcome.found is False
+    status = engine.get_status()
+    assert status["discoveries"] == 0
+    assert status["integrated"] == 0
+    assert status["cycles"] == 1
+    assert status["last_refusal"]
 
 
 # --- 72c94940: mode alone grants nothing --------------------------------

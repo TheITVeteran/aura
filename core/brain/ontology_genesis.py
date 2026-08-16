@@ -8,19 +8,29 @@ Refactored for ZENITH Protocol efficiency:
   - Must be explicitly triggered by user or deep-research soul drive.
   - Mandatory resource_anxiety abort if system load exceeds thresholds.
 
-**Honest status: the discovery step is NOT IMPLEMENTED.** CP126 c0a3c26e found
-that the advertised "autonomous formation of cognitive laws" was a loop that
-logged, slept sixty seconds, and reached a comment saying the real logic went
-there. It produced no candidate, experiment, verifier result or artifact, and
-never wrote to its own discovery log — while logging "Discovery loop active"
-and reporting ``active: true``.
+CP126 c0a3c26e found that the advertised "autonomous formation of cognitive
+laws" was a loop that logged, slept sixty seconds, and reached a comment saying
+the real logic went there. It produced no candidate, experiment, verifier
+result or artifact, and never wrote to its own discovery log — while logging
+"Discovery loop active" and reporting ``active: true``. The module was made to
+say so: ``DISCOVERY_IMPLEMENTED = False``, and a note naming the four things a
+real step owes.
 
-Rather than dress that up, this module now says so. ``DISCOVERY_IMPLEMENTED``
-is False, ``start_discovery`` refuses with ``not_implemented``, and the status
-surface carries ``implemented: false`` so nothing downstream can read an idle
-timer as research in progress. The admission checks around it — volition,
-authority, resource pressure, supervision — are real and are fixed here, so
-the day a discovery step is written it lands behind a working gate.
+The step exists now, in :mod:`core.brain.ontology_discovery`. Each cycle reads
+the runtime's own degradation ring, induces a conjunctive predicate over
+observable features on a training split, measures it on a held-out split the
+search never saw, tests it against a permutation null, prunes conjuncts that do
+not pay for themselves, requires it to hold on a third split later in time, and
+only then writes it — into the shared heuristic pool that
+``curiosity_explorer``, ``dreamer_v2`` and ``dream_skill`` already read, so a
+discovery reaches a consumer rather than a file nobody opens.
+
+Most cycles find nothing, and that is the design. A discovery loop that cannot
+come back empty is not measuring anything: on twenty runs of pure noise the
+induction returns no law twenty times. ``last_refusal`` carries the reason.
+
+The admission checks around it — volition, authority, resource pressure,
+supervision — were already real and are unchanged.
 
 CP126 c0a3c26e / 72c94940 / d52e6a29 / 96cb9483 / 478804d4.
 """
@@ -32,6 +42,12 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from core.brain.ontology_discovery import (
+    DiscoveredLaw,
+    DiscoveryOutcome,
+    Observation,
+    OntologyDiscovery,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.numeric_safety import validated_unit
 from core.runtime.service_registry import get_runtime_service, register_runtime_service
@@ -40,8 +56,27 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger("Aura.OntologyGenesis")
 
 #: Whether a real discovery step exists. Flipping this to True without writing
-#: one re-creates CP126 c0a3c26e.
-DISCOVERY_IMPLEMENTED = False
+#: one re-creates CP126 c0a3c26e. It is True because
+#: ``core.brain.ontology_discovery`` produces a candidate, runs an experiment
+#: on data the search never saw, obtains a verifier result against a
+#: permutation null, and writes a discovered result to a pool with readers.
+DISCOVERY_IMPLEMENTED = True
+
+#: Gap between discovery cycles. The ring it reads holds 500 records and turns
+#: over slowly; sampling it faster re-measures the same episodes and spends
+#: compute on a question whose answer cannot have changed.
+DISCOVERY_INTERVAL_S = 300.0
+
+#: Degradation records pulled per cycle. The tracker keeps 500, which is the
+#: ceiling; asking for it means a cycle sees everything still in memory.
+OBSERVATION_LIMIT = 500
+
+#: Window for the burst features. Long enough that a retry storm is one burst
+#: rather than several, short enough that an idle hour is not.
+BURST_WINDOW_S = 60.0
+
+#: Discoveries kept in memory. This engine runs for the life of the process.
+MAX_DISCOVERY_LOG = 50
 
 #: Single source of truth for the abort boundary. CP126 96cb9483: status
 #: advertised 0.2 while start_discovery used 0.5 and the loop used 0.3 or 0.6,
@@ -65,6 +100,64 @@ _GENESIS_ERRORS = (
 )
 
 
+def degradation_observations(
+    records: Optional[List[Dict[str, Any]]] = None,
+) -> List[Observation]:
+    """Turn the runtime's degradation ring into episodes to learn from.
+
+    The outcome is whether a record was serious — error or critical. Severity
+    is therefore NOT a feature: a rule that reads the answer off its own input
+    is the leak that makes an induction look brilliant and predict nothing, and
+    excluding it is what makes the held-out lift mean anything.
+
+    Everything else the record carries is available, plus three features about
+    its neighbourhood in time. Those are where the interesting laws live: a
+    single degradation says little, and "the fourth one in a minute, from a
+    third distinct subsystem" says a great deal.
+    """
+    if records is None:
+        try:
+            from core.runtime.errors import recent_degradations
+
+            records = recent_degradations(limit=OBSERVATION_LIMIT)
+        except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+            logger.debug("Degradation ring unavailable: %s", exc)
+            return []
+
+    ordered = sorted(records or [], key=lambda r: float(r.get("at", 0.0) or 0.0))
+    observations: List[Observation] = []
+    for index, record in enumerate(ordered):
+        at = float(record.get("at", 0.0) or 0.0)
+        window_start = at - BURST_WINDOW_S
+        window = [
+            other
+            for other in ordered[:index]
+            if float(other.get("at", 0.0) or 0.0) >= window_start
+        ]
+        previous_at = float(ordered[index - 1].get("at", 0.0) or 0.0) if index else at
+        severity = str(record.get("severity", "") or "").lower()
+        observations.append(
+            Observation(
+                features={
+                    "subsystem": str(record.get("subsystem", "") or "unknown"),
+                    "error_type": str(record.get("error_type", "") or "unknown"),
+                    "seconds_since_previous": round(max(0.0, at - previous_at), 3),
+                    "burst_count": float(len(window)),
+                    "distinct_subsystems": float(
+                        len({str(o.get("subsystem", "")) for o in window})
+                    ),
+                    "repeat_of_previous": bool(
+                        index
+                        and record.get("subsystem") == ordered[index - 1].get("subsystem")
+                    ),
+                },
+                outcome=severity in {"error", "critical"},
+                at=at,
+            )
+        )
+    return observations
+
+
 class OntologyGenesisEngine:
     """
     Manages autonomous discovery of new cognitive laws and heuristics.
@@ -76,12 +169,19 @@ class OntologyGenesisEngine:
     The discovery step itself is not implemented; see the module docstring.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, discovery: Optional[OntologyDiscovery] = None) -> None:
         self._active = False
         self._genesis_task: Optional[asyncio.Task] = None
-        self._discovery_log: List[str] = []
+        self._discovery_log: List[Dict[str, Any]] = []
         self._last_refusal = ""
         self._started_at = 0.0
+        self._discovery = discovery or OntologyDiscovery(
+            outcome_name="a serious degradation"
+        )
+        self._cycles = 0
+        self._integrated = 0
+        self._last_cycle_at = 0.0
+        self._last_outcome: Optional[DiscoveryOutcome] = None
 
     # -- resource telemetry ----------------------------------------------
     def resource_anxiety(self) -> tuple[float, bool]:
@@ -243,13 +343,75 @@ class OntologyGenesisEngine:
             else ANXIETY_THRESHOLD_RUNNING
         )
 
-    async def _discovery_loop(self, volition: int = 0) -> None:
-        """Main loop for high-compute cognitive law formation.
+    async def run_discovery_cycle(
+        self, observations: Optional[List[Observation]] = None
+    ) -> DiscoveryOutcome:
+        """One candidate → experiment → verifier → integration pass.
 
-        Unreachable while DISCOVERY_IMPLEMENTED is False. Kept because the
-        admission and abort logic around the (absent) discovery step is real
-        and tested; the step itself is what has to be written.
+        Separated from the loop so it can be driven directly by a test or an
+        operator. The loop's job is admission and pacing; the evidence work is
+        here, and it returns the refusal when there is one rather than logging
+        and moving on.
         """
+        episodes = observations if observations is not None else degradation_observations()
+        # The induction is CPU-bound over up to 500 episodes with a
+        # 999-permutation null. On the loop it would hold the event loop for
+        # long enough to matter, and this runs beside a live desktop runtime.
+        outcome = await asyncio.to_thread(self._discovery.discover, episodes)
+        self._last_cycle_at = time.time()
+        self._cycles += 1
+        self._last_outcome = outcome
+
+        if not outcome.found or outcome.discovered is None:
+            self._last_refusal = outcome.refusal or "no law survived validation"
+            logger.debug("OntologyGenesis: no law this cycle — %s", self._last_refusal)
+            return outcome
+
+        self._last_refusal = ""
+        discovered = outcome.discovered
+        self._discovery_log.append(discovered.to_dict())
+        # The log is bounded: this runs for the life of the process and an
+        # unbounded list of discoveries is a leak with a scientific name.
+        del self._discovery_log[:-MAX_DISCOVERY_LOG]
+        self._integrate(discovered)
+        return outcome
+
+    def _integrate(self, discovered: DiscoveredLaw) -> bool:
+        """Put the law where something reads it.
+
+        The shared heuristic pool, not a private file. CP126's finding across
+        this codebase is that a writer with no reader is indistinguishable from
+        no writer at all, and a discovery nobody consults is exactly that.
+        """
+        rule = (
+            f"{discovered.law.describe()} "
+            f"(held-out lift {discovered.evidence.heldout_lift:.2f}, "
+            f"p={discovered.evidence.p_value:.3f}, "
+            f"transfer lift {discovered.evidence.transfer_lift:.2f})"
+        )
+        try:
+            from core.adaptation.heuristic_synthesizer import get_heuristic_synthesizer
+
+            accepted = bool(
+                get_heuristic_synthesizer().ingest_external_heuristic(
+                    rule, domain="runtime_ontology", source="ontology_genesis"
+                )
+            )
+        except (*_GENESIS_ERRORS, OSError) as exc:
+            record_degradation(
+                "ontology_genesis",
+                exc,
+                action="discovered law was not integrated into the heuristic pool",
+                severity="warning",
+            )
+            return False
+        self._integrated += int(accepted)
+        if accepted:
+            logger.info("🔬 OntologyGenesis integrated a discovered law: %s", rule)
+        return accepted
+
+    async def _discovery_loop(self, volition: int = 0) -> None:
+        """Admission, pacing, and the abort boundary around the discovery step."""
         while self._active:
             # CP126 478804d4: volition was captured once at start, so a
             # revocation mid-run never tightened the boundary.
@@ -264,11 +426,16 @@ class OntologyGenesisEngine:
                 self._active = False
                 break
 
-            logger.debug("OntologyGenesis: Processing candidate heuristics...")
-            await asyncio.sleep(60)
-            # A discovery step belongs here. It must produce a candidate, run
-            # an experiment, obtain a verifier result, and append an entry to
-            # self._discovery_log — anything less is the CP126 c0a3c26e defect.
+            try:
+                await self.run_discovery_cycle()
+            except _GENESIS_ERRORS as exc:
+                record_degradation(
+                    "ontology_genesis",
+                    exc,
+                    action="discovery cycle failed; the loop continues to the next",
+                    severity="warning",
+                )
+            await asyncio.sleep(DISCOVERY_INTERVAL_S)
 
     # -- status -----------------------------------------------------------
     def get_status(self) -> Dict[str, Any]:
@@ -279,6 +446,14 @@ class OntologyGenesisEngine:
             # CP126 c0a3c26e: the honest headline.
             "implemented": DISCOVERY_IMPLEMENTED,
             "discoveries": len(self._discovery_log),
+            # Cycles run and laws integrated are separate numbers on purpose.
+            # Most cycles find nothing, so reporting only "discoveries" would
+            # make an engine that is working look like one that never ran —
+            # and an engine that never ran look identical to a working one.
+            "cycles": self._cycles,
+            "integrated": self._integrated,
+            "last_cycle_at": self._last_cycle_at,
+            "last_law": self._discovery_log[-1] if self._discovery_log else None,
             # CP126 96cb9483: the thresholds actually in force, all of them.
             "anxiety_threshold_admission": ANXIETY_THRESHOLD_ADMISSION,
             "anxiety_threshold_running": self.running_threshold(volition),
