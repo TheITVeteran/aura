@@ -202,7 +202,10 @@ RULES: list[Rule] = [
             r"\b(?:and that matters"
             r"|that'?s? (?:the part|what) (?:everyone|most people|nobody) (?:miss|gets?)"
             r"|which is exactly the point|that'?s (?:exactly )?the (?:whole )?point"
-            r"|is the important part|worth reading|the part worth"
+            # Bare "worth reading" also matched "before its precision is worth
+            # reading", which is a statement about statistical support. The
+            # clapping sense needs a demonstrative pointing at the text itself.
+            r"|is the important part|(?:this|that|it) is worth reading|the part worth"
             r"|which is the whole point|and that'?s the thing"
             r"|cannot be overstated|it'?s worth stating)\b",
             re.I,

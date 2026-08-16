@@ -104,6 +104,8 @@ NEGATIVES: list[str] = [
     "Wait in short slices so dead workers fail fast.",
     "Processes queued writes in short micro-batches with retry backoff.",
     "Check for deep keywords even in short messages.",
+    # "worth reading" about a statistic, not about the prose.
+    "How many episodes a rule must fire on before its precision is worth reading.",
     # Ordinary prose that must stay quiet.
     "The gate refuses rather than gambles when free memory is low.",
     "Set AURA_LOG_DIR so tests never write into the live log directory.",
