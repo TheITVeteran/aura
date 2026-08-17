@@ -47,6 +47,9 @@ _REFERENCE_FORMAT_TAIL_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _REFERENCE_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*(?:-[A-Za-z0-9'’-]+)*")
+_REFERENCE_SPEAKER_PREFIX_RE = re.compile(
+    r"^\s*[A-Z][A-Za-z0-9_.-]{1,48}\s+here\s*[.:!?-]+\s*",
+)
 _SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "archive", "dev_archive", ".mypy_cache",
               ".ruff_cache", ".pytest_cache", "dist", "build",
               # Worktrees are COPIES of this repository. Measured 2026-08-06:
@@ -114,6 +117,15 @@ def reference_query_candidates(objective: str) -> list[str]:
     raw = " ".join(str(objective or "").split()).strip()
     if not raw:
         return []
+    # A visible speaker label is conversation routing metadata, not the topic.
+    # Live desktop requests commonly begin ``ChatGPT here.`` so Aura knows who
+    # is testing her.  Splitting on the first sentence before removing that
+    # label searched the local corpus for ``ChatGPT here`` and discarded the
+    # actual Dijkstra sentence.  Strip only the narrow self-identification
+    # form; ordinary subjects that happen to contain "here" are untouched.
+    raw = _REFERENCE_SPEAKER_PREFIX_RE.sub("", raw, count=1).strip()
+    if not raw:
+        return []
     opening = re.split(r"(?<=[.!?])\s+", raw, maxsplit=1)[0]
     opening = _REFERENCE_LEAD_RE.sub("", opening).strip(" .?!,:;")
     opening = _REFERENCE_FORMAT_TAIL_RE.sub("", opening).strip(" .?!,:;")
@@ -122,6 +134,7 @@ def reference_query_candidates(objective: str) -> list[str]:
     subject = " ".join(terms).strip()
 
     candidates: list[str] = []
+    named_subject = ""
     if subject:
         candidates.append(subject)
         # Possessive algorithm/theorem names often index under the shorter
@@ -132,7 +145,7 @@ def reference_query_candidates(objective: str) -> list[str]:
             subject,
         )
         if named:
-            candidates.append(f"{named.group(1)} {named.group(2)}")
+            named_subject = f"{named.group(1)} {named.group(2)}"
     if not candidates:
         fallback_terms = [
             term
@@ -141,7 +154,25 @@ def reference_query_candidates(objective: str) -> list[str]:
         ][:8]
         if fallback_terms:
             candidates.append(" ".join(fallback_terms))
-    return list(dict.fromkeys(candidates))[:2]
+    evidence_subject = named_subject or subject
+    lowered = raw.lower()
+    normalized_lowered = lowered.replace("-", " ")
+    # Add only facets the person explicitly asked about. These are retrieval
+    # queries, not decoder instructions: their purpose is to expose the exact
+    # reference sections needed to verify a compound technical explanation.
+    if evidence_subject and "negative" in lowered and "weight" in lowered:
+        candidates.append(f"{evidence_subject} negative weight")
+    if evidence_subject and "complexity" in normalized_lowered and (
+        "heap" in normalized_lowered or "array" in normalized_lowered
+    ):
+        if "heap" in normalized_lowered:
+            heap = "binary heap" if "binary" in normalized_lowered else "heap"
+            candidates.append(
+                f"{evidence_subject} {heap} complexity"
+            )
+        if "array" in normalized_lowered:
+            candidates.append(f"{evidence_subject} array complexity")
+    return list(dict.fromkeys(candidates))[:4]
 
 
 class EvidenceProvider:
@@ -193,17 +224,17 @@ class EvidenceProvider:
             )
 
             corpus = get_local_corpus_store()
-            hits = []
-            for query in queries:
-                found = await asyncio.to_thread(
-                    corpus.search,
-                    query,
-                    max(6, limit * 2),
-                    deadline_s=CONVERSATION_SEARCH_DEADLINE_S,
+            search_groups = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        corpus.search,
+                        query,
+                        max(6, limit * 2),
+                        deadline_s=CONVERSATION_SEARCH_DEADLINE_S,
+                    )
+                    for query in queries
                 )
-                hits.extend(found or [])
-                if len(hits) >= limit:
-                    break
+            )
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "evidence_reference",
@@ -227,12 +258,28 @@ class EvidenceProvider:
             overlap = len(query_terms & title_terms) / max(1, len(query_terms))
             return (-overlap, float(getattr(hit, "rank", 0.0) or 0.0), len(title_terms))
 
-        unique: dict[tuple[str, str], Any] = {}
-        for hit in hits:
-            key = (str(getattr(hit, "source", "")), str(getattr(hit, "title", "")))
-            if key[1] and key not in unique:
-                unique[key] = hit
-        ordered = sorted(unique.values(), key=rank)
+        # Rank each query's results by subject-title agreement, then interleave
+        # the groups. A broad title hit must not crowd out the focused snippet
+        # about a requested limitation or complexity bound. Exact duplicate
+        # snippets collapse; different sections of the same article remain.
+        ranked_groups = [sorted(list(group or []), key=rank) for group in search_groups]
+        ordered: list[Any] = []
+        seen: set[tuple[str, str, str]] = set()
+        width = max((len(group) for group in ranked_groups), default=0)
+        for position in range(width):
+            for group in ranked_groups:
+                if position >= len(group):
+                    continue
+                hit = group[position]
+                key = (
+                    str(getattr(hit, "source", "")),
+                    str(getattr(hit, "title", "")),
+                    str(getattr(hit, "snippet", "")),
+                )
+                if not key[1] or key in seen:
+                    continue
+                seen.add(key)
+                ordered.append(hit)
         return [
             EvidenceSpan(
                 "reference",

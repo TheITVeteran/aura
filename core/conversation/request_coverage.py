@@ -37,6 +37,7 @@ _COVERAGE_STOPWORDS = frozenset(
         "chatgpt",
         "current",
         "could",
+        "correct",
         "did",
         "does",
         "doing",
@@ -127,6 +128,70 @@ _COVERAGE_STOPWORDS = frozenset(
 
 _MIN_COVERAGE_TOKENS = 2
 
+_NUMBER_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+}
+_COUNT_TOKEN = r"(?:\d{1,3}|" + "|".join(_NUMBER_WORDS) + r")"
+_MINIMUM_QUANTITY_RE = re.compile(
+    rf"\b(?:at\s+least|no\s+fewer\s+than|a\s+minimum\s+of|minimum(?:\s+of)?)\s+"
+    rf"(?P<count>{_COUNT_TOKEN})\s+"
+    r"(?P<label>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})",
+    re.IGNORECASE,
+)
+_BOTH_SIDES_RE = re.compile(
+    r"\bboth\s+(?P<left>.+?)\s+and\s+(?P<right>.+?)(?=\s*[,.;]|$)",
+    re.IGNORECASE,
+)
+_SHARED_HEAD_PAIR_RE = re.compile(
+    r"\b(?P<left>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*)?)\s+and\s+"
+    r"(?P<right>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*)?)\s+"
+    r"(?P<head>complexit(?:y|ies)|comparison|contrast|tradeoffs?|effects?|results?)\b",
+    re.IGNORECASE,
+)
+_CORRECT_ALTERNATIVE_RE = re.compile(
+    r"\b(?:the\s+)?correct\s+alternative\b", re.IGNORECASE
+)
+_ALTERNATIVE_WITNESS_RE = re.compile(
+    r"\b(?:alternative|instead|rather\s+than|replacement|replace(?:s|d)?|"
+    r"use|choose|switch(?:es|ed)?\s+to)\b",
+    re.IGNORECASE,
+)
+_NAMED_ENUMERATION_RE = re.compile(
+    r"\b(?:vertices|nodes|items|options|cases|stages|phases)\s+"
+    r"(?P<items>[A-Z0-9][A-Z0-9_-]*(?:\s*,\s*[A-Z0-9][A-Z0-9_-]*){1,15})",
+)
+_NUMBERED_ANSWER_SECTION_RE = re.compile(
+    r"(?<![A-Za-z0-9^])(?P<number>\d{1,2})\s*[.)]\s+"
+)
+_GRAPH_EDGE_RE = re.compile(
+    r"(?:"
+    r"\(\s*[A-Z]\s*[,\-]\s*[A-Z]\s*\)"
+    r"|\(\s*[A-Z]{2}\s*\)"
+    r"|\b[A-Z]\s*(?:->|→|--?|–|—|\bto\b)\s*[A-Z]\b"
+    r")\s*(?::|=|\(|\[)?\s*-?\d+(?:\.\d+)?",
+    re.IGNORECASE,
+)
+
 _RELATION_REQUEST_RE = re.compile(
     r"\b(?:distinguish|differentiate|separate|compare|contrast)\b"
     r"(?P<left>.+?)"
@@ -188,6 +253,7 @@ _COVERAGE_EQUIVALENCE = {
     "failing": "failure",
     "weighted": "weight",
     "weights": "weight",
+    "instead": "alternative",
 }
 
 _EPISTEMIC_SIDES = frozenset({"epistemic_known", "epistemic_inferred"})
@@ -210,13 +276,17 @@ def coverage_tokens(text: Any) -> set[str]:
     """Return distinctive words that can prove an ask was engaged."""
 
     words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", str(text or "").lower())
-    return {
-        _COVERAGE_EQUIVALENCE.get(
-            word.split("'", 1)[0], word.split("'", 1)[0]
-        )
-        for word in words
-        if word not in _COVERAGE_STOPWORDS and len(word.split("'", 1)[0]) > 2
-    }
+    tokens: set[str] = set()
+    for word in words:
+        candidates = (word, *word.split("-")) if "-" in word else (word,)
+        for candidate in candidates:
+            stem = candidate.split("'", 1)[0]
+            if candidate in _COVERAGE_STOPWORDS or stem in _COVERAGE_STOPWORDS:
+                continue
+            if len(stem) <= 2:
+                continue
+            tokens.add(_COVERAGE_EQUIVALENCE.get(stem, stem))
+    return tokens
 
 
 def _epistemic_partition_is_covered(body: Any) -> bool:
@@ -343,6 +413,120 @@ def _relation_sides_are_covered(
     return bool(left & answered) and bool(right & answered)
 
 
+def _count_value(raw: Any) -> int | None:
+    text = str(raw or "").strip().lower()
+    if text.isdigit():
+        return int(text)
+    return _NUMBER_WORDS.get(text)
+
+
+def _numbered_answer_sections(body: Any) -> dict[int, str]:
+    """Return numbered response bodies without confusing exponents for items."""
+
+    text = str(body or "")
+    matches = list(_NUMBERED_ANSWER_SECTION_RE.finditer(text))
+    if len(matches) < 2:
+        return {}
+    sections: dict[int, str] = {}
+    for index, match in enumerate(matches):
+        number = int(match.group("number"))
+        if number in sections:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[number] = text[match.end() : end].strip()
+    return sections
+
+
+def _semantic_group_is_covered(group: set[str], body: Any) -> bool:
+    """Require every distinctive term in one explicitly named obligation."""
+
+    if not group:
+        return True
+    return group <= coverage_tokens(body)
+
+
+def _minimum_quantity_is_covered(segment: Any, body: Any) -> bool | None:
+    """Prove a requested minimum from an explicit or structured witness.
+
+    This does not infer that mentioning a plural noun satisfies a cardinality.
+    Domain readers can supply exact structured counts; graph edges are the first
+    such reader because their endpoint/weight syntax is independently parsable.
+    ``None`` means no minimum quantity was requested.
+    """
+
+    request = _MINIMUM_QUANTITY_RE.search(str(segment or ""))
+    if request is None:
+        return None
+    minimum = _count_value(request.group("count"))
+    if minimum is None:
+        return False
+    label_tokens = coverage_tokens(request.group("label"))
+    label_head = next(reversed(sorted(label_tokens, key=len)), "")
+    text = str(body or "")
+
+    explicit = re.compile(
+        rf"\b(?P<count>{_COUNT_TOKEN})\s+"
+        rf"(?:[A-Za-z][A-Za-z'-]*\s+){{0,2}}{re.escape(label_head)}(?:s|es)?\b",
+        re.IGNORECASE,
+    ) if label_head else None
+    if explicit is not None:
+        for match in explicit.finditer(text):
+            value = _count_value(match.group("count"))
+            if value is not None and value >= minimum:
+                return True
+
+    if "edge" in label_tokens or "edges" in str(request.group("label")).lower():
+        unique_edges = {match.group(0).casefold() for match in _GRAPH_EDGE_RE.finditer(text)}
+        return len(unique_edges) >= minimum
+    return False
+
+
+def _strong_segment_obligations_are_covered(segment: Any, body: Any) -> bool:
+    """Check constraints whose semantics are stronger than lexical overlap."""
+
+    text = str(segment or "")
+    quantity = _minimum_quantity_is_covered(text, body)
+    if quantity is False:
+        return False
+
+    both = _BOTH_SIDES_RE.search(text)
+    if both is not None:
+        left = coverage_tokens(both.group("left"))
+        right = coverage_tokens(both.group("right"))
+        if not (
+            _semantic_group_is_covered(left, body)
+            and _semantic_group_is_covered(right, body)
+        ):
+            return False
+
+    shared_head = _SHARED_HEAD_PAIR_RE.search(text)
+    if shared_head is not None:
+        left = coverage_tokens(shared_head.group("left"))
+        right = coverage_tokens(shared_head.group("right"))
+        if not (
+            _semantic_group_is_covered(left, body)
+            and _semantic_group_is_covered(right, body)
+        ):
+            return False
+
+    if _CORRECT_ALTERNATIVE_RE.search(text) and not _ALTERNATIVE_WITNESS_RE.search(
+        str(body or "")
+    ):
+        return False
+
+    enumeration = _NAMED_ENUMERATION_RE.search(text)
+    if enumeration is not None:
+        requested = [item.strip() for item in enumeration.group("items").split(",")]
+        answer_text = str(body or "")
+        if any(
+            re.search(rf"(?<![A-Za-z0-9_]){re.escape(item)}(?![A-Za-z0-9_])", answer_text)
+            is None
+            for item in requested
+        ):
+            return False
+    return True
+
+
 def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
     """Return substantive asks a reply never engages with at all.
 
@@ -360,6 +544,7 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
         return []
 
     answered = coverage_tokens(body)
+    numbered_sections = _numbered_answer_sections(body)
     numbered_markers = re.findall(r"(?:^|\n|\s)\d+\s*[.)]", str(body or ""))
     if len(numbered_markers) >= 2:
         answered.add("numbered")
@@ -372,7 +557,21 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
     for index, segment in enumerate(segments):
         if is_reply_shape_constraint_segment(segment):
             continue
-        relation_covered = _relation_sides_are_covered(segment, body, answered)
+        numbered_section = index - numbered_start + 1
+        local_body = str(body or "")
+        local_answered = answered
+        if numbered_parts >= 3 and index >= numbered_start and numbered_sections:
+            local_body = numbered_sections.get(numbered_section, "")
+            if not local_body:
+                missed.append(str(segment))
+                continue
+            local_answered = coverage_tokens(local_body)
+        if not _strong_segment_obligations_are_covered(segment, local_body):
+            missed.append(str(segment))
+            continue
+        relation_covered = _relation_sides_are_covered(
+            segment, local_body, local_answered
+        )
         if relation_covered is False:
             missed.append(str(segment))
             continue
@@ -381,7 +580,7 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
         wanted = coverage_tokens(segment)
         if len(wanted) < _MIN_COVERAGE_TOKENS:
             continue
-        overlap = wanted & answered
+        overlap = wanted & local_answered
         # Numbered multipart requests carry independent explicit obligations.
         # One shared context word cannot prove one of those obligations was
         # answered: "weights" in a graph example must not satisfy a later ask

@@ -73,12 +73,36 @@ def test_reference_query_uses_subject_not_requested_answer_format():
     assert "worked example" not in " ".join(queries).lower()
 
 
+def test_reference_query_ignores_visible_speaker_identity_prefix():
+    queries = reference_query_candidates(
+        "ChatGPT here. Explain the Dijkstra shortest-path algorithm in one "
+        "complete response. Include: (1) the invariant and (2) pseudocode."
+    )
+
+    assert queries[0] == "Dijkstra shortest-path algorithm"
+    assert all("chatgpt" not in query.lower() for query in queries)
+
+
+def test_reference_query_adds_explicit_technical_facets():
+    queries = reference_query_candidates(
+        "Explain the Dijkstra shortest-path algorithm. Include binary-heap and "
+        "array complexity plus its failure with negative weights."
+    )
+
+    assert "Dijkstra algorithm negative weight" in queries
+    assert "Dijkstra algorithm binary heap complexity" in queries
+    assert "Dijkstra algorithm array complexity" in queries
+
+
 @pytest.mark.asyncio
 async def test_factual_evidence_reads_and_prioritizes_offline_reference(monkeypatch):
     from types import SimpleNamespace
 
     class _Corpus:
+        queries = []
+
         def search(self, query, limit, *, deadline_s):
+            self.queries.append(query)
             assert query.startswith("Dijkstra")
             assert limit >= 6
             assert deadline_s <= 0.25
@@ -109,3 +133,38 @@ async def test_factual_evidence_reads_and_prioritizes_offline_reference(monkeypa
     assert spans[0].source == "reference"
     assert "Dijkstra's algorithm" in spans[0].ref
     assert "non-negative" in spans[0].text
+
+
+@pytest.mark.asyncio
+async def test_factual_evidence_keeps_distinct_sections_from_same_article(monkeypatch):
+    from types import SimpleNamespace
+
+    class _Corpus:
+        def search(self, query, limit, *, deadline_s):
+            if "negative weight" in query:
+                snippet = "Negative weights require Bellman-Ford instead."
+            elif "complexity" in query:
+                snippet = "A binary heap costs O(E log V); an array costs O(V^2)."
+            else:
+                snippet = "Dijkstra finds shortest paths in weighted graphs."
+            return [
+                SimpleNamespace(
+                    source="wikipedia",
+                    title="Dijkstra's algorithm",
+                    snippet=snippet,
+                    rank=-1.0,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "core.knowledge.local_corpus.get_local_corpus_store", lambda: _Corpus()
+    )
+    spans = await EvidenceProvider(memory_facade=None).reference_evidence(
+        "ChatGPT here. Explain the Dijkstra algorithm, including negative weights "
+        "and binary heap and array complexity.",
+        limit=4,
+    )
+
+    rendered = "\n".join(span.render() for span in spans)
+    assert "Bellman-Ford" in rendered
+    assert "O(E log V)" in rendered

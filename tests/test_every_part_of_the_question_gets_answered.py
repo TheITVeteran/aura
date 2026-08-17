@@ -144,6 +144,71 @@ def test_one_shared_context_word_does_not_satisfy_a_numbered_obligation():
     assert any("negative-weight" in segment for segment in missed)
 
 
+def test_each_numbered_obligation_is_proved_by_its_own_answer_section():
+    user = (
+        "Explain Dijkstra. Include: (1) its core invariant, (2) numbered pseudocode, "
+        "(3) a worked graph example, (4) heap and array complexity, and "
+        "(5) a negative-weight failure case and the correct alternative."
+    )
+    reply = (
+        "1. The core invariant finalizes the minimum unsettled distance. "
+        "2. Numbered pseudocode repeatedly relaxes edges. "
+        "3. The worked graph example uses weighted edges. "
+        "4. Heap complexity is O(E log V). "
+        "5. An array scan is O(V^2), while negative weights cause failure."
+    )
+    shape = analyze_prompt_shape(user)
+
+    missed = _unanswered_question_parts(reply, _Contract(shape))
+
+    assert any("heap and array" in segment for segment in missed)
+    assert any("correct alternative" in segment for segment in missed)
+
+
+def test_minimum_quantity_requires_a_real_count_witness():
+    user = (
+        "Explain Dijkstra. Include: (1) its invariant, (2) pseudocode, "
+        "(3) a worked example with at least five weighted edges."
+    )
+    three_edges = (
+        "Dijkstra computes shortest paths. 1. Its invariant finalizes the minimum distance. "
+        "2. Pseudocode initializes and relaxes distances. "
+        "3. The worked example has weighted edges (AB):10, (AC):20, (AD):30."
+    )
+    five_edges = three_edges.replace(
+        "(AD):30.", "(AD):30, (BC):4, (CD):6."
+    )
+    shape = analyze_prompt_shape(user)
+
+    assert any(
+        "five weighted edges" in segment
+        for segment in _unanswered_question_parts(three_edges, _Contract(shape))
+    )
+    assert not _unanswered_question_parts(five_edges, _Contract(shape))
+
+
+def test_both_sides_and_correct_alternative_need_independent_witnesses():
+    user = (
+        "Explain Dijkstra. Include: (1) the invariant, (2) time complexity with "
+        "both a binary heap and an array, and (3) a negative-weight failure and "
+        "the correct alternative."
+    )
+    incomplete = (
+        "Dijkstra computes shortest paths. 1. The invariant finalizes the minimum distance. "
+        "2. Time complexity with a heap is O(E log V). "
+        "3. Negative weights cause a failure."
+    )
+    complete = (
+        "Dijkstra computes shortest paths. 1. The invariant finalizes the minimum distance. "
+        "2. Time complexity with a binary heap is O(E log V), and an array is O(V^2). "
+        "3. Negative weights cause a failure; use Bellman-Ford instead."
+    )
+    shape = analyze_prompt_shape(user)
+
+    assert len(_unanswered_question_parts(incomplete, _Contract(shape))) == 2
+    assert not _unanswered_question_parts(complete, _Contract(shape))
+
+
 def test_one_shared_content_word_counts_as_engaged():
     """Catches the half ignored outright, not the half answered briefly.
 

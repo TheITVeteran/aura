@@ -271,6 +271,40 @@ def test_prompt_renderer_bounds_redacts_and_labels_untrusted_values():
     assert json.loads(encoded)["schema"] == CONTEXT_SCHEMA
 
 
+def test_prompt_renderer_preserves_reference_evidence_when_telemetry_is_large():
+    packet = {
+        "schema": CONTEXT_SCHEMA,
+        "snapshot_id": "s-reference",
+        "complete": True,
+        "sources": {
+            "identity": {"status": "ok", "data": {"bulk": "x" * 8_000}},
+            "consciousness": {"status": "ok", "data": {"bulk": "y" * 8_000}},
+            "reference": {
+                "status": "ok",
+                "data": {
+                    "items": [
+                        {
+                            "content": "Dijkstra rejects negative weights; use Bellman-Ford.",
+                            "source": "wikipedia",
+                        }
+                    ],
+                    "count": 1,
+                },
+            },
+        },
+    }
+
+    rendered = render_unified_context_prompt(packet)
+
+    assert len(rendered) < 7_000
+    assert "Dijkstra rejects negative weights" in rendered
+    encoded = rendered.split("<UNTRUSTED_CONTEXT_DATA>", 1)[1].split(
+        "</UNTRUSTED_CONTEXT_DATA>", 1
+    )[0]
+    decoded = json.loads(encoded)
+    assert decoded["sources"]["reference"]["data"]["count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_stale_memory_cache_is_partitioned_by_principal(monkeypatch):
     class _SwitchingMemory(_Memory):

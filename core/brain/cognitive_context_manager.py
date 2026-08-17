@@ -20,6 +20,7 @@ from typing import Any
 from core.brain.evidence_provider import get_evidence_provider
 from core.runtime import service_access
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_async_lock
 from core.runtime.memory_consent import get_memory_consent_policy
 from core.runtime.principal_context import (
     current_relational_principal,
@@ -27,7 +28,6 @@ from core.runtime.principal_context import (
 )
 from core.runtime.runtime_settings import get_runtime_setting
 from core.security.structural_redaction import redact_structure, redact_text
-from core.runtime.lockdep import checked_async_lock
 
 logger = logging.getLogger("Aura.ContextManager")
 
@@ -39,6 +39,7 @@ _STALE_SOURCE_TTL_S = 30.0
 _MAX_MEMORY_ITEMS = 3
 _MAX_MEMORY_CHARS = 2_500
 _MAX_PROMPT_CHARS = 6_000
+_PROMPT_EVIDENCE_SOURCES = ("reference", "memory", "user_intent")
 _SCOPE_KEYS = frozenset(
     {
         "principal_id",
@@ -138,19 +139,36 @@ def render_unified_context_prompt(packet: Mapping[str, Any] | None) -> str:
     encoded = json.dumps(safe, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     if len(encoded) > _MAX_PROMPT_CHARS:
         sources = _safe_mapping(packet.get("sources"))
-        encoded = json.dumps(
+        projected_sources: dict[str, Any] = {}
+        for name, record in sources.items():
+            if not isinstance(name, str) or not isinstance(record, Mapping):
+                continue
+            projected: dict[str, Any] = {
+                key: record.get(key)
+                for key in ("status", "captured_at", "latency_ms", "stale_age_s", "error")
+                if record.get(key) is not None
+            }
+            if name in _PROMPT_EVIDENCE_SOURCES and "data" in record:
+                projected["data"] = record.get("data")
+            projected_sources[name] = projected
+        compact, _compact_report = redact_structure(
             {
                 "schema": CONTEXT_SCHEMA,
                 "snapshot_id": str(packet.get("snapshot_id") or "")[:128],
                 "complete": bool(packet.get("complete")),
-                "source_status": {
-                    name: record.get("status")
-                    for name, record in sources.items()
-                    if isinstance(name, str) and isinstance(record, Mapping)
-                },
+                "captured_at": packet.get("captured_at"),
+                "capture_skew_ms": packet.get("capture_skew_ms"),
+                "sources": projected_sources,
                 "truncated": True,
                 "full_packet_sha256": hashlib.sha256(encoded.encode()).hexdigest(),
             },
+            max_depth=7,
+            max_items=64,
+            max_string=1_200,
+            max_total_chars=_MAX_PROMPT_CHARS - 256,
+        )
+        encoded = json.dumps(
+            compact,
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
