@@ -17,6 +17,7 @@ from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.nonparametric_ingest import NonParametricIngestor
 from core.brain.nonparametric_memory import NonParametricMemory
 from core.utils.deadlines import get_deadline
+from tests.nonparametric_support import entry_provenance
 
 
 class _Process:
@@ -52,14 +53,15 @@ def test_worker_ingest_reuses_resident_model_with_one_forward(tmp_path, monkeypa
     monkeypatch.setattr(nonparametric_generation, "MLXEncoder", _BatchEncoder)
     monkeypatch.setattr(
         nonparametric_ingest,
-        "collect_trusted_pairs",
-        lambda limit: [("keeper name", "Tessaly the great")][:limit],
+        "collect_trusted_pairs_by_source",
+        lambda *, limit: [("entries", [("keeper name", "Tessaly the great")])],
     )
     monkeypatch.setattr(
         nonparametric_ingest,
         "NonParametricIngestor",
-        lambda target: NonParametricIngestor(
+        lambda target, *, provenance: NonParametricIngestor(
             target,
+            provenance=provenance,
             dedup_path=tmp_path / "seen.json",
         ),
     )
@@ -80,28 +82,38 @@ def test_worker_ingest_reuses_resident_model_with_one_forward(tmp_path, monkeypa
     assert result["positions_ingested"] == 3
     assert _BatchEncoder.calls == 1
     assert len(memory) == 3
+    # every entry names the store it came from, so a discredited trusted
+    # store can be withdrawn without erasing the rest
+    assert memory.revoke_source("trusted_store:entries") == 3
 
 
 def test_worker_ingest_skips_seen_prefix_and_uses_next_pair(tmp_path, monkeypatch):
     memory = NonParametricMemory(dim=8, path=tmp_path / "memory")
     dedup_path = tmp_path / "seen.json"
     encoder = _BatchEncoder(object(), object())
-    seed = NonParametricIngestor(memory, dedup_path=dedup_path)
+    seed = NonParametricIngestor(memory, dedup_path=dedup_path, provenance=entry_provenance())
     assert seed.ingest_sequence("already known", "first answer", encoder) == 2
     _BatchEncoder.calls = 0
     monkeypatch.setattr(nonparametric_generation, "MLXEncoder", _BatchEncoder)
     monkeypatch.setattr(
         nonparametric_ingest,
-        "collect_trusted_pairs",
-        lambda limit: [
-            ("already known", "first answer"),
-            ("new keeper", "second answer"),
-        ][:limit],
+        "collect_trusted_pairs_by_source",
+        lambda *, limit: [
+            (
+                "entries",
+                [
+                    ("already known", "first answer"),
+                    ("new keeper", "second answer"),
+                ],
+            )
+        ],
     )
     monkeypatch.setattr(
         nonparametric_ingest,
         "NonParametricIngestor",
-        lambda target: NonParametricIngestor(target, dedup_path=dedup_path),
+        lambda target, *, provenance: NonParametricIngestor(
+            target, provenance=provenance, dedup_path=dedup_path
+        ),
     )
     monkeypatch.setattr(
         nonparametric_memory,
@@ -121,25 +133,29 @@ def test_worker_ingest_skips_seen_prefix_and_uses_next_pair(tmp_path, monkeypatc
     assert _BatchEncoder.calls == 1
 
 
-def test_worker_ingest_skips_oversized_prefix_and_uses_eligible_pair(
-    tmp_path, monkeypatch
-):
+def test_worker_ingest_skips_oversized_prefix_and_uses_eligible_pair(tmp_path, monkeypatch):
     memory = NonParametricMemory(dim=8, path=tmp_path / "memory")
     _BatchEncoder.calls = 0
     monkeypatch.setattr(nonparametric_generation, "MLXEncoder", _BatchEncoder)
     monkeypatch.setattr(
         nonparametric_ingest,
-        "collect_trusted_pairs",
-        lambda limit: [
-            ("oversized context", " ".join(["token"] * 40)),
-            ("eligible context", "short answer"),
-        ][:limit],
+        "collect_trusted_pairs_by_source",
+        lambda *, limit: [
+            (
+                "entries",
+                [
+                    ("oversized context", " ".join(["token"] * 40)),
+                    ("eligible context", "short answer"),
+                ],
+            )
+        ],
     )
     monkeypatch.setattr(
         nonparametric_ingest,
         "NonParametricIngestor",
-        lambda target: NonParametricIngestor(
+        lambda target, *, provenance: NonParametricIngestor(
             target,
+            provenance=provenance,
             dedup_path=tmp_path / "seen.json",
         ),
     )
@@ -168,21 +184,21 @@ def test_worker_ingest_skips_oversized_prefix_and_uses_eligible_pair(
     assert _BatchEncoder.calls == 1
 
 
-def test_worker_does_not_publish_dedup_receipt_before_memory_persist(
-    tmp_path, monkeypatch
-):
+def test_worker_does_not_publish_dedup_receipt_before_memory_persist(tmp_path, monkeypatch):
     memory = NonParametricMemory(dim=8, path=tmp_path / "memory")
     dedup_path = tmp_path / "seen.json"
     monkeypatch.setattr(nonparametric_generation, "MLXEncoder", _BatchEncoder)
     monkeypatch.setattr(
         nonparametric_ingest,
-        "collect_trusted_pairs",
-        lambda limit: [("keeper name", "Tessaly")][:limit],
+        "collect_trusted_pairs_by_source",
+        lambda *, limit: [("entries", [("keeper name", "Tessaly")])],
     )
     monkeypatch.setattr(
         nonparametric_ingest,
         "NonParametricIngestor",
-        lambda target: NonParametricIngestor(target, dedup_path=dedup_path),
+        lambda target, *, provenance: NonParametricIngestor(
+            target, provenance=provenance, dedup_path=dedup_path
+        ),
     )
     monkeypatch.setattr(
         nonparametric_memory,
@@ -207,8 +223,8 @@ def test_worker_ingest_observes_soft_cancel_before_model_forward(tmp_path, monke
     monkeypatch.setattr(nonparametric_generation, "MLXEncoder", _BatchEncoder)
     monkeypatch.setattr(
         nonparametric_ingest,
-        "collect_trusted_pairs",
-        lambda limit: [("keeper name", "Tessaly")][:limit],
+        "collect_trusted_pairs_by_source",
+        lambda *, limit: [("entries", [("keeper name", "Tessaly")])],
     )
     monkeypatch.setattr(
         nonparametric_memory,

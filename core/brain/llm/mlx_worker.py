@@ -4941,11 +4941,16 @@ def _run_nonparametric_ingest_job(
     """
 
     from core.brain.nonparametric_generation import MLXEncoder
+    from core.brain.nonparametric_identity import TrustLevel
     from core.brain.nonparametric_ingest import (
         NonParametricIngestor,
-        collect_trusted_pairs,
+        collect_trusted_pairs_by_source,
+        ingest_provenance,
     )
-    from core.brain.nonparametric_memory import get_nonparametric_memory
+    from core.brain.nonparametric_memory import (
+        SHARED_MEMORY_PRINCIPAL,
+        get_nonparametric_memory,
+    )
 
     max_pairs = max(1, min(4, int(job.get("max_pairs") or 1)))
     scan_limit = max(max_pairs, min(64, int(job.get("scan_limit") or 16)))
@@ -4986,12 +4991,36 @@ def _run_nonparametric_ingest_job(
             "positions_ingested": 0,
         }
 
-    ingestor = NonParametricIngestor(memory)
     # Collection is bounded BY the admitted scan limit (small multiple for
     # the has_seen filter), not a fixed >=500 floor that let a "tiny
     # bounded batch" job inspect the entire oversized collection.
-    collected_pairs = collect_trusted_pairs(limit=min(256, scan_limit * 4))
-    if not collected_pairs:
+    #
+    # Grouped by source, because every entry has to name the trusted store
+    # that produced it. The ingestor used to be built with no provenance at
+    # all, so each entry it wrote was unattributed, unverified and owned by
+    # "anonymous" — the three values the store's revocation and
+    # per-principal erasure need before they can do anything.
+    grouped = collect_trusted_pairs_by_source(limit=min(256, scan_limit * 4))
+    collected_pairs = [
+        (context, answer, source) for source, found in grouped for context, answer in found
+    ]
+    ingestors = {
+        source: NonParametricIngestor(
+            memory,
+            provenance=ingest_provenance(
+                # Aura's own verified reasoning results belong to the
+                # system, not to a person, and the store has a name for
+                # that: `shared` is readable by every principal.
+                principal=SHARED_MEMORY_PRINCIPAL,
+                source_id=f"trusted_store:{source}",
+                trust=TrustLevel.VERIFIED,
+                verifier="reasoning_solved_cache",
+            ),
+        )
+        for source, _found in grouped
+    }
+    ingestor = next(iter(ingestors.values()), None)
+    if ingestor is None or not collected_pairs:
         return {
             "state": "no_trusted_pairs",
             "pairs_scanned": 0,
@@ -4999,9 +5028,9 @@ def _run_nonparametric_ingest_job(
             "positions_ingested": 0,
         }
     pairs = [
-        (context, answer)
-        for context, answer in collected_pairs
-        if not ingestor.has_seen(context, answer)
+        (context, answer, source)
+        for context, answer, source in collected_pairs
+        if not ingestors[source].has_seen(context, answer)
     ]
     if not pairs:
         return {
@@ -5016,7 +5045,8 @@ def _run_nonparametric_ingest_job(
     pairs_scanned = 0
     pairs_ingested = 0
     positions_ingested = 0
-    for context, answer in pairs:
+    for context, answer, source in pairs:
+        ingestor = ingestors[source]
         if (
             pairs_ingested >= max_pairs
             # scan_limit bounds budget-eligible scans; total budget-probe

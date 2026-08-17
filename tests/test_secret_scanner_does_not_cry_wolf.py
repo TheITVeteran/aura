@@ -14,9 +14,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.aura_enterprise_gate import _is_non_secret_literal
+from tools.security_scan import _is_regular_expression_literal
 
 # Built at runtime, never written as literals. A test that proves the scanner
 # still catches high-entropy keys must not itself ship high-entropy keys —
@@ -150,3 +153,54 @@ class TestPassOnlyConstructorsAreJudgedByShape:
 
     def test_a_bare_pass_only_function_is_reported(self) -> None:
         assert "pass_only_function" in self._findings("def nothing():\n    pass\n")
+
+
+class TestARegexIsRecognisedByItsValue:
+    """The scanner asked what the constant was CALLED, not what it held.
+
+    `interlocutor_identity._NAME_TOKEN` is a regular expression. It was the
+    entire standing output of `make security`, reported every run, because
+    the exclusion required the constant's name to end in `_re`/`_regex` or
+    contain "pattern" — and this one is called `_NAME_TOKEN`, whose second
+    word is in the credential vocabulary. A name is not evidence.
+    """
+
+    def test_the_constant_that_stood_in_the_gate_is_excluded(self) -> None:
+        from core.conversation.interlocutor_identity import _NAME_TOKEN
+
+        assert _is_regular_expression_literal(_NAME_TOKEN)
+
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            r"(?P<name>\w+)",
+            r"[a-z]{3,8}",
+            r"^\s*(?i:this\s+is)\s+",
+            r"\bAKIA[0-9A-Z]{16}\b",
+        ],
+    )
+    def test_regex_syntax_is_recognised_without_help_from_the_name(
+        self, literal: str
+    ) -> None:
+        assert _is_regular_expression_literal(literal)
+
+    @pytest.mark.parametrize("literal", [_SK, _AWS, _GHP, _SLACK])
+    def test_a_real_credential_is_never_read_as_a_regex(self, literal: str) -> None:
+        assert not _is_regular_expression_literal(literal)
+
+    def test_base64_punctuation_alone_does_not_make_a_regex(self) -> None:
+        """`+`, `/`, `-` and `_` appear in base64url secrets; they are not
+        regex evidence on their own."""
+        assert not _is_regular_expression_literal("eyJhbGciOi.abc-_+/=" * 2)
+
+    def test_an_uncompilable_string_is_not_treated_as_a_pattern(self) -> None:
+        assert not _is_regular_expression_literal(r"(?P<unclosed[a-z]{2,}")
+
+
+def test_the_security_gate_has_no_standing_findings() -> None:
+    """A gate with a permanent finding is a gate nobody reads."""
+    from tools.security_scan import scan
+
+    report = scan()
+    assert report["findings"] == [], report["findings"]
+    assert report["passed"] is True

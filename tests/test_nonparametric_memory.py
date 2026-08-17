@@ -1,4 +1,5 @@
 """Tests for non-parametric memory — growable token-level capacity for a fixed model."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -10,6 +11,7 @@ from core.brain.nonparametric_memory import (
     reset_nonparametric_memory,
     validate_nonparametric_memory_identity,
 )
+from tests.nonparametric_support import entry_provenance
 
 
 @pytest.fixture
@@ -18,7 +20,9 @@ def mem(tmp_path):
 
 
 def test_add_and_len(mem):
-    assert mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
+    assert mem.add(
+        np.array([1.0, 0, 0, 0]), token_id=7, token="seven", provenance=entry_provenance()
+    )
     assert len(mem) == 1
     matrices = (64 * 4 * 4) + (64 * 4)
     reported = mem.stats()["allocated_bytes"]
@@ -30,7 +34,7 @@ def test_add_and_len(mem):
 
 
 def test_identity_receipt_is_stable_cached_and_invalidated_by_content(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
+    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven", provenance=entry_provenance())
 
     first, first_work = mem.identity_receipt_with_work()
     second, second_work = mem.identity_receipt_with_work()
@@ -40,7 +44,7 @@ def test_identity_receipt_is_stable_cached_and_invalidated_by_content(mem):
     assert first_work == first["source_bytes"]
     assert second_work == 0
 
-    mem.add(np.array([0.0, 1.0, 0, 0]), token_id=8, token="eight")
+    mem.add(np.array([0.0, 1.0, 0, 0]), token_id=8, token="eight", provenance=entry_provenance())
     changed, changed_work = mem.identity_receipt_with_work()
     assert changed["content_sha256"] != first["content_sha256"]
     assert changed["receipt_sha256"] != first["receipt_sha256"]
@@ -48,7 +52,7 @@ def test_identity_receipt_is_stable_cached_and_invalidated_by_content(mem):
 
 
 def test_identity_receipt_rejects_rehashed_content_lie(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven")
+    mem.add(np.array([1.0, 0, 0, 0]), token_id=7, token="seven", provenance=entry_provenance())
     receipt = mem.identity_receipt()
     tampered = {**receipt, "content_sha256": "0" * 64}
 
@@ -57,15 +61,15 @@ def test_identity_receipt_rejects_rehashed_content_lie(mem):
 
 
 def test_add_rejects_wrong_dim(mem):
-    assert mem.add(np.array([1.0, 0, 0]), token_id=1) is False
+    assert mem.add(np.array([1.0, 0, 0]), token_id=1, provenance=entry_provenance()) is False
 
 
 def test_query_returns_nearest_first(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
-    mem.add(np.array([0.0, 1.0, 0, 0]), 2, "b")
-    mem.add(np.array([0.9, 0.1, 0, 0]), 3, "c")
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
+    mem.add(np.array([0.0, 1.0, 0, 0]), 2, "b", provenance=entry_provenance())
+    mem.add(np.array([0.9, 0.1, 0, 0]), 3, "c", provenance=entry_provenance())
     nbrs = mem.query(np.array([1.0, 0, 0, 0]), k=2)
-    assert nbrs[0].token_id in (1, 3)         # the two closest to [1,0,0,0]
+    assert nbrs[0].token_id in (1, 3)  # the two closest to [1,0,0,0]
     assert nbrs[0].distance <= nbrs[1].distance
 
 
@@ -74,19 +78,19 @@ def test_query_empty_store_returns_nothing(mem):
 
 
 def test_knn_probs_sum_to_one(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
-    mem.add(np.array([0.0, 1.0, 0, 0]), 2, "b")
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
+    mem.add(np.array([0.0, 1.0, 0, 0]), 2, "b", provenance=entry_provenance())
     nbrs = mem.query(np.array([1.0, 0, 0, 0]), k=2)
     probs = mem.knn_probs(nbrs)
     assert abs(sum(probs.values()) - 1.0) < 1e-6
-    assert probs[1] > probs[2]                # nearer neighbor gets more mass
+    assert probs[1] > probs[2]  # nearer neighbor gets more mass
 
 
 def test_adaptive_lambda_higher_for_closer_neighbor(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
-    near = mem.query(np.array([1.0, 0, 0, 0]))      # distance ~0
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
+    near = mem.query(np.array([1.0, 0, 0, 0]))  # distance ~0
     far_mem = NonParametricMemory(dim=4)
-    far_mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
+    far_mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
     far = far_mem.query(np.array([0.0, 0.0, 0.0, 5.0]))  # far
     assert mem.adaptive_lambda(near) > far_mem.adaptive_lambda(far)
 
@@ -96,41 +100,41 @@ def test_adaptive_lambda_zero_without_neighbors(mem):
 
 
 def test_adaptive_lambda_higher_with_free_energy(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
     nbrs = mem.query(np.array([1.0, 0, 0, 0]))
     low_fe = mem.adaptive_lambda(nbrs, free_energy=0.0)
     high_fe = mem.adaptive_lambda(nbrs, free_energy=1.0)
-    assert high_fe > low_fe                    # a surprised model trusts memory more
+    assert high_fe > low_fe  # a surprised model trusts memory more
 
 
 def test_low_phi_zeroes_lambda(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
     nbrs = mem.query(np.array([1.0, 0, 0, 0]))
-    assert mem.adaptive_lambda(nbrs, phi=0.01) == 0.0   # fragmented cognition → no recall trust
+    assert mem.adaptive_lambda(nbrs, phi=0.01) == 0.0  # fragmented cognition → no recall trust
 
 
 def test_lambda_never_exceeds_max(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 1, "a")
+    mem.add(np.array([1.0, 0, 0, 0]), 1, "a", provenance=entry_provenance())
     nbrs = mem.query(np.array([1.0, 0, 0, 0]))
     assert mem.adaptive_lambda(nbrs, free_energy=1.0, phi=0.55) <= 0.7
 
 
 def test_interpolate_blends_toward_memory(mem):
     # memory strongly recalls token 42; model favored token 7
-    mem.add(np.array([1.0, 0, 0, 0]), 42, "answer", weight=1.0)
+    mem.add(np.array([1.0, 0, 0, 0]), 42, "answer", weight=1.0, provenance=entry_provenance())
     lm = {7: 0.6, 42: 0.1, 9: 0.3}
     blended = mem.interpolate(lm, np.array([1.0, 0, 0, 0]), free_energy=1.0)
-    assert blended[42] > lm[42]                 # memory pulled probability toward 42
+    assert blended[42] > lm[42]  # memory pulled probability toward 42
     assert abs(sum(blended.values()) - 1.0) < 1e-6
 
 
 def test_interpolate_fail_open_no_neighbors(mem):
     lm = {7: 0.6, 9: 0.4}
-    assert mem.interpolate(lm, np.array([1.0, 0, 0, 0])) == lm   # empty store → unchanged
+    assert mem.interpolate(lm, np.array([1.0, 0, 0, 0])) == lm  # empty store → unchanged
 
 
 def test_interpolate_fail_open_zero_lambda(mem):
-    mem.add(np.array([1.0, 0, 0, 0]), 42, "x")
+    mem.add(np.array([1.0, 0, 0, 0]), 42, "x", provenance=entry_provenance())
     lm = {7: 0.6, 9: 0.4}
     # phi below DORMANT forces lambda 0 → model distribution unchanged
     assert mem.interpolate(lm, np.array([1.0, 0, 0, 0]), phi=0.0) == lm
@@ -139,7 +143,7 @@ def test_interpolate_fail_open_zero_lambda(mem):
 def test_eviction_bounded(tmp_path):
     m = NonParametricMemory(dim=2, path=tmp_path / "b", max_entries=64)
     for i in range(300):
-        m.add(np.array([float(i), 1.0]), token_id=i, weight=1.0)
+        m.add(np.array([float(i), 1.0]), token_id=i, weight=1.0, provenance=entry_provenance())
     assert len(m) <= 64
     assert m.stats()["evicted"] > 0
 
@@ -147,7 +151,13 @@ def test_eviction_bounded(tmp_path):
 def test_persist_round_trip(tmp_path):
     p = tmp_path / "store"
     m1 = NonParametricMemory(dim=3, path=p)
-    m1.add(np.array([1.0, 2.0, 3.0]), token_id=5, token="five", weight=2.0)
+    m1.add(
+        np.array([1.0, 2.0, 3.0]),
+        token_id=5,
+        token="five",
+        weight=2.0,
+        provenance=entry_provenance(),
+    )
     assert m1.persist() is True
     m2 = NonParametricMemory(dim=3, path=p)
     assert len(m2) == 1
@@ -158,7 +168,7 @@ def test_persist_round_trip(tmp_path):
 def test_dim_mismatch_on_load_starts_fresh(tmp_path):
     p = tmp_path / "store"
     m1 = NonParametricMemory(dim=3, path=p)
-    m1.add(np.array([1.0, 2.0, 3.0]), token_id=5)
+    m1.add(np.array([1.0, 2.0, 3.0]), token_id=5, provenance=entry_provenance())
     m1.persist()
     # a different base model → different hidden dim → must NOT mix vector spaces
     m2 = NonParametricMemory(dim=8, path=p)
@@ -195,7 +205,7 @@ def test_apply_to_logits_flag_off_is_identity(mem, monkeypatch):
     monkeypatch.delenv("AURA_NONPARAMETRIC_MEMORY", raising=False)
     logits = np.array([0.1, 0.2, 5.0, 0.3], dtype=np.float32)
     out = mem.apply_to_logits(logits, np.array([1.0, 0, 0, 0]))
-    assert np.allclose(out, logits)            # default-off: never touches generation
+    assert np.allclose(out, logits)  # default-off: never touches generation
 
 
 def _softmax(a: np.ndarray) -> np.ndarray:
@@ -206,8 +216,10 @@ def _softmax(a: np.ndarray) -> np.ndarray:
 
 def test_apply_to_logits_flag_on_reweights(mem, monkeypatch):
     monkeypatch.setenv("AURA_NONPARAMETRIC_MEMORY", "1")
-    mem.add(np.array([1.0, 0, 0, 0]), token_id=0, token="x", weight=1.0)  # recall favors token 0
-    logits = np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32)            # model favors token 2
+    mem.add(
+        np.array([1.0, 0, 0, 0]), token_id=0, token="x", weight=1.0, provenance=entry_provenance()
+    )  # recall favors token 0
+    logits = np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32)  # model favors token 2
     out = mem.apply_to_logits(logits, np.array([1.0, 0, 0, 0]), free_energy=1.0)
     # compare probabilities (out is log-probs, logits are raw) — token 0's share must rise
     assert _softmax(out)[0] > _softmax(logits)[0]
@@ -215,7 +227,9 @@ def test_apply_to_logits_flag_on_reweights(mem, monkeypatch):
 
 def test_apply_to_logits_preserves_relative_mass_for_unrecalled_tokens(mem, monkeypatch):
     monkeypatch.setenv("AURA_NONPARAMETRIC_MEMORY", "1")
-    mem.add(np.array([1.0, 0, 0, 0]), token_id=0, token="x", weight=1.0)
+    mem.add(
+        np.array([1.0, 0, 0, 0]), token_id=0, token="x", weight=1.0, provenance=entry_provenance()
+    )
     logits = np.array([0.0, 1.0, 3.0, -0.5], dtype=np.float32)
 
     before = _softmax(logits)
@@ -274,7 +288,7 @@ def test_similarity_raw_fallback_before_mu_ready(tmp_path):
 
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
     key = _unit([1, 2, 3, 4, 5, 6, 7, 8])
-    mem.add(key, 42)
+    mem.add(key, 42, provenance=entry_provenance())
     assert not mem.similarity_ready()
     assert mem.min_similarity() == mem.MIN_SIM_RAW
 
@@ -282,7 +296,10 @@ def test_similarity_raw_fallback_before_mu_ready(tmp_path):
     assert exact.similarity > 0.99
 
     related_but_not_exact = mem.query(_unit([1, 2, 3, 4, 5, 6, 7, 9]), k=1)[0]
-    assert related_but_not_exact.similarity < mem.MIN_SIM_RAW or exact.similarity > related_but_not_exact.similarity
+    assert (
+        related_but_not_exact.similarity < mem.MIN_SIM_RAW
+        or exact.similarity > related_but_not_exact.similarity
+    )
 
 
 def test_similarity_centers_once_mu_ready(tmp_path):
@@ -295,7 +312,7 @@ def test_similarity_centers_once_mu_ready(tmp_path):
     common = np.array([10, 10, 10, 10, 10, 10, 10, 10], dtype=np.float32)
     a = _unit(common + np.array([3, 0, 0, 0, 0, 0, 0, 0]))
     b = _unit(common + np.array([0, 3, 0, 0, 0, 0, 0, 0]))
-    mem.add(a, 1)
+    mem.add(a, 1, provenance=entry_provenance())
 
     raw_cos = float(np.dot(a, b))
     assert raw_cos > 0.9, "the anisotropy setup: raw cosine is inflated"
@@ -323,8 +340,8 @@ def test_interpolate_filters_below_gate_neighbors(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
     target = _unit([1, 0, 0, 0, 0, 0, 0, 0.2])
     other = _unit([0, 1, 0, 0, 0, 0, 0, 0.2])
-    mem.add(target, 111)
-    mem.add(other, 222)
+    mem.add(target, 111, provenance=entry_provenance())
+    mem.add(other, 222, provenance=entry_provenance())
 
     blended = mem.interpolate({111: 0.01, 999: 0.99}, target, k=4, lam_override=0.9)
     assert blended[111] > blended.get(222, 0.0), (
@@ -336,7 +353,7 @@ def test_query_mu_persists_across_reload(tmp_path):
     import numpy as np
 
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    mem.add(_unit([1, 1, 1, 1, 1, 1, 1, 1]), 5)
+    mem.add(_unit([1, 1, 1, 1, 1, 1, 1, 1]), 5, provenance=entry_provenance())
     for _ in range(20):
         mem.query(_unit(np.random.default_rng(3).normal(1, 0.1, 8)), k=1)
     assert mem.similarity_ready()
@@ -350,8 +367,8 @@ def test_neighbors_carry_store_index(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
     a = _unit([1, 0, 0, 0, 0, 0, 0, 0])
     b = _unit([0, 1, 0, 0, 0, 0, 0, 0])
-    mem.add(a, 1)
-    mem.add(b, 2)
+    mem.add(a, 1, provenance=entry_provenance())
+    mem.add(b, 2, provenance=entry_provenance())
     nearest = mem.query(a, k=1)[0]
     assert nearest.index == 0 and nearest.token_id == 1
 
@@ -372,9 +389,7 @@ class TestRecallPathsShareTheConfidenceGate:
 
         return NonParametricMemory(dim=8, path=str(tmp_path / "npm"))
 
-    def test_below_gate_neighbour_cannot_shift_logits_via_lam_override(
-        self, tmp_path, monkeypatch
-    ):
+    def test_below_gate_neighbour_cannot_shift_logits_via_lam_override(self, tmp_path, monkeypatch):
         """The exact path that made this exploitable.
 
         adaptive_lambda independently returns ~0 for weak neighbours, which
@@ -391,6 +406,7 @@ class TestRecallPathsShareTheConfidenceGate:
             np.array([1, 1, 1, 1, 1, 1, 1, -0.3], dtype=np.float32),
             token_id=5,
             token="y",
+            provenance=entry_provenance(),
         )
         query = np.ones(8, dtype=np.float32)
 
@@ -401,9 +417,7 @@ class TestRecallPathsShareTheConfidenceGate:
         )
 
         out = np.asarray(
-            store.apply_to_logits(
-                np.zeros(16, dtype=np.float32), query, lam_override=0.5
-            ),
+            store.apply_to_logits(np.zeros(16, dtype=np.float32), query, lam_override=0.5),
             dtype=np.float64,
         )
         assert np.allclose(out, 0.0), (
@@ -420,6 +434,7 @@ class TestRecallPathsShareTheConfidenceGate:
             np.array([1, 1, 1, 1, 1, 1, 1, 0.55], dtype=np.float32),
             token_id=5,
             token="y",
+            provenance=entry_provenance(),
         )
         query = np.ones(8, dtype=np.float32)
 
@@ -447,7 +462,6 @@ class TestRecallPathsShareTheConfidenceGate:
         for name in ("def apply_to_logits", "def interpolate"):
             body = source.split(name, 1)[1][:3000]
             assert "nb.similarity >= nb.gate_threshold" in body, (
-                f"{name} does not gate on the threshold its similarity was "
-                "computed against"
+                f"{name} does not gate on the threshold its similarity was computed against"
             )
         assert isinstance(store.min_similarity(), float)

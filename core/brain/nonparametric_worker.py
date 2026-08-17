@@ -34,7 +34,9 @@ from typing import Any
 
 import numpy as np
 
+from core.brain.nonparametric_binding import MemoryBinding, binding_for_job
 from core.brain.nonparametric_generation import normalize
+from core.brain.nonparametric_memory import get_nonparametric_memory
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Brain.NonParametricWorker")
@@ -302,7 +304,6 @@ def maybe_build_foreground(
         if dim <= 0:
             _set_recall_outcome("unavailable", "model exposes no hidden_size")
             return None
-        from core.brain.nonparametric_memory import get_nonparametric_memory
         memory = get_nonparametric_memory(dim)
         if memory is None:
             _set_recall_outcome("unavailable", "no datastore")
@@ -319,8 +320,20 @@ def maybe_build_foreground(
                 unusable,
             )
             return None
+        binding = binding_for_job(job, source_id="foreground_recall")
+        if binding is None:
+            # A job that does not say whose turn this is gets no recall.
+            # Reading every principal's entries because the request forgot
+            # to identify itself is precisely the leak the store's
+            # principal argument exists to prevent.
+            _set_recall_outcome(
+                "not_admitted",
+                "this job names no principal, and unscoped recall reads every "
+                "principal's entries",
+            )
+            return None
         tap = HiddenStateTap(model)
-        proc = make_tapped_nonparametric_processor(tap, memory)
+        proc = make_tapped_nonparametric_processor(tap, memory, binding=binding)
         logger.info("🧠 [WORKER] Foreground non-parametric memory ACTIVE (%d entries, dim=%d).",
                     len(memory), dim)
         _set_recall_outcome("installed", f"{len(memory)} entries at dim {dim}")
@@ -434,6 +447,7 @@ def make_tapped_nonparametric_processor(
     tap: HiddenStateTap,
     memory: Any,
     *,
+    binding: MemoryBinding,
     k: int = 4,
     temperature: float = 0.1,
     phi: float | None = 0.5,
@@ -448,7 +462,13 @@ def make_tapped_nonparametric_processor(
     base_lam: float = 0.25,
     max_lam: float = 0.35,
 ) -> Callable[[Any, Any], Any]:
-    """O(1)-per-token non-parametric logits-processor driven by the hidden-state tap."""
+    """O(1)-per-token non-parametric logits-processor driven by the hidden-state tap.
+
+    ``binding`` is required. This called ``memory.query(key, k=k)`` with no
+    principal, and the store's own docstring says an empty principal
+    searches EVERYTHING — so the isolation the storage layer implements was
+    not enforced at the one seam where a person's turn meets the datastore.
+    """
     import mlx.core as mx
 
     state = {"last_fired_index": -1}
@@ -458,7 +478,7 @@ def make_tapped_nonparametric_processor(
         if key is None:
             return logits  # tap inactive / no hidden yet → leave logits untouched (fail-open)
         try:
-            neighbors = memory.query(key, k=k)
+            neighbors = memory.query(key, k=k, principal=binding.principal)
             if not neighbors:
                 return logits
             # Anisotropy-corrected gate (see Neighbor.similarity): raw cosine
@@ -486,6 +506,7 @@ def make_tapped_nonparametric_processor(
             blended = memory.interpolate(
                 lm_probs, key, k=k, temperature=temperature, phi=phi,
                 free_energy=free_energy, lam_override=min(lam, 0.9),
+                principal=binding.principal,
             )
             out = lg.copy()
             import math as _m
@@ -518,6 +539,7 @@ def cached_generate_with_memory(
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     use_memory: bool = True,
+    principal: str = "",
     min_cos: float = 0.55,
     base_lam: float = 0.75,
 ) -> str:
@@ -557,7 +579,11 @@ def cached_generate_with_memory(
         next_id = int(np.argmax(lg))
         if use_memory:
             try:
-                neighbors = memory.query(key, k=k)
+                # Same scoping as the foreground processor. An empty
+                # principal searches every entry in the store, so a proof
+                # harness that omits one is measuring a different store
+                # from the one a request would see.
+                neighbors = memory.query(key, k=k, principal=principal)
                 if neighbors:
                     # Anisotropy-corrected gate (see Neighbor.similarity).
                     sim = float(getattr(neighbors[0], "similarity", -1.0))
@@ -573,6 +599,7 @@ def cached_generate_with_memory(
                         blended = memory.interpolate(
                             _topk_probs(lg), key, k=k, temperature=temperature, phi=phi,
                             free_energy=free_energy, lam_override=min(lam, 0.9),
+                            principal=principal,
                         )
                         memory_choice = int(max(blended, key=blended.get))
                         if memory_choice != next_id:

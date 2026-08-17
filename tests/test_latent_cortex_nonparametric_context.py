@@ -21,6 +21,7 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     policy_sha256,
 )
 from core.brain.nonparametric_memory import NonParametricMemory
+from tests.nonparametric_support import TEST_PRINCIPAL, entry_provenance
 
 
 class _Tokenizer:
@@ -31,7 +32,7 @@ class _Tokenizer:
 @pytest.fixture
 def active_store(tmp_path, monkeypatch):
     store = NonParametricMemory(dim=4, path=tmp_path / "one-shot")
-    store.add(np.array([1.0, 0.0, 0.0, 0.0]), 7, "remembered")
+    store.add(np.array([1.0, 0.0, 0.0, 0.0]), 7, "remembered", provenance=entry_provenance())
     monkeypatch.setattr(nonparametric_worker, "foreground_enabled", lambda: True)
     monkeypatch.setattr(
         nonparametric_memory,
@@ -43,8 +44,7 @@ def active_store(tmp_path, monkeypatch):
 
 def test_exact_prompt_tail_is_admitted_as_non_authoritative_evidence(active_store):
     observation, receipt = retrieve_observation(
-        np.array([1.0, 0.0, 0.0, 0.0]),
-        _Tokenizer(),
+        np.array([1.0, 0.0, 0.0, 0.0]), _Tokenizer(), principal=TEST_PRINCIPAL
     )
 
     assert validate_receipt(receipt) == receipt
@@ -58,15 +58,15 @@ def test_exact_prompt_tail_is_admitted_as_non_authoritative_evidence(active_stor
     assert observation["instruction_authority"] is False
     assert observation["evidence_kind"] == "one_shot_nonparametric_memory"
     assert observation["content_sha256"] == receipt["observation_sha256"]
-    assert observation["content_sha256"] == hashlib.sha256(
-        observation["text"].encode("utf-8")
-    ).hexdigest()
+    assert (
+        observation["content_sha256"]
+        == hashlib.sha256(observation["text"].encode("utf-8")).hexdigest()
+    )
 
 
 def test_unrelated_prompt_tail_fails_closed_at_similarity_gate(active_store):
     observation, receipt = retrieve_observation(
-        np.array([0.0, 1.0, 0.0, 0.0]),
-        _Tokenizer(),
+        np.array([0.0, 1.0, 0.0, 0.0]), _Tokenizer(), principal=TEST_PRINCIPAL
     )
 
     assert observation is None
@@ -77,7 +77,7 @@ def test_unrelated_prompt_tail_fails_closed_at_similarity_gate(active_store):
 
 def test_disabled_store_is_not_loaded_or_queried(active_store, monkeypatch):
     monkeypatch.setattr(nonparametric_worker, "foreground_enabled", lambda: False)
-    observation, receipt = retrieve_observation(np.ones(4), _Tokenizer())
+    observation, receipt = retrieve_observation(np.ones(4), _Tokenizer(), principal=TEST_PRINCIPAL)
 
     assert observation is None
     assert validate_receipt(receipt)["status"] == "store_unavailable"
@@ -87,8 +87,7 @@ def test_disabled_store_is_not_loaded_or_queried(active_store, monkeypatch):
 
 def test_receipt_rejects_verdict_and_resource_tampering(active_store):
     _observation, receipt = retrieve_observation(
-        np.array([1.0, 0.0, 0.0, 0.0]),
-        _Tokenizer(),
+        np.array([1.0, 0.0, 0.0, 0.0]), _Tokenizer(), principal=TEST_PRINCIPAL
     )
     tampered = copy.deepcopy(receipt)
     tampered["resource_accounting"]["entries_examined"] += 1
@@ -99,8 +98,7 @@ def test_receipt_rejects_verdict_and_resource_tampering(active_store):
 
 def test_service_binds_admitted_receipt_to_exact_immutable_slot(active_store):
     observation, one_shot = retrieve_observation(
-        np.array([1.0, 0.0, 0.0, 0.0]),
-        _Tokenizer(),
+        np.array([1.0, 0.0, 0.0, 0.0]), _Tokenizer(), principal=TEST_PRINCIPAL
     )
     assert observation is not None
     accounting = one_shot["resource_accounting"]
@@ -145,9 +143,7 @@ def test_service_binds_admitted_receipt_to_exact_immutable_slot(active_store):
             "nonparametric_memory": policy_sha256(
                 {
                     "policy": "context_only_prompt_tail_recall_v1",
-                    "active_source_receipt_sha256": source_identity[
-                        "receipt_sha256"
-                    ],
+                    "active_source_receipt_sha256": source_identity["receipt_sha256"],
                 }
             )
         },
@@ -180,3 +176,28 @@ def test_service_binds_admitted_receipt_to_exact_immutable_slot(active_store):
     tampered["cognitive_slots"][0]["text_sha256"] = "0" * 64
     errors = LatentCortexService._receipt_contract_errors(tampered, config)
     assert "nonparametric_memory_binding_unproven" in errors
+
+
+def test_an_unscoped_recurrent_step_gets_no_clue(active_store):
+    """A turn that cannot say whose memory this is reads nobody's."""
+    observation, receipt = retrieve_observation(
+        np.array([1.0, 0.0, 0.0, 0.0]),
+        _Tokenizer(),
+    )
+
+    assert observation is None
+    assert validate_receipt(receipt)["status"] == "no_principal"
+    assert receipt["applied"] is False
+    assert receipt["observation_sha256"] == ""
+
+
+def test_another_principal_gets_no_clue_from_this_one(active_store):
+    """The entry belongs to TEST_PRINCIPAL; a different turn cannot see it."""
+    observation, receipt = retrieve_observation(
+        np.array([1.0, 0.0, 0.0, 0.0]),
+        _Tokenizer(),
+        principal="somebody_else",
+    )
+
+    assert observation is None
+    assert validate_receipt(receipt)["status"] != "admitted"

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import atexit
 import os
 import threading
 import time
@@ -56,6 +57,12 @@ _cache_epoch = 0
 _cache_last_checked = 0.0
 _refresh_started = False
 _refresh_wakeup = threading.Event()
+#: Set once, at interpreter shutdown or by an explicit stop. The refresh lane
+#: loops until it is set. A `while True` daemon thread has no way to be told
+#: the process is going away, so its last iteration can run against modules
+#: that are already being torn down.
+_refresh_stop = threading.Event()
+_refresh_thread: threading.Thread | None = None
 
 _WATCH_INTERVAL_SECONDS = 0.5
 _STALE_FAIL_CLOSED_SECONDS = 5.0
@@ -237,7 +244,7 @@ def _refresh_settings_from_disk() -> None:
 
 
 def _refresh_worker() -> None:
-    while True:
+    while not _refresh_stop.is_set():
         try:
             _refresh_settings_from_disk()
         except (*_RECOVERABLE, ImportError, KeyError) as exc:
@@ -246,8 +253,30 @@ def _refresh_worker() -> None:
         _refresh_wakeup.clear()
 
 
+def stop_refresh_worker(timeout_s: float = 2.0) -> bool:
+    """Stop the refresh lane and wait for it to leave the loop.
+
+    Returns True when the thread is gone. Callers that need settings again
+    afterwards can just read them: `_ensure_refresh_worker` restarts the lane.
+    """
+    global _refresh_started, _refresh_thread
+    _refresh_stop.set()
+    _refresh_wakeup.set()
+    worker = _refresh_thread
+    if worker is not None:
+        worker.join(timeout=max(0.0, float(timeout_s)))
+        if worker.is_alive():
+            return False
+    with _lock:
+        _refresh_started = False
+        _refresh_thread = None
+    _refresh_stop.clear()
+    _refresh_wakeup.clear()
+    return True
+
+
 def _ensure_refresh_worker() -> None:
-    global _refresh_started
+    global _refresh_started, _refresh_thread
     with _lock:
         if _refresh_started:
             return
@@ -257,7 +286,15 @@ def _ensure_refresh_worker() -> None:
             name="aura-runtime-settings-refresh",
             daemon=True,
         )
+        _refresh_thread = worker
     worker.start()
+    atexit.register(_stop_refresh_worker_at_exit)
+
+
+def _stop_refresh_worker_at_exit() -> None:
+    """Leave the loop before the interpreter tears its imports down."""
+    _refresh_stop.set()
+    _refresh_wakeup.set()
 
 
 def publish_runtime_settings_snapshot(

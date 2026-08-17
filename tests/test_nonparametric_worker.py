@@ -5,10 +5,12 @@ token. These tests prove the tap records the hidden the generation forward alrea
 (so the processor needs no extra forward), that the cached loop runs exactly one forward per
 token, and that everything is fail-open.
 """
+
 from __future__ import annotations
 
 import numpy as np
 
+from core.brain.nonparametric_binding import MemoryBinding
 from core.brain.nonparametric_generation import normalize
 from core.brain.nonparametric_memory import NonParametricMemory
 from core.brain.nonparametric_worker import (
@@ -17,6 +19,12 @@ from core.brain.nonparametric_worker import (
     foreground_memory_admitted_for_job,
     make_tapped_nonparametric_processor,
 )
+from tests.nonparametric_support import TEST_PRINCIPAL, entry_provenance
+
+
+def _binding() -> MemoryBinding:
+    """Whose memory the processor is allowed to read."""
+    return MemoryBinding(principal=TEST_PRINCIPAL, source_id="worker_test")
 
 
 def _softmax(a: np.ndarray) -> np.ndarray:
@@ -27,9 +35,7 @@ def _softmax(a: np.ndarray) -> np.ndarray:
 
 def test_structural_contract_inhibits_token_recall_without_memory_requirement():
     assert (
-        foreground_memory_admitted_for_job(
-            {"requested_output_contract": {"kind": "word_count"}}
-        )
+        foreground_memory_admitted_for_job({"requested_output_contract": {"kind": "word_count"}})
         is False
     )
     assert (
@@ -42,10 +48,7 @@ def test_structural_contract_inhibits_token_recall_without_memory_requirement():
         is True
     )
     assert (
-        foreground_memory_admitted_for_job(
-            {"requested_output_contract": {"kind": "none"}}
-        )
-        is True
+        foreground_memory_admitted_for_job({"requested_output_contract": {"kind": "none"}}) is True
     )
 
 
@@ -73,6 +76,7 @@ def test_control_and_measurement_jobs_never_install_associative_recall():
 
 # ── the tap captures the hidden the forward already produced ────────────────
 
+
 def test_tap_records_last_hidden_and_restores_model():
     import mlx.core as mx
 
@@ -95,11 +99,11 @@ def test_tap_records_last_hidden_and_restores_model():
     real_inner = model.model
     with HiddenStateTap(model) as tap:
         assert tap.active
-        assert model.model is not real_inner            # proxy installed
-        model.model(mx.array([[1, 2, 3]]))              # a normal generation forward
+        assert model.model is not real_inner  # proxy installed
+        model.model(mx.array([[1, 2, 3]]))  # a normal generation forward
         assert tap.last_key is not None
         assert np.allclose(tap.last_key, kvec, atol=1e-6)
-    assert model.model is real_inner                    # restored on exit
+    assert model.model is real_inner  # restored on exit
 
 
 def test_tapped_processor_uses_tap_without_recompute():
@@ -107,7 +111,7 @@ def test_tapped_processor_uses_tap_without_recompute():
 
     mem = NonParametricMemory(dim=4)
     kvec = normalize(np.array([1.0, 0, 0, 0]))
-    mem.add(kvec, token_id=0, token="x", weight=1.0)
+    mem.add(kvec, token_id=0, token="x", weight=1.0, provenance=entry_provenance())
 
     class Inner:
         def __init__(self):
@@ -127,7 +131,7 @@ def test_tapped_processor_uses_tap_without_recompute():
         # the generation forward runs once and fills the tap
         model.model(mx.array([[1, 2, 3]]))
         forwards_after_generation = model.model.calls
-        proc = make_tapped_nonparametric_processor(tap, mem, free_energy=1.0)
+        proc = make_tapped_nonparametric_processor(tap, mem, free_energy=1.0, binding=_binding())
         logits = mx.array(np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32))
         out = np.array(proc(mx.array([1, 2, 3]), logits)).reshape(-1)
         # recalled token 0 is boosted ...
@@ -140,13 +144,15 @@ def test_tapped_processor_failopen_when_tap_empty():
     import mlx.core as mx
 
     mem = NonParametricMemory(dim=4)
-    mem.add(normalize(np.array([1.0, 0, 0, 0])), token_id=0, token="x")
+    mem.add(
+        normalize(np.array([1.0, 0, 0, 0])), token_id=0, token="x", provenance=entry_provenance()
+    )
 
-    tap = HiddenStateTap(object())   # never entered → last_key stays None
-    proc = make_tapped_nonparametric_processor(tap, mem)
+    tap = HiddenStateTap(object())  # never entered → last_key stays None
+    proc = make_tapped_nonparametric_processor(tap, mem, binding=_binding())
     logits = mx.array(np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32))
     out = np.array(proc(mx.array([1]), logits)).reshape(-1)
-    assert np.allclose(out, np.array([0.0, 0.0, 5.0, 0.0]))   # untouched
+    assert np.allclose(out, np.array([0.0, 0.0, 5.0, 0.0]))  # untouched
 
 
 def test_tap_failopen_on_unswappable_model():
@@ -162,12 +168,13 @@ def test_tap_failopen_on_unswappable_model():
 
 # ── the cached loop runs exactly one forward per token (O(n), not O(n²)) ─────
 
+
 def test_cached_generate_is_linear_and_uses_memory(monkeypatch):
     import mlx.core as mx
 
     recalled = normalize(np.array([0.0, 1.0, 0.0, 0.0]))
     mem = NonParametricMemory(dim=4)
-    mem.add(recalled, token_id=7, token="seven", weight=1.0)
+    mem.add(recalled, token_id=7, token="seven", weight=1.0, provenance=entry_provenance())
 
     class Inner:
         def __init__(self):
@@ -212,7 +219,9 @@ def test_cached_generate_is_linear_and_uses_memory(monkeypatch):
     monkeypatch.setattr("mlx_lm.models.cache.make_prompt_cache", lambda model: object())
 
     model = Model()
-    out = cached_generate_with_memory(model, Tok(), "hi", mem, max_tokens=5, free_energy=1.0)
+    out = cached_generate_with_memory(
+        model, Tok(), "hi", mem, max_tokens=5, free_energy=1.0, principal=TEST_PRINCIPAL
+    )
     # Step 1 prefills the 3-token prompt (and yields the 1st token); steps 2-5 each forward a
     # SINGLE new token via the cache → 4 width-1 decode forwards. The decisive O(n) proof:
     # no forward ever re-processes the whole growing sequence (max width == prompt length 3,

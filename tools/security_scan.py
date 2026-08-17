@@ -6,6 +6,7 @@ import ast
 import json
 import math
 import re
+import warnings
 import sys
 import time
 from pathlib import Path
@@ -197,7 +198,45 @@ def _has_credential_name(names: list[str]) -> bool:
     return False
 
 
+#: Constructs that only a regular-expression engine reads. A credential is an
+#: opaque string; it never contains a group opener, a character-class range, a
+#: repetition brace or a shorthand class. Base64 and base64url secrets do use
+#: ``+``, ``/``, ``-`` and ``_``, so those are deliberately absent here.
+REGEX_SYNTAX = re.compile(
+    r"""\(\?[:=!P<#aiLmsux]      # (?: (?= (?! (?P< (?# and inline flags
+    | \[ [^\]]* [A-Za-z0-9] - [A-Za-z0-9] [^\]]* \]   # a character-class range
+    | \{ \d* , \d* \}          # a repetition brace
+    | \\ [bdswBDSWAZ]            # a shorthand class or anchor
+    """,
+    re.VERBOSE,
+)
+
+
+def _is_regular_expression_literal(literal: str) -> bool:
+    """Decide from the VALUE whether this string is a regular expression.
+
+    The name-based test below asks whether the constant is *called* something
+    regex-ish, so ``_NAME_TOKEN = r"(?:@?[A-Z][A-Za-z0-9_+-]*|...)"`` was read
+    as credential material and reported on every run of this gate. A name is
+    not evidence. A string that carries regex syntax and compiles as a pattern
+    is evidence, and no issued credential looks like one.
+    """
+    if not REGEX_SYNTAX.search(literal):
+        return False
+    try:
+        with warnings.catch_warnings():
+            # A pattern may compile and still warn (nested set unions, for
+            # one). The question here is whether it compiles at all.
+            warnings.simplefilter("ignore")
+            re.compile(literal)
+    except re.error:
+        return False
+    return True
+
+
 def _is_parser_regex_constant(names: list[str], literal: str) -> bool:
+    if _is_regular_expression_literal(literal):
+        return True
     if not any(marker in literal for marker in REGEX_LITERAL_MARKERS):
         return False
     for name in names:

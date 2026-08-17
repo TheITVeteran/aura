@@ -33,6 +33,7 @@ from core.brain.nonparametric_memory import (
     get_nonparametric_memory,
     reset_nonparametric_memory_for_test,
 )
+from tests.nonparametric_support import entry_provenance
 
 DIM = 8
 
@@ -135,11 +136,23 @@ def test_a_discredited_source_can_be_revoked_entirely(tmp_path):
     assert store._provenance[0].source_id == "good"
 
 
-def test_an_unattributed_add_is_recorded_as_unattributed(tmp_path):
+def test_an_unattributed_add_is_no_longer_possible(tmp_path):
+    """The anonymous default was the whole defect.
+
+    ``add`` used to accept ``provenance=None`` and record the entry as
+    ``unattributed``/``UNVERIFIED``/``anonymous``. The live ingest path
+    took exactly that default for every entry it wrote, so nothing the
+    resident worker learned could be revoked by source or erased by
+    principal. There is no such default now: a writer names itself or the
+    call does not type-check.
+    """
     store = _store(tmp_path)
-    store.add(_vec(1), 7, "seven")
-    assert store._provenance[0].source_id == "unattributed"
-    assert store._provenance[0].trust == TrustLevel.UNVERIFIED
+    with pytest.raises(TypeError, match="provenance"):
+        store.add(_vec(1), 7, "seven")
+
+    store.add(_vec(1), 7, "seven", provenance=entry_provenance())
+    assert store._provenance[0].source_id != "unattributed"
+    assert store._provenance[0].principal != "anonymous"
 
 
 # ── 62309dad: one principal cannot read another's memory ────────────────────
@@ -265,16 +278,12 @@ def test_the_persisted_file_is_memory_mapped_before_the_cap(tmp_path):
 
 
 def test_an_oversized_store_loads_only_its_bound(tmp_path):
-    big = NonParametricMemory(
-        DIM, path=str(tmp_path / "s"), max_entries=200, identity=_identity()
-    )
+    big = NonParametricMemory(DIM, path=str(tmp_path / "s"), max_entries=200, identity=_identity())
     for seed in range(120):
         big.add(_vec(seed), seed % 900, "t", provenance=EntryProvenance(source_id="s"))
     big.persist()
 
-    small = NonParametricMemory(
-        DIM, path=str(tmp_path / "s"), max_entries=64, identity=_identity()
-    )
+    small = NonParametricMemory(DIM, path=str(tmp_path / "s"), max_entries=64, identity=_identity())
     assert len(small) == 64
 
 
@@ -306,7 +315,7 @@ def test_a_vector_whose_square_overflows_is_refused(tmp_path):
     store = _store(tmp_path)
     huge = np.full(DIM, 1e30, dtype=np.float32)
     assert np.all(np.isfinite(huge))
-    assert store.add(huge, 7, "seven") is False, (
+    assert store.add(huge, 7, "seven", provenance=entry_provenance()) is False, (
         "a finite float32 key whose squared norm overflows was admitted, and "
         "that norm feeds every distance in the store"
     )
@@ -325,8 +334,7 @@ def test_a_nan_clamps_down():
     from core.brain.nonparametric_memory import _clamp
 
     assert _clamp(float("nan"), 0.0, 0.7) == 0.0, (
-        "max(lo, min(hi, nan)) returns hi, so a NaN lambda handed the whole "
-        "distribution to recall"
+        "max(lo, min(hi, nan)) returns hi, so a NaN lambda handed the whole distribution to recall"
     )
     assert _clamp(float("inf"), 0.0, 0.7) == 0.0
     assert _clamp(0.5, 0.0, 0.7) == 0.5
@@ -352,17 +360,15 @@ def test_a_caller_distribution_with_a_nan_does_not_propagate_it(tmp_path):
 
 def test_an_out_of_vocabulary_id_is_never_stored(tmp_path):
     store = _store(tmp_path)
-    assert store.add(_vec(1), 10**9, "huge") is False
-    assert store.add(_vec(2), -1, "negative") is False
+    assert store.add(_vec(1), 10**9, "huge", provenance=entry_provenance()) is False
+    assert store.add(_vec(2), -1, "negative", provenance=entry_provenance()) is False
     assert len(store) == 0
 
 
 def test_an_unknown_vocabulary_still_refuses_a_negative_id(tmp_path):
-    store = NonParametricMemory(
-        DIM, path=str(tmp_path / "s"), identity=StoreIdentity(dim=DIM)
-    )
-    assert store.add(_vec(1), -5, "negative") is False
-    assert store.add(_vec(2), 5, "ok") is True
+    store = NonParametricMemory(DIM, path=str(tmp_path / "s"), identity=StoreIdentity(dim=DIM))
+    assert store.add(_vec(1), -5, "negative", provenance=entry_provenance()) is False
+    assert store.add(_vec(2), 5, "ok", provenance=entry_provenance()) is True
 
 
 # ── 4354909: a replay writes one fact once ──────────────────────────────────
@@ -444,7 +450,9 @@ def test_the_receipt_names_the_store_and_its_neighbours(tmp_path, monkeypatch):
 def test_stats_reports_the_memory_it_actually_holds(tmp_path):
     store = _store(tmp_path)
     for seed in range(5):
-        store.add(_vec(seed), seed, "a long token string", provenance=EntryProvenance(source_id="s"))
+        store.add(
+            _vec(seed), seed, "a long token string", provenance=EntryProvenance(source_id="s")
+        )
     stats = store.stats()
     assert stats["allocated_bytes"] > store._keys.nbytes, (
         "the figure counted the two matrices and none of the metadata"
@@ -460,9 +468,7 @@ def test_the_registry_is_keyed_by_identity_not_width():
     try:
         alpha = get_nonparametric_memory(identity=_identity(checkpoint="ck-alpha"))
         beta = get_nonparametric_memory(identity=_identity(checkpoint="ck-beta"))
-        assert alpha is not beta, (
-            "two checkpoints of one width were handed the same store"
-        )
+        assert alpha is not beta, "two checkpoints of one width were handed the same store"
     finally:
         reset_nonparametric_memory_for_test()
 

@@ -908,9 +908,17 @@ def handle_latent_reason(
                 "status": "error",
                 "message": (f"latent_reason action intervention replay admission rejected: {exc}"),
             }
+    # Recurrent recall reads the shared datastore. Without a principal the
+    # store searches every entry, so this episode inherits the principal the
+    # job names and gets nothing when the job names nobody.
+    from core.brain.nonparametric_binding import binding_for_job
+
+    recall_binding = binding_for_job(job, source_id="latent_recurrent_recall")
+
     def reason_with_continuation(**continuation_kwargs: Any) -> Any:
         return engine.reason(
             prompt=prompt if isinstance(prompt, str) else None,
+            memory_principal=(recall_binding.principal if recall_binding else ""),
             messages=episode_messages,
             budget=budget,
             domain=str(job.get("domain", "general")),

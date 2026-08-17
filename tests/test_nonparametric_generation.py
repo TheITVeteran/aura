@@ -4,12 +4,14 @@ The full generate_with_memory loop is validated end-to-end against the real mode
 aura_bench/nonparametric_probe.py (generation 5/5). These cover the pure helpers that
 make the cosine-gated λ model-independent.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
 from core.brain.nonparametric_generation import cosine_from_l2, normalize
+from tests.nonparametric_support import entry_provenance
 
 
 def test_normalize_unit_norm():
@@ -55,7 +57,9 @@ def test_logits_processor_boosts_recalled_token():
 
     mem = NonParametricMemory(dim=4)
     kvec = normalize(np.array([1.0, 0, 0, 0]))
-    mem.add(kvec, token_id=0, token="x", weight=1.0)   # recall favors token 0
+    mem.add(
+        kvec, token_id=0, token="x", weight=1.0, provenance=entry_provenance()
+    )  # recall favors token 0
 
     class FakeModel:
         def model(self, seq):
@@ -77,7 +81,12 @@ def test_logits_processor_fail_open_on_far_neighbor():
     from core.brain.nonparametric_memory import NonParametricMemory
 
     mem = NonParametricMemory(dim=4)
-    mem.add(normalize(np.array([0.0, 0.0, 0.0, 1.0])), token_id=0, token="x")  # orthogonal to query
+    mem.add(
+        normalize(np.array([0.0, 0.0, 0.0, 1.0])),
+        token_id=0,
+        token="x",
+        provenance=entry_provenance(),
+    )  # orthogonal to query
 
     class FakeModel:
         def model(self, seq):
@@ -104,7 +113,7 @@ def test_topk_probs_do_not_inflate_truncated_mass():
     top = _topk_probs(logits, k=3)
     full = _full_probs(logits)
 
-    assert sum(top.values()) < 1.0            # dropped mass is NOT redistributed
+    assert sum(top.values()) < 1.0  # dropped mass is NOT redistributed
     for token_id, probability in top.items():
         assert probability == pytest.approx(float(full[token_id]))
 
@@ -119,7 +128,7 @@ def test_processor_applies_the_advertised_mixture_not_an_argmax_override():
 
     mem = NonParametricMemory(dim=4)
     kvec = normalize(np.array([1.0, 0, 0, 0]))
-    mem.add(kvec, token_id=0, token="x", weight=1.0)
+    mem.add(kvec, token_id=0, token="x", weight=1.0, provenance=entry_provenance())
 
     class FakeModel:
         def model(self, seq):
@@ -156,16 +165,22 @@ def test_memory_tokens_outside_the_vocabulary_are_rejected():
             return 0.5
 
         def knn_probs(self, neighbors, temperature):
-            return {99999: 1.0}   # far outside a 4-token vocabulary
+            return {99999: 1.0}  # far outside a 4-token vocabulary
 
     logits = np.array([0.0, 0.0, 5.0, 0.0], dtype=np.float32)
     token, fired = _select_with_memory(
-        _Memory(), normalize(np.array([1.0, 0, 0, 0])), logits,
-        k=1, temperature=1.0, phi=0.5, free_energy=1.0,
-        base_lam=0.75, exclude_index=-1,
+        _Memory(),
+        normalize(np.array([1.0, 0, 0, 0])),
+        logits,
+        k=1,
+        temperature=1.0,
+        phi=0.5,
+        free_energy=1.0,
+        base_lam=0.75,
+        exclude_index=-1,
     )
 
-    assert token == 2      # fell back to the model's own pick
+    assert token == 2  # fell back to the model's own pick
     assert fired == -1
     assert 0 <= token < logits.shape[0]
 
@@ -200,7 +215,7 @@ def test_absent_continuation_is_not_token_zero():
         all_special_ids = [7]
 
         def encode(self, text):
-            return [7]        # only a special token → no usable continuation
+            return [7]  # only a special token → no usable continuation
 
     encoder = MLXEncoder.__new__(MLXEncoder)
     encoder.tok = _Tok()

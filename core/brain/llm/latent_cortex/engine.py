@@ -2791,6 +2791,7 @@ class LatentCortexEngine:
         action_continuation_capture_only: bool = False,
         action_continuation_restore_verified: Callable[[str], None] | None = None,
         nonparametric_memory_enabled: bool = True,
+        memory_principal: str = "",
     ) -> LatentReasoningResult:
         if type(capture_decode_logprobs) is not bool:
             raise TypeError("capture_decode_logprobs must be boolean")
@@ -2815,6 +2816,8 @@ class LatentCortexEngine:
             raise TypeError("action_continuation_capture_only must be boolean")
         if type(nonparametric_memory_enabled) is not bool:
             raise TypeError("nonparametric_memory_enabled must be boolean")
+        if not isinstance(memory_principal, str) or len(memory_principal) > 192:
+            raise TypeError("memory_principal must be a string naming who this episode is for")
         continuation_requested = (
             action_continuation_capture is not None
             or action_continuation_restore is not None
@@ -3088,6 +3091,7 @@ class LatentCortexEngine:
                     action_continuation_capture_only=action_continuation_capture_only,
                     action_continuation_restore_verified=(action_continuation_restore_verified),
                     nonparametric_memory_enabled=nonparametric_memory_enabled,
+                    memory_principal=memory_principal,
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
                     # Abstention may end the episode only when the latent lane
@@ -3588,6 +3592,7 @@ class LatentCortexEngine:
         action_continuation_capture_only: bool = False,
         action_continuation_restore_verified: Callable[[str], None] | None = None,
         nonparametric_memory_enabled: bool = True,
+        memory_principal: str = "",
     ) -> tuple[list[int], EpisodeReceipt, dict[str, Any]]:
         import mlx.core as mx
 
@@ -3893,6 +3898,7 @@ class LatentCortexEngine:
             self._last_prefill_hidden,
             self.tokenizer,
             enabled=nonparametric_memory_enabled,
+            principal=memory_principal,
         )
         receipt.nonparametric_memory = validate_nonparametric_receipt(one_shot_receipt)
         one_shot_accounting = receipt.nonparametric_memory["resource_accounting"]

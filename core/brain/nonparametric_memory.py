@@ -50,7 +50,6 @@ from typing import Any
 import numpy as np
 
 from core.brain.nonparametric_identity import (
-    CENTERING_VERSION,
     EntryProvenance,
     StoreIdentity,
     TrustLevel,
@@ -66,8 +65,10 @@ PHI_DORMANT = 0.05
 PHI_DELIBERATE = 0.55
 
 #: A principal every caller may read. Facts that belong to the system
-#: rather than to a person.
-_SHARED_PRINCIPAL = "shared"
+#: rather than to a person — Aura's own verified reasoning results, not
+#: anyone's conversation.
+SHARED_MEMORY_PRINCIPAL = "shared"
+_SHARED_PRINCIPAL = SHARED_MEMORY_PRINCIPAL
 
 
 def _flag_on(name: str, default: str = "0") -> bool:
@@ -275,16 +276,17 @@ class NonParametricMemory:
         token: str = "",
         *,
         weight: float = 1.0,
-        provenance: EntryProvenance | None = None,
+        provenance: EntryProvenance,
     ) -> bool:
         """Admit one (key -> next token) pair, with its provenance.
 
         ``provenance`` names the source, the trust level, the verifier and
-        the principal. It defaults to an UNVERIFIED anonymous entry rather
-        than being optional in effect: the module's docstring says the store
-        holds verifier-clean trusted knowledge, and ``add`` used to accept
-        anything from anyone with no way to say otherwise and no way to
-        revoke a source later (CP126 ``ff3a4505``, ``62309dad``).
+        the principal, and it is required. It was once optional with an
+        anonymous default, which meant the live ingest path wrote every
+        entry as ``unattributed``/``UNVERIFIED``/``anonymous`` — the three
+        values that make revocation by source and erasure by principal
+        impossible. An optional isolation argument is not isolation, so the
+        default is gone (CP126 ``ff3a4505``, ``62309dad``).
         """
         k = np.asarray(key, dtype=np.float32).reshape(-1)
         if k.shape[0] != self._dim or not np.all(np.isfinite(k)):

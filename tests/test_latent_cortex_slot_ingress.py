@@ -8,6 +8,7 @@ prefix with named roles, the receipt maps slot → organ, the seeded content
 is CAUSAL on the answer distribution, each seeded slot is individually
 ablatable, and every wire boundary validates the payload.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,6 +30,7 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     WorkspaceConfig,
 )
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace  # noqa: E402
+from tests.nonparametric_support import TEST_PRINCIPAL, entry_provenance
 
 N_LAYERS = 8
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23, 2, 88]
@@ -214,8 +216,7 @@ def test_receipt_maps_slots_to_organs(tiny_model):
         for row in slots
     ]
     assert all(
-        transition["evidence_pre_sha256"]
-        == transition["evidence_post_sha256"]
+        transition["evidence_pre_sha256"] == transition["evidence_post_sha256"]
         for branch in grounding["branches"]
         for transition in branch["transitions"]
     )
@@ -283,15 +284,11 @@ def test_value_controller_actions_focus_only_the_matching_context_class(
     assert result.ok is True
     trace = result.receipt.cognitive_action_trace
     selected_step = next(
-        index
-        for index, row in enumerate(trace)
-        if row["transition"]["action"] == action.value
+        index for index, row in enumerate(trace) if row["transition"]["action"] == action.value
     )
     assert trace[selected_step]["transition"]["outcome"] == expected_outcome
     focus_rows = [
-        row
-        for row in result.receipt.context_focus_trace
-        if row["action_step"] == selected_step
+        row for row in result.receipt.context_focus_trace if row["action_step"] == selected_step
     ]
     assert len(focus_rows) == 1
     focus = validate_context_focus_receipt(
@@ -338,9 +335,7 @@ def test_value_controller_actions_focus_only_the_matching_context_class(
     assert "context_focus_execution_unproven" in tampered_errors
 
 
-def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(
-    tiny_model, tmp_path, monkeypatch
-):
+def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(tiny_model, tmp_path, monkeypatch):
     from core.brain import nonparametric_memory, nonparametric_worker
     from core.brain.nonparametric_generation import normalize
     from core.brain.nonparametric_memory import NonParametricMemory
@@ -352,7 +347,7 @@ def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(
     prompt_tail = normalize(np.asarray(engine._last_prefill_hidden).reshape(-1))
 
     store = NonParametricMemory(dim=64, path=tmp_path / "one-shot")
-    assert store.add(prompt_tail, token_id=17, token="t17")
+    assert store.add(prompt_tail, token_id=17, token="t17", provenance=entry_provenance())
     monkeypatch.setattr(nonparametric_worker, "foreground_enabled", lambda: True)
     monkeypatch.setattr(
         nonparametric_memory,
@@ -360,10 +355,16 @@ def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(
         lambda dim=0: store if int(dim or 64) == 64 else None,
     )
 
-    result = engine.reason(token_ids=PROMPT_TOKENS)
+    result = engine.reason(token_ids=PROMPT_TOKENS, memory_principal=TEST_PRINCIPAL)
 
     assert result.ok
     assert result.receipt.nonparametric_memory["status"] == "admitted"
+
+    unscoped = engine.reason(token_ids=PROMPT_TOKENS)
+    assert unscoped.receipt.nonparametric_memory["status"] == "no_principal", (
+        "an episode that names no principal pulled a clue out of the shared "
+        "datastore, which holds every principal's entries"
+    )
     one_shot_slots = [
         row
         for row in result.receipt.cognitive_slots
@@ -403,16 +404,14 @@ def test_context_seeding_is_causal_on_answer_distribution(tiny_model):
         cognitive_context=[MEMORY_ITEM],
     )
     assert without.ok and with_ctx.ok
-    assert (
-        without.receipt.first_logits_digest != with_ctx.receipt.first_logits_digest
-    ), "organ-seeded slots must reach the answer distribution"
+    assert without.receipt.first_logits_digest != with_ctx.receipt.first_logits_digest, (
+        "organ-seeded slots must reach the answer distribution"
+    )
 
 
 def test_seeded_slot_is_individually_ablatable(tiny_model):
     engine = LatentCortexEngine(tiny_model, FakeTokenizer(), config=_config())
-    intact = engine.reason(
-        token_ids=PROMPT_TOKENS, cognitive_context=[MEMORY_ITEM]
-    )
+    intact = engine.reason(token_ids=PROMPT_TOKENS, cognitive_context=[MEMORY_ITEM])
     assert intact.ok
     slot = intact.receipt.cognitive_slots[0]["slot"]
     ablated = engine.reason(
@@ -421,12 +420,10 @@ def test_seeded_slot_is_individually_ablatable(tiny_model):
         ablate_slot=slot,
     )
     assert ablated.ok
-    assert any(
-        flag.startswith(f"slot_ablated:{slot}") for flag in ablated.receipt.honest_flags
+    assert any(flag.startswith(f"slot_ablated:{slot}") for flag in ablated.receipt.honest_flags)
+    assert intact.receipt.first_logits_digest != ablated.receipt.first_logits_digest, (
+        "destroying the organ slot must change the answer distribution"
     )
-    assert (
-        intact.receipt.first_logits_digest != ablated.receipt.first_logits_digest
-    ), "destroying the organ slot must change the answer distribution"
 
 
 def test_malformed_context_is_rejected(tiny_model):
@@ -434,9 +431,7 @@ def test_malformed_context_is_rejected(tiny_model):
     with pytest.raises(ValueError):
         engine.reason(token_ids=PROMPT_TOKENS, cognitive_context="not a list")
     with pytest.raises(ValueError):
-        engine.reason(
-            token_ids=PROMPT_TOKENS, cognitive_context=[{"source": "", "text": "x"}]
-        )
+        engine.reason(token_ids=PROMPT_TOKENS, cognitive_context=[{"source": "", "text": "x"}])
 
 
 def test_typed_memory_context_reaches_engine_but_cannot_gain_instruction_authority(
@@ -495,9 +490,7 @@ def test_worker_handler_rejects_memory_authority_tampering(tiny_model):
     assert "memory cognitive context authority" in body["message"]
 
 
-def test_worker_recomputes_and_echoes_runtime_operation_authority(
-    tiny_model, tmp_path
-):
+def test_worker_recomputes_and_echoes_runtime_operation_authority(tiny_model, tmp_path):
     from core.brain.llm.latent_cortex.epistemic_runtime import RuntimeOperationLease
     from core.brain.llm.latent_cortex.epistemic_state import (
         ComputeBudgetState,
@@ -576,9 +569,7 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         encoding="utf-8",
     )
     (model_root / "tokenizer.json").write_text("{}", encoding="utf-8")
-    (model_root / "model.safetensors").write_bytes(
-        b"synthetic-checkpoint-identity"
-    )
+    (model_root / "model.safetensors").write_bytes(b"synthetic-checkpoint-identity")
 
     body = handle_latent_reason(
         job,

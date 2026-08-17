@@ -17,6 +17,10 @@ _STATUSES = frozenset(
         "disabled_by_policy",
         "store_unavailable",
         "invalid_hidden",
+        # The turn named no principal, so nothing was looked up. Distinct
+        # from "disabled": retrieval was wanted and refused for lack of a
+        # subject to scope it to.
+        "no_principal",
         "query_failed",
         "no_neighbor",
         "invalid_neighbor",
@@ -137,8 +141,16 @@ def retrieve_observation(
     tokenizer: Any,
     *,
     enabled: bool = True,
+    principal: str = "",
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Retrieve one continuation clue and make it context-only recurrent evidence."""
+    """Retrieve one continuation clue and make it context-only recurrent evidence.
+
+    ``principal`` scopes the lookup. This called ``memory.query(key, k=4)``
+    with none, and the store's own docstring says an empty principal
+    searches EVERY entry — so a recurrent step could pull a clue from a
+    different person's memory into this turn's evidence. A turn that names
+    nobody gets no retrieval rather than an unscoped one.
+    """
 
     if type(enabled) is not bool:
         raise TypeError("nonparametric retrieval enabled flag must be boolean")
@@ -155,6 +167,12 @@ def retrieve_observation(
 
     if not foreground_enabled():
         return None, _base_receipt(status="store_unavailable", source_identity={})
+    # Read the reason that is actually true. A turn with no principal and a
+    # store that is switched off is reported as switched off; "no_principal"
+    # is reserved for the case where the store was ready and willing and the
+    # caller could not say whose memory this is.
+    if not str(principal or "").strip():
+        return None, _base_receipt(status="no_principal", source_identity={})
     from core.brain.nonparametric_memory import get_nonparametric_memory
 
     memory = get_nonparametric_memory(int(key.shape[0]))
@@ -163,7 +181,7 @@ def retrieve_observation(
     source_identity, identity_scan_bytes = memory.identity_receipt_with_work()
     query_sha256 = hashlib.sha256(key.tobytes()).hexdigest()
     try:
-        neighbors = memory.query(key, k=4)
+        neighbors = memory.query(key, k=4, principal=principal)
     except (RuntimeError, TypeError, ValueError, FloatingPointError):
         receipt = _base_receipt(
             status="query_failed",
@@ -337,6 +355,9 @@ def validate_receipt(value: Any) -> dict[str, Any]:
         "disabled_by_policy",
         "store_unavailable",
         "invalid_hidden",
+        # A turn that named nobody. The verdict carries no query and no
+        # neighbour because nothing was looked up.
+        "no_principal",
     }:
         if (
             source
@@ -388,6 +409,7 @@ def validate_receipt(value: Any) -> dict[str, Any]:
         "disabled_by_policy",
         "store_unavailable",
         "invalid_hidden",
+        "no_principal",
         "query_failed",
     }:
         similarity = value["similarity"]

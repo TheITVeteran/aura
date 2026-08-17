@@ -46,7 +46,7 @@ def _run_probe(model_path: str) -> int:
     from mlx_lm import load
 
     from core.brain.nonparametric_generation import MLXEncoder, generate_with_memory
-    from core.brain.nonparametric_ingest import NonParametricIngestor
+    from core.brain.nonparametric_ingest import NonParametricIngestor, ingest_provenance
     from core.brain.nonparametric_memory import NonParametricMemory
 
     print(f"Loading {model_path} ...")
@@ -84,7 +84,15 @@ def _run_probe(model_path: str) -> int:
             _os.remove(_f)
     mem = NonParametricMemory(dim=dim, path=str(probe_root), base_lambda=0.4, max_lambda=0.8)
     enc = MLXEncoder(model, tok)
-    ing = NonParametricIngestor(mem, dedup_path=str(seen_path))
+    ing = NonParametricIngestor(
+        mem,
+        provenance=ingest_provenance(
+            principal="nonparametric_probe",
+            source_id="nonparametric_probe:facts",
+            verifier="aura_bench/nonparametric_probe.py",
+        ),
+        dedup_path=str(seen_path),
+    )
     positions = sum(ing.ingest_sequence(ctx, ans, enc) for ctx, ans in FACTS)
     print(f"Datastore built: {len(mem)} entries from {len(FACTS)} facts ({positions} positions).\n")
 
@@ -95,7 +103,15 @@ def _run_probe(model_path: str) -> int:
             _, logits = hidden_and_logits(ctx)
             qkey = enc.encode_hidden(ctx)  # normalized, matches the datastore keys
             bare = topk_probs(logits, include=gold)
-            blended = mem.interpolate(bare, qkey, k=4, temperature=2.0, phi=0.5, free_energy=0.9)
+            blended = mem.interpolate(
+                bare,
+                qkey,
+                k=4,
+                temperature=2.0,
+                phi=0.5,
+                free_energy=0.9,
+                principal="nonparametric_probe",
+            )
             bare_hits += int(max(bare, key=bare.get) == gold)
             interp_hits += int(max(blended, key=blended.get) == gold)
             print(f"  {'✓' if max(blended,key=blended.get)==gold else '✗'} [{name}] '{ans}': "
@@ -125,7 +141,15 @@ def _run_probe(model_path: str) -> int:
     _, logits = hidden_and_logits(CONTROL[0])
     qkey = enc.encode_hidden(CONTROL[0])
     bare = topk_probs(logits, include=gold)
-    blended = mem.interpolate(bare, qkey, k=4, temperature=2.0, phi=0.5, free_energy=0.9)
+    blended = mem.interpolate(
+                bare,
+                qkey,
+                k=4,
+                temperature=2.0,
+                phi=0.5,
+                free_energy=0.9,
+                principal="nonparametric_probe",
+            )
     ctrl_ok = max(blended, key=blended.get) == gold
     print(f"  control preserved={ctrl_ok}\n")
 

@@ -22,6 +22,8 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+from core.brain.nonparametric_binding import ingest_provenance  # noqa: F401
+from core.brain.nonparametric_identity import EntryProvenance
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.state_ownership import state_root
@@ -185,10 +187,64 @@ def collect_trusted_pairs(
     return pairs
 
 
+def collect_trusted_pairs_by_source(
+    *, limit: int = 500, sources: list[tuple[Path, str]] | None = None
+) -> list[tuple[str, list[tuple[str, str]]]]:
+    """The same pairs, grouped by the store they came from.
+
+    Revocation is per-source, so an entry has to remember which trusted
+    store produced it. ``collect_trusted_pairs`` flattened that away, and
+    every ingested entry then shared one indistinguishable origin.
+    """
+    if sources is None:
+        sources = [
+            (Path(str(state_root() / "data/runtime/reasoning_solved_cache.json")), "entries"),
+            (Path(str(state_root() / "data/runtime/reasoning_traces.json")), "traces"),
+        ]
+    grouped: list[tuple[str, list[tuple[str, str]]]] = []
+    remaining = max(0, int(limit))
+    for path, key in sources:
+        if remaining <= 0:
+            break
+        found = collect_trusted_pairs(limit=remaining, sources=[(path, key)])
+        if found:
+            grouped.append((path.stem, found))
+            remaining -= len(found)
+    return grouped
+
+
 class NonParametricIngestor:
     """Encode trusted (context -> answer) pairs into the non-parametric datastore."""
 
-    def __init__(self, memory: Any, *, dedup_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        memory: Any,
+        *,
+        provenance: EntryProvenance,
+        dedup_path: str | Path | None = None,
+    ) -> None:
+        """``provenance`` is required, and its principal and source must be real.
+
+        Every ``add`` from this class passed no provenance, so each entry
+        the resident worker wrote defaulted to ``source_id="unattributed"``,
+        ``trust=UNVERIFIED``, ``principal="anonymous"`` — the exact values
+        the store's revocation and per-principal erasure need to work at
+        all. A write nobody can attribute is a write nobody can take back.
+
+        Refusing at construction rather than at ``add`` is deliberate: it
+        makes an anonymous ingest impossible to reach by omission from any
+        call site, present or future.
+        """
+        if not isinstance(provenance, EntryProvenance):
+            raise TypeError(
+                "NonParametricIngestor needs an EntryProvenance: an entry that "
+                "cannot be attributed cannot be revoked or erased"
+            )
+        if not str(provenance.source_id or "").strip() or provenance.source_id == "unattributed":
+            raise ValueError("ingest provenance needs a source that can later be revoked")
+        if not str(provenance.principal or "").strip() or provenance.principal == "anonymous":
+            raise ValueError("ingest provenance needs the principal the entry belongs to")
+        self._provenance = provenance
         self._mem = memory
         self._dedup_path = Path(
             dedup_path or str(state_root() / "data/runtime/nonparametric_ingested.json")
@@ -255,6 +311,7 @@ class NonParametricIngestor:
                 token_id,
                 token=_decode_token(encoder, token_id),
                 weight=weight,
+                provenance=self._provenance,
             ):
                 return False
             self._mark_seen(h)
@@ -393,6 +450,7 @@ class NonParametricIngestor:
                     token_id,
                     token=token_text,
                     weight=weight,
+                    provenance=self._provenance,
                 ):
                     added += 1
                 else:

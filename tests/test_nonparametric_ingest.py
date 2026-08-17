@@ -1,4 +1,5 @@
 """Tests for non-parametric memory ingestion (trusted knowledge -> datastore)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -9,6 +10,7 @@ import numpy as np
 
 from core.brain.nonparametric_ingest import NonParametricIngestor, collect_trusted_pairs
 from core.brain.nonparametric_memory import NonParametricMemory
+from tests.nonparametric_support import entry_provenance
 
 
 class FakeEncoder:
@@ -68,14 +70,18 @@ class FakeBatchSeqEncoder(FakeSeqEncoder):
     def encode_hidden_sequence_ids(self, ids: list[int]) -> np.ndarray:
         self.batch_calls += 1
         return np.vstack(
-            [super(FakeBatchSeqEncoder, self).encode_hidden_ids(ids[: index + 1])
-             for index in range(len(ids))]
+            [
+                super(FakeBatchSeqEncoder, self).encode_hidden_ids(ids[: index + 1])
+                for index in range(len(ids))
+            ]
         )
 
 
 def _ingestor(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     return mem, ing, FakeEncoder()
 
 
@@ -91,7 +97,7 @@ def test_ingest_pair_adds_and_recalls(tmp_path):
 def test_ingest_pair_dedups(tmp_path):
     mem, ing, enc = _ingestor(tmp_path)
     assert ing.ingest_pair("q", "a", enc) is True
-    assert ing.ingest_pair("q", "a", enc) is False    # same pair → skipped
+    assert ing.ingest_pair("q", "a", enc) is False  # same pair → skipped
     assert len(mem) == 1
 
 
@@ -111,9 +117,7 @@ def test_ingest_pairs_counts_and_persists(tmp_path):
     assert (tmp_path / "seen.json").exists()
 
 
-def test_ingest_pairs_does_not_publish_receipt_when_memory_persist_fails(
-    tmp_path, monkeypatch
-):
+def test_ingest_pairs_does_not_publish_receipt_when_memory_persist_fails(tmp_path, monkeypatch):
     mem, ing, enc = _ingestor(tmp_path)
     monkeypatch.setattr(mem, "persist", lambda: False)
 
@@ -124,18 +128,25 @@ def test_ingest_pairs_does_not_publish_receipt_when_memory_persist_fails(
 def test_dedup_survives_new_ingestor_instance(tmp_path):
     mem, ing, enc = _ingestor(tmp_path)
     ing.ingest_pairs([("durable", "fact")], enc)
-    ing2 = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing2 = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     assert ing2.ingest_pair("durable", "fact", enc) is False  # remembered across instances
 
 
 def test_collect_trusted_pairs_reads_stores(tmp_path):
     cache = tmp_path / "cache.json"
-    cache.write_text(json.dumps({
-        "entries": {
-            "h1": {"objective": "what is 2+2", "answer": "4"},
-            "h2": {"objective": "capital of Vorth", "answer": "Myrrhal"},
-        }
-    }), encoding="utf-8")
+    cache.write_text(
+        json.dumps(
+            {
+                "entries": {
+                    "h1": {"objective": "what is 2+2", "answer": "4"},
+                    "h2": {"objective": "capital of Vorth", "answer": "Myrrhal"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     pairs = collect_trusted_pairs(sources=[(Path(cache), "entries")])
     assert ("what is 2+2", "4") in pairs
     assert ("capital of Vorth", "Myrrhal") in pairs
@@ -150,15 +161,17 @@ def test_ingest_from_trusted_stores_kill_switch(tmp_path, monkeypatch):
     must still stop ingestion cold."""
     mem, ing, enc = _ingestor(tmp_path)
     monkeypatch.setenv("AURA_NONPARAMETRIC_INGEST", "0")
-    assert ing.ingest_from_trusted_stores(enc) == 0   # kill switch → no-op
+    assert ing.ingest_from_trusted_stores(enc) == 0  # kill switch → no-op
 
 
 def test_ingest_sequence_adds_every_answer_position(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeSeqEncoder()
     added = ing.ingest_sequence("the keeper is named", "Tessaly the great", enc)
-    assert added == 3                      # one entry per answer word
+    assert added == 3  # one entry per answer word
     assert len(mem) == 3
     # the context's hidden recalls the first answer token
     nbrs = mem.query(enc.encode_hidden("the keeper is named"))
@@ -167,23 +180,29 @@ def test_ingest_sequence_adds_every_answer_position(tmp_path):
 
 def test_ingest_sequence_dedups(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeSeqEncoder()
     assert ing.ingest_sequence("q here", "a b c", enc) > 0
-    assert ing.ingest_sequence("q here", "a b c", enc) == 0   # same fact → skipped
+    assert ing.ingest_sequence("q here", "a b c", enc) == 0  # same fact → skipped
 
 
 def test_ingest_sequence_falls_back_without_id_hooks(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeEncoder()  # no encode_hidden_ids / encode_tokens
-    assert ing.ingest_sequence("q", "a", enc) == 1   # degrades to first-token ingestion
+    assert ing.ingest_sequence("q", "a", enc) == 1  # degrades to first-token ingestion
     assert len(mem) == 1
 
 
 def test_ingest_sequence_uses_one_full_sequence_forward(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeBatchSeqEncoder()
 
     added = ing.ingest_sequence("the keeper is named", "Tessaly the great", enc)
@@ -195,7 +214,9 @@ def test_ingest_sequence_uses_one_full_sequence_forward(tmp_path):
 
 def test_ingest_sequence_budget_refuses_partial_pair(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeBatchSeqEncoder()
 
     assert (
@@ -209,25 +230,33 @@ def test_ingest_sequence_budget_refuses_partial_pair(tmp_path):
     )
     assert len(mem) == 0
     assert enc.batch_calls == 0
-    assert ing.ingest_sequence(
-        "the keeper is named",
-        "Tessaly the great",
-        enc,
-        max_positions=3,
-    ) == 3
+    assert (
+        ing.ingest_sequence(
+            "the keeper is named",
+            "Tessaly the great",
+            enc,
+            max_positions=3,
+        )
+        == 3
+    )
 
 
 def test_sequence_budget_check_does_not_run_model_or_mutate_memory(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeBatchSeqEncoder()
 
-    assert ing.sequence_within_budget(
-        "the keeper is named",
-        "Tessaly the great",
-        enc,
-        max_positions=2,
-    ) is False
+    assert (
+        ing.sequence_within_budget(
+            "the keeper is named",
+            "Tessaly the great",
+            enc,
+            max_positions=2,
+        )
+        is False
+    )
     assert enc.batch_calls == 0
     assert enc.prefix_calls == 0
     assert len(mem) == 0
@@ -235,7 +264,9 @@ def test_sequence_budget_check_does_not_run_model_or_mutate_memory(tmp_path):
 
 def test_ingest_sequence_cancellation_cannot_publish_partial_pair(tmp_path):
     mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
-    ing = NonParametricIngestor(mem, dedup_path=tmp_path / "seen.json")
+    ing = NonParametricIngestor(
+        mem, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     enc = FakeBatchSeqEncoder()
     checks = 0
 
@@ -244,12 +275,15 @@ def test_ingest_sequence_cancellation_cannot_publish_partial_pair(tmp_path):
         checks += 1
         return checks == 1
 
-    assert ing.ingest_sequence(
-        "the keeper is named",
-        "Tessaly the great",
-        enc,
-        should_continue=_continue_once,
-    ) == 0
+    assert (
+        ing.ingest_sequence(
+            "the keeper is named",
+            "Tessaly the great",
+            enc,
+            should_continue=_continue_once,
+        )
+        == 0
+    )
     assert enc.batch_calls == 1
     assert len(mem) == 0
 
@@ -275,7 +309,9 @@ class _NonPrefixEncoder(FakeSeqEncoder):
 def test_non_prefix_tokenizer_falls_back_instead_of_misaligning(tmp_path):
     """Misaligned positions would bind every key to the WRONG target, durably."""
     memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
-    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+    ingestor = NonParametricIngestor(
+        memory, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
 
     added = ingestor.ingest_sequence(
         "what is two plus two", "the answer is four", _NonPrefixEncoder()
@@ -289,16 +325,20 @@ def test_cancellation_midway_leaves_no_receipt(tmp_path):
     """A partial sequence must stay retryable: receipting it made every future
     run skip the missing positions permanently."""
     memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
-    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+    ingestor = NonParametricIngestor(
+        memory, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
     calls = {"n": 0}
 
     def should_continue() -> bool:
         calls["n"] += 1
-        return calls["n"] <= 3   # cancel partway through the commit loop
+        return calls["n"] <= 3  # cancel partway through the commit loop
 
     ingestor.ingest_sequence(
-        "context words here", "answer words follow along now",
-        FakeSeqEncoder(), should_continue=should_continue,
+        "context words here",
+        "answer words follow along now",
+        FakeSeqEncoder(),
+        should_continue=should_continue,
     )
 
     assert ingestor.has_seen("context words here", "answer words follow along now") is False
@@ -314,7 +354,9 @@ def test_malformed_keys_and_token_ids_are_rejected(tmp_path):
             return -5
 
     memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
-    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+    ingestor = NonParametricIngestor(
+        memory, dedup_path=tmp_path / "seen.json", provenance=entry_provenance()
+    )
 
     assert ingestor.ingest_pair("ctx", "ans", BadKeyEncoder()) is False
     assert ingestor.ingest_pair("ctx2", "ans2", BadTokenEncoder()) is False
@@ -333,7 +375,7 @@ def test_legacy_truncated_receipts_are_still_honoured(tmp_path):
     dedup.write_text(json.dumps({"seen": [legacy]}), encoding="utf-8")
 
     memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
-    ingestor = NonParametricIngestor(memory, dedup_path=dedup)
+    ingestor = NonParametricIngestor(memory, dedup_path=dedup, provenance=entry_provenance())
 
     assert ingestor.has_seen(ctx, ans) is True
     assert ingestor.ingest_pair(ctx, ans, FakeEncoder()) is False
@@ -343,22 +385,23 @@ def test_dedup_retention_keeps_the_most_recent(tmp_path):
     """Retention used list(set)[-N:], whose order is arbitrary and unstable."""
     memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
     dedup = tmp_path / "seen.json"
-    ingestor = NonParametricIngestor(memory, dedup_path=dedup)
+    ingestor = NonParametricIngestor(memory, dedup_path=dedup, provenance=entry_provenance())
 
     for i in range(50):
         ingestor._mark_seen(f"hash-{i:04d}")
     assert ingestor.persist_seen() is True
 
     stored = json.loads(dedup.read_text(encoding="utf-8"))["seen"]
-    assert stored == [f"hash-{i:04d}" for i in range(50)]   # insertion order preserved
+    assert stored == [f"hash-{i:04d}" for i in range(50)]  # insertion order preserved
 
 
 def test_oversized_trusted_store_is_skipped_before_loading(tmp_path, monkeypatch):
     import core.brain.nonparametric_ingest as ingest_module
 
     store = tmp_path / "big.json"
-    store.write_text(json.dumps({"entries": {"a": {"objective": "o", "answer": "a"}}}),
-                     encoding="utf-8")
+    store.write_text(
+        json.dumps({"entries": {"a": {"objective": "o", "answer": "a"}}}), encoding="utf-8"
+    )
     monkeypatch.setattr(ingest_module, "_MAX_TRUSTED_STORE_BYTES", 4)
 
     assert collect_trusted_pairs(sources=[(store, "entries")]) == []

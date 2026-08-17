@@ -666,3 +666,45 @@ def test_sensory_worker_ping_and_exit_contract() -> None:
     sensory_worker_loop(request_queue, response_queue)
 
     assert response_queue.get(timeout=0.1) == {"status": "ok", "msg": "pong"}
+
+
+class TestTheSettingsRefreshLaneCanBeStopped:
+    """`while True` in a daemon thread has no way to be told to stop.
+
+    The runtime-settings refresh lane looped forever. At interpreter
+    shutdown its last iteration ran against half-torn-down imports, and a
+    test that needed a quiet process had no way to end it. The loop now
+    reads a stop event, and there is a function that sets it and waits.
+    """
+
+    def test_the_worker_leaves_the_loop_when_asked(self) -> None:
+        from core.runtime import runtime_settings
+
+        runtime_settings._ensure_refresh_worker()
+        thread = runtime_settings._refresh_thread
+        assert thread is not None and thread.is_alive()
+
+        assert runtime_settings.stop_refresh_worker(timeout_s=5.0) is True
+        assert thread.is_alive() is False
+        assert runtime_settings._refresh_thread is None
+
+    def test_reading_settings_again_restarts_the_lane(self) -> None:
+        from core.runtime import runtime_settings
+
+        runtime_settings._ensure_refresh_worker()
+        runtime_settings.stop_refresh_worker(timeout_s=5.0)
+
+        runtime_settings._ensure_refresh_worker()
+        restarted = runtime_settings._refresh_thread
+        assert restarted is not None and restarted.is_alive()
+        assert runtime_settings.stop_refresh_worker(timeout_s=5.0) is True
+
+    def test_the_loop_condition_is_an_event_not_a_constant(self) -> None:
+        """A ratchet the next edit has to answer to."""
+        import inspect
+
+        from core.runtime import runtime_settings
+
+        source = inspect.getsource(runtime_settings._refresh_worker)
+        assert "while True" not in source
+        assert "_refresh_stop.is_set()" in source

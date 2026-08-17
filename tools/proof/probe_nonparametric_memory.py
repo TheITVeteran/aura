@@ -67,6 +67,7 @@ def _run_probe(model_path: str) -> int:
     import mlx.core as mx
     from mlx_lm import load
 
+    from core.brain.nonparametric_identity import EntryProvenance, TrustLevel
     from core.brain.nonparametric_memory import NonParametricMemory
 
     print(f"Loading {model_path} ...")
@@ -98,7 +99,18 @@ def _run_probe(model_path: str) -> int:
     mem = NonParametricMemory(dim=dim, path=probe_path, base_lambda=0.4, max_lambda=0.8)
     for ctx, ans in FACTS:
         key, _ = hidden_and_logits(ctx)
-        mem.add(key, _gold_token(tok, ans), token=ans, weight=1.0)
+        mem.add(
+            key,
+            _gold_token(tok, ans),
+            token=ans,
+            weight=1.0,
+            provenance=EntryProvenance(
+                source_id="probe_nonparametric_memory:facts",
+                principal="nonparametric_probe",
+                trust=TrustLevel.VERIFIED,
+                verifier="tools/proof/probe_nonparametric_memory.py",
+            ),
+        )
     print(f"Datastore built: {len(mem)} fictional facts.\n")
 
     def evaluate(name, pairs):
@@ -108,7 +120,15 @@ def _run_probe(model_path: str) -> int:
             gold = _gold_token(tok, ans)
             key, logits = hidden_and_logits(ctx)
             bare = topk_probs(logits, include=gold)
-            blended = mem.interpolate(bare, key, k=4, temperature=2.0, phi=0.5, free_energy=0.9)
+            blended = mem.interpolate(
+                bare,
+                key,
+                k=4,
+                temperature=2.0,
+                phi=0.5,
+                free_energy=0.9,
+                principal="nonparametric_probe",
+            )
             bare_top = max(bare, key=bare.get)
             interp_top = max(blended, key=blended.get)
             bare_hits += int(bare_top == gold)
@@ -132,7 +152,15 @@ def _run_probe(model_path: str) -> int:
     gold = _gold_token(tok, CONTROL[1])
     key, logits = hidden_and_logits(CONTROL[0])
     bare = topk_probs(logits, include=gold)
-    blended = mem.interpolate(bare, key, k=4, temperature=2.0, phi=0.5, free_energy=0.9)
+    blended = mem.interpolate(
+                bare,
+                key,
+                k=4,
+                temperature=2.0,
+                phi=0.5,
+                free_energy=0.9,
+                principal="nonparametric_probe",
+            )
     ctrl_ok = max(blended, key=blended.get) == gold
     print(f"  control '{CONTROL[1]}': bare_top={tok.decode([max(bare,key=bare.get)])!r} "
           f"interp_top={tok.decode([max(blended,key=blended.get)])!r} preserved={ctrl_ok}\n")

@@ -103,20 +103,38 @@ def _run_proof_with_lane(model_path, load, MLXEncoder, NonParametricMemory,
     # 2. BASE pass (memory present but OFF) — the model cannot know these.
     for prompt, answer in facts:
         base_out = cached_generate_with_memory(
-            model, tokenizer, prompt, memory, max_tokens=max_tokens, use_memory=False
+            model,
+            tokenizer,
+            prompt,
+            memory,
+            max_tokens=max_tokens,
+            use_memory=False,
+            principal="nonparametric_proof",
         )
         results.append({"prompt": prompt, "expected": answer.strip(), "base": base_out})
 
     control_base = cached_generate_with_memory(
-        model, tokenizer, control_prompt, memory, max_tokens=6, use_memory=False
+        model,
+        tokenizer,
+        control_prompt,
+        memory,
+        max_tokens=6,
+        use_memory=False,
+        principal="nonparametric_proof",
     )
 
     # 3. ONE-SHOT ingest via the REAL production path: full-sequence keys
     # (one entry per answer position) so recall carries the whole value.
-    from core.brain.nonparametric_ingest import NonParametricIngestor
+    from core.brain.nonparametric_ingest import NonParametricIngestor, ingest_provenance
 
     ingestor = NonParametricIngestor(
-        memory, dedup_path=Path(tempfile.mkdtemp(prefix="np-proof-dedup-")) / "seen.json"
+        memory,
+        provenance=ingest_provenance(
+            principal="nonparametric_proof",
+            source_id="nonparametric_proof:facts",
+            verifier="tools/nonparametric_proof.py",
+        ),
+        dedup_path=Path(tempfile.mkdtemp(prefix="np-proof-dedup-")) / "seen.json",
     )
     ingested_positions = 0
     for prompt, answer in facts:
@@ -125,7 +143,13 @@ def _run_proof_with_lane(model_path, load, MLXEncoder, NonParametricMemory,
     # 4. MEMORY pass — the blend must surface the trusted continuation.
     for record, (prompt, answer) in zip(results, facts):
         mem_out = cached_generate_with_memory(
-            model, tokenizer, prompt, memory, max_tokens=max_tokens, use_memory=True
+            model,
+            tokenizer,
+            prompt,
+            memory,
+            max_tokens=max_tokens,
+            use_memory=True,
+            principal="nonparametric_proof",
         )
         # The blend controls the FIRST token; the KV-cached continuation then
         # follows the model. Success = the answer's leading token surfaced
@@ -139,7 +163,13 @@ def _run_proof_with_lane(model_path, load, MLXEncoder, NonParametricMemory,
 
     # 5. CONTROL — unrelated prompt unchanged with the datastore loaded.
     control_mem = cached_generate_with_memory(
-        model, tokenizer, control_prompt, memory, max_tokens=6, use_memory=True
+        model,
+        tokenizer,
+        control_prompt,
+        memory,
+        max_tokens=6,
+        use_memory=True,
+        principal="nonparametric_proof",
     )
     control_preserved = control_base == control_mem
 
