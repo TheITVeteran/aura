@@ -185,3 +185,66 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
         (False, "chat_dependencies_warming"),
         (True, ""),
     ]
+
+
+def test_server_prewarm_binds_gate_that_registers_after_lifespan(monkeypatch) -> None:
+    import core.consciousness.unified_self as unified_self_module
+    import core.memory.embedding_runtime as embedding_runtime
+    import core.memory.profile_manager as profile_manager_module
+    import core.self.self_condition as self_condition_module
+    from interface import server
+
+    class _LateGate:
+        def __init__(self):
+            self.ready_events: list[tuple[bool, str]] = []
+
+        def get_cortex_readiness_status(self):
+            return {"conversation_ready": True}
+
+        def set_chat_dependencies_ready(self, ready, *, blocker=""):
+            self.ready_events.append((bool(ready), str(blocker)))
+
+    gate = _LateGate()
+    lookups = 0
+
+    def _lookup(_cls, key, default=None):
+        nonlocal lookups
+        if key != "inference_gate":
+            return default
+        lookups += 1
+        return None if lookups == 1 else gate
+
+    async def _ready_object():
+        return object()
+
+    monkeypatch.setattr(server.ServiceContainer, "get", classmethod(_lookup))
+    monkeypatch.setattr(server, "is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        embedding_runtime,
+        "prewarm_shared_embedding_runtime",
+        lambda: {"vector_dimensions": 384, "lease_count": 1},
+    )
+    monkeypatch.setattr(
+        profile_manager_module.ProfileManager,
+        "get_instance",
+        _ready_object,
+    )
+    monkeypatch.setattr(unified_self_module, "get_unified_self", _ready_object)
+    monkeypatch.setattr(
+        self_condition_module,
+        "build_self_condition_projection",
+        lambda: type("Projection", (), {"evidence_id": "condition-proof"})(),
+    )
+
+    asyncio.run(
+        server._prewarm_chat_dependencies_after_cortex_ready(
+            readiness_timeout_s=0.1,
+            poll_interval_s=0.01,
+        )
+    )
+
+    assert lookups >= 2
+    assert gate.ready_events == [
+        (False, "chat_dependencies_warming"),
+        (True, ""),
+    ]

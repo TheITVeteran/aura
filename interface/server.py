@@ -165,14 +165,15 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
 ) -> None:
     """Materialize the complete foreground read path before advertising chat."""
 
-    gate = ServiceContainer.get("inference_gate", default=None)
-    set_ready = getattr(gate, "set_chat_dependencies_ready", None)
-    if callable(set_ready):
-        set_ready(False, blocker="chat_dependencies_warming")
+    set_ready = None
 
     deadline = asyncio.get_running_loop().time() + max(1.0, readiness_timeout_s)
     while not is_shutdown_requested():
         gate = ServiceContainer.get("inference_gate", default=None)
+        candidate_set_ready = getattr(gate, "set_chat_dependencies_ready", None)
+        if set_ready is None and callable(candidate_set_ready):
+            set_ready = candidate_set_ready
+            set_ready(False, blocker="chat_dependencies_warming")
         get_status = getattr(gate, "get_cortex_readiness_status", None)
         if not callable(get_status):
             get_status = getattr(gate, "get_conversation_status", None)
