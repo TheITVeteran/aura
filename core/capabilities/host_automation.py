@@ -1167,13 +1167,21 @@ class HostAutomationProvider:
         max_files = cls._retention_limit(
             "AURA_SCREENSHOT_RETENTION_MAX_FILES", 4 if ephemeral else 200, 1
         )
-        max_age_days = cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_DAYS", 14, 1)
+        if ephemeral:
+            max_age_seconds = cls._retention_limit(
+                "AURA_EPHEMERAL_SCREENSHOT_RETENTION_MAX_SECONDS", 300, 30
+            )
+        else:
+            max_age_seconds = (
+                cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_DAYS", 14, 1)
+                * 86400
+            )
         max_bytes = cls._retention_limit(
             "AURA_SCREENSHOT_RETENTION_MAX_BYTES",
             (16 if ephemeral else 512) * 1024 * 1024,
             8 * 1024 * 1024,
         )
-        cutoff = time.time() - max_age_days * 86400
+        cutoff = time.time() - max_age_seconds
         candidates = await asyncio.to_thread(
             cls._screenshot_retention_candidates,
             directory,

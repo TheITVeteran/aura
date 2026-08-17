@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -294,6 +296,48 @@ async def test_screenshot_retention_bounds_capture_count(monkeypatch, tmp_path) 
     assert result["deleted"] == 2
     assert sum(path.exists() for path in paths) == 10
     assert unrelated.exists()
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_screenshot_retention_expires_failure_residue(
+    monkeypatch, tmp_path
+) -> None:
+    from core.capabilities import host_automation
+
+    directory = tmp_path / "ephemeral"
+    directory.mkdir()
+    stale_paths = []
+    for index in range(3):
+        path = directory / f"stale-{index}.png"
+        path.write_bytes(b"stale")
+        os.utime(path, (time.time() - 3600, time.time() - 3600))
+        stale_paths.append(path)
+    active_path = directory / "active.png"
+    active_path.write_bytes(b"active")
+
+    async def execute_action(*, params, **_kwargs):
+        path = Path(str(params["path"]))
+        path.unlink(missing_ok=True)
+        return {
+            "ok": True,
+            "effect_verified": True,
+            "receipt_persisted": True,
+            "post_action_receipt_id": f"delete-{path.name}",
+        }
+
+    monkeypatch.setenv("AURA_EPHEMERAL_SCREENSHOT_RETENTION_MAX_SECONDS", "300")
+    monkeypatch.setenv("AURA_SCREENSHOT_RETENTION_MAX_FILES", "10")
+    monkeypatch.setenv("AURA_SCREENSHOT_RETENTION_MAX_BYTES", str(32 * 1024 * 1024))
+    monkeypatch.setattr(host_automation.ActionExecutor, "execute", execute_action)
+
+    result = await HostAutomationProvider._enforce_screenshot_retention(
+        directory,
+        keep_path=active_path,
+    )
+
+    assert result == {"kept": 1, "deleted": 3, "bytes_deleted": 15}
+    assert active_path.exists()
+    assert not any(path.exists() for path in stale_paths)
 
 
 @pytest.mark.asyncio
