@@ -790,6 +790,7 @@ class TestTheLatencyPayoff:
         assert asyncio.run(presence.tick()).observed is True
 
         async def _unknown():
+            presence._context_lookup_failure = "frontmost-window provider failed"
             return None
 
         presence._current_context = _unknown
@@ -841,6 +842,14 @@ class TestTheLatencyPayoff:
 
 class TestThePrivacyRuleHoldsForEveryCaller:
     """A privacy rule enforced in one caller is a rule with a hole in it."""
+
+    @pytest.fixture(autouse=True)
+    def _deterministic_python_foreground_probe(self, monkeypatch):
+        """Exercise injected metadata independently of a live resident app."""
+
+        from core.security import screen_capture_policy
+
+        monkeypatch.setattr(screen_capture_policy.sys, "platform", "test")
 
     def test_the_skill_itself_refuses_a_private_foreground(self, monkeypatch):
         from core.skills.computer_use import ComputerUseSkill

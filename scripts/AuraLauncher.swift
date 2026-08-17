@@ -148,13 +148,29 @@ private func nextBridgeFrameSequence() -> UInt64 {
 }
 
 private func bridgeScreenSessionLocked() -> Bool {
-    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
-          let locked = session["CGSSessionScreenIsLocked"] as? NSNumber else {
-        // Missing session evidence cannot authorize pixels from whatever may
-        // be behind loginwindow or a fast-user-switch boundary.
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+        // A missing session dictionary cannot authorize pixels from whatever
+        // may be behind loginwindow or a fast-user-switch boundary.
         return true
     }
-    return locked.boolValue
+    if let locked = session["CGSSessionScreenIsLocked"] as? NSNumber,
+       locked.boolValue {
+        return true
+    }
+
+    // macOS omits CGSSessionScreenIsLocked while an ordinary session is
+    // unlocked. Positive console ownership and completed-login evidence are
+    // therefore the authority to proceed; either missing signal still fails
+    // closed. Treating the absent lock key itself as locked made the resident
+    // privacy bridge permanently return foreground_unknown on every healthy
+    // desktop session.
+    guard let onConsole = session["kCGSSessionOnConsoleKey"] as? NSNumber,
+          onConsole.boolValue,
+          let loginDone = session["kCGSessionLoginDoneKey"] as? NSNumber,
+          loginDone.boolValue else {
+        return true
+    }
+    return false
 }
 
 private func bridgeForegroundWindowContext() -> BridgeForegroundWindowContext? {

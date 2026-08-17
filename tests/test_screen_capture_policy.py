@@ -118,6 +118,10 @@ def test_shared_privacy_policy_is_valid_and_bundled_once():
     assert "kCGWindowOwnerName" in swift
     assert '"private_visible"' in swift
     assert 'session["CGSSessionScreenIsLocked"]' in swift
+    assert 'session["kCGSSessionOnConsoleKey"]' in swift
+    assert 'session["kCGSessionLoginDoneKey"]' in swift
+    assert "onConsole.boolValue" in swift
+    assert "loginDone.boolValue" in swift
     assert "ownerApplication.activationPolicy == .regular" in swift
     assert "return bridgeScreenCaptureRefusal(bridgeScreenCaptureAdmission())" in swift
 
