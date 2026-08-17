@@ -40,6 +40,14 @@ class StepStatus(Enum):
     ROLLED_BACK = "rolled_back"
 
 
+class TaskExecutionDeferred(RuntimeError):
+    """Execution admission was postponed without consuming a task attempt."""
+
+    def __init__(self, reason: str):
+        self.reason = str(reason or "execution_admission_deferred")[:240]
+        super().__init__(self.reason)
+
+
 def _persistable_context(context: Any) -> dict[str, Any]:
     """Plan context reduced to what can survive a restart.
 
@@ -467,6 +475,19 @@ class AutonomousTaskEngine:
             if missing:
                 errors.append(f"{step.step_id or step.tool}:{step.tool}:{','.join(missing)}")
         return errors
+
+    @staticmethod
+    def _tool_result_deferral_reason(result: Any) -> str:
+        if not isinstance(result, dict):
+            return ""
+        if str(result.get("status", "") or "").strip().lower() != "deferred":
+            return ""
+        return str(
+            result.get("reason")
+            or result.get("message")
+            or result.get("error")
+            or "execution_admission_deferred"
+        )[:240]
 
     def _persist_active_plans(self) -> None:
         try:
@@ -1035,6 +1056,34 @@ class AutonomousTaskEngine:
 
         # 2. Execute steps
         await self._execute_plan(plan, on_progress)
+
+        if plan.status == "deferred":
+            deferred_reason = str(
+                plan.context.get("execution_deferred_reason", "")
+                or "execution_admission_deferred"
+            )[:240]
+            await self._report_progress_event(
+                on_progress,
+                {
+                    "event": "execution_deferred",
+                    "plan_id": plan.plan_id,
+                    "status": "deferred",
+                    "reason": deferred_reason,
+                    "steps_completed": len(plan.succeeded_steps),
+                    "steps_total": len(plan.steps),
+                },
+            )
+            self._persist_plan_state(plan)
+            return TaskResult(
+                plan_id=plan.plan_id,
+                goal=goal,
+                succeeded=False,
+                summary="Execution remains queued until runtime admission clears.",
+                steps_completed=len(plan.succeeded_steps),
+                steps_total=len(plan.steps),
+                trace_id=trace_id,
+                deferred_reason=deferred_reason,
+            )
 
         # 3. Synthesize result
         result = await self._synthesize_result(plan, time.time() - plan.created_at)
@@ -2587,6 +2636,8 @@ Respond ONLY with a JSON array, no other text:
                         completed_ids.add(step.step_id)
                     await self._emit_step_progress(step, on_progress, plan)
                 self._persist_plan_state(plan)
+                if plan.status == "deferred":
+                    return
                 failed_step = next(
                     (step for step in parallel_wave if step.status == StepStatus.FAILED), None
                 )
@@ -2611,6 +2662,9 @@ Respond ONLY with a JSON array, no other text:
                 completed_ids.add(step.step_id)
             await self._emit_step_progress(step, on_progress, plan)
             self._persist_plan_state(plan)
+
+            if plan.status == "deferred":
+                return
 
             if step.status == StepStatus.FAILED:
                 await self._fail_plan(
@@ -2735,6 +2789,10 @@ Respond ONLY with a JSON array, no other text:
                     timeout=step_timeout,
                 )
 
+                deferred_reason = self._tool_result_deferral_reason(raw_result)
+                if deferred_reason:
+                    raise TaskExecutionDeferred(deferred_reason)
+
                 step.raw_result = self._compact_tool_result(raw_result)
                 step.result_summary = step.raw_result
 
@@ -2846,6 +2904,24 @@ Respond ONLY with a JSON array, no other text:
                         )
                     self._persist_plan_state(plan)
 
+            except TaskExecutionDeferred as exc:
+                # Admission pressure and boot grace are scheduling facts, not
+                # failed actions. Preserve the exact step and its attempt
+                # budget so the plan can resume when the runtime is ready.
+                step.attempts = max(0, step.attempts - 1)
+                step.status = StepStatus.PENDING
+                step.error = f"execution deferred: {exc.reason}"
+                step.completed_at = None
+                plan.status = "deferred"
+                plan.context["execution_deferred_reason"] = exc.reason
+                plan.context["execution_deferred_at"] = time.time()
+                self._persist_plan_state(plan)
+                logger.info(
+                    "TaskEngine: step '%s' deferred without consuming an attempt: %s",
+                    step.description[:40],
+                    exc.reason,
+                )
+                return
             except TimeoutError:
                 step.error = f"timeout after {step_timeout}s"
                 self._record_coding_execution(
@@ -3006,6 +3082,7 @@ Respond ONLY with a JSON array, no other text:
                 f"Result: {result_str}\n\n"
                 "Answer with ONLY 'YES' or 'NO' followed by one sentence of evidence."
             )
+            verification_started_at = time.time()
             raw = await asyncio.wait_for(
                 llm.think(
                     prompt,
@@ -3017,6 +3094,12 @@ Respond ONLY with a JSON array, no other text:
                 timeout=15.0,
             )
             if not str(raw or "").strip():
+                deferral = take_deferral(
+                    origin="autonomous_task_engine",
+                    not_before=verification_started_at,
+                )
+                if deferral is not None:
+                    raise TaskExecutionDeferred(str(deferral.reason or "verifier_deferred"))
                 # Blank verifier output is NOT a pass: an empty verdict is a
                 # verifier outage, and treating "nothing came back" as success
                 # let unrelated or failure output satisfy arbitrary criteria.
@@ -3032,6 +3115,8 @@ Respond ONLY with a JSON array, no other text:
         except asyncio.CancelledError:
             # Cancellation is shutdown/caller intent, never a verification
             # outcome — propagate it rather than converting it into a pass.
+            raise
+        except TaskExecutionDeferred:
             raise
         except (RuntimeError, TimeoutError, AttributeError) as e:
             # Verifier exception or timeout: FAIL CLOSED. Assuming pass here
@@ -3106,7 +3191,13 @@ Respond ONLY with a JSON array, no other text:
                     "Alternative approach returned identical args for '%s'", step.description[:40]
                 )
         except (json.JSONDecodeError, TypeError, ValueError) as e:
-            record_degradation("autonomous_task_engine", e)
+            record_degradation(
+                "autonomous_task_engine_retry",
+                e,
+                severity="warning",
+                action="failed the step after retry synthesis produced no executable alternative",
+                enforce_failure_policy=False,
+            )
             logger.debug("Alternative approach generation failed: %s", e)
 
         # Signal exhaustion rather than silently looping identically

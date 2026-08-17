@@ -374,6 +374,42 @@ def test_overt_action_selection_requires_explicit_web_intent_or_structured_skill
     assert incidental.reason == "retained_memory_is_evidence_not_an_action"
 
 
+def test_overt_action_boot_anchor_relaxes_only_user_anchor_policy(monkeypatch):
+    import core.runtime.overt_action_loop as overt_action_module
+
+    calls = []
+
+    def policy_reason(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "boot_grace_17s"
+
+    monkeypatch.setenv("AURA_OVERT_ACTION_ALLOW_BOOT_ANCHOR", "1")
+    monkeypatch.setattr(overt_action_module, "background_activity_reason", policy_reason)
+
+    reason = overt_action_module.OvertActionLoop()._background_reason()
+
+    assert reason == "boot_grace_17s"
+    assert calls[0][1]["allow_no_user_anchor"] is True
+
+
+def test_overt_action_can_require_a_real_user_anchor(monkeypatch):
+    import core.runtime.overt_action_loop as overt_action_module
+
+    calls = []
+
+    def policy_reason(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "no_user_anchor"
+
+    monkeypatch.setenv("AURA_OVERT_ACTION_ALLOW_BOOT_ANCHOR", "0")
+    monkeypatch.setattr(overt_action_module, "background_activity_reason", policy_reason)
+
+    reason = overt_action_module.OvertActionLoop()._background_reason()
+
+    assert reason == "no_user_anchor"
+    assert calls[0][1]["allow_no_user_anchor"] is False
+
+
 def test_overt_action_selection_semantically_plans_paraphrased_objectives(tmp_path):
     from core.runtime.overt_action_loop import OvertActionLoop
     from core.runtime.receipts import ReceiptStore

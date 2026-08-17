@@ -207,15 +207,18 @@ class OvertActionLoop:
             return action.to_dict()
 
     def _background_reason(self) -> str:
+        allow_boot_anchor = os.getenv(
+            "AURA_OVERT_ACTION_ALLOW_BOOT_ANCHOR",
+            "1",
+        ).strip().lower() not in {"0", "false", "off", "no"}
         reason = background_activity_reason(
             self._orchestrator(),
             min_idle_seconds=float(os.getenv("AURA_OVERT_ACTION_IDLE_S", "30")),
             max_memory_percent=float(os.getenv("AURA_OVERT_ACTION_MAX_MEMORY_PERCENT", "88")),
             max_failure_pressure=float(os.getenv("AURA_OVERT_ACTION_MAX_FAILURE_PRESSURE", "0.35")),
             require_conversation_ready=False,
+            allow_no_user_anchor=allow_boot_anchor,
         )
-        if reason == "no_user_anchor" and os.getenv("AURA_OVERT_ACTION_ALLOW_BOOT_ANCHOR", "1").strip().lower() not in {"0", "false", "off", "no"}:
-            return ""
         return str(reason or "")
 
     def _record_skip(self, reason: str) -> OvertActionResult:

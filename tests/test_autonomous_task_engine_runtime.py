@@ -7,6 +7,7 @@ import pytest
 from core.agency.autonomous_task_engine import (
     AutonomousTaskEngine,
     StepStatus,
+    TaskExecutionDeferred,
     TaskPlan,
     TaskStep,
 )
@@ -673,6 +674,37 @@ async def test_task_engine_verifier_fails_closed_on_blank_llm_verdict():
 
 
 @pytest.mark.asyncio
+async def test_task_engine_verifier_propagates_inference_admission_deferral():
+    from core.brain.llm import deferral_record
+
+    async def deferred_think(*_args, **_kwargs):
+        deferral_record.record_deferral(
+            origin="autonomous_task_engine",
+            reason="foreground_quiet_window",
+        )
+        return ""
+
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    engine.kernel = SimpleNamespace(
+        organs={"llm": SimpleNamespace(get_instance=lambda: SimpleNamespace(think=deferred_think))}
+    )
+    step = TaskStep(
+        step_id="s1",
+        description="Verify grounded research",
+        tool="web_search",
+        args={"query": "consensus history"},
+        success_criterion="sources support the claim",
+    )
+
+    deferral_record.reset_for_test()
+    try:
+        with pytest.raises(TaskExecutionDeferred, match="foreground_quiet_window"):
+            await engine._verify_step(step, {"ok": True, "results": ["source"]})
+    finally:
+        deferral_record.reset_for_test()
+
+
+@pytest.mark.asyncio
 async def test_task_engine_records_execution_repair_pressure(monkeypatch):
     events: list[tuple[str, dict]] = []
 
@@ -738,6 +770,74 @@ async def test_task_engine_fails_fast_when_no_alternative_args_exist():
 
     assert step.status.value == "failed"
     assert step.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_task_engine_preserves_tool_deferral_without_spending_retry_budget():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    engine._invoke_tool = AsyncCallRecorder(
+        return_value={"ok": False, "status": "deferred", "reason": "boot_grace_17s"}
+    )
+    engine._verify_step = AsyncCallRecorder(return_value=False)
+    engine._persist_plan_state = lambda plan: None
+    engine._record_coding_execution = lambda *_args, **_kwargs: None
+
+    step = TaskStep(
+        step_id="plan-deferred_s0",
+        description="Search for consensus history",
+        tool="web_search",
+        args={"query": "distributed systems consensus history"},
+        success_criterion="recent sources returned",
+    )
+    plan = TaskPlan(
+        plan_id="plan-deferred",
+        goal="Research consensus history",
+        steps=[step],
+        trace_id="trace",
+    )
+
+    await AutonomousTaskEngine._execute_step_with_retry(engine, step, plan)
+
+    assert plan.status == "deferred"
+    assert plan.context["execution_deferred_reason"] == "boot_grace_17s"
+    assert step.status == StepStatus.PENDING
+    assert step.attempts == 0
+    assert "boot_grace_17s" in step.error
+    engine._verify_step.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_task_engine_scheduler_retains_deferred_plan_for_resume():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    engine._safety_registry = SimpleNamespace(is_allowed=AsyncCallRecorder(return_value=True))
+    engine._invoke_tool = AsyncCallRecorder(
+        return_value={"ok": False, "status": "deferred", "reason": "boot_grace_17s"}
+    )
+    engine._verify_step = AsyncCallRecorder(return_value=False)
+    engine._persist_plan_state = lambda plan: None
+    engine._record_coding_execution = lambda *_args, **_kwargs: None
+    engine._can_run_in_parallel = lambda _step: False
+
+    step = TaskStep(
+        step_id="plan-deferred_s0",
+        description="Search for consensus history",
+        tool="web_search",
+        args={"query": "distributed systems consensus history"},
+        success_criterion="recent sources returned",
+    )
+    plan = TaskPlan(
+        plan_id="plan-deferred",
+        goal="Research consensus history",
+        steps=[step],
+        trace_id="trace",
+    )
+
+    await AutonomousTaskEngine._execute_plan(engine, plan, on_progress=None)
+
+    assert plan.status == "deferred"
+    assert step.status == StepStatus.PENDING
+    assert step.attempts == 0
+    assert plan.any_failed is False
 
 
 @pytest.mark.asyncio
