@@ -3591,6 +3591,8 @@ class InferenceGate:
             lane["readiness_blockers"] = blockers
             lane["conversation_ready"] = False
             lane["chat_dependencies_ready"] = False
+            if not str(lane.get("last_failure_reason", "") or "").strip():
+                lane["last_failure_reason"] = blocker
         else:
             lane["chat_dependencies_ready"] = chat_dependencies_state is True
         lane_state = str(lane.get("state", "") or "").lower()

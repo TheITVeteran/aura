@@ -27,6 +27,7 @@ def test_chat_dependencies_block_public_readiness_after_cortex_is_ready():
     assert public["conversation_ready"] is False
     assert public["chat_dependencies_ready"] is False
     assert "chat_dependencies_warming" in public["readiness_blockers"]
+    assert public["last_failure_reason"] == "chat_dependencies_warming"
 
 
 def test_chat_dependencies_release_same_resident_lane_without_reloading_model():

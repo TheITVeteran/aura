@@ -21,6 +21,7 @@ def _health_pulse_boot_grace_s() -> float:
 
 
 _CONVERSATION_BOOT_TRANSIENT_BLOCKERS = {
+    "chat_dependencies_warming",
     "foreground_owner",
     "foreground_warming",
     "prewarm_not_attempted",
