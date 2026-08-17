@@ -1057,7 +1057,7 @@ class ResearchSearchPipeline:
         try:
             from core.capabilities.phantom_browser import PhantomBrowser
 
-            browser = PhantomBrowser(visible=False)
+            browser = PhantomBrowser(visible=False, principal="research_pipeline")
             try:
                 await browser.ensure_ready()
                 ok = await browser.browse(hit.url)

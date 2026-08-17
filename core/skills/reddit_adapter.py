@@ -466,7 +466,11 @@ class RedditAdapterSkill(BaseSkill):
 
     async def _create_browser(self) -> PhantomBrowser:
         """Create browser with persistent login state."""
-        browser = PhantomBrowser(visible=False, browser_type="chromium")
+        browser = PhantomBrowser(
+            visible=False,
+            browser_type="chromium",
+            principal="reddit_adapter",
+        )
         ready = await asyncio.wait_for(browser.ensure_ready(), timeout=30.0)
         if not ready or browser.context is None:
             status = browser.get_status() if hasattr(browser, "get_status") else {}

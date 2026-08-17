@@ -158,7 +158,7 @@ class SensoryGateActor:
         self._shutdown_event = asyncio.Event()
         try:
             try:
-                self.browser = PhantomBrowser(visible=False)
+                self.browser = PhantomBrowser(visible=False, principal="sensory_gate")
             except SENSORY_RECOVERABLE_ERRORS as exc:
                 _record_sensory_degradation(
                     exc,

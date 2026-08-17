@@ -123,7 +123,11 @@ class SovereignBrowserSkill(BaseSkill):
     async def _create_browser(self, preference: str = "auto") -> PhantomBrowser:
         """Create a fresh, ephemeral PhantomBrowser instance."""
         browser_type = self._pick_browser_type(preference)
-        browser = PhantomBrowser(visible=False, browser_type=browser_type)
+        browser = PhantomBrowser(
+            visible=False,
+            browser_type=browser_type,
+            principal="sovereign_browser",
+        )
         ready = await asyncio.wait_for(browser.ensure_ready(), timeout=30.0)
         if not ready:
             status = browser.get_status()

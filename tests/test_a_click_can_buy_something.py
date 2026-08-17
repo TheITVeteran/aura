@@ -47,6 +47,18 @@ def test_reading_needs_only_a_principal():
     assert verdict.allowed is True
 
 
+def test_browser_binds_a_production_principal_without_weakening_anonymous_calls():
+    from core.capabilities.phantom_browser import PhantomBrowser
+
+    owned = PhantomBrowser(principal="reddit_adapter")
+    anonymous = PhantomBrowser()
+
+    assert owned._effective_principal() == "reddit_adapter"
+    assert owned._effective_principal("narrower_operation") == "narrower_operation"
+    assert anonymous._effective_principal() == ""
+    assert owned.receipts()["principal"] == "reddit_adapter"
+
+
 def test_clicking_needs_a_lease():
     verdict = authorize_browser_action(
         BrowserAction.CLICK, principal="bryan", url="https://example.com/checkout"

@@ -175,13 +175,23 @@ class PhantomBrowser:
     """High-fidelity browser agent (Async Version).
     """
     
-    def __init__(self, visible: bool = False, browser_type: str = "chromium"):
+    def __init__(
+        self,
+        visible: bool = False,
+        browser_type: str = "chromium",
+        *,
+        principal: str = "",
+    ):
         self.playwright = None
         self.browser = None
         self.context = None
         self.page: Page | None = None
         self.visible = visible
         self.browser_type = browser_type
+        # Bind ownership once when a production service creates the browser.
+        # Individual operations may still provide a narrower principal, while
+        # anonymous ad-hoc browser objects remain refused by BrowserAuthority.
+        self.principal = str(principal or "").strip()
         self.is_active = False
         self._homeostasis = None
         self._resource_lock = None
@@ -217,6 +227,11 @@ class PhantomBrowser:
         
         if not PLAYWRIGHT_AVAILABLE:
             return
+
+    def _effective_principal(self, principal: str = "") -> str:
+        return str(principal or "").strip() or str(
+            getattr(self, "principal", "") or ""
+        ).strip()
 
     async def ensure_ready(self) -> bool:
         """Start the browser if needed. One starter at a time.
@@ -762,6 +777,7 @@ class PhantomBrowser:
         revalidated because a 302 can land somewhere policy would have
         refused.
         """
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.NAVIGATE, principal=principal, url=_normalize_url(url)
         )
@@ -862,6 +878,7 @@ class PhantomBrowser:
         the call: no before/after URL, no target identity, no receipt
         (``ed96f557``).
         """
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.CLICK,
             principal=principal,
@@ -954,6 +971,7 @@ class PhantomBrowser:
         accepted — there was no read-back proving the field holds what was
         typed (CP126 ``a66d2e59``, ``ed96f557``).
         """
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.TYPE,
             principal=principal,
@@ -1032,6 +1050,7 @@ class PhantomBrowser:
         self, direction: str = "down", amount: int = 500, *, principal: str = ""
     ) -> bool:
         """Scroll the page in a human-like manner."""
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.SCROLL,
             principal=principal,
@@ -1057,8 +1076,18 @@ class PhantomBrowser:
             logger.error("Scroll failed: %s", e)
             return False
 
-    async def read_content(self) -> str:
+    async def read_content(self, *, principal: str = "") -> str:
         """Extract page content by scoring likely article/content containers."""
+        principal = self._effective_principal(principal)
+        verdict = authorize_browser_action(
+            BrowserAction.READ,
+            principal=principal,
+            url=str(getattr(self.page, "url", "") or ""),
+        )
+        self._last_verdict = verdict.to_dict()
+        if not verdict.allowed:
+            logger.warning("Page read refused: %s", verdict.reason)
+            return ""
         try:
             if not self.page:
                 return ""
@@ -1200,6 +1229,7 @@ class PhantomBrowser:
 
     async def get_links(self, *, principal: str = "") -> list[dict[str, str]]:
         """Links on this page, bounded and scheme-filtered."""
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.READ,
             principal=principal,
@@ -1237,6 +1267,7 @@ class PhantomBrowser:
         of someone's private account could cross the capability boundary
         as one base64 string (CP126 ``a02663f7``).
         """
+        principal = self._effective_principal(principal)
         verdict = authorize_browser_action(
             BrowserAction.SCREENSHOT,
             principal=principal,
@@ -1317,6 +1348,7 @@ class PhantomBrowser:
         """
         return {
             "generation": self._generation,
+            "principal": str(getattr(self, "principal", "") or ""),
             "navigation": dict(self._last_navigation),
             "authorization": dict(self._last_verdict),
             "interaction": dict(self._last_interaction),

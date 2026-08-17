@@ -297,7 +297,7 @@ async def test_phantom_browser_read_content_prefers_article_block_over_chrome():
                 return "Home About Subscribe Contact"
             raise AssertionError(f"Unexpected script: {script[:80]}")
 
-    browser = PhantomBrowser(visible=False)
+    browser = PhantomBrowser(visible=False, principal="grounded_search_test")
     browser.page = _FakePage()
 
     content = await browser.read_content()
