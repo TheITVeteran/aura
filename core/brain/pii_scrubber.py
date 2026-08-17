@@ -1,17 +1,9 @@
-"""PII Scrubber — Removes personal identifiers before cloud routing.
+"""PII scrubbing for governed egress boundaries.
 
-When Aura falls back to cloud inference (Gemini, etc.), the system prompt
-may contain personal information from biography_private.json: real names,
-trust scores, relationship labels, and other PII that should not leave
-the local machine.
-
-This module strips that data before the prompt is sent to external
-endpoints, replacing it with generic placeholders that preserve the
-conversational context without leaking identity information.
-
-The scrubber is intentionally aggressive — it's better to lose some
-personality context in cloud responses than to transmit real PII to
-third-party inference infrastructure.
+Aura's resident model does not require redaction. Network-capable skills such
+as browsing, messaging, and web interlocution can still transmit text beyond
+the host, so their shared egress boundary needs deterministic redaction and a
+verifiable receipt independent of any model provider.
 """
 
 import hashlib
@@ -29,13 +21,21 @@ class PrivateNamesUnavailable(RuntimeError):
     a scrub that cannot load the names it exists to remove must not report
     success. Reusing a generic error would let a broad `except` upstream
     treat "redaction is unavailable" the same as "there was nothing to
-    redact" — which is how the names would reach the cloud provider.
+    redact" at a network egress boundary.
     """
 
 
 logger = logging.getLogger("Aura.PIIScrubber")
 
-__all__ = ["scrub_pii_for_cloud", "get_pii_patterns"]
+__all__ = [
+    "SCRUBBER_VERSION",
+    "get_pii_patterns",
+    "residual_pii_findings",
+    "scrub_for_cloud_with_receipt",
+    "scrub_for_egress_with_receipt",
+    "scrub_pii_for_cloud",
+    "scrub_pii_for_egress",
+]
 
 # Patterns that indicate PII-bearing content in system prompts
 _PII_SECTION_MARKERS = (
@@ -50,8 +50,7 @@ _PII_SECTION_MARKERS = (
 _PII_PATTERNS = [
     # Contact details and credentials. The scrubber's name list catches
     # "Bryan"; nothing caught an email address, a phone number, or an API key
-    # pasted into a prompt — and a third-party provider is exactly who must
-    # not receive those. residual_pii_findings() checks that these were
+    # pasted into outbound text. residual_pii_findings() checks that these were
     # actually removed, so a pattern that stops matching blocks the send
     # instead of quietly letting the data through.
     (re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+"), "[REDACTED_EMAIL]"),
@@ -94,7 +93,7 @@ def _load_private_names() -> list[str]:
     except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
         # Silently returning [] disabled targeted redaction and let the
         # caller carry on scrubbing — so the owner's and his family's real
-        # names went to a cloud provider unredacted, and the only signal was
+        # names crossed a network boundary unredacted, and the only signal was
         # an empty list that looks exactly like "this user named nobody".
         #
         # Raised rather than recorded-and-continued: the caller decides
@@ -126,8 +125,8 @@ def _get_private_names() -> list[str]:
     return _cached_names
 
 
-def scrub_pii_for_cloud(text: str) -> str:
-    """Remove personal identifiers from text before sending to cloud.
+def scrub_pii_for_egress(text: str) -> str:
+    """Remove personal identifiers before text crosses a governed boundary.
 
     Replaces:
     - Real names from biography_private.json with "the user"
@@ -141,7 +140,7 @@ def scrub_pii_for_cloud(text: str) -> str:
         text: The system prompt or message content to scrub.
 
     Returns:
-        Scrubbed text safe for cloud transmission.
+        Scrubbed text suitable for residual verification before egress.
     """
     if not text:
         return text
@@ -193,6 +192,11 @@ def scrub_pii_for_cloud(text: str) -> str:
     return scrubbed
 
 
+def scrub_pii_for_cloud(text: str) -> str:
+    """Compatibility wrapper for callers migrating to ``scrub_pii_for_egress``."""
+    return scrub_pii_for_egress(text)
+
+
 def get_pii_patterns() -> list[tuple[re.Pattern, str]]:
     """Return the PII patterns for external testing/validation."""
     return list(_PII_PATTERNS)
@@ -217,7 +221,7 @@ _RESIDUAL_PATTERNS: list[tuple[str, re.Pattern]] = [
 def residual_pii_findings(text: str) -> list[str]:
     """Kinds of personal data still present AFTER scrubbing.
 
-    The privacy claim on the cloud path was two scrubbed strings and a comment.
+    The original privacy claim was two scrubbed strings and a comment.
     Nothing checked whether the scrub worked, so a name the loader could not
     read, or a shape no pattern covered, left the machine with the claim
     intact. A non-empty result here blocks the send.
@@ -237,7 +241,7 @@ def residual_pii_findings(text: str) -> list[str]:
     return sorted(set(findings))
 
 
-def scrub_for_cloud_with_receipt(text: str) -> tuple[str, dict]:
+def scrub_for_egress_with_receipt(text: str) -> tuple[str, dict]:
     """Scrub, then record what the scrub actually did.
 
     The receipt is the difference between "we scrub before sending" as a
@@ -245,11 +249,11 @@ def scrub_for_cloud_with_receipt(text: str) -> tuple[str, dict]:
     what came out (by hash), and whether anything recognisable survived.
     """
     source = str(text or "")
-    scrubbed = scrub_pii_for_cloud(source)
+    scrubbed = scrub_pii_for_egress(source)
     scrubbed_text = "" if scrubbed is None else str(scrubbed)
     residual = residual_pii_findings(scrubbed_text)
     receipt = {
-        "schema": "aura.cloud.privacy_receipt.v1",
+        "schema": "aura.egress.privacy_receipt.v1",
         "scrubber_version": SCRUBBER_VERSION,
         "source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "scrubbed_sha256": hashlib.sha256(scrubbed_text.encode("utf-8")).hexdigest(),
@@ -260,3 +264,8 @@ def scrub_for_cloud_with_receipt(text: str) -> tuple[str, dict]:
         "safe_to_send": not residual and bool(scrubbed_text or not source),
     }
     return scrubbed_text, receipt
+
+
+def scrub_for_cloud_with_receipt(text: str) -> tuple[str, dict]:
+    """Compatibility wrapper for the provider-neutral egress receipt API."""
+    return scrub_for_egress_with_receipt(text)

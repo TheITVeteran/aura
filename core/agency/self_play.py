@@ -170,9 +170,8 @@ Detail your logical chain of thought before providing the final answer.
             if not solution:
                 return
 
-            # 3. Evaluate the effort and route to Distillation
-            # If the solver's response is short, confused, or lacks structured logic,
-            # we consider it a failure and send it to the Teacher model.
+            # 3. Evaluate the effort and route failed local attempts to the
+            # governed distillation dataset for later resident-model training.
             succeeded, confidence, reason = self._evaluate_solution_quality(solution)
             if not succeeded:
                 logger.info(
@@ -183,8 +182,6 @@ Detail your logical chain of thought before providing the final answer.
                 
                 distillation = get_runtime_service("distillation_pipe", default=None)
                 if distillation and hasattr(distillation, 'flag_for_distillation'):
-                    # This uses existing pipeline to ask Gemini for the ideal answer
-                    # and saves it to lora_dataset.jsonl
                     await distillation.flag_for_distillation(
                         prompt=problem,
                         local_response=solution,

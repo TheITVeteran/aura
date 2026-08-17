@@ -1,9 +1,9 @@
-"""Which caller-declared tools may reach a cloud provider.
+"""Validate tool declarations at the model-execution boundary.
 
-A tool definition in a provider request tells the model that a capability
+A tool definition in a generation request tells the model that a capability
 exists. If Aura cannot actually execute it, the model is being told
 something untrue about itself; if nothing checked, then anything that
-could reach the adapter could declare one. CP126 ``6e14ba27`` — caller
+could reach an adapter could declare one. CP126 ``6e14ba27`` — caller
 tools were copied straight into the request with no validation against the
 capability registry, no schema limit, and no policy.
 
@@ -28,7 +28,7 @@ __all__ = [
 
 #: Ceiling on what one request may declare. An unbounded tool list is a
 #: payload, and a schema deep enough to be interesting is deep enough to be
-#: a denial of service on the provider's parser.
+#: a denial of service on the request parser.
 MAX_TOOLS_PER_REQUEST = 32
 MAX_TOOL_SCHEMA_CHARS = 20_000
 
@@ -74,15 +74,15 @@ def admissible_tools(tools: Any) -> list[Any]:
         return []
     if not isinstance(tools, (list, tuple)):
         record_degradation(
-            "api_adapter",
+            "provider_tools",
             TypeError(f"tools must be a sequence, got {type(tools).__name__}"),
             severity="warning",
-            action="dropped a malformed tool declaration before it reached the provider",
+            action="dropped a malformed tool declaration at the execution boundary",
         )
         return []
     if len(tools) > MAX_TOOLS_PER_REQUEST:
         record_degradation(
-            "api_adapter",
+            "provider_tools",
             ValueError(f"{len(tools)} tools declared for one request"),
             severity="warning",
             action=f"kept the first {MAX_TOOLS_PER_REQUEST} tool declarations",
@@ -111,7 +111,7 @@ def admissible_tools(tools: Any) -> list[Any]:
 
     if refused:
         record_degradation(
-            "api_adapter",
+            "provider_tools",
             PermissionError(f"refused tool declarations: {refused[:8]}"),
             severity="warning",
             action="forwarded only the tools Aura's capability registry knows",

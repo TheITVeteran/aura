@@ -8,8 +8,10 @@ logger = logging.getLogger("Brain.Composer")
 
 class ComposerNode:
     """
-    Complex Multimodal Workflow Orchestrator.
-    Specializes in Style Transfer, Image-to-Image, and Layout-aware generation.
+    Local multimodal composition planner.
+
+    The current implementation derives an image-generation description from
+    the resident visual context. It does not apply an image transformation.
     """
     
     def __init__(self, container: Optional[Any] = None):
@@ -29,15 +31,17 @@ class ComposerNode:
                 self.vision_buffer = get_runtime_service("continuous_vision", default=None)
                 self.capability_engine = get_runtime_service("capability_engine", default=None)
             self._is_setup = True
-            logger.info("🎨 Composer Node Online (Style Transfer Enabled).")
+            logger.info("🎨 Composer Node Online (Style Planning Enabled).")
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('composer_node', e)
             logger.error("Composer setup failed: %s", e)
 
     async def stylize_desktop(self, style_prompt: str) -> Dict[str, Any]:
         """
-        Captures the current desktop and transforms it according to the style prompt.
-        Example: 'In the style of Van Gogh' or 'Cyberpunk transformation'.
+        Derive a style-transfer plan from the current desktop observation.
+
+        The returned receipt distinguishes planning from an applied media
+        effect so callers cannot report a completed transformation.
         """
         self._setup()
         
@@ -49,29 +53,14 @@ class ComposerNode:
         if not frames:
             return {"ok": False, "error": "No frames captured."}
             
-        # 2. Prepare Img2Img Prompt
-        # We need a skill that supports Image-to-Image.
-        # local_media_generation currently only supports Text-to-Image.
-        # I would need to extend it.
-        
-        # For now, we delegate to the capability engine for an img2img skill
-        # if one exists, otherwise we fallback to high-fidelity description + generation.
-        
-        logger.info("🎭 Stylizing desktop with prompt: '%s'", style_prompt)
+        logger.info("🎭 Planning desktop style treatment: '%s'", style_prompt)
         
         try:
-            # Prototype workflow:
-            # a) Use Gemini to describe the current screen + style
-            # b) Use Diffusion to generate the result based on description
-            
+            # Ground the plan in Aura's resident visual-context service.
             description = await self.vision_buffer.query_visual_context(
                 f"Describe this screen capture in detail for a style transfer to: {style_prompt}",
                 get_runtime_service("cognitive_engine", default=None)
             )
-            
-            # c) Trigger generation
-            # This is a bit recursive, but effective for high-fidelity 'concept' manifestation.
-            # Real high-fidelity would use a proper Img2Img pipeline.
             
             # Evolution 8: Pulse Mycelium
             mycelium = get_runtime_service("mycelium", default=None)
@@ -80,9 +69,11 @@ class ComposerNode:
 
             return {
                 "ok": True,
-                "workflow": "vision_to_diffusion",
+                "workflow": "visual_context_style_plan",
                 "base_description": description,
-                "message": f"I'm visualizing your desktop as: {style_prompt}. The transformation is complete."
+                "effect_applied": False,
+                "requires_image_transform": True,
+                "message": f"Prepared a grounded style-transfer plan for: {style_prompt}.",
             }
             
         except (ImportError, AttributeError, RuntimeError) as e:

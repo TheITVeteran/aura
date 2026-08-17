@@ -124,5 +124,5 @@ class AffectStateManager(AuraBaseModule):
         self._current_vibe.semantic_summary = f"System Internal State: Aura feels {primary} and her cognition is {energy}."
 
     def get_context_injection(self) -> str:
-        """This is the ONLY thing injected into the Gemini/MLX prompt."""
+        """Return the bounded affect summary exposed to resident inference."""
         return self._current_vibe.semantic_summary

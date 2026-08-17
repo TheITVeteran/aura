@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 @runtime_checkable
 class LLMClient(Protocol):
-    """Protocol for any LLM backend (Gemini, Local MLX)."""
+    """Protocol for Aura's resident generation backends."""
     async def generate(
         self, 
         prompt: str, 

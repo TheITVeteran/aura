@@ -19,7 +19,6 @@ into concrete, measurable changes to the LLM call:
 The bridge is consumed by:
   * MLX inference path (``core/brain/llm/mlx_client.py`` reads
     ``current_inference_params()`` before each generation)
-  * Cloud fallback (``core/brain/cloud_client.py``)
   * Brainstem fast path
 
 This is the structural alternative to "tell the LLM in the prompt that
