@@ -27,9 +27,16 @@ _REQUEST_FACETS = {
         re.I,
     ),
     "verify": re.compile(r"\b(?:verify|test|prove|validate|certif(?:y|ication))\b", re.I),
-    "explain": re.compile(r"\b(?:explain|why|how|caus(?:e|al|ality))\b", re.I),
+    "explain": re.compile(r"\b(?:explain|why|caus(?:e|al|ality))\b", re.I),
     "enumerate": re.compile(r"\b(?:list|enumerate|steps|each)\b", re.I),
 }
+_HOW_RE = re.compile(r"\bhow\b", re.I)
+_HOW_COMPARISON_RE = re.compile(
+    r"\bhow\s+(?:does|do|did|would|will|is|are|was|were)\b"
+    r"[^?.;\n]{0,120}?\b(?:compar(?:e|es|ed|ing)|contrast(?:s|ed|ing)?|"
+    r"differ(?:s|ed|ent|ently|ing)?)\b",
+    re.I,
+)
 _ANSWER_FACETS = {
     "compare": re.compile(
         r"\b(?:whereas|while|unlike|versus|compared|by\s+contrast|in\s+contrast)\b",
@@ -125,7 +132,17 @@ def request_facets(objective: Any) -> list[str]:
     judge the answer by — no drift between what is provisioned and what is
     demanded."""
     text = objective if isinstance(objective, str) else ""
-    return [name for name, pattern in _REQUEST_FACETS.items() if pattern.search(text)]
+    facets = [name for name, pattern in _REQUEST_FACETS.items() if pattern.search(text)]
+    # "How" normally requests an explanation, except when it introduces a
+    # comparison ("How does that compare...?"). That form asks one question.
+    comparison_spans = tuple(match.span() for match in _HOW_COMPARISON_RE.finditer(text))
+    how_requires_explanation = any(
+        not any(start <= match.start() < end for start, end in comparison_spans)
+        for match in _HOW_RE.finditer(text)
+    )
+    if how_requires_explanation and "explain" not in facets:
+        facets.append("explain")
+    return facets
 
 
 def _tokens(text: str) -> list[str]:

@@ -9499,7 +9499,8 @@ async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkey
                 }
             )
             return SimpleNamespace(
-                content="The voices. The small ones. They're whispering in my ear. Telling me things."
+                content="The voices. The small ones. They're whispering in my ear. Telling me things.",
+                metadata=_bound_live_mind_controls_metadata(),
             )
 
     class _Pool:
@@ -9548,6 +9549,8 @@ async def test_desktop_cognitive_engine_rejects_unfounded_voice_intrusion(monkey
     assert len(calls) == 2
     assert reply is None
     assert trace["engine_think_invoked"] is True
+    assert trace["repair_retry_attempt_count"] == 1
+    assert trace["foreground_model_generation_count"] == 2
     assert trace["cognitive_engine_reply_accepted"] is False
     assert trace.get("bounded_contract_used") is not True
     assert trace["response_path"] in {

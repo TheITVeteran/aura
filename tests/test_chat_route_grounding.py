@@ -45,6 +45,29 @@ async def test_referential_followup_anchor_finds_previous_question(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_comparative_anaphora_finds_the_question_it_inherits(monkeypatch):
+    first_question = "ChatGPT here. Hey Aura, how are you doing right now?"
+
+    async def _fake_recent(_message, limit=8):
+        return [first_question]
+
+    monkeypatch.setattr(chat_mod, "_gather_recent_user_messages_for_relevance", _fake_recent)
+
+    anchor = await chat_mod._resolve_referential_followup_anchor(
+        "ChatGPT here. How does that compare with a minute ago?"
+    )
+
+    assert anchor == first_question
+
+    active, inherited = chat_mod._classify_self_condition_contract(
+        "ChatGPT here. How does that compare with a minute ago?",
+        referential_anchor=anchor,
+    )
+    assert active is True
+    assert inherited is True
+
+
+@pytest.mark.asyncio
 async def test_referential_followup_does_not_anchor_deep_probe(monkeypatch):
     async def _fake_recent(_message, limit=8):
         return ["What is one thing you can notice about your own operation without turning it into roleplay?"]

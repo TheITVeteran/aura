@@ -2843,6 +2843,17 @@ _REFERENTIAL_FOLLOWUP_MARKERS = (
     "what's the actual thing you need",
     "whats the actual thing you need",
 )
+_REFERENTIAL_FOLLOWUP_RE = re.compile(
+    r"(?:"
+    r"\b(?:how|why|when|where|what)\s+"
+    r"(?:does|do|did|is|are|was|were|would|will|could|should)\s+"
+    r"(?:that|this|it|those|these)\b"
+    r"|\bwhat\s+about\s+(?:that|this|it|then|now)\b"
+    r"|\b(?:is|are|was|were|does|did|has|have)\s+"
+    r"(?:that|this|it|those|these)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _is_referential_followup_request(user_message: str) -> bool:
@@ -2858,6 +2869,8 @@ def _is_referential_followup_request(user_message: str) -> bool:
         record_degradation("chat", exc)
         logger.debug("Deep mind probe classifier unavailable: %s", exc)
     if any(marker in text for marker in _REFERENTIAL_FOLLOWUP_MARKERS):
+        return True
+    if _REFERENTIAL_FOLLOWUP_RE.search(text):
         return True
     tokens = set(re.findall(r"\b\w+\b", text))
     return ("question" in tokens or "answer" in tokens) and bool(tokens & {"it", "that", "last"})
@@ -2917,6 +2930,24 @@ async def _resolve_referential_followup_anchor(user_message: str) -> str | None:
             continue
         return candidate_text
     return None
+
+
+def _classify_self_condition_contract(
+    user_message: str,
+    *,
+    referential_anchor: str = "",
+) -> tuple[bool, bool]:
+    """Return (contract active, inherited from an explicit antecedent)."""
+
+    from core.conversation.response_reliability import is_self_condition_turn
+
+    visible_contract = is_self_condition_turn(user_message)
+    inherited_contract = bool(
+        not visible_contract
+        and str(referential_anchor or "").strip()
+        and is_self_condition_turn(referential_anchor)
+    )
+    return bool(visible_contract or inherited_contract), inherited_contract
 
 
 def _collect_recent_traceability_event_sync() -> tuple[dict[str, Any] | None, str]:
@@ -4677,6 +4708,7 @@ async def _run_cognitive_engine_chat_turn(
     conversation_only_surface: bool = False,
     principal_id: str = "",
     turn_trace: dict[str, Any] | None = None,
+    referential_anchor: str = "",
     continuation_partial: str = "",
     continuation_reasons: tuple[str, ...] | list[str] | None = None,
 ) -> str | None:
@@ -4732,12 +4764,28 @@ async def _run_cognitive_engine_chat_turn(
         if turn_trace is not None:
             turn_trace.update(fields)
 
+    def _record_foreground_generation(metadata: Any) -> None:
+        """Count proven model work whether or not its text is later accepted."""
+
+        if (
+            turn_trace is None
+            or not require_engine
+            or not _generation_metadata_consumed_foreground_owner(metadata)
+        ):
+            return
+        turn_trace["foreground_model_generation_consumed"] = True
+        turn_trace["foreground_model_generation_count"] = (
+            int(turn_trace.get("foreground_model_generation_count") or 0) + 1
+        )
+        turn_trace["single_owner_generation_exhausted"] = True
+
     def _adopt_generation_metadata(
         metadata: Any,
         *,
         source_label: str,
         adopt_response_path: bool = True,
         inherit_turn_context: bool = True,
+        count_foreground_generation: bool = True,
     ) -> None:
         """Bind the accepted generation's receipt without retaining stale fields."""
 
@@ -4821,12 +4869,8 @@ async def _run_cognitive_engine_chat_turn(
                 "text_mutation_count": len(receipt_mutations),
             }
         )
-        if require_engine and _generation_metadata_consumed_foreground_owner(metadata):
-            turn_trace["foreground_model_generation_consumed"] = True
-            turn_trace["foreground_model_generation_count"] = (
-                int(turn_trace.get("foreground_model_generation_count") or 0) + 1
-            )
-            turn_trace["single_owner_generation_exhausted"] = True
+        if count_foreground_generation:
+            _record_foreground_generation(metadata)
         raw_latent_receipt = metadata.get("latent_cortex_receipt")
         turn_trace.update(
             {
@@ -5042,10 +5086,15 @@ async def _run_cognitive_engine_chat_turn(
         if runtime_fact_status_contract
         else ""
     )
+    inherited_self_condition_contract = False
     try:
-        from core.conversation.response_reliability import is_self_condition_turn
-
-        self_condition_contract = is_self_condition_turn(visible)
+        (
+            self_condition_contract,
+            inherited_self_condition_contract,
+        ) = _classify_self_condition_contract(
+            visible,
+            referential_anchor=referential_anchor,
+        )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.self_condition", exc)
         self_condition_contract = False
@@ -5288,6 +5337,7 @@ async def _run_cognitive_engine_chat_turn(
         "memory_state_contract_covers_turn": memory_state_contract_covers_turn,
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
         "self_condition_contract": self_condition_contract,
+        "self_condition_contract_inherited": inherited_self_condition_contract,
         "self_condition_contract_covers_turn": self_condition_contract_covers_turn,
         "canonical_self_condition_context": canonical_self_condition_context,
         "live_capability_condition": live_capability_condition,
@@ -5424,6 +5474,7 @@ async def _run_cognitive_engine_chat_turn(
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "memory_state_contract": memory_state_contract,
                 "self_condition_contract": self_condition_contract,
+                "self_condition_contract_inherited": inherited_self_condition_contract,
                 "prompt_shape": dict(prompt_shape_payload),
             }
         )
@@ -6115,6 +6166,14 @@ async def _run_cognitive_engine_chat_turn(
             )
             return None
 
+        retry_metadata = getattr(repair_thought, "metadata", None)
+        if not isinstance(retry_metadata, dict) and isinstance(repair_thought, dict):
+            retry_metadata = repair_thought.get("metadata")
+        retry_metadata = retry_metadata if isinstance(retry_metadata, dict) else {}
+        # A rejected model draft still consumed the foreground owner. Count it
+        # before any visible-text gate returns so the public receipt cannot claim
+        # one generation after two resident decodes actually ran.
+        _record_foreground_generation(retry_metadata)
         retry_content = getattr(repair_thought, "content", None)
         if retry_content is None and isinstance(repair_thought, dict):
             retry_content = repair_thought.get("content") or repair_thought.get("response")
@@ -6129,10 +6188,6 @@ async def _run_cognitive_engine_chat_turn(
                 "CognitiveEngine desktop chat repair retry produced no user-facing text."
             )
             return None
-        retry_metadata = getattr(repair_thought, "metadata", None)
-        if not isinstance(retry_metadata, dict) and isinstance(repair_thought, dict):
-            retry_metadata = repair_thought.get("metadata")
-        retry_metadata = retry_metadata if isinstance(retry_metadata, dict) else {}
         if completion_only_retry:
             retry_text = _merge_reply_continuation(rejected_reply, retry_text)
         if bool(
@@ -6178,6 +6233,7 @@ async def _run_cognitive_engine_chat_turn(
                 source_label="desktop_chat_completion_live_mind_controls",
                 adopt_response_path=False,
                 inherit_turn_context=False,
+                count_foreground_generation=False,
             )
         if retry_still_incomplete:
             made_progress = len(retry_text.rstrip()) > len(str(rejected_reply or "").rstrip())
@@ -6215,6 +6271,7 @@ async def _run_cognitive_engine_chat_turn(
                     source_label="desktop_chat_repair_live_mind_controls",
                     adopt_response_path=False,
                     inherit_turn_context=False,
+                    count_foreground_generation=False,
                 )
             if turn_trace is not None:
                 _append_turn_text_mutation(
@@ -17425,6 +17482,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     conversation_only_surface=conversation_only_surface,
                     principal_id=_profile_user_id,
                     turn_trace=_live_turn_trace,
+                    referential_anchor=str(referential_anchor or ""),
                 )
                 if reply_text:
                     reply_text = _repair_required_search_reply_provenance(

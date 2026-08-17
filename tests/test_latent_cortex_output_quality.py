@@ -108,7 +108,17 @@ def test_temporal_contrast_satisfies_comparison_without_magic_connective():
             "It has since cleared, and the current measurement is back inside "
             "the normal range."
         ),
-        "Explain how that compares with a minute ago.",
+        "How does that compare with a minute ago?",
+    )
+
+    assert evidence["requested"] == ["compare"]
+    assert evidence["satisfied"] == ["compare"]
+
+
+def test_comparison_with_explicit_explanation_keeps_both_facets():
+    evidence = evaluate_facet_coverage(
+        "Compared with the prior reading, the current one is lower because the fault cleared.",
+        "Compare the current reading with the prior one and explain why it changed.",
     )
 
     assert evidence["requested"] == ["compare", "explain"]
