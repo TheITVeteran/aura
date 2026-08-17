@@ -2462,7 +2462,15 @@ def _acquire_spawn_file_lock(lock_file: Any, *, model_path: str) -> None:
 
 
 def _real_model_path(value: Any) -> str:
-    return os.path.realpath(str(value))
+    raw = str(value or "").strip()
+    try:
+        from .model_registry import is_model_repository_id
+
+        if is_model_repository_id(raw):
+            return raw
+    except (ImportError, RuntimeError):
+        pass
+    return os.path.realpath(raw)
 
 
 def _probe_cache_ttl_seconds(ok: bool | None, *, disk: bool) -> float:

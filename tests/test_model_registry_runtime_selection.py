@@ -71,6 +71,29 @@ def test_get_model_path_preserves_missing_absolute_paths(monkeypatch, tmp_path):
     assert model_registry.get_model_path(str(missing)) == str(missing)
 
 
+def test_get_model_path_is_idempotent_for_governed_repository_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(model_registry, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(model_registry, "_cortex_path_cache", None)
+    repository_id = model_registry.get_model_path("Qwen2.5-32B-Instruct-8bit")
+
+    assert repository_id == "mlx-community/Qwen2.5-32B-Instruct-8bit"
+    assert model_registry.get_model_path(repository_id) == repository_id
+
+
+def test_explicit_shared_model_root_is_independent_of_source_root(monkeypatch, tmp_path):
+    source_root = tmp_path / "worktree"
+    shared_models = tmp_path / "primary" / "models"
+    model_dir = shared_models / "Qwen2.5-32B-Instruct-8bit"
+    model_dir.mkdir(parents=True)
+    monkeypatch.setattr(model_registry, "BASE_DIR", source_root)
+    monkeypatch.setenv("AURA_MODELS_DIR", str(shared_models))
+    monkeypatch.setattr(model_registry, "_cortex_path_cache", None)
+
+    assert model_registry.get_model_path("Qwen2.5-32B-Instruct-8bit") == str(
+        model_dir.resolve()
+    )
+
+
 def _reset_lane_audit_cache():
     model_registry._LANE_AUDIT_CACHE.update(key=None, at=0.0, result=None)
 

@@ -87,6 +87,7 @@ ICON_SOURCE="${ROOT_DIR}/aura_icon.icns"
 ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
 PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"
 ENV_PATH_FILE="${RESOURCES_DIR}/aura-env-path"
+MODELS_PATH_FILE="${RESOURCES_DIR}/aura-models-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
 PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
@@ -164,6 +165,11 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 printf '%s\n' "${ROOT_DIR}" > "${ROOT_PATH_FALLBACK}"
 printf '%s\n' "${PYTHON_RUNTIME}" > "${PYTHON_RUNTIME_FILE}"
+MODELS_ROOT="${ROOT_DIR}/models"
+if [ -n "${PRIMARY_ROOT}" ] && [ -d "${PRIMARY_ROOT}/models" ]; then
+    MODELS_ROOT="${PRIMARY_ROOT}/models"
+fi
+printf '%s\n' "${MODELS_ROOT}" > "${MODELS_PATH_FILE}"
 ENV_SOURCE=""
 for candidate in "${ROOT_DIR}/.env" "${PRIMARY_ROOT:+${PRIMARY_ROOT}/.env}"; do
     if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then

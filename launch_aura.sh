@@ -6,6 +6,15 @@
 
 # Dynamically resolve root path relative to this script
 export AURA_ROOT="$(cd -P "$(dirname "$0")" && pwd -P)"
+if [ -z "${AURA_MODELS_DIR:-}" ]; then
+    AURA_GIT_COMMON_DIR="$(git -C "$AURA_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$AURA_GIT_COMMON_DIR" ] && [ "$(basename "$AURA_GIT_COMMON_DIR")" = ".git" ]; then
+        AURA_PRIMARY_ROOT="$(dirname "$AURA_GIT_COMMON_DIR")"
+        if [ -d "$AURA_PRIMARY_ROOT/models" ]; then
+            export AURA_MODELS_DIR="$AURA_PRIMARY_ROOT/models"
+        fi
+    fi
+fi
 cd "$AURA_ROOT" || exit 1
 
 print_usage() {

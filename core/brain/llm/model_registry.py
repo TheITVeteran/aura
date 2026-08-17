@@ -23,8 +23,9 @@ from core.brain.llm.context_window_evidence import (
     measured,
     note_assumption,
 )
+from core.runtime.flags import FlagKind as _FlagKind
+from core.runtime.flags import declare as _declare_flag
 from core.runtime.runtime_settings import get_runtime_setting
-from core.runtime.flags import FlagKind as _FlagKind, declare as _declare_flag
 
 # Declared flags (migrated from raw os.environ reads so the knobs are
 # inventoried and reportable). STRING kind with the original literal
@@ -117,6 +118,20 @@ logger = logging.getLogger("Aura.ModelRegistry")
 
 BASE_DIR = Path(os.getenv("AURA_ROOT", Path(__file__).resolve().parents[3]))
 LOCAL_BACKEND = str(_FLAG_LOCAL_BACKEND.value()).strip().lower()
+
+
+def get_models_dir() -> Path:
+    """Return the model artifact root independently of the source checkout.
+
+    Worktree-built desktop apps execute source from the worktree but share the
+    large, immutable model inventory in the primary checkout.  Conflating those
+    two roots made a valid Hugging Face repository ID get reinterpreted as a
+    nonexistent path below the worktree.
+    """
+
+    configured = str(os.getenv("AURA_MODELS_DIR", "")).strip()
+    return Path(configured).expanduser() if configured else BASE_DIR / "models"
+
 
 PRIMARY_ENDPOINT = "Cortex"
 DEEP_ENDPOINT = "Solver"
@@ -242,6 +257,35 @@ _CORTEX_NAME = "Qwen2.5-32B-Instruct-8bit"
 _CORTEX_MANIFEST_TTL_S = 5.0
 _cortex_path_cache: tuple[float, Path] | None = None
 
+HF_FALLBACKS = {
+    "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+    "Qwen3.5-9B-4bit": "mlx-community/Qwen3.5-9B-4bit",
+    "Qwen2.5-7B-Instruct-4bit": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "Qwen2.5-32B-Instruct-8bit": "mlx-community/Qwen2.5-32B-Instruct-8bit",
+    "Qwen2.5-32B-Instruct-4bit": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+    "Qwen2.5-72B-Instruct-4bit": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+    "Qwen2.5-72B-Instruct-Q4": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+    "QwQ-32B-4bit": "mlx-community/QwQ-32B-4bit",
+    "DeepSeek-R1-Distill-Qwen-32B-4bit": (
+        "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit"
+    ),
+    "DeepSeek-R1-Distill-Qwen-32B-8bit": (
+        "mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-8Bit"
+    ),
+}
+_KNOWN_MODEL_REPOSITORY_IDS = frozenset(HF_FALLBACKS.values())
+
+
+def is_model_repository_id(value: str | Path | None) -> bool:
+    """Return whether *value* is a governed remote artifact identifier.
+
+    This deliberately recognizes only registry-owned repositories.  Treating
+    every relative ``owner/name`` string as remote would turn malformed local
+    paths into implicit network fetches.
+    """
+
+    return str(value or "").strip() in _KNOWN_MODEL_REPOSITORY_IDS
+
 
 def _current_cortex_path() -> Path:
     """Resolve the cortex artifact FRESH: env pin > fused manifest > default.
@@ -260,7 +304,7 @@ def _current_cortex_path() -> Path:
     resolved = Path(
         _FLAG_LLM__MLX_MODEL_PATH.value()
         or _resolve_active_fused_model()
-        or str(BASE_DIR / "models" / _CORTEX_NAME)
+        or str(get_models_dir() / _CORTEX_NAME)
     )
     _cortex_path_cache = (now, resolved)
     return resolved
@@ -269,11 +313,11 @@ def _current_cortex_path() -> Path:
 _CORTEX_PATH = _current_cortex_path()  # legacy import-time view; do not add consumers
 _SOLVER_PATH = Path(
     _FLAG_LLM__MLX_DEEP_MODEL_PATH.value()
-    or str(BASE_DIR / "models" / "Qwen2.5-72B-Instruct-4bit")
+    or str(get_models_dir() / "Qwen2.5-72B-Instruct-4bit")
 )
 _BRAINSTEM_PATH = Path(
     _FLAG_LLM__MLX_BRAINSTEM_PATH.value()
-    or str(BASE_DIR / "models" / "Qwen3.5-9B-4bit")
+    or str(get_models_dir() / "Qwen3.5-9B-4bit")
 )
 
 MODEL_PATHS = {
@@ -407,25 +451,13 @@ def _read_adapter_target_model(adapter_dir: Path) -> str:
 def get_model_path(model_name: str | None = None) -> str:
     """Resolve the path for a model. Returns absolute path if local, else HF repo ID."""
     raw_name = str(model_name or ACTIVE_MODEL).strip() or ACTIVE_MODEL
+    if is_model_repository_id(raw_name):
+        return raw_name
     explicit_path = Path(raw_name).expanduser()
     if explicit_path.is_absolute() or explicit_path.exists():
         return str(explicit_path.resolve() if explicit_path.exists() else explicit_path)
 
     name = normalize_runtime_model_name(raw_name)
-
-    # Mapping of local names to HF repo IDs for auto-download fallback
-    hf_fallbacks = {
-        "Qwen2.5-1.5B-Instruct-4bit": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
-        "Qwen3.5-9B-4bit":            "mlx-community/Qwen3.5-9B-4bit",
-        "Qwen2.5-7B-Instruct-4bit":   "mlx-community/Qwen2.5-7B-Instruct-4bit",
-        "Qwen2.5-32B-Instruct-8bit":  "mlx-community/Qwen2.5-32B-Instruct-8bit",
-        "Qwen2.5-32B-Instruct-4bit":  "mlx-community/Qwen2.5-32B-Instruct-4bit",
-        "Qwen2.5-72B-Instruct-4bit":  "mlx-community/Qwen2.5-72B-Instruct-4bit",
-        "Qwen2.5-72B-Instruct-Q4":    "mlx-community/Qwen2.5-72B-Instruct-4bit",
-        "QwQ-32B-4bit":               "mlx-community/QwQ-32B-4bit",
-        "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
-        "DeepSeek-R1-Distill-Qwen-32B-8bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-8Bit",
-    }
 
     # The cortex lane resolves FRESH so a promoted fused artifact serves
     # every consumer (including worker respawns), not just the hot-swapped
@@ -434,9 +466,9 @@ def get_model_path(model_name: str | None = None) -> str:
         cortex = _current_cortex_path().expanduser()
         if cortex.exists():
             return str(cortex.resolve())
-        return hf_fallbacks.get(name, str(cortex))
+        return HF_FALLBACKS.get(name, str(cortex))
 
-    local_path = MODEL_PATHS.get(name, BASE_DIR / "models" / name)
+    local_path = MODEL_PATHS.get(name, get_models_dir() / name)
 
     # If it's a Path object, check if it exists
     if isinstance(local_path, Path):
@@ -444,7 +476,10 @@ def get_model_path(model_name: str | None = None) -> str:
         if local_path.exists():
             return str(local_path.resolve())
         # Fallback to repo ID if missing locally
-        return hf_fallbacks.get(name, str(local_path))
+        shared_path = get_models_dir() / name
+        if shared_path != local_path and shared_path.exists():
+            return str(shared_path.resolve())
+        return HF_FALLBACKS.get(name, str(local_path))
 
     return str(local_path)
 

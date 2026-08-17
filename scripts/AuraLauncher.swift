@@ -2158,6 +2158,24 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             "AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256": try requiredProvenanceString("workspace_state_sha256"),
             "AURA_LAUNCH_BUNDLE_ID": bundleIdentifier,
         ]
+        let modelsPathFile = resourcesURL.appendingPathComponent("aura-models-path")
+        guard let modelsPath = try? String(contentsOf: modelsPathFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !modelsPath.isEmpty else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura's signed model inventory path is missing. Rebuild the installed app.",
+            ])
+        }
+        let modelsURL = URL(fileURLWithPath: modelsPath, isDirectory: true).standardizedFileURL
+        var isModelsDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: modelsURL.path, isDirectory: &isModelsDirectory),
+              isModelsDirectory.boolValue,
+              fileManager.isReadableFile(atPath: modelsURL.path) else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura's signed model inventory is unavailable. Restore it or rebuild the installed app.",
+            ])
+        }
+        launchProvenanceEnvironment["AURA_MODELS_DIR"] = modelsURL.path
         let envPathFile = resourcesURL.appendingPathComponent("aura-env-path")
         if let envPath = try? String(contentsOf: envPathFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
