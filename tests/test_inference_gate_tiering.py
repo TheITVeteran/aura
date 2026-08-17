@@ -826,6 +826,32 @@ async def test_user_facing_primary_uses_conversational_budget_and_chatml():
 
 
 @pytest.mark.asyncio
+async def test_desktop_cortex_only_contract_does_not_reserve_for_forbidden_lane():
+    gate = InferenceGate()
+    cortex = _RecordingClient(
+        "Design: the foreground owner keeps the only permitted Cortex lane for the "
+        "whole bounded attempt. Verification: force a Cortex deadline and confirm "
+        "that no forbidden lower-lane generation starts."
+    )
+    gate._mlx_client = cortex
+
+    result = await gate.generate(
+        "Explain the design and verify the failure case.",
+        context={
+            "origin": "user",
+            "prefer_tier": "primary",
+            "history": [],
+            "cognitive_engine_required": True,
+            "foreground_request": True,
+        },
+        timeout=200.0,
+    )
+
+    assert result.startswith("Design: the foreground owner")
+    assert cortex.deadlines[0]._timeout == 196.0
+
+
+@pytest.mark.asyncio
 async def test_live_self_process_prebuilt_prompt_is_compacted_and_live_grounded(monkeypatch):
     gate = InferenceGate()
     cortex_reply = (

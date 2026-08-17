@@ -117,6 +117,39 @@ class TestDeferredLaneBudget:
         assert ready != chat_routes._DEFERRED_CORTEX_TURN_TIMEOUT_S
 
 
+class TestDesktopCycleAnswerRoom:
+    def test_compact_single_part_turn_keeps_the_latency_cap(self):
+        from interface.routes import chat as chat_routes
+        from core.runtime.structured_input import PromptShape
+
+        timeout = chat_routes._cognitive_cycle_timeout_for_request(
+            200.0,
+            require_engine=True,
+            compact_desktop_chat_contract=True,
+            prompt_shape=PromptShape(),
+        )
+
+        assert timeout == chat_routes._DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S
+
+    def test_extended_turn_uses_the_measured_outer_budget(self):
+        from interface.routes import chat as chat_routes
+        from core.runtime.structured_input import PromptShape
+
+        timeout = chat_routes._cognitive_cycle_timeout_for_request(
+            200.0,
+            require_engine=True,
+            compact_desktop_chat_contract=True,
+            prompt_shape=PromptShape(
+                prefers_extended_answer=True,
+                requires_single_reply_coverage=True,
+                question_parts=3,
+            ),
+        )
+
+        assert timeout == 198.0
+        assert timeout > chat_routes._DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S
+
+
 # ---------------------------------------------------------------------------
 # Half 2: the spawn gate must never be waited past the caller's own deadline
 # ---------------------------------------------------------------------------

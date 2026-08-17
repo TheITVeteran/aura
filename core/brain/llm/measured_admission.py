@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import enum
 import math
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -57,6 +58,7 @@ __all__ = [
     "TaskShape",
     "ThroughputEstimator",
     "get_throughput_estimator",
+    "recommended_foreground_deadline",
     "admit",
     "record_generation",
 ]
@@ -102,6 +104,32 @@ _UNMEASURED_CAUTION = 2.0
 #: Fraction of the deadline reserved for everything that is not decode:
 #: gates, assembly, delivery. Measured separately as overhead samples.
 _MIN_MARGIN = 0.15
+
+
+def _unmeasured_decode_seconds_per_token(model: str) -> float:
+    """Conservative local decode prior until this process has measurements.
+
+    A single 25ms/token default described a small accelerator model reasonably
+    and a resident 32B on this host disastrously.  The latter was therefore
+    admitted for 1,024 tokens inside a window that could physically decode only
+    about 220.  Model size is not a measurement, so the resulting decision
+    remains ``NO_SAMPLES``; it is only a safer prior than pretending all model
+    sizes have the same throughput.
+    """
+
+    match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)\s*[bB](?![A-Za-z])", str(model or ""))
+    if match is None:
+        return 2.5e-2
+    billions = float(match.group(1))
+    if billions <= 3.0:
+        return 1.8e-2
+    if billions <= 8.0:
+        return 3.5e-2
+    if billions <= 16.0:
+        return 6.5e-2
+    if billions <= 40.0:
+        return 1.6e-1
+    return 2.5e-1
 
 
 @dataclass(frozen=True)
@@ -268,7 +296,8 @@ class ThroughputEstimator:
             # No measurement. Say so, and be conservative rather than
             # inventing a rate that would look like knowledge.
             fallback = _UNMEASURED_CAUTION * (
-                prompt_tokens * 1.5e-4 + decode_tokens * 2.5e-2
+                prompt_tokens * 1.5e-4
+                + decode_tokens * _unmeasured_decode_seconds_per_token(shape.model)
             )
             return fallback, confidence, 0
         with self._lock:
@@ -313,6 +342,56 @@ def get_throughput_estimator() -> ThroughputEstimator:
             _ESTIMATOR = ThroughputEstimator()
             _publish_to_runtime_registry(_ESTIMATOR)
         return _ESTIMATOR
+
+
+def recommended_foreground_deadline(
+    *,
+    model: str,
+    prompt_tokens: int,
+    decode_tokens: int,
+    minimum_seconds: float,
+    maximum_seconds: float,
+) -> tuple[float, Confidence, int]:
+    """Bound a foreground window by observed p90 throughput.
+
+    The caller may not yet know whether its exact prefix will hit the KV cache.
+    Plan against the slower warm/cold prediction rather than optimistically
+    choosing one.  Natural EOS still returns early; this is permission to
+    finish, not a sleep or a target duration.
+    """
+
+    estimator = get_throughput_estimator()
+    predictions: dict[bool, tuple[float, Confidence, int]] = {}
+    for cache_warm in (False, True):
+        predictions[cache_warm] = estimator.predict_seconds(
+            TaskShape(
+                model=str(model or "unknown"),
+                prompt_bucket=TaskShape.bucket_for(prompt_tokens),
+                cache_warm=cache_warm,
+                foreground=True,
+            ),
+            prompt_tokens=max(1, int(prompt_tokens)),
+            decode_tokens=max(1, int(decode_tokens)),
+        )
+    # Cold-cache behavior is an upper-bound shape. Once it has observations,
+    # an unmeasured warm bucket must not keep the static prior authoritative
+    # forever. Conversely, warm-only evidence cannot prove cold behavior, so
+    # retain the cold prior until a cold generation has completed.
+    cold_prediction = predictions[False]
+    if cold_prediction[1] is Confidence.NO_SAMPLES:
+        candidates = list(predictions.values())
+    else:
+        candidates = [
+            prediction
+            for prediction in predictions.values()
+            if prediction[1] is not Confidence.NO_SAMPLES
+        ]
+    predicted, confidence, samples = max(candidates, key=lambda item: item[0])
+    # Admission itself reserves 15% for delivery. Invert that margin here and
+    # retain four seconds for the HTTP projection and receipt binding.
+    needed = (predicted / max(0.01, 1.0 - _MIN_MARGIN)) + 4.0
+    deadline = max(float(minimum_seconds), min(float(maximum_seconds), needed))
+    return deadline, confidence, samples
 
 
 def _publish_to_runtime_registry(estimator: ThroughputEstimator) -> None:

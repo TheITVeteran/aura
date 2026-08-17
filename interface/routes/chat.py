@@ -904,7 +904,7 @@ _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    140.0,
+    236.0,
     minimum=60.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
@@ -3425,6 +3425,29 @@ def _inner_cognitive_cycle_timeout(
     return max(8.0, outer - recovery_reserve)
 
 
+def _cognitive_cycle_timeout_for_request(
+    outer_timeout_s: float,
+    *,
+    require_engine: bool,
+    compact_desktop_chat_contract: bool,
+    prompt_shape: Any,
+) -> float:
+    """Keep compact turns bounded without clipping structurally long answers."""
+
+    cycle_timeout = _inner_cognitive_cycle_timeout(
+        outer_timeout_s,
+        protected_foreground=bool(require_engine),
+    )
+    shape_needs_room = bool(
+        getattr(prompt_shape, "prefers_extended_answer", False)
+        or getattr(prompt_shape, "requires_single_reply_coverage", False)
+        or int(getattr(prompt_shape, "question_parts", 0) or 0) >= 2
+    )
+    if require_engine and compact_desktop_chat_contract and not shape_needs_room:
+        return min(cycle_timeout, _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S)
+    return cycle_timeout
+
+
 def _runtime_personality_available() -> bool:
     """Is the voice that makes her sound like herself actually present?
 
@@ -5935,15 +5958,12 @@ async def _run_cognitive_engine_chat_turn(
         logger.info("Foreground final-binding stages: %s", final_binding_stages)
 
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
-    engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(
+    engine_cycle_timeout_s = _cognitive_cycle_timeout_for_request(
         timeout_s,
-        protected_foreground=bool(require_engine),
+        require_engine=bool(require_engine),
+        compact_desktop_chat_contract=bool(compact_desktop_chat_contract),
+        prompt_shape=shape,
     )
-    if require_engine and compact_desktop_chat_contract:
-        engine_cycle_timeout_s = min(
-            engine_cycle_timeout_s,
-            _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S,
-        )
     no_reply_action = (
         "required caller must fail closed"
         if require_engine
@@ -8512,10 +8532,37 @@ def _foreground_timeout_for_lane(
             or getattr(shape, "requires_single_reply_coverage", False)
             or int(getattr(shape, "question_parts", 0) or 0) >= 2
         ):
-            return max(
-                ready_timeout,
-                _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
-            )
+            try:
+                from core.brain.llm.measured_admission import (
+                    recommended_foreground_deadline,
+                )
+                from core.brain.llm.model_registry import ACTIVE_MODEL
+
+                prompt_tokens = max(2048, 1800 + len(str(user_message or "")) // 4)
+                deadline, _confidence, _samples = recommended_foreground_deadline(
+                    model=ACTIVE_MODEL,
+                    prompt_tokens=prompt_tokens,
+                    decode_tokens=512,
+                    minimum_seconds=ready_timeout,
+                    maximum_seconds=(
+                        _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S
+                        + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S
+                    ),
+                )
+                return deadline
+            except (ArithmeticError, ImportError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "chat.measured_foreground_deadline",
+                    exc,
+                    severity="debug",
+                    action="used the conservative extended foreground ceiling",
+                    enforce_failure_policy=False,
+                )
+                return max(
+                    ready_timeout,
+                    _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S
+                    + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
+                )
         return ready_timeout
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
         if _lane_warmup_is_deliberately_deferred(lane):

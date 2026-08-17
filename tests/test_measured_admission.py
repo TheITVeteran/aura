@@ -17,6 +17,7 @@ from core.brain.llm.measured_admission import (
     ThroughputEstimator,
     admit,
     measured_slack_seconds,
+    recommended_foreground_deadline,
 )
 
 
@@ -71,6 +72,56 @@ def test_an_unmeasured_shape_is_admitted_cautiously_not_confidently():
     )
     assert generous.outcome is AdmissionOutcome.ADMIT
     assert tight.outcome is not AdmissionOutcome.ADMIT
+
+
+def test_unmeasured_prior_distinguishes_resident_32b_from_small_model():
+    small = admit(
+        model="Qwen2.5-1.5B-Instruct-4bit",
+        prompt_tokens=2048,
+        requested_decode_tokens=512,
+        deadline_seconds=60.0,
+    )
+    resident = admit(
+        model="Qwen2.5-32B-Instruct-4bit",
+        prompt_tokens=2048,
+        requested_decode_tokens=512,
+        deadline_seconds=60.0,
+    )
+
+    assert small.confidence is Confidence.NO_SAMPLES
+    assert resident.confidence is Confidence.NO_SAMPLES
+    assert resident.predicted_seconds > small.predicted_seconds * 5
+    assert resident.outcome is not AdmissionOutcome.ADMIT
+
+
+def test_foreground_deadline_covers_cold_resident_decode_before_measurement():
+    deadline, confidence, samples = recommended_foreground_deadline(
+        model="Qwen2.5-32B-Instruct-4bit",
+        prompt_tokens=2048,
+        decode_tokens=512,
+        minimum_seconds=112.0,
+        maximum_seconds=240.0,
+    )
+
+    assert 190.0 <= deadline <= 240.0
+    assert confidence is Confidence.NO_SAMPLES
+    assert samples == 0
+
+
+def test_foreground_deadline_converges_to_measured_throughput():
+    _teach(0.012, model="Qwen2.5-32B-Instruct-4bit", prompt_tokens=2048)
+
+    deadline, confidence, samples = recommended_foreground_deadline(
+        model="Qwen2.5-32B-Instruct-4bit",
+        prompt_tokens=2048,
+        decode_tokens=512,
+        minimum_seconds=112.0,
+        maximum_seconds=240.0,
+    )
+
+    assert deadline == 112.0
+    assert confidence is Confidence.MEASURED
+    assert samples == 30
 
 
 def test_it_gets_less_wrong_as_it_measures():

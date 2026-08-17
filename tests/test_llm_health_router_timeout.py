@@ -502,6 +502,47 @@ async def test_quality_rejection_does_not_trip_healthy_local_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_direct_surface_receipt_prevents_false_endpoint_failure():
+    class _ReceiptOnlyQualityRejectedClient:
+        async def think(self, *_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def get_last_generation_metadata():
+            return {}
+
+        @staticmethod
+        def get_last_surface_control_receipt():
+            return {
+                "surface_quality_gate_enabled": True,
+                "surface_quality_gate_passed": False,
+                "surface_quality_gate_reasons": ["corrupted_language"],
+            }
+
+    router = HealthAwareLLMRouter()
+    endpoint = EndpointHealth(
+        name="Cortex",
+        url="internal",
+        model="local-test",
+        is_local=True,
+        tier="local",
+        client=_ReceiptOnlyQualityRejectedClient(),
+    )
+
+    result = await router._call_endpoint(
+        endpoint,
+        "Explain the result completely.",
+        "Speak as Aura.",
+        timeout=30.0,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "surface_quality_rejected"
+    assert endpoint.failure_count == 0
+    assert endpoint.state.value == "closed"
+
+
+@pytest.mark.asyncio
 async def test_router_does_not_recover_to_a_removed_remote_provider():
     router = HealthAwareLLMRouter()
     router.register(

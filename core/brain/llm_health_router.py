@@ -4204,6 +4204,25 @@ class HealthAwareLLMRouter:
                         _quality_rejection = str(
                             generation_metadata.get("error") or ""
                         ).strip()
+                        if not _quality_rejection:
+                            receipt_getter = getattr(
+                                client, "get_last_surface_control_receipt", None
+                            )
+                            if callable(receipt_getter):
+                                try:
+                                    direct_receipt = receipt_getter()
+                                except (AttributeError, RuntimeError, TypeError, ValueError):
+                                    direct_receipt = {}
+                                if (
+                                    isinstance(direct_receipt, dict)
+                                    and direct_receipt.get("surface_quality_gate_enabled")
+                                    and not direct_receipt.get("surface_quality_gate_passed")
+                                    and direct_receipt.get("surface_quality_gate_reasons")
+                                ):
+                                    _quality_rejection = "surface_quality_rejected"
+                                    generation_metadata["surface_control_receipt"] = dict(
+                                        direct_receipt
+                                    )
                         if _quality_rejection in _SURFACE_QUALITY_REJECTIONS:
                             # The endpoint is healthy; something above it
                             # intentionally rejected the visible draft.

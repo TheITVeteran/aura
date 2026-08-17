@@ -1697,8 +1697,15 @@ def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace
     assert "foreground_desktop_action_constrained:not_deferred" in policy["constraints"]
 
 
-def test_foreground_timeout_for_cold_or_recovering_lane():
+def test_foreground_timeout_for_cold_or_recovering_lane(monkeypatch):
     from interface import server as server_module
+    from core.brain.llm import measured_admission
+
+    monkeypatch.setattr(
+        measured_admission,
+        "recommended_foreground_deadline",
+        lambda **_kwargs: (198.0, measured_admission.Confidence.NO_SAMPLES, 0),
+    )
 
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "cold"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "recovering"}) == 210.0
@@ -1706,14 +1713,14 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
     assert server_module._foreground_timeout_for_lane(
         {"conversation_ready": True, "state": "ready"},
         "Compare both designs, then choose one and explain the verification plan.",
-    ) == 144.0
+    ) == 198.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 62.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 104.0
     assert server_module._desktop_required_cognitive_budget(
         foreground_timeout=108.0,
         elapsed_s=20.0,
     ) == 84.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 140.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 206.0
 
 
 def test_reply_topicality_flags_unbridged_relevance_challenge():

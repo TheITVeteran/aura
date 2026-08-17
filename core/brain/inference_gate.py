@@ -9716,6 +9716,21 @@ class InferenceGate:
         primary_timeout, fallback_timeout = self._split_attempt_timeouts(
             timeout_val, requested_tier
         )
+        lower_local_lane_forbidden = bool(
+            proof_evaluation_contract
+            or strict_primary_proof_lane
+            or operator_evidence_contract
+            or desktop_cognitive_engine_contract
+            or health_probe
+        )
+        if requested_tier == "primary" and lower_local_lane_forbidden:
+            # This contract refuses every lower lane. Reserving 15-40% for a
+            # fallback that is forbidden shortened the only admissible 32B
+            # attempt, then failed closed after spending the reserved time on
+            # nothing. Keep a small delivery margin and give the real lane the
+            # rest; EOS still returns immediately.
+            primary_timeout = max(8.0, timeout_val - 4.0)
+            fallback_timeout = min(4.0, timeout_val)
         # ONE clock for the whole request.
         #
         # Every attempt below used to start a fresh timeout of its own: the
@@ -11788,9 +11803,15 @@ class InferenceGate:
                             is_user_facing=_is_user_facing,
                         )
                     primary_failure_metadata = self.get_last_generation_metadata()
+                    primary_surface_receipt = self.get_last_surface_control_receipt()
                     primary_surface_quality_rejected = (
                         str(primary_failure_metadata.get("error") or "").strip()
                         == "surface_quality_rejected"
+                        or bool(
+                            primary_surface_receipt.get("surface_quality_gate_enabled")
+                            and not primary_surface_receipt.get("surface_quality_gate_passed")
+                            and primary_surface_receipt.get("surface_quality_gate_reasons")
+                        )
                     )
                     if primary_surface_quality_rejected and desktop_cognitive_engine_contract:
                         logger.warning(
