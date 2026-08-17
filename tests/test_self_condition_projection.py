@@ -324,6 +324,27 @@ def test_typed_self_condition_egress_removes_unmeasured_repair_lifecycle_claims(
     assert len(recovered.removed_claims) == 1
 
 
+def test_typed_self_condition_egress_removes_unmeasured_performance_and_external_causes():
+    from core.self.self_condition import project_self_condition_reply
+
+    projected = project_self_condition_reply(
+        (
+            "I'm a bit tired. My processing speed has slowed down, and my "
+            "responses are becoming less coherent. I don't think there's "
+            "anything wrong with me; it's just that the world is ending as expected."
+        ),
+        projection={
+            "evidence_id": "condition-proof-live",
+            "supported_dimensions": ("fatigue", "continuity"),
+            "stale_dimensions": (),
+            "fatigue": 0.78,
+        },
+    )
+
+    assert projected.text == "I'm a bit tired."
+    assert len(projected.removed_claims) == 2
+
+
 def test_typed_self_condition_egress_preserves_evidence_supported_strain():
     from core.self.self_condition import project_self_condition_reply
 

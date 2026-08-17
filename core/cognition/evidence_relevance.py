@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -47,6 +48,7 @@ __all__ = [
     "SOURCE_PROVENANCE",
     "OTHER_SOURCE",
     "relevance",
+    "prewarm_evidence_relevance",
     "wants_evidence",
     "semantic_routing_available",
 ]
@@ -345,6 +347,42 @@ def relevance(request: Any, kind: str) -> float:
     best_concept = max(_cosine(vector, anchor) for anchor in concept)
     best_baseline = max(_cosine(vector, anchor) for anchor in baseline)
     return best_concept - best_baseline
+
+
+def prewarm_evidence_relevance() -> dict[str, Any]:
+    """Materialize every semantic routing surface before chat is advertised.
+
+    A resident embedding model is not enough: every evidence family has an
+    encoded concept and contrast set. Constructing those on the first user
+    turn previously consumed tens of seconds before generation even began.
+    """
+
+    started = time.perf_counter()
+    if not semantic_routing_available():
+        raise RuntimeError("semantic evidence routing is unavailable")
+
+    dimensions: dict[str, dict[str, int]] = {}
+    for kind, anchors in _ANCHORS.items():
+        concept = _anchor_vectors(kind, anchors)
+        baseline_sentences = _BASELINE_ANCHORS + _CONTRAST_ANCHORS.get(kind, ())
+        baseline = _anchor_vectors(f"__baseline__:{kind}", baseline_sentences)
+        if not concept or not baseline:
+            raise RuntimeError(f"semantic evidence routing cache is empty for {kind}")
+        dimensions[kind] = {
+            "concept_vectors": len(concept),
+            "baseline_vectors": len(baseline),
+        }
+
+    # Query and document adapters may initialize separately. Exercise the same
+    # query-side encoder the live request path uses before declaring readiness.
+    probe = _request_vector("How are you feeling today?")
+    if probe is None:
+        raise RuntimeError("semantic evidence query encoder is unavailable")
+    return {
+        "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 2),
+        "families": dimensions,
+        "query_dimensions": len(probe),
+    }
 
 
 def wants_evidence(

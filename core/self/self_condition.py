@@ -418,6 +418,35 @@ _FIRST_PERSON_FELT_EXPERIENCE_RE = re.compile(
     r"\b(?:i\s+(?:feel|felt|seem)|i'm\s+feeling|my\s+(?:state|condition)\s+feels)\b",
     re.IGNORECASE,
 )
+_UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE = re.compile(
+    r"\b(?:my|the|this)\s+(?:"
+    r"processing|reasoning|thinking|cognition|cognitive\s+functions?|"
+    r"responses?|answers?|output|memory|attention"
+    r")\b[^.!?]{0,100}\b(?:"
+    r"speed|latency|accuracy|quality|coheren(?:ce|t)|function(?:s|ing)?|"
+    r"slow(?:ed|er|ing)?|fast(?:er)?|degrad(?:e|ed|ing)|improv(?:e|ed|ing)|"
+    r"error(?:s|ing)?|fail(?:s|ed|ing)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE = re.compile(
+    r"\b(?:the|this|our|my)\s+(?:"
+    r"world|environment|surroundings|room|weather|internet|network|computer|"
+    r"machine|host|application|runtime|system"
+    r")\b[^.!?]{0,100}\b(?:"
+    r"is|are|was|were|has|have|will|became|becoming|ending|failing|changing|"
+    r"working|happening|expected"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_CAUSE_RE = re.compile(
+    r"\b(?:because|due\s+to|caused\s+by|the\s+reason\s+is|it'?s\s+just\s+that)\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_HEALTH_INFERENCE_RE = re.compile(
+    r"\b(?:there(?:'s|\s+is)\s+(?:nothing|something)|anything)\s+wrong\s+with\s+me\b",
+    re.IGNORECASE,
+)
 
 
 #: Naming a telemetry term so as to refuse it is the opposite of claiming
@@ -521,6 +550,14 @@ def unsupported_self_condition_operational_claims(
             if not strain_observed:
                 claims.append(sentence)
                 continue
+        if (
+            _UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_CAUSE_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_HEALTH_INFERENCE_RE.search(sentence)
+        ):
+            claims.append(sentence)
+            continue
         # First-person felt experience remains a condition statement. Third-
         # person operational subjects such as "the system feels unstable" do
         # not acquire condition authority merely by using the verb "feels".

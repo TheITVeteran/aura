@@ -119,6 +119,7 @@ def test_process_prewarm_is_idempotent_and_retained_until_close(monkeypatch) -> 
 
 
 def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
+    import core.cognition.evidence_relevance as evidence_relevance_module
     import core.consciousness.unified_self as unified_self_module
     import core.memory.embedding_runtime as embedding_runtime
     import core.memory.profile_manager as profile_manager_module
@@ -153,6 +154,11 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
         "prewarm_shared_embedding_runtime",
         lambda: calls.append("prewarmed")
         or {"vector_dimensions": 1024, "lease_count": 1},
+    )
+    monkeypatch.setattr(
+        evidence_relevance_module,
+        "prewarm_evidence_relevance",
+        lambda: calls.append("evidence_routing") or {"elapsed_ms": 4.0},
     )
     async def _profile():
         calls.append("profile")
@@ -191,6 +197,7 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
         "profile",
         "unified_self",
         "foreground_services",
+        "evidence_routing",
     }
     assert gate.ready_events == [
         (False, "chat_dependencies_warming"),
@@ -199,6 +206,7 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
 
 
 def test_server_prewarm_binds_gate_that_registers_after_lifespan(monkeypatch) -> None:
+    import core.cognition.evidence_relevance as evidence_relevance_module
     import core.consciousness.unified_self as unified_self_module
     import core.memory.embedding_runtime as embedding_runtime
     import core.memory.profile_manager as profile_manager_module
@@ -235,6 +243,11 @@ def test_server_prewarm_binds_gate_that_registers_after_lifespan(monkeypatch) ->
         embedding_runtime,
         "prewarm_shared_embedding_runtime",
         lambda: {"vector_dimensions": 384, "lease_count": 1},
+    )
+    monkeypatch.setattr(
+        evidence_relevance_module,
+        "prewarm_evidence_relevance",
+        lambda: {"elapsed_ms": 4.0},
     )
     monkeypatch.setattr(
         profile_manager_module.ProfileManager,

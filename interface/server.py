@@ -198,6 +198,7 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
 
     started = time.perf_counter()
     try:
+        from core.cognition.evidence_relevance import prewarm_evidence_relevance
         from core.consciousness.unified_self import get_unified_self
         from core.memory.embedding_runtime import prewarm_shared_embedding_runtime
         from core.memory.profile_manager import ProfileManager
@@ -222,7 +223,10 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
             embedding_task,
             foreground_services_task,
         )
-        projection = await asyncio.to_thread(build_self_condition_projection)
+        projection, evidence_routing = await asyncio.gather(
+            asyncio.to_thread(build_self_condition_projection),
+            asyncio.to_thread(prewarm_evidence_relevance),
+        )
         if not getattr(projection, "evidence_id", ""):
             raise RuntimeError("self-condition warmup produced no evidence identity")
     except _SERVER_BOUNDARY_ERRORS as exc:
@@ -242,13 +246,14 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
     logger.info(
         "Foreground chat dependencies prewarmed after Cortex readiness in %.2fs "
         "(embedding_dimensions=%s, leases=%s, skills=%s, expression_ms=%s, "
-        "condition_evidence=%s).",
+        "condition_evidence=%s, evidence_routing_ms=%s).",
         time.perf_counter() - started,
         snapshot.get("vector_dimensions"),
         snapshot.get("lease_count"),
         foreground_services.get("skill_count"),
         (foreground_services.get("expression_path") or {}).get("elapsed_ms"),
         str(getattr(projection, "evidence_id", ""))[:16],
+        evidence_routing.get("elapsed_ms"),
     )
 
 
