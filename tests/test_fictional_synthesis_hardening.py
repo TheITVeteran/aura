@@ -79,6 +79,52 @@ class TestTrustIsNotAuthority:
             allowed, _ = engine.can_do("web_search", risk_level=risk)
             assert allowed is True, risk
 
+    def test_signed_action_bound_capability_is_pre_execution_governance(
+        self, tmp_path, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        from core.governance.capability_chain import (
+            attach_capability,
+            get_capability_issuer,
+            reset_capability_chain,
+        )
+
+        monkeypatch.setenv("AURA_CAPABILITY_KEY_DIR", str(tmp_path / "keys"))
+        reset_capability_chain()
+        payload = {"mode": "check", "limit": 5}
+        capability = get_capability_issuer().issue_from_decision(
+            SimpleNamespace(
+                outcome="proceed",
+                domain="tool_execution",
+                receipt_id="edi-preflight",
+                constraints=(),
+            ),
+            action="email_adapter",
+            payload=payload,
+        )
+        context = attach_capability({}, capability)
+        engine = ProgressiveAutonomySystem(persist_path=str(tmp_path / "t.json"))
+
+        allowed, _ = engine.can_do(
+            "email_adapter",
+            risk_level="critical",
+            governed=True,
+            governance_context=context,
+            governance_payload=payload,
+        )
+        assert allowed is True
+
+        mismatched, _ = engine.can_do(
+            "email_adapter",
+            risk_level="critical",
+            governed=True,
+            governance_context=context,
+            governance_payload={"mode": "send", "recipient": "somebody@example.com"},
+        )
+        assert mismatched is False
+        reset_capability_chain()
+
 
 class TestTrustJournal:
     def test_signals_are_journaled_with_source(self, tmp_path):

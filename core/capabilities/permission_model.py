@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 import os
+import re
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -366,7 +366,14 @@ class PermissionRiskModel:
     # Risk classification
     # ------------------------------------------------------------------
 
-    def classify_risk(self, action: str, target: str = "") -> Tuple[RiskLevel, str]:
+    def classify_risk(
+        self,
+        action: str,
+        target: str = "",
+        *,
+        effect_scope: str = "",
+        execution_risk: str = "",
+    ) -> Tuple[RiskLevel, str]:
         """Classify the risk level of an action.
 
         Returns (risk_level, reason).
@@ -377,6 +384,31 @@ class PermissionRiskModel:
         for pattern, level, reason in _RISK_RULES:
             if re.search(pattern, combined, re.IGNORECASE):
                 return level, reason
+
+        # CapabilityEngine resolves invocation semantics from the registered
+        # skill contract and concrete arguments before asking this model. That
+        # typed result is stronger than whether a phrase happened to match the
+        # English regex list above. It may only classify an otherwise-unknown
+        # action: an explicit dangerous pattern always wins above.
+        normalized_scope = str(effect_scope or "").strip().lower()
+        normalized_risk = str(execution_risk or "").strip().lower()
+        typed_levels = {
+            "low": RiskLevel.LOW,
+            "medium": RiskLevel.MEDIUM,
+            "high": RiskLevel.HIGH,
+            # Critical means "needs the strongest ordinary authority", not
+            # "categorically prohibited". Only explicit BLOCKED patterns such
+            # as root deletion may enter the irreversible no-override class.
+            "critical": RiskLevel.HIGH,
+            "blocked": RiskLevel.BLOCKED,
+        }
+        typed_level = typed_levels.get(normalized_risk)
+        if typed_level is not None:
+            return (
+                typed_level,
+                f"Typed execution contract: scope={normalized_scope or 'unknown'}, "
+                f"risk={normalized_risk}",
+            )
 
         # An action no rule recognises is UNKNOWN, and unknown is not low.
         #
@@ -404,6 +436,9 @@ class PermissionRiskModel:
         action: str,
         target: str = "",
         context: Optional[Dict[str, Any]] = None,
+        *,
+        effect_scope: str = "",
+        execution_risk: str = "",
     ) -> PermissionDecision:
         """Check if an action is permitted.
 
@@ -411,7 +446,12 @@ class PermissionRiskModel:
         permission before executing.
         """
         context = context or {}
-        risk_level, reason = self.classify_risk(action, target)
+        risk_level, reason = self.classify_risk(
+            action,
+            target,
+            effect_scope=effect_scope,
+            execution_risk=execution_risk,
+        )
         modality = self._detect_modality(action, target)
         user_presence_verified = bool(context.get("user_presence_verified"))
         if user_presence_verified:

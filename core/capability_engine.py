@@ -5586,12 +5586,30 @@ class CapabilityEngine(AuraBaseModule):
                         "status": "blocked_by_self_preservation_unavailable",
                     }
 
+            # Resolve invocation semantics once. Permission, constitutional
+            # authority, EDI and the execution sink must evaluate the same
+            # action rather than independently inferring it from names/prose.
+            effect_scope = self._effect_scope_for_execution(
+                skill_name, meta, params, ctx
+            )
+            risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
+            if effect_scope and effect_scope != "unknown":
+                ctx["effect_scope"] = effect_scope
+            if risk:
+                ctx["risk_level"] = risk
+
             # ── PERMISSION RISK MODEL GATE ──────────────────────────────
             try:
                 pm = ServiceContainer.get("permission_model", default=None)
                 if pm:
                     target_str = str(canonical_authority_arguments(skill_name, params))
-                    pm_decision = pm.check_permission(skill_name, target_str, ctx)
+                    pm_decision = pm.check_permission(
+                        skill_name,
+                        target_str,
+                        ctx,
+                        effect_scope=effect_scope,
+                        execution_risk=risk,
+                    )
                     if not pm_decision.approved:
                         self.logger.warning(
                             "🚫 CapabilityEngine: Tool execution '%s' blocked by Permission Model: %s",
@@ -5649,23 +5667,6 @@ class CapabilityEngine(AuraBaseModule):
                 #
                 # A mutating invocation still resolves to privileged_mutation
                 # and still needs the authority that demands.
-                try:
-                    _declared_scope = self._effect_scope_for_execution(
-                        skill_name, meta, params, ctx
-                    )
-                except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
-                    _declared_scope = ""
-                if _declared_scope and _declared_scope != "unknown":
-                    ctx.setdefault("effect_scope", _declared_scope)
-                    try:
-                        _declared_risk = self._edi_risk_for(
-                            skill_name, meta, params, _declared_scope
-                        )
-                    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
-                        _declared_risk = ""
-                    if _declared_risk:
-                        ctx.setdefault("risk_level", _declared_risk)
-
                 tool_handle = await constitution.begin_tool_execution(
                     skill_name,
                     constitutional_args,
@@ -5880,8 +5881,6 @@ class CapabilityEngine(AuraBaseModule):
                     "CapabilityEngine: metabolic self-preservation check skipped: %s", e
                 )
 
-            effect_scope = self._effect_scope_for_execution(skill_name, meta, params, ctx)
-            risk = self._edi_risk_for(skill_name, meta, params, effect_scope)
             governed_execution = self._context_governed_execution(ctx, skill_name)
             user_authorized = self._context_user_authorized(ctx, exec_source)
 
@@ -5894,6 +5893,8 @@ class CapabilityEngine(AuraBaseModule):
                     effect_scope=effect_scope,
                     governed=governed_execution,
                     user_authorized=user_authorized,
+                    governance_context=ctx,
+                    governance_payload=canonical_authority_arguments(skill_name, params),
                 )
                 if not allowed:
                     self.logger.warning("🛡️ EDI blocked execution of '%s': %s", skill_name, reason)

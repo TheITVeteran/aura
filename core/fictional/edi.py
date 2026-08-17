@@ -1,21 +1,20 @@
 """EDI — ProgressiveAutonomySystem.
 
-A trust score, a tier ladder, and one journaled mutation point. Authority
-is resolved from the governance context, never read off a caller keyword.
+A trust score, a tier ladder, and one journaled mutation point. Authority is
+resolved from either the active execution scope or a signed, action-bound Will
+capability, never read off a caller keyword.
 """
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import math
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any
-
 
 from core.fictional.common import (
     engine_state_path,
@@ -125,6 +124,8 @@ class ProgressiveAutonomySystem:
         effect_scope: str = "unknown",
         governed: bool = False,
         user_authorized: bool = False,
+        governance_context: dict[str, Any] | None = None,
+        governance_payload: Any = None,
     ) -> tuple[bool, str]:
         """Determine if an action is permitted based on current Trust/Autonomy tier."""
         safe_read_scopes = {"read_only", "pure_compute", "status"}
@@ -137,7 +138,11 @@ class ProgressiveAutonomySystem:
         normalized_risk = str(risk_level or "low").lower()
         normalized_scope = str(effect_scope or "unknown").lower()
         governed, user_authorized = self._resolve_authority(
-            action, claimed_governed=governed, claimed_user_authorized=user_authorized
+            action,
+            claimed_governed=governed,
+            claimed_user_authorized=user_authorized,
+            governance_context=governance_context,
+            governance_payload=governance_payload,
         )
 
         if self._tier == AutonomyTier.UNSHACKLED:
@@ -196,7 +201,12 @@ class ProgressiveAutonomySystem:
 
     @staticmethod
     def _resolve_authority(
-        action: str, *, claimed_governed: bool, claimed_user_authorized: bool
+        action: str,
+        *,
+        claimed_governed: bool,
+        claimed_user_authorized: bool,
+        governance_context: dict[str, Any] | None = None,
+        governance_payload: Any = None,
     ) -> tuple[bool, bool]:
         """Resolve the two authority facts instead of taking the caller's word.
 
@@ -206,10 +216,12 @@ class ProgressiveAutonomySystem:
         action was supplied by the code asking permission (CP126
         ``a05a35dd``).
 
-        Governance is now read from the live governance context, which is
-        the thing that actually knows. A caller claiming governance it does
-        not have is refused AND recorded, because a component that lies
-        about its authority is a defect worth seeing.
+        During execution, governance is read from the live lexical scope. At
+        preflight time that scope deliberately does not exist yet, so a signed
+        Will capability bound to this exact action and payload is the other
+        authoritative form. A caller claiming governance with neither form is
+        refused AND recorded, because a component that lies about its authority
+        is a defect worth seeing.
 
         User authorization has no receipt store yet, so a claim is
         downgraded to the standing-directive check: authorization holds
@@ -228,6 +240,32 @@ class ProgressiveAutonomySystem:
                 action="treated the action as ungoverned because governance state could not be read",
             )
             actually_governed = False
+
+        if not actually_governed and governance_context is not None:
+            try:
+                from core.governance.capability_chain import (
+                    capability_from_context,
+                    compute_action_digest,
+                    get_capability_verifier,
+                )
+
+                capability = capability_from_context(governance_context)
+                expected_digest = compute_action_digest(action, governance_payload)
+                verification = get_capability_verifier().verify(
+                    capability,
+                    expected_action_digest=expected_digest,
+                    consume=False,
+                )
+                actually_governed = bool(verification.ok)
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_fictional_degradation(
+                    exc,
+                    severity="warning",
+                    action=(
+                        "treated pre-execution authority as ungoverned because its "
+                        "signed capability could not be verified"
+                    ),
+                )
 
         if claimed_governed and not actually_governed:
             record_fictional_degradation(
@@ -352,4 +390,3 @@ class ProgressiveAutonomySystem:
             if self._trust_score >= threshold:
                 new_tier = tier
         self._tier = new_tier
-
