@@ -14,6 +14,7 @@ from core.self_improvement.host_reconstruction import (
     resolve_target,
     reverse_engineer_host_binary,
 )
+import interface.routes.chat_capability_inventory as _chat_capability_inventory
 
 
 def test_user_phrasings_resolve_to_known_targets():
@@ -109,7 +110,7 @@ async def test_live_chat_program_dna_request_runs_governed_skill(monkeypatch):
             },
         }
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Reverse engineer base64 from its behavior only — no source — and prove your reconstruction matches the real command on held-out inputs."
     )
@@ -176,7 +177,7 @@ async def test_live_chat_program_dna_app_request_enables_research_scaffold_and_s
             },
         }
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, and compare it to engineering standards."
     )
@@ -203,7 +204,7 @@ async def test_live_chat_program_dna_does_not_execute_conceptual_question(monkey
     async def _forbidden_governed_skill(*_args, **_kwargs):
         raise AssertionError("conceptual Program DNA questions must stay conversational")
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _forbidden_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _forbidden_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "What is Program DNA and how would it help Aura understand software?"
     )
@@ -241,7 +242,7 @@ async def test_live_chat_rsi_median_request_runs_verified_lab(monkeypatch):
             }
         raise AssertionError(skill_name)
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Here's a buggy median function: it returns the upper-middle element for even-length lists. Improve it and verify the fix passes."
     )
@@ -294,7 +295,7 @@ async def test_live_chat_web_interlocutor_request_runs_governed_skill(monkeypatc
             },
         }
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Open ChatGPT in my browser and have a real conversation about sentience and agency. Take 20 turns and report back what you learned."
     )
@@ -361,7 +362,7 @@ async def test_live_chat_web_interlocutor_rejects_non_cognitive_fallback(monkeyp
             },
         }
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Talk to Gemini about whether memory proves agency and report back."
     )
@@ -393,7 +394,7 @@ async def test_live_chat_web_interlocutor_rejects_unverified_echo_turns(monkeypa
             "diagnostics": {"composition_events": [{"source": "cognitive", "attempt": 1}]},
         }
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Open ChatGPT and have a real conversation about retained memory. Take 1 turn."
     )
@@ -422,7 +423,7 @@ async def test_live_chat_web_interlocutor_does_not_execute_conceptual_question(m
     async def _forbidden_governed_skill(*_args, **_kwargs):
         raise AssertionError("conceptual web-interlocutor questions must stay conversational")
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _forbidden_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _forbidden_governed_skill)
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "What is a web interlocutor and why would Aura talk to another AI?"
     )
@@ -439,10 +440,9 @@ def test_live_chat_governed_capabilities_precede_generic_desktop_objectives():
     # than on the ordering it exists to protect. Find the function that holds
     # the two calls instead of naming one, so the next refactor cannot strand it
     # the same way.
-    governed_call = (
-        "governed_capability_response = await "
-        "_execute_governed_capability_request_from_chat"
-    )
+    # The call is module-qualified now that the capability lane is its own
+    # module; the ordering guarantee is the same one either way.
+    governed_call = "governed_capability_response = await "
     desktop_call = (
         "desktop_objective_response = await "
         "_execute_narrow_desktop_objective_before_cognition()"
@@ -456,7 +456,11 @@ def test_live_chat_governed_capabilities_precede_generic_desktop_objectives():
         )
     ]
     holders = [
-        text for text in candidates if governed_call in text and desktop_call in text
+        text
+        for text in candidates
+        if governed_call in text
+        and "_execute_governed_capability_request_from_chat" in text
+        and desktop_call in text
     ]
     assert holders, (
         "neither api_chat nor _api_chat_turn contains both the governed-capability "

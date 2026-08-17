@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
+from core.runtime.errors import record_degradation
 
 #: Call names that publish something into the service spine.
 _REGISTRATION_CALLS = frozenset({
@@ -256,20 +257,36 @@ def expected_turn_organ_names() -> tuple[str, ...]:
     from the one that actually raises the fault, which is the failure mode
     this module exists to catch.
     """
-    route = (
-        Path(__file__).resolve().parent.parent.parent
-        / "interface" / "routes" / "chat.py"
+    routes = Path(__file__).resolve().parent.parent.parent / "interface" / "routes"
+    # The chat route is several modules now, and the roster travelled with the
+    # turn-contract lane. Reading one filename by name returned an empty
+    # roster the moment it moved — and an empty roster reads as "every organ
+    # is wired", which is the exact false all-clear this module exists to
+    # prevent.
+    for route in sorted(routes.glob("chat*.py")):
+        try:
+            source = route.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(
+            r"_EXPECTED_TURN_ORGANS[^=]*=\s*\((.*?)\n\)", source, re.S,
+        )
+        if not match:
+            continue
+        names = tuple(re.findall(r'\(\s*"([a-z_]+)"\s*,', match.group(1)))
+        if names:
+            return names
+    record_degradation(
+        "runtime.service_wiring_audit",
+        RuntimeError("_EXPECTED_TURN_ORGANS was not found in any chat lane module"),
+        severity="error",
+        action=(
+            "reported an empty turn-organ roster, which every caller reads as "
+            "nothing missing"
+        ),
+        enforce_failure_policy=False,
     )
-    try:
-        source = route.read_text(encoding="utf-8")
-    except OSError:
-        return ()
-    match = re.search(
-        r"_EXPECTED_TURN_ORGANS[^=]*=\s*\((.*?)\n\)", source, re.S,
-    )
-    if not match:
-        return ()
-    return tuple(re.findall(r'\(\s*"([a-z_]+)"\s*,', match.group(1)))
+    return ()
 
 
 def audit_turn_organs() -> WiringReport:

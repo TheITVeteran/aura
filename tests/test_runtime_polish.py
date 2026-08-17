@@ -18,6 +18,7 @@ from interface.server import (
     _cache_policy_for_path,
     _phenomenal_error_status,
 )
+from tests.chat_lane_support import chat_lane_source
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -87,7 +88,7 @@ def test_phenomenal_error_envelopes_use_truthful_http_status():
 
 def test_global_error_and_introspection_paths_do_not_hide_failures():
     server = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
-    chat = (PROJECT_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    chat = chat_lane_source()
     system = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
     synthesis = (PROJECT_ROOT / "core" / "initiative_synthesis.py").read_text(encoding="utf-8")
 

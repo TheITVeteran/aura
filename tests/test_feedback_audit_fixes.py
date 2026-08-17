@@ -16,7 +16,6 @@ from core.runtime.governance_policy import (
 from core.skills.train_self import TrainSelfSkill as CoreTrainSelfSkill
 from skills.train_self import TrainSelfSkill as LegacyTrainSelfSkill
 import interface.routes.chat_memory_state as _chat_memory_state
-import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
 
@@ -715,7 +714,6 @@ def test_substrate_voice_reuses_rich_field_cache_under_pressure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_voice_state_endpoint_rehydrates_profile_after_first_exchange(monkeypatch):
-    from interface.routes import chat as chat_routes
     from interface.routes import subsystems as subsystems_module
 
     class DummyVoiceEngine:
@@ -1918,9 +1916,7 @@ def test_self_diagnostic_reflex_reports_runtime_status(monkeypatch):
         return default
 
     monkeypatch.setattr(chat_route.ServiceContainer, "get", staticmethod(fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {"conversation_ready": True, "state": "ready"},
     )
 
@@ -1946,9 +1942,7 @@ def test_self_diagnostic_reflex_does_not_report_missing_stability_as_healthy(mon
         return default
 
     monkeypatch.setattr(chat_route.ServiceContainer, "get", staticmethod(fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {"conversation_ready": True, "state": "ready"},
     )
 

@@ -26,6 +26,7 @@ from core.conversation.response_reliability import (
 )
 from core.self.source_excerpt import excerpt_for_topic, source_tree_is_readable
 from core.synthesis import _direct_answer_floor
+from tests.chat_lane_support import chat_lane_source
 
 pytestmark = pytest.mark.unit
 
@@ -383,7 +384,7 @@ def test_a_clipped_reply_is_completed_before_the_gate_judges_it():
 
 
 def test_the_chat_path_runs_bounded_model_authored_completion():
-    source = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    source = chat_lane_source()
     code = "\n".join(
         line for line in source.splitlines() if not line.strip().startswith("#")
     )

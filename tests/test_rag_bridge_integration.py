@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.chat_lane_support import chat_lane_source
 
 pytestmark = pytest.mark.unit
 
@@ -96,13 +97,13 @@ class TestTurnPathWiring:
     """Source-level pins: deleting the integration fails the build."""
 
     def test_chat_context_builder_fetches_deep_memory(self):
-        source = (REPO_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+        source = chat_lane_source()
         assert "_fetch_deep_memory_context" in source
         assert 'context["deep_memory_context"]' in source
         assert "fetch_deep_context" in source, "the bridge must be the fetcher"
 
     def test_fetch_is_time_bounded(self):
-        source = (REPO_ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+        source = chat_lane_source()
         helper = source.split("async def _fetch_deep_memory_context", 1)[1][:1500]
         assert "wait_for" in helper, "a slow vault must never stall a live turn"
 

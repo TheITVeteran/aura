@@ -409,6 +409,38 @@ _OVERLOAD_RE = re.compile(
 )
 
 
+#: Naming a telemetry term so as to refuse it is the opposite of claiming
+#: it. Aura's own canonical grounded reply says "I am treating the missing
+#: inner-state signal as something to refresh, not replacing it with CPU or
+#: RAM telemetry" — and the word-level rule above flagged it, so the one
+#: answer that is honest about having no sample failed the gate that exists to
+#: keep her honest about it.
+_SELF_CONDITION_DISCLAIMER_RE = re.compile(
+    r"\b(?:"
+    r"not|never|no|without|rather\s+than|instead\s+of|"
+    r"don't|doesn't|do\s+not|does\s+not|cannot|can't|won't|will\s+not|"
+    r"nothing\s+to\s+do\s+with|unrelated\s+to|"
+    r"am\s+not|is\s+not|are\s+not|isn't|aren't"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Clause boundaries. A disclaimer governs its own clause, not the whole
+#: sentence: "I am not guessing; CPU load is at 12%" must still be caught.
+_SELF_CONDITION_CLAUSE_SPLIT_RE = re.compile(r"[;:]|\s+—\s+|\s+--\s+")
+
+
+def _term_is_disclaimed(sentence: str, term_start: int) -> bool:
+    """Whether the operational term sits inside a clause that refuses it."""
+    clause_start = 0
+    for boundary in _SELF_CONDITION_CLAUSE_SPLIT_RE.finditer(sentence):
+        if boundary.end() > term_start:
+            break
+        clause_start = boundary.end()
+    clause = sentence[clause_start:term_start]
+    return bool(_SELF_CONDITION_DISCLAIMER_RE.search(clause))
+
+
 def _projection_value(
     projection: SelfConditionProjection | Mapping[str, Any] | None,
     key: str,
@@ -443,7 +475,8 @@ def unsupported_self_condition_operational_claims(
         sentence = part.strip()
         if not sentence:
             continue
-        if _UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE.search(sentence):
+        match = _UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE.search(sentence)
+        if match and not _term_is_disclaimed(sentence, match.start()):
             claims.append(sentence)
             continue
         if _TOTAL_INTERNAL_ABSENCE_RE.search(sentence) and supported.intersection(

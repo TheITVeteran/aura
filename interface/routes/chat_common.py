@@ -299,3 +299,5 @@ _TOPIC_STOPWORDS = frozenset(
 _MAX_USER_SURFACE_CONTINUATIONS = 3
 
 _ORGAN_ABSENCE_STREAKS: dict[str, int] = {}
+
+_SEARCH_SKILL_NAMES = {"web_search", "search_web", "free_search", "grounded_search"}

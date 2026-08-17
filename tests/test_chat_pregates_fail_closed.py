@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-import interface.routes.chat_preflight as _chat_preflight
+from tests.chat_lane_support import patch_chat_lane
 
 
 def _request() -> SimpleNamespace:
@@ -19,7 +19,6 @@ def _request() -> SimpleNamespace:
 @pytest.mark.asyncio
 async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
     from interface import server as server_module
-    from interface.routes import chat as chat_routes
 
     delivered: list[tuple[str, dict[str, str]]] = []
 
@@ -37,9 +36,7 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
         "core.conversation.surface_delivery.note_route_delivered",
         capture_delivery,
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: pytest.fail("cognition admission ran after a failed security preflight"),
     )
 
@@ -65,7 +62,6 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
 async def test_broken_conscience_preflight_never_reaches_cognition(monkeypatch):
     from core.security.defensive_runtime import IngressDecision
     from interface import server as server_module
-    from interface.routes import chat as chat_routes
 
     monkeypatch.setattr(
         "core.security.defensive_runtime.inspect_chat_ingress",
@@ -75,9 +71,7 @@ async def test_broken_conscience_preflight_never_reaches_cognition(monkeypatch):
         "core.ethics.conscience.get_conscience",
         lambda: (_ for _ in ()).throw(RuntimeError("conscience internals")),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: pytest.fail("cognition admission ran after a failed conscience preflight"),
     )
 

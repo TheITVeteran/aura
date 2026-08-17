@@ -26,6 +26,7 @@ from core.conversation.capability_condition import (
     condition_for,
     needed_capabilities,
 )
+from tests.chat_lane_support import chat_lane_source
 
 pytestmark = pytest.mark.unit
 
@@ -107,10 +108,9 @@ class TestItReachesTheModel:
         import inspect
 
         from core.brain import cognitive_engine
-        from interface.routes import chat as chat_routes
 
         assert '"live_capability_condition": live_capability_condition' in (
-            inspect.getsource(chat_routes)
+            chat_lane_source()
         )
         assert 'context.get("live_capability_condition")' in (
             inspect.getsource(cognitive_engine)

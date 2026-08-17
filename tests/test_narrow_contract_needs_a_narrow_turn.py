@@ -24,6 +24,7 @@ removed the cap would regress the latency the cap exists to protect.
 """
 
 import pytest
+from tests.chat_lane_support import chat_lane_source
 
 pytestmark = pytest.mark.unit
 
@@ -81,11 +82,9 @@ class TestTheFlagReachesTheEngine:
         """The engine defaults the flag to True when absent, so a chat.py that
         stopped publishing it would silently restore the 256-token cap for
         every compound turn — the defect, back, with all tests passing."""
-        import inspect
 
-        from interface.routes import chat as chat_routes
 
-        source = inspect.getsource(chat_routes)
+        source = chat_lane_source()
         assert '"memory_state_contract_covers_turn": memory_state_contract_covers_turn' in source, (
             "chat.py must publish the coverage flag into the engine context"
         )

@@ -462,13 +462,13 @@ def test_an_unstamped_live_mind_snapshot_does_not_bind_controls():
 
 
 def test_the_producer_stamps_the_snapshot():
-    import inspect
 
-    import interface.routes.chat as chat_mod
 
-    source = inspect.getsource(chat_mod)
+    # Whitespace-insensitive: the formatter wraps the call, and where the
+    # line breaks fall is not what this test is about.
+    source = " ".join(chat_lane_source().split())
 
-    assert "stamp_runtime_payload({" in source
+    assert "stamp_runtime_payload( {" in source or "stamp_runtime_payload({" in source
     assert '"schema": "aura.live_mind_context.v1"' in source
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from tests.chat_lane_support import chat_lane_source
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,7 @@ def test_tool_result_synthesis_prompt_uses_operational_identity_boundary() -> No
 
 
 def test_live_chat_route_uses_operational_self_context_name() -> None:
-    route_text = (ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    route_text = chat_lane_source()
     preflight_text = (ROOT / "core" / "conversation" / "chat_preflight.py").read_text(
         encoding="utf-8"
     )
@@ -118,7 +119,7 @@ def test_live_prompt_sources_do_not_instruct_ontological_overclaims() -> None:
             (ROOT / "core" / "phases" / "response_generation_unitary.py").read_text(
                 encoding="utf-8"
             ),
-            (ROOT / "interface" / "routes" / "chat.py").read_text(encoding="utf-8"),
+            chat_lane_source(),
         ]
     ).lower()
 

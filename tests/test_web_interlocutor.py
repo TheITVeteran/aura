@@ -21,6 +21,7 @@ from core.capabilities.web_interlocutor import (
 from core.runtime.gateways import MemoryWriteReceipt
 from core.skills.web_interlocutor import WebInterlocutorSkill
 from core.skills.web_interlocutor import WebInterlocutorParams
+import interface.routes.chat_capability_inventory as _chat_capability_inventory
 
 
 class FakeBrowser:
@@ -549,7 +550,7 @@ async def test_chat_route_does_not_recurse_on_internal_web_interlocutor_composit
     async def _forbidden_governed_skill(*_args, **_kwargs):
         raise AssertionError("internal composition prompt must not execute web_interlocutor")
 
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _forbidden_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _forbidden_governed_skill)
 
     result = await chat_routes._execute_governed_capability_request_from_chat(
         "Compose only the exact message Aura should send to another AI in a visible "

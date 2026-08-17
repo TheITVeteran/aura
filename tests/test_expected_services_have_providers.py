@@ -153,3 +153,41 @@ class TestTheProxyNoLongerHidesTheGap:
         soul = mod.get_panzer_soul()
         assert soul is real
         assert getattr(soul, "is_proxy", False) is False
+
+
+class TestAnEmptyRosterIsNotAnAllClear:
+    """The roster is read from the route, and the route moved.
+
+    `expected_turn_organ_names` regexed `interface/routes/chat.py` for
+    `_EXPECTED_TURN_ORGANS`. When that constant travelled to the
+    turn-contract lane the regex stopped matching, and the function returned
+    `()` — which every caller reads as "no organ is missing". A wiring audit
+    that reports nothing missing because it could not read anything is worse
+    than no audit.
+    """
+
+    def test_the_roster_is_found_wherever_the_lane_keeps_it(self):
+        from core.runtime.service_wiring_audit import expected_turn_organ_names
+
+        assert expected_turn_organ_names(), (
+            "the roster came back empty, which reads as a clean bill of health"
+        )
+
+    def test_an_unreadable_roster_is_recorded_rather_than_returned_empty(
+        self, monkeypatch
+    ):
+        """No lane carries the constant: the empty answer must be loud."""
+        import core.runtime.service_wiring_audit as audit
+
+        recorded = []
+        monkeypatch.setattr(
+            audit,
+            "record_degradation",
+            lambda subsystem, exc, **kwargs: recorded.append((subsystem, kwargs)),
+        )
+        monkeypatch.setattr(audit.re, "search", lambda *_args, **_kwargs: None)
+
+        assert audit.expected_turn_organ_names() == ()
+        assert recorded, "an unreadable roster produced no record at all"
+        assert recorded[0][0] == "runtime.service_wiring_audit"
+        assert "nothing missing" in recorded[0][1]["action"]

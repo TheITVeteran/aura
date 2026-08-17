@@ -24,6 +24,7 @@ as a desktop objective.
 import pytest
 
 from interface.routes.chat import _looks_like_capability_refusal
+from tests.chat_lane_support import chat_lane_source
 
 pytestmark = pytest.mark.unit
 
@@ -56,11 +57,9 @@ def test_ordinary_replies_are_not_refusals(text: str):
 
 
 def test_the_route_runs_the_executor_instead_of_serving_the_refusal():
-    import inspect
 
-    from interface.routes import chat as chat_routes
 
-    source = inspect.getsource(chat_routes)
+    source = chat_lane_source()
     assert "_looks_like_capability_refusal(salvaged_no_reply)" in source
     assert "executed_after_refusal" in source
 

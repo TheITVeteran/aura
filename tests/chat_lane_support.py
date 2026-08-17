@@ -20,6 +20,7 @@ from typing import Any
 #: are split out; a lane missing from this list is a lane a patch will miss.
 LANE_MODULES = (
     "interface.routes.chat",
+    "interface.routes.chat_capability_inventory",
     "interface.routes.chat_common",
     "interface.routes.chat_conversation_repair",
     "interface.routes.chat_delivery",
@@ -89,3 +90,41 @@ def chat_lane_source() -> str:
         if path.exists():
             parts.append(path.read_text(encoding="utf-8"))
     return "\n".join(parts)
+
+
+def lane_function_source(name: str) -> str:
+    """The source of one lane function, by name.
+
+    Tests used to slice a text window out of `chat.py` — `split("def foo")[1]`
+    up to some later marker. Every insertion above the function moved the
+    window, and the test then failed for a reason that had nothing to do with
+    what it was checking. Reading the function is stable under any edit that
+    does not touch the function.
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    for module in _loaded_lanes():
+        candidate = getattr(module, name, None)
+        if candidate is not None:
+            target = getattr(candidate, "__wrapped__", candidate)
+            return inspect.getsource(target)
+
+    # Nested definitions are not module attributes, and a closure inside a
+    # 4,600-line handler is exactly what a text window slices wrong.
+    routes = pathlib.Path(__file__).resolve().parent.parent / "interface" / "routes"
+    for module_name in LANE_MODULES:
+        path = routes / (module_name.rsplit(".", 1)[1] + ".py")
+        if not path.exists():
+            continue
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines(keepends=True)
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != name:
+                continue
+            start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+            return "".join(lines[start - 1 : node.end_lineno])
+    raise AttributeError(f"no chat lane module defines {name!r}")

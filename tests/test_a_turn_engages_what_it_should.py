@@ -39,7 +39,7 @@ from interface.routes.chat import (
     _collect_expected_turn_organs,
     _collect_live_chat_required_subsystems,
 )
-from tests.chat_lane_support import chat_lane_source
+from tests.chat_lane_support import chat_lane_source, lane_function_source
 
 SOURCE = Path("interface/routes/chat.py")
 
@@ -127,9 +127,7 @@ def test_probing_never_raises_outside_a_runtime() -> None:
 
 def test_the_expected_tier_is_not_fatal() -> None:
     """Promoting these would recreate a failure already paid for once."""
-    src = chat_lane_source()
-    required = src[src.index("def _collect_live_chat_required_subsystems") :]
-    required = required[: required.index("def _assess_live_mind_snapshot")]
+    required = lane_function_source("_collect_live_chat_required_subsystems")
     for organ, _why in _EXPECTED_TURN_ORGANS:
         assert f'"{organ}":' not in required, (
             f"{organ} became a hard requirement; a warming organ would now "
@@ -281,9 +279,7 @@ def test_escalation_never_refuses_the_turn() -> None:
     """The whole point: chronic absence is loud, and still not a gate."""
     from interface.routes.chat import _note_organ_engagement
 
-    src = chat_lane_source()
-    fn = src[src.index("def _note_organ_engagement") :]
-    fn = fn[: fn.index("def reset_organ_engagement_streaks_for_test")]
+    fn = lane_function_source("_note_organ_engagement")
     assert "return" in fn
     assert "raise" not in fn, "a reporting tier must not throw"
     assert _note_organ_engagement(_engagement(soul=False)) == []

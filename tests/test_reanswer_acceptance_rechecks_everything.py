@@ -13,8 +13,9 @@ read.
 from __future__ import annotations
 
 import re
+from tests.chat_lane_support import chat_lane_source
 
-SOURCE = open("interface/routes/chat.py", encoding="utf-8").read()
+SOURCE = chat_lane_source()
 
 
 def test_the_acceptance_test_reads_every_check():

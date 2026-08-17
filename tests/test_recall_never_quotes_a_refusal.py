@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from interface.routes.chat import _NON_ANSWER_OPENERS, _is_non_answer_surface
+from tests.chat_lane_support import chat_lane_source
 
 
 @pytest.mark.parametrize("opener", _NON_ANSWER_OPENERS)
@@ -52,10 +53,8 @@ def test_leading_whitespace_does_not_defeat_the_guard():
 
 def test_the_openers_match_the_notices_the_builder_produces():
     """If those sentences change, this guard must change with them."""
-    import inspect
 
-    from interface.routes import chat
 
-    source = inspect.getsource(chat)
+    source = chat_lane_source()
     for opener in _NON_ANSWER_OPENERS:
         assert opener in source, f"{opener!r} no longer appears in chat.py"

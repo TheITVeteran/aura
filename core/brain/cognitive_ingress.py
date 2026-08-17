@@ -22,6 +22,7 @@ present/value/contribution, so "allocation came from memory hits, body,
 goals, Will, uncertainty, self-model" is provable per turn — never inferred
 from prompt punctuation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.CognitiveIngress")
 
@@ -50,22 +52,82 @@ _BASE_STAKES = 0.60
 _BASE_UNCERTAINTY = 0.70
 
 _SELF_TERMS = {
-    "aura", "yourself", "your", "identity", "memory", "memories", "weights",
-    "cortex", "consciousness", "governance", "constitution", "will",
+    "aura",
+    "yourself",
+    "your",
+    "identity",
+    "memory",
+    "memories",
+    "weights",
+    "cortex",
+    "consciousness",
+    "governance",
+    "constitution",
+    "will",
 }
 
 # Conversation recall must overlap on the subject, not merely on request shape.
 # These terms are intentionally limited to grammar and common instruction verbs;
 # domain terms such as ``runtime``, ``locking``, and ``queue`` remain available.
 _RETRIEVAL_GENERIC_TERMS = {
-    "about", "after", "again", "against", "also", "another", "answer",
-    "because", "before", "between", "both", "choose", "choice", "compare",
-    "concrete", "could", "decide", "describe", "does", "each", "explain",
-    "failure", "from", "give", "have", "into", "itself", "just", "make",
-    "more", "most", "other", "question", "reply", "requested", "scenario",
-    "should", "show", "single", "than", "that", "their", "there", "these",
-    "they", "this", "through", "under", "using", "verify", "what", "when",
-    "where", "which", "while", "with", "would", "your",
+    "about",
+    "after",
+    "again",
+    "against",
+    "also",
+    "another",
+    "answer",
+    "because",
+    "before",
+    "between",
+    "both",
+    "choose",
+    "choice",
+    "compare",
+    "concrete",
+    "could",
+    "decide",
+    "describe",
+    "does",
+    "each",
+    "explain",
+    "failure",
+    "from",
+    "give",
+    "have",
+    "into",
+    "itself",
+    "just",
+    "make",
+    "more",
+    "most",
+    "other",
+    "question",
+    "reply",
+    "requested",
+    "scenario",
+    "should",
+    "show",
+    "single",
+    "than",
+    "that",
+    "their",
+    "there",
+    "these",
+    "they",
+    "this",
+    "through",
+    "under",
+    "using",
+    "verify",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "would",
+    "your",
 }
 
 
@@ -187,11 +249,7 @@ def _hit_observed_at(hit: Any) -> float | None:
     """Best-effort recording time for an unknown-shaped memory hit."""
     for key in ("observed_at", "timestamp", "created_at", "recorded_at"):
         value = hit.get(key) if isinstance(hit, dict) else getattr(hit, key, None)
-        if (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and float(value) > 0.0
-        ):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) > 0.0:
             return float(value)
     return None
 
@@ -248,19 +306,22 @@ def _conversation_pair(metadata: dict[str, Any]) -> tuple[str, str] | None:
     """Extract the prompt/reply pair from either supported conversation record."""
     conversation_turn = _metadata_flag(metadata.get("conversation_turn"))
     conversation_turn = conversation_turn or (
-        str(metadata.get("memory_type") or "").strip().lower()
-        == "conversation_continuity"
+        str(metadata.get("memory_type") or "").strip().lower() == "conversation_continuity"
     )
     if not conversation_turn:
         return None
 
     user_utterance = str(metadata.get("user_utterance") or "").strip()
     aura_response = str(metadata.get("aura_response") or "").strip()
-    if not user_utterance and str(metadata.get("action") or "").strip().lower() == "conversation_reply":
-        user_utterance = str(
-            metadata.get("context") or metadata.get("objective") or ""
-        ).strip()
-    if not aura_response and str(metadata.get("action") or "").strip().lower() == "conversation_reply":
+    if (
+        not user_utterance
+        and str(metadata.get("action") or "").strip().lower() == "conversation_reply"
+    ):
+        user_utterance = str(metadata.get("context") or metadata.get("objective") or "").strip()
+    if (
+        not aura_response
+        and str(metadata.get("action") or "").strip().lower() == "conversation_reply"
+    ):
         aura_response = str(metadata.get("outcome") or "").strip()
     return user_utterance, aura_response
 
@@ -274,12 +335,7 @@ def _subject_relevance(
     overlap = current & remembered
     smaller = min(len(current), len(remembered))
     relevant = bool(
-        overlap
-        and (
-            smaller <= 2
-            or len(overlap) >= 2
-            or len(overlap) / max(1, smaller) >= 0.5
-        )
+        overlap and (smaller <= 2 or len(overlap) >= 2 or len(overlap) / max(1, smaller) >= 0.5)
     )
     return relevant, {
         "query_subject_terms": len(current),
@@ -334,9 +390,7 @@ def _conversation_pre_admission(
         # remaining allowance…" against "Can you explain why the deadline
         # slipped?". Served to the person, and then refused re-admission as
         # memory evidence for the crime of not quoting the question back.
-        reasons.extend(
-            f"current_quality:{reason}" for reason in assessment.blocking_reasons
-        )
+        reasons.extend(f"current_quality:{reason}" for reason in assessment.blocking_reasons)
         relevant, relevance = _subject_relevance(objective, user_utterance)
         if not relevant:
             reasons.append("subject_mismatch")
@@ -395,9 +449,7 @@ def _reference_source_version(store: Any) -> str:
             descriptor["database_mtime_ns"] = int(stat.st_mtime_ns)
         except (OSError, TypeError, ValueError):
             descriptor["database_file_state"] = "unavailable"
-    payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"local-corpus-v1:{hashlib.sha256(payload).hexdigest()[:32]}"
 
 
@@ -861,9 +913,7 @@ def _signal_reference(
             value=0.0,
             detail="local_corpus: 0 hits",
             firewall={
-                "retrieval_query_sha256": hashlib.sha256(
-                    query.encode("utf-8")
-                ).hexdigest(),
+                "retrieval_query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
                 "admitted": [],
                 "refused": [],
             },
@@ -941,8 +991,7 @@ def _signal_reference(
         value=grounding,
         uncertainty_delta=-0.05 * grounding + conflict_uncertainty,
         detail=(
-            f"local_corpus: {len(hits)} hits, "
-            f"{len(firewall_receipt.get('admitted', []))} admitted"
+            f"local_corpus: {len(hits)} hits, {len(firewall_receipt.get('admitted', []))} admitted"
         ),
         context_text=recalled,
         firewall=firewall_receipt,
@@ -977,16 +1026,11 @@ def _signal_body(orchestrator: Any) -> IngressSignal:
         # doubles. The old call-only read raised TypeError on the REAL
         # organ and silently reported the body absent every episode.
         total = float(total_raw() if callable(total_raw) else total_raw)
-        vector = {
-            str(key): float(value)
-            for key, value in body.pressure_vector().items()
-        }
+        vector = {str(key): float(value) for key, value in body.pressure_vector().items()}
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return IngressSignal(source="body", present=False)
     total = min(1.0, max(0.0, total))
-    anticipatory = min(
-        1.0, max(0.0, vector.get("anticipatory_pressure", 0.0))
-    )
+    anticipatory = min(1.0, max(0.0, vector.get("anticipatory_pressure", 0.0)))
     strained = sorted(
         (
             (key.removesuffix("_pressure"), value)
@@ -1001,13 +1045,10 @@ def _signal_body(orchestrator: Any) -> IngressSignal:
         parts = []
         if strained:
             parts.append(
-                "strained now: "
-                + ", ".join(f"{name} {value:.2f}" for name, value in strained)
+                "strained now: " + ", ".join(f"{name} {value:.2f}" for name, value in strained)
             )
         if anticipatory >= 0.20:
-            parts.append(
-                f"forecast pressure {anticipatory:.2f} — heading toward strain"
-            )
+            parts.append(f"forecast pressure {anticipatory:.2f} — heading toward strain")
         context = "My body: " + "; ".join(parts)
     return IngressSignal(
         source="body",
@@ -1016,11 +1057,7 @@ def _signal_body(orchestrator: Any) -> IngressSignal:
         stakes_delta=min(0.15, 0.10 * total + 0.05 * anticipatory),
         detail=(
             f"total_pressure={total:.3f} anticipatory={anticipatory:.3f}"
-            + (
-                " strained=" + ",".join(name for name, _ in strained)
-                if strained
-                else ""
-            )
+            + (" strained=" + ",".join(name for name, _ in strained) if strained else "")
         ),
         context_text=context[:400],
     )
@@ -1067,9 +1104,7 @@ def _signal_goals(objective: str) -> IngressSignal:
     )
 
 
-def _best_goal_similarity(
-    objective: str, goals_text: list[str]
-) -> tuple[float, str, str]:
+def _best_goal_similarity(objective: str, goals_text: list[str]) -> tuple[float, str, str]:
     """Best goal match: embedding cosine when the vector organ is up,
     lexical-overlap fallback otherwise.
 
@@ -1087,10 +1122,7 @@ def _best_goal_similarity(
             for goal in goals_text:
                 goal_vec = embed(goal)
                 num = float((objective_vec * goal_vec).sum())
-                den = float(
-                    ((objective_vec**2).sum() ** 0.5)
-                    * ((goal_vec**2).sum() ** 0.5)
-                )
+                den = float(((objective_vec**2).sum() ** 0.5) * ((goal_vec**2).sum() ** 0.5))
                 score = max(0.0, num / den) if den > 1e-9 else 0.0
                 if score > best_score:
                     best_score, best_goal = score, goal
@@ -1167,14 +1199,10 @@ def _signal_affect(orchestrator: Any) -> IngressSignal:
     arousal = None
     if state is not None:
         raw_valence = getattr(state, "valence", None)
-        if isinstance(raw_valence, (int, float)) and not isinstance(
-            raw_valence, bool
-        ):
+        if isinstance(raw_valence, (int, float)) and not isinstance(raw_valence, bool):
             valence = max(-1.0, min(1.0, float(raw_valence)))
         raw_arousal = getattr(state, "arousal", None)
-        if isinstance(raw_arousal, (int, float)) and not isinstance(
-            raw_arousal, bool
-        ):
+        if isinstance(raw_arousal, (int, float)) and not isinstance(raw_arousal, bool):
             arousal = max(0.0, min(1.0, float(raw_arousal)))
     if doubt is None and valence is None and arousal is None:
         return IngressSignal(source="affect", present=False)
@@ -1196,11 +1224,7 @@ def _signal_affect(orchestrator: Any) -> IngressSignal:
     context = ""
     if pronounced:
         label = getattr(state, "label", "") or getattr(state, "mood_label", "")
-        quality = (
-            f" ({label.strip()})"
-            if isinstance(label, str) and label.strip()
-            else ""
-        )
+        quality = f" ({label.strip()})" if isinstance(label, str) and label.strip() else ""
         context = "How this feels right now: " + ", ".join(dims) + quality
     return IngressSignal(
         source="affect",
@@ -1223,13 +1247,56 @@ def _embedding_similarity(text_a: str, text_b: str) -> float | None:
         vec_a = embed(text_a)
         vec_b = embed(text_b)
         num = float((vec_a * vec_b).sum())
-        den = float(
-            ((vec_a**2).sum() ** 0.5) * ((vec_b**2).sum() ** 0.5)
-        )
+        den = float(((vec_a**2).sum() ** 0.5) * ((vec_b**2).sum() ** 0.5))
         return max(0.0, num / den) if den > 1e-9 else 0.0
     except Exception as exc:  # noqa: BLE001 - organ contract unknown
         logger.debug("Embedding similarity unavailable: %s", exc)
         return None
+
+
+#: Where the self block actually comes from. `get_context_block` is a method
+#: of `CanonicalSelfEngine`, and the `canonical_self` service key holds the
+#: `CanonicalSelf` DATACLASS the engine publishes each tick. Reading the key
+#: and calling `getattr(service, "get_context_block", None)` therefore found
+#: nothing, every time, on every turn — so the semantic lane below never ran
+#: once and the keyword probe its docstring calls a fallback was the only
+#: path there was. The abstraction was right; the seam named the wrong object.
+_CANONICAL_SELF_READERS = ("canonical_self_engine", "canonical_self")
+
+
+def _canonical_self_context_block() -> str:
+    """The live self block, from whichever service can produce one."""
+    tried: list[str] = []
+    for key in _CANONICAL_SELF_READERS:
+        service = _get_service(key)
+        if service is None:
+            tried.append(f"{key}:absent")
+            continue
+        reader = getattr(service, "get_context_block", None)
+        if not callable(reader):
+            tried.append(f"{key}:no_context_block")
+            continue
+        try:
+            candidate = reader()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            tried.append(f"{key}:{type(exc).__name__}")
+            continue
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        tried.append(f"{key}:empty")
+    # A silent empty block reads as "not identity-relevant", which is a
+    # measurement this function did not make. Say so instead.
+    record_degradation(
+        "cognitive_ingress.canonical_self",
+        RuntimeError("no canonical-self service could produce a context block"),
+        severity="warning",
+        action=(
+            "scored identity relevance from keywords alone because the "
+            f"semantic lane had no self block ({', '.join(tried)})"
+        ),
+        enforce_failure_policy=False,
+    )
+    return ""
 
 
 def _signal_self_model(objective: str) -> IngressSignal:
@@ -1247,20 +1314,11 @@ def _signal_self_model(objective: str) -> IngressSignal:
     keyword_relevance = min(1.0, len(matched) / 2.0)
     semantic: float | None = None
     method = "keyword_terms"
-    self_service = _get_service("canonical_self")
-    if self_service is not None:
-        block = ""
-        reader = getattr(self_service, "get_context_block", None)
-        try:
-            candidate = reader() if callable(reader) else ""
-            if isinstance(candidate, str):
-                block = candidate.strip()
-        except Exception:  # noqa: BLE001 - organ contract unknown
-            block = ""
-        if block:
-            semantic = _embedding_similarity(objective, block[:2000])
-            if semantic is not None:
-                method = "embedding_cosine_vs_canonical_self"
+    block = _canonical_self_context_block()
+    if block:
+        semantic = _embedding_similarity(objective, block[:2000])
+        if semantic is not None:
+            method = "embedding_cosine_vs_canonical_self"
     relevance = keyword_relevance
     if semantic is not None:
         # Raw cosine floors well above zero on unrelated text; rescale
@@ -1271,9 +1329,7 @@ def _signal_self_model(objective: str) -> IngressSignal:
         )
     present = bool(matched) or relevance > 0.0
     if matched:
-        context = "This question touches my own identity: " + ", ".join(
-            matched[:4]
-        )
+        context = "This question touches my own identity: " + ", ".join(matched[:4])
     elif relevance >= 0.5:
         context = (
             "This question is about who I am — it matched my canonical "
@@ -1344,15 +1400,13 @@ def assemble_cognitive_ingress(
         epistemic_state = None
         memory_result = None
     else:
-        memory_signal, epistemic_genesis, epistemic_state, memory_result = (
-            _resolve_memory_sync(
-                orchestrator,
-                objective,
-                tenant_id=tenant_id,
-                user_id=user_id,
-                session_id=session_id,
-                retrieval_query=retrieval_query,
-            )
+        memory_signal, epistemic_genesis, epistemic_state, memory_result = _resolve_memory_sync(
+            orchestrator,
+            objective,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            session_id=session_id,
+            retrieval_query=retrieval_query,
         )
     reference_signal = (
         IngressSignal(
@@ -1377,9 +1431,7 @@ def assemble_cognitive_ingress(
         _signal_world_model(orchestrator),
     ]
     stakes = _BASE_STAKES + sum(s.stakes_delta for s in signals if s.present)
-    uncertainty = _BASE_UNCERTAINTY + sum(
-        s.uncertainty_delta for s in signals if s.present
-    )
+    uncertainty = _BASE_UNCERTAINTY + sum(s.uncertainty_delta for s in signals if s.present)
     return CognitiveIngress(
         stakes=min(1.0, max(0.0, stakes)),
         uncertainty=min(1.0, max(0.0, uncertainty)),
@@ -1449,9 +1501,7 @@ async def assemble_cognitive_ingress_async(
         epistemic_state = None
         memory_result = None
     else:
-        memory_signal, epistemic_genesis, epistemic_state, memory_result = (
-            await memory_task
-        )
+        memory_signal, epistemic_genesis, epistemic_state, memory_result = await memory_task
     signals = [memory_signal, *other_signals]
     stakes = _BASE_STAKES + sum(s.stakes_delta for s in signals if s.present)
     uncertainty = _BASE_UNCERTAINTY + sum(s.uncertainty_delta for s in signals if s.present)
@@ -1521,9 +1571,7 @@ def cognitive_context_items(ingress: CognitiveIngress) -> list[dict[str, Any]]:
     if felt:
         felt_lines.append("Current felt state: " + "; ".join(felt))
     if felt_lines:
-        items.append(
-            {"source": "interoception", "text": " | ".join(felt_lines)[:400]}
-        )
+        items.append({"source": "interoception", "text": " | ".join(felt_lines)[:400]})
     remaining = max(0, 6 - len(items))
     return (items + overflow[:remaining])[:6]
 

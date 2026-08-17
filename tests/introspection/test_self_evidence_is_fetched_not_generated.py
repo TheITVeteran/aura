@@ -43,6 +43,7 @@ from core.introspection.self_evidence import (
     resolve_self_health,
     self_health_answer,
 )
+from tests.chat_lane_support import chat_lane_source
 
 
 # ── The demand predicate: narrow on purpose ────────────────────────────────
@@ -205,11 +206,9 @@ def test_the_refusal_path_asks_whether_the_runtime_holds_the_answer() -> None:
 
     The live refusal was emitted with the answer sitting in runtime_health_report().
     """
-    import inspect
 
-    from interface.routes import chat
 
-    source = inspect.getsource(chat)
+    source = chat_lane_source()
     assert source.count("_self_health_answer_or_empty(") >= 3  # definition + both sites
 
     # Anchor on the assignment that BUILDS the refusal, not on the sentence —
@@ -561,11 +560,9 @@ def test_the_last_resort_consults_the_record_before_apologising() -> None:
     The last resort is exactly where a stored answer matters most, because by
     definition nothing else produced one.
     """
-    import inspect
 
-    from interface.routes import chat
 
-    source = inspect.getsource(chat)
+    source = chat_lane_source()
     marker = "_record_last_resort_self_rejection(user_message, composed)"
     assert marker in source
     window = source[max(0, source.find(marker) - 1600) : source.find(marker)]

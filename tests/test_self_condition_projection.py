@@ -489,3 +489,81 @@ def test_an_unread_soma_leaves_the_other_dimensions_in_charge():
     )
     assert "reserve" not in projection.supported_dimensions
     assert projection.condition == "well"
+
+
+class TestNamingATermToRefuseItIsNotAClaim:
+    """The gate failed the one reply that was honest about having no sample.
+
+    `unsupported_self_condition_operational_claims` matched telemetry words
+    anywhere in a sentence. Aura's canonical grounded reply says:
+
+        "I am treating the missing inner-state signal as something to
+        refresh, not replacing it with CPU or RAM telemetry."
+
+    — and that sentence was returned as an unsupported operational claim. So
+    a reply whose entire purpose is to refuse a telemetry substitute was
+    rejected by the gate that exists to stop telemetry substitutes, and the
+    chat lane refused the turn rather than serve it.
+
+    A disclaimer governs its own clause, and only its own clause.
+    """
+
+    def test_the_canonical_grounded_reply_passes_its_own_gate(self):
+        from core.self.self_condition import (
+            unsupported_self_condition_operational_claims,
+        )
+
+        reply = (
+            "I'm here with you, but I do not have a current self-condition "
+            "sample I can honestly use to call myself fine. I can still think "
+            "with you; I am treating the missing inner-state signal as "
+            "something to refresh, not replacing it with CPU or RAM telemetry."
+        )
+
+        assert unsupported_self_condition_operational_claims(reply) == ()
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "I do not have CPU telemetry for this.",
+            "I will not answer from disk space.",
+            "I am not reading RAM pressure to describe how I feel.",
+            "That is unrelated to network connectivity.",
+            "I would rather say I don't know than quote load average.",
+        ],
+    )
+    def test_a_refused_term_is_not_a_claim(self, sentence):
+        from core.self.self_condition import (
+            unsupported_self_condition_operational_claims,
+        )
+
+        assert unsupported_self_condition_operational_claims(sentence) == ()
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "CPU load is at 12% and RAM is fine.",
+            "I feel steady; disk usage is nominal.",
+            "I'm fine — network connectivity is up.",
+            "Everything's running smoothly.",
+        ],
+    )
+    def test_an_asserted_term_is_still_a_claim(self, sentence):
+        """The disclaimer must not become a way through the gate."""
+        from core.self.self_condition import (
+            unsupported_self_condition_operational_claims,
+        )
+
+        assert unsupported_self_condition_operational_claims(sentence)
+
+    def test_a_disclaimer_does_not_cover_a_later_clause(self):
+        """`not X; Y` asserts Y. One clause is not a licence for the next."""
+        from core.self.self_condition import (
+            unsupported_self_condition_operational_claims,
+        )
+
+        claims = unsupported_self_condition_operational_claims(
+            "I am not guessing; CPU load is at 12%."
+        )
+
+        assert claims, "a disclaimer in the first clause excused the second"

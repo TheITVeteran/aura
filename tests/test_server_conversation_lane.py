@@ -14,9 +14,13 @@ from core.utils.injected_blocks import stamp_runtime_payload
 import interface.routes.chat_desktop_repair as _chat_desktop_repair
 import interface.routes.chat_memory_state as _chat_memory_state
 import interface.routes.chat_preflight as _chat_preflight
-from tests.chat_lane_support import patch_chat_lane
+from tests.chat_lane_support import (
+    chat_lane_source,
+    lane_function_source,
+    patch_chat_lane,
+)
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
-import interface.routes.chat_turn_contract as _chat_turn_contract
+import interface.routes.chat_capability_inventory as _chat_capability_inventory
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
@@ -261,7 +265,6 @@ def _reset_conversation_log():
 @pytest.fixture(autouse=True)
 def _encrypted_session_pin_cipher(monkeypatch):
     from core.memory.session_pin_cipher import SessionPinCipher
-    from interface.routes import chat as chat_routes
 
     cipher = SessionPinCipher(b"k" * 32)
     monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_cipher", lambda: cipher)
@@ -309,7 +312,7 @@ def _mock_orch(**kwargs):
 def test_runtime_fact_status_reply_uses_canonical_lane(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     reply = chat_routes._ground_runtime_fact_status_reply(
         (
             "Live desktop path validation. Reply in one sentence with the active model lane, "
@@ -348,7 +351,7 @@ def test_runtime_fact_status_request_respects_own_voice_instruction():
 def test_runtime_fact_status_reply_recaps_current_route_probe(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     reply = chat_routes._ground_runtime_fact_status_reply(
         (
             "Live desktop route probe. Answer directly in two sentences: what did I just ask "
@@ -375,7 +378,7 @@ def test_runtime_fact_status_reply_recaps_current_route_probe(monkeypatch):
 def test_runtime_fact_status_reply_does_not_overwrite_action_objectives(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     reply = chat_routes._ground_runtime_fact_status_reply(
         (
             "Use the governed tool path to create a small self-contained HTML page "
@@ -2354,9 +2357,7 @@ async def test_api_chat_uses_single_canonical_kernel_cognitive_path(monkeypatch)
         "_run_cognitive_engine_chat_turn",
         _unexpected_direct_cognitive_turn,
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -2410,9 +2411,7 @@ async def test_api_chat_refuses_implicit_legacy_orchestrator_fallback(monkeypatc
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -2470,9 +2469,7 @@ async def test_api_chat_allows_explicit_legacy_orchestrator_fallback(monkeypatch
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", AsyncCallFixture())
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -2575,7 +2572,7 @@ async def test_api_chat_routes_desktop_turn_through_cognitive_engine(monkeypatch
             "background_endpoint": "Brainstem",
         }
 
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", _lane_status)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", _lane_status)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     _force_full_mind_runtime(monkeypatch, chat_routes)
 
@@ -2684,15 +2681,13 @@ async def test_api_chat_desktop_capability_inventory_uses_cognitive_engine_first
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *_args, **_kwargs: True)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -2988,11 +2983,11 @@ async def test_required_capability_inventory_binds_catalog_after_weak_engine_rep
 def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3535,11 +3530,11 @@ def test_strict_live_inference_readiness_requires_lane_status(monkeypatch):
 def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3580,11 +3575,11 @@ def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkey
 def test_live_turn_contract_preserves_stale_preflight_subsystem_state(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3656,12 +3651,12 @@ def test_live_turn_contract_refuses_engine_text_without_live_mind_context(monkey
 def test_live_turn_contract_refuses_failure_envelope_as_full_mind(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *_args, **_kwargs: True)
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *_args, **_kwargs: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -4114,7 +4109,7 @@ def test_capability_catalog_snapshot_caps_unbounded_catalog(monkeypatch):
                     "effect_scope": "read_only",
                 }
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4155,7 +4150,7 @@ def test_capability_catalog_snapshot_prefers_streaming_catalog(monkeypatch):
             return []
 
     engine = _FakeCapabilityEngine()
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4185,7 +4180,7 @@ def test_capability_catalog_snapshot_skips_materialized_catalog(monkeypatch):
             raise AssertionError("desktop inventory must not materialize a full catalog")
 
     engine = _FakeCapabilityEngine()
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4220,7 +4215,7 @@ def test_capability_catalog_snapshot_requires_explicit_legacy_availability(monke
         def get_catalog_health(self):
             return {"ready": True}
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4253,7 +4248,7 @@ def test_capability_catalog_snapshot_does_not_call_malformed_stream_measured(
         def get_catalog_health(self):
             return {"ready": True}
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4288,7 +4283,7 @@ def test_capability_inventory_separates_catalog_availability_from_unhealthy_owne
         def get_catalog_health(self):
             return {"ready": False}
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -4319,7 +4314,7 @@ def test_measured_sparse_capability_catalog_is_not_discarded(monkeypatch):
         def get_catalog_health(self):
             return {"ready": True}
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -5370,10 +5365,8 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
     monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 1.0)
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -5462,10 +5455,8 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
     )
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -5622,7 +5613,7 @@ async def test_api_chat_desktop_surface_keeps_nontrivial_chat_on_cognitive_engin
             "background_endpoint": "Brainstem",
         }
 
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", _lane_status)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", _lane_status)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
 
     from core.kernel.kernel_interface import KernelInterface
@@ -5707,14 +5698,12 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
     monkeypatch.setattr(_chat_preflight, "_begin_logged_exchange", _fake_begin_exchange)
     chat_routes._recent_responses.clear()
     chat_routes._recent_response_pairs.clear()
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": False,
             "state": "cold",
@@ -5799,14 +5788,10 @@ async def test_api_chat_desktop_cold_lane_timeout_is_not_reported_as_failed_reas
         "foreground_endpoint": None,
         "background_endpoint": "Brainstem",
     }
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: dict(cold_lane),
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="warming": dict(
             cold_lane,
             state=state,
@@ -5819,12 +5804,12 @@ async def test_api_chat_desktop_cold_lane_timeout_is_not_reported_as_failed_reas
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *a, **k: False)
+    patch_chat_lane(monkeypatch, "_runtime_kernel_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_substrate_voice_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *a, **k: False)
 
     response = await server_module.api_chat(
         server_module.ChatRequest(message="Are you with me?"),
@@ -5900,9 +5885,7 @@ async def test_api_chat_desktop_surface_routes_memory_state_through_cognitive_en
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _memory_cognitive_turn)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6025,9 +6008,7 @@ async def test_api_chat_desktop_memory_state_drift_rebounds_to_canonical_evidenc
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _drifting_cognitive_turn)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6114,9 +6095,7 @@ async def test_api_chat_desktop_owner_name_recall_routes_through_cognitive_engin
     monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: True)
     monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6235,7 +6214,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
     monkeypatch.setattr(_chat_preflight, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FakePool())
     lane_calls = 0
@@ -6262,9 +6241,7 @@ async def test_api_chat_desktop_surface_plans_with_cognitive_engine_before_execu
             "background_endpoint": "Brainstem",
         }
 
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         _live_proof_lane_status,
     )
 
@@ -6667,10 +6644,8 @@ async def test_api_chat_desktop_objective_requires_cognitive_planning(monkeypatc
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _slow_or_empty_cognitive_turn)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6743,9 +6718,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     monkeypatch.setattr(_chat_preflight, "_begin_logged_exchange", _fake_begin_exchange)
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6755,9 +6728,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -6855,10 +6826,8 @@ async def test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bounded_repair_candidate)
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", lambda: dict(ready_lane))
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", lambda: dict(ready_lane))
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": dict(ready_lane, conversation_ready=False, state=state, reason=reason),
     )
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
@@ -6947,9 +6916,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -6959,9 +6926,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -7057,9 +7022,7 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7069,9 +7032,7 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -7184,9 +7145,7 @@ async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7196,9 +7155,7 @@ async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": True,
             "state": state,
@@ -7310,9 +7267,7 @@ async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(mon
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7322,9 +7277,7 @@ async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(mon
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -7443,11 +7396,9 @@ async def test_api_chat_desktop_capability_no_reply_fails_closed_without_invento
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7457,9 +7408,7 @@ async def test_api_chat_desktop_capability_no_reply_fails_closed_without_invento
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -7575,10 +7524,8 @@ async def test_api_chat_self_sufficient_desktop_objective_skips_cognition(
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _forbidden_cognitive_reply)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7685,10 +7632,8 @@ async def test_api_chat_desktop_no_reply_executes_self_summary_after_cognitive_a
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7815,9 +7760,7 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
             "background_endpoint": "Brainstem",
         }
 
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         _live_proof_lane_status,
     )
 
@@ -7896,12 +7839,10 @@ async def test_api_chat_desktop_explicit_file_objective_runs_after_cognitive_eng
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_governed_skill)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -7989,12 +7930,10 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8075,12 +8014,10 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8151,12 +8088,10 @@ async def test_api_chat_desktop_coherence_status_uses_cognitive_engine_when_requ
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8234,9 +8169,7 @@ async def test_api_chat_desktop_nonexecuting_plan_uses_cognitive_engine_when_req
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_execute_desktop_objective_from_chat", _forbidden_desktop_objective)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8317,9 +8250,7 @@ async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_ta
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(chat_routes, "_execute_desktop_objective_from_chat", _forbidden_desktop_objective)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8401,9 +8332,7 @@ async def test_api_chat_desktop_surface_outer_timeout_refuses_direct_gate_fallba
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _timeout_cognitive_turn)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8413,9 +8342,7 @@ async def test_api_chat_desktop_surface_outer_timeout_refuses_direct_gate_fallba
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -8487,9 +8414,7 @@ async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_re
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8499,9 +8424,7 @@ async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_re
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -8591,9 +8514,7 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
     monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8603,9 +8524,7 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -8694,9 +8613,7 @@ async def test_api_chat_desktop_required_blocks_unfounded_voice_intrusion(monkey
     monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _no_repair)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8706,9 +8623,7 @@ async def test_api_chat_desktop_required_blocks_unfounded_voice_intrusion(monkey
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -8818,9 +8733,7 @@ async def test_api_chat_desktop_required_does_not_start_second_full_mind_owner(m
             else default
         ),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -8830,9 +8743,7 @@ async def test_api_chat_desktop_required_does_not_start_second_full_mind_owner(m
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -8909,7 +8820,7 @@ async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch
             return await operation()
 
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -9648,7 +9559,7 @@ def test_response_quality_logger_downgrades_canonical_failures(monkeypatch, capl
 
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     caplog.set_level(logging.INFO, logger="Aura.ResponseQuality")
 
     chat_routes._log_response_quality_metrics(
@@ -9943,7 +9854,7 @@ async def test_desktop_stabilizer_keeps_complex_self_process_questions_substanti
     )
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
@@ -12573,7 +12484,7 @@ async def test_desktop_required_runtime_status_invokes_engine_then_grounds(monke
             calls.append({"objective": objective, "context": dict(context or {})})
             return SimpleNamespace(content="unexpected model answer")
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -12627,7 +12538,7 @@ async def test_desktop_required_cognitive_fusion_status_invokes_engine_then_grou
             calls.append({"objective": objective, "context": dict(context or {})})
             return SimpleNamespace(content="unexpected model answer")
 
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -13737,9 +13648,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
     monkeypatch.setattr(chat_routes, "_stabilize_user_facing_reply", _fake_stabilize)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
     monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _FailingPool())
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -13749,9 +13658,7 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -14028,15 +13935,13 @@ async def test_api_chat_desktop_required_search_collects_evidence_before_cogniti
     monkeypatch.setattr(_chat_memory_state, "_build_conversation_recall_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_build_retained_memory_evidence_context", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
-    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
         staticmethod(lambda name, default=None: memory if name == "memory_facade" else default),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -14106,9 +14011,7 @@ async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch
             raise AssertionError("desktop regenerate must not use legacy orchestrator fallback")
 
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -14118,9 +14021,7 @@ async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch
             "background_endpoint": "Brainstem",
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": {
             "conversation_ready": False,
             "state": state,
@@ -14261,9 +14162,7 @@ async def test_api_chat_regenerate_desktop_stabilizer_keeps_protected_flags(monk
         _fake_apply_regeneration,
     )
     _force_full_mind_runtime(monkeypatch, chat_routes)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -14356,10 +14255,8 @@ async def test_api_chat_regenerate_desktop_rejects_bounded_repair_without_full_m
 
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _bounded_cognitive_turn)
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", lambda: dict(ready_lane))
-    monkeypatch.setattr(
-        chat_routes,
-        "_mark_conversation_lane_state",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", lambda: dict(ready_lane))
+    patch_chat_lane(monkeypatch, "_mark_conversation_lane_state",
         lambda reason, state="failed": dict(ready_lane, conversation_ready=False, state=state, reason=reason),
     )
     monkeypatch.setattr(
@@ -14490,7 +14387,7 @@ async def test_api_chat_skips_protected_foreground_rescue_under_memory_warning(m
 
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", lambda: dict(lane_status))
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", lambda: dict(lane_status))
     monkeypatch.setattr(
         "core.utils.memory_monitor.get_memory_pressure_snapshot",
         lambda: SimpleNamespace(
@@ -14546,7 +14443,7 @@ async def test_stabilize_user_facing_reply_blocks_ungrounded_search_turn_fallbac
         def sanitize(self, _text):
             return ""
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: state)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: state)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_looks_generic_assistantish", lambda _msg, _text: (False, ""))
@@ -14655,9 +14552,7 @@ async def test_cognitive_engine_required_private_model_report_uses_cognitive_eng
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -14714,7 +14609,7 @@ async def test_stabilize_user_facing_reply_rejects_objective_parrot(monkeypatch)
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14750,7 +14645,7 @@ async def test_stabilize_user_facing_reply_clarifies_specificity_push(monkeypatc
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14786,7 +14681,7 @@ async def test_stabilize_user_facing_reply_acknowledges_parrot_callout(monkeypat
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14822,7 +14717,7 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14879,7 +14774,7 @@ async def test_stabilize_user_facing_reply_does_not_turn_timeout_confusion_into_
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(
         _chat_conversation_repair,
         "_build_grounded_introspection_reply",
@@ -14923,7 +14818,7 @@ async def test_stabilize_user_facing_reply_blocks_semantic_glitch(monkeypatch):
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14967,7 +14862,7 @@ async def test_stabilize_user_facing_reply_rejects_identity_collapse_disclaimer(
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
@@ -15039,7 +14934,7 @@ async def test_desktop_required_stabilizer_does_not_add_a_third_generation_by_de
     inference_gate = _InferenceGate()
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
@@ -15113,7 +15008,7 @@ async def test_desktop_required_capability_repair_uses_grounded_inventory_withou
     inference_gate = _InferenceGate()
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
@@ -15192,7 +15087,7 @@ async def test_stabilizer_skips_second_generation_under_critical_memory_pressure
 
     inference_gate = _InferenceGate()
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
@@ -15267,7 +15162,7 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
             reason="",
         ),
     )
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
@@ -15327,9 +15222,7 @@ def test_same_worker_desktop_repair_allowed_on_ready_lane_without_env_flag(monke
             reason="",
         ),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "state": "ready",
             "conversation_ready": True,
@@ -15362,9 +15255,7 @@ def test_same_worker_desktop_repair_blocks_when_lane_is_busy(monkeypatch):
             reason="",
         ),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "state": "ready",
             "conversation_ready": True,
@@ -15397,9 +15288,7 @@ def test_completion_retry_is_admitted_at_high_pressure_when_lane_is_ready(monkey
             reason="memory_pressure:high",
         ),
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "state": "ready",
             "conversation_ready": True,
@@ -15492,7 +15381,7 @@ async def test_stabilize_user_facing_reply_uses_live_grounding_for_specificity_p
         def sanitize(self, text):
             return text
 
-    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
+    patch_chat_lane(monkeypatch, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(
         _chat_conversation_repair,
         "_build_grounded_introspection_reply",
@@ -15642,9 +15531,7 @@ async def test_api_chat_benchmark_header_uses_kernel_not_fastpath_or_direct_gate
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
     monkeypatch.setattr(conversation_support, "record_conversation_experience", experience_recorder)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -15724,9 +15611,7 @@ async def test_api_chat_uses_protected_foreground_lane_when_kernel_lock_is_held(
         "_stabilize_user_facing_reply",
         _fake_stabilize,
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -15784,9 +15669,7 @@ async def test_api_chat_uses_social_presence_before_protected_foreground_for_liv
     monkeypatch.setattr(chat_routes, "_evaluate_reply_topicality", lambda *_args, **_kwargs: (False, ""))
     monkeypatch.setattr(chat_routes, "_looks_semantically_glitched", lambda *_args, **_kwargs: (False, ""))
     monkeypatch.setattr(_chat_desktop_repair, "_build_social_presence_reply", lambda _message: "hey. i'm here. My attention is on you.")
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -15856,9 +15739,7 @@ async def test_api_chat_keeps_protected_foreground_deep_prompts_on_primary_lane(
         "_stabilize_user_facing_reply",
         _fake_stabilize,
     )
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -16254,9 +16135,7 @@ async def test_api_chat_capability_inventory_bypasses_busy_foreground_lock(monke
     monkeypatch.setattr(chat_routes, "_FOREGROUND_CHAT_BUSY_WAIT_S", 0.01)
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -16331,9 +16210,7 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
-    monkeypatch.setattr(
-        _chat_preflight,
-        "_collect_conversation_lane_status",
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": True,
             "state": "ready",
@@ -16430,30 +16307,51 @@ def test_collect_conversation_lane_status_exposes_actual_user_generation(monkeyp
 
 
 def test_live_desktop_final_repairs_preserve_cognitive_engine_contract():
-    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
-        encoding="utf-8"
-    )
-    protected_slice = source.split("async def _attempt_protected_foreground_reply", 1)[1].split(
-        "async def _execute_narrow_desktop_objective_before_cognition",
-        1,
-    )[0]
-    fastpath_slice = source.split("async def _finalize_fastpath", 1)[1].split(
-        "async def _attempt_protected_foreground_reply",
-        1,
-    )[0]
-    final_gate_slice = source.rsplit('if response_confidence == "degraded":', 1)[1].split(
-        'final_text = reply_text',
-        1,
-    )[0]
+    # The function itself. A text window into a 20,000-line file drifts every
+    # time anything above it moves, and then fails for a reason that has
+    # nothing to do with what this test is about.
+    # Read the requests themselves, not a text window. The window ran from one
+    # function name to another, so any edit between them changed what this
+    # test was looking at — and it is looking for one thing: a protected
+    # foreground request never asks for the engine without also declaring the
+    # desktop contract and closing the cloud door.
+    import ast
 
-    assert '"cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
-    assert '"desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
-    assert '"allow_cloud_fallback": False' in protected_slice
-    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in protected_slice
-    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in fastpath_slice
-    assert "protected_foreground_lane=desktop_requires_cognitive_engine" in fastpath_slice
-    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in final_gate_slice
-    assert "protected_foreground_lane=desktop_requires_cognitive_engine" in final_gate_slice
+    source = chat_lane_source()
+    protected_requests = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Dict):
+            continue
+        pairs = {
+            key.value: value
+            for key, value in zip(node.keys, node.values, strict=False)
+            if isinstance(key, ast.Constant)
+        }
+        engine_required = pairs.get("cognitive_engine_required")
+        # The protected foreground REQUEST, not any context payload that
+        # happens to carry the same key: the request derives it from the
+        # desktop contract flag.
+        if engine_required is None:
+            continue
+        if "desktop_requires_cognitive_engine" not in ast.unparse(engine_required):
+            continue
+        protected_requests.append((set(pairs), ast.unparse(node)))
+
+    assert protected_requests, "no protected foreground request found at all"
+    for keys, rendered in protected_requests:
+        assert "desktop_cognitive_engine_required" in keys, (
+            "a request asks for the cognitive engine without declaring the "
+            f"desktop contract: {rendered[:200]}"
+        )
+        assert "allow_cloud_fallback" in keys, (
+            f"a protected foreground request leaves the cloud door open: {rendered[:200]}"
+        )
+        assert "'allow_cloud_fallback': False" in rendered
+
+    # And the flag travels with every call that runs the protected lane.
+    calls = " ".join(source.split())
+    assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in calls
+    assert "protected_foreground_lane=desktop_requires_cognitive_engine" in calls
 
 
 def test_live_desktop_timeout_paths_do_not_enable_cloud_fallback():
@@ -16482,7 +16380,7 @@ def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
     # The bounded desktop repair moved to its own lane module; read it where
     # it lives rather than asserting against the file it used to live in.
     repair_source = (routes / "chat_desktop_repair.py").read_text(encoding="utf-8")
-    stabilizer_slice = source.split("async def _stabilize_user_facing_reply", 1)[1].split(
+    stabilizer_slice = lane_function_source("_stabilize_user_facing_reply").split(
         "# Length cap is structural",
         1,
     )[0]
@@ -16490,13 +16388,16 @@ def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():
     for text in (source, repair_source):
         assert "failed the reply-quality gate" not in text
         assert "not starting a second foreground generation" not in text
+    # Whitespace-insensitive: the formatter wraps a long call across lines,
+    # and where the line breaks fall is not what this test is about.
+    stabilizer_calls = " ".join(stabilizer_slice.split())
     assert (
-        "_chat_desktop_repair._build_bounded_desktop_repair_reply(user_message, frame)"
-        in stabilizer_slice
+        "_chat_desktop_repair._build_bounded_desktop_repair_reply( user_message, frame )"
+        in stabilizer_calls
+        or "_chat_desktop_repair._build_bounded_desktop_repair_reply(user_message, frame)"
+        in stabilizer_calls
     )
-    bounded_repair_slice = repair_source.split("def _build_bounded_desktop_repair_reply", 1)[
-        1
-    ].split("_CJK_SCRIPT_RE", 1)[0]
+    bounded_repair_slice = lane_function_source("_build_bounded_desktop_repair_reply")
     assert "_is_low_risk_social_continuity_request(user_message)" in bounded_repair_slice
     assert "_build_social_continuity_repair_reply(user_message)" in bounded_repair_slice
     assert "_build_bounded_capability_inventory_repair_reply(user_message)" in bounded_repair_slice

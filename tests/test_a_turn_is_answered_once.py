@@ -25,6 +25,7 @@ from core.conversation.turn_arbitration import (
     ledger_for,
     reset_turn_ledgers_for_test,
 )
+from tests.chat_lane_support import chat_lane_source
 
 
 @pytest.fixture(autouse=True)
@@ -180,9 +181,8 @@ def test_a_turn_can_be_forgotten() -> None:
 # ── It is wired to the path every gate takes ──────────────────────────────
 
 def test_the_chat_mutation_funnel_records_suppression() -> None:
-    from pathlib import Path
 
-    src = Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    src = chat_lane_source()
     funnel = src[src.index("def _append_turn_text_mutation") :]
     funnel = funnel[: funnel.index("def _merge_turn_text_mutations")]
     assert "from core.conversation.turn_arbitration import ledger_for" in funnel

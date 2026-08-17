@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
+import interface.routes.chat_capability_inventory as _chat_capability_inventory
+from tests.chat_lane_support import chat_lane_source
 
 
 def _clear_proof_run_signals(monkeypatch):
@@ -2262,7 +2264,7 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
     chat_module._locks.pop("fg", None)
     monkeypatch.setattr(chat_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", lambda: {"state": "ready"})
+    patch_chat_lane(monkeypatch, "_collect_conversation_lane_status", lambda: {"state": "ready"})
     monkeypatch.setattr(chat_module, "_emit_chat_output_receipt", no_op_async)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", no_op_async)
     monkeypatch.setattr(chat_module, "_repair_final_degraded_reply", fail_if_repaired)
@@ -2437,7 +2439,7 @@ async def test_chat_live_desktop_proof_rejects_shallow_success(
     async def fake_execute(*_args, **_kwargs):
         return desktop_result
 
-    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", fake_execute)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", fake_execute)
 
     result = await chat_module._execute_live_runtime_proof(
         "Run a live proof: open Calculator and put the result in Notes."
@@ -2461,7 +2463,7 @@ async def test_live_proof_file_rejects_unbound_success_even_when_file_exists(mon
         return {"ok": True, "path": params["path"]}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", shallow_write)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", shallow_write)
 
     result = await chat_module._write_live_proof_file(
         "artifacts/live_runtime/generated/proof.txt",
@@ -2493,7 +2495,7 @@ async def test_chained_live_proof_rejects_failed_observation(monkeypatch, tmp_pa
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
-    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", failed_observation)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", failed_observation)
 
     result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")
 
@@ -2523,7 +2525,7 @@ async def test_chained_live_proof_accepts_only_matching_pwd_observation(monkeypa
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
-    monkeypatch.setattr(chat_module, "_execute_governed_live_skill", verified_observation)
+    monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", verified_observation)
 
     result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")
 
@@ -2912,7 +2914,7 @@ def test_every_chokepoint_door_attaches_desktop_receipts():
     the kernel/deep door applied the chokepoint but dropped the receipts."""
     import pathlib
 
-    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    src = chat_lane_source()
     doors = src.count("await _apply_desktop_objective_chokepoint(")
     attachments = src.count('"desktop_result": _json_safe_payload')
     assert doors >= 2, f"expected both reply doors, found {doors}"
@@ -2930,7 +2932,7 @@ def test_desktop_objective_execution_routes_through_tracked_gate():
     """
     import pathlib
 
-    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    src = chat_lane_source()
     direct_calls = src.count("await _execute_desktop_objective_from_chat(")
     assert direct_calls == 1, (
         f"{direct_calls} direct executor calls — all desktop objective "
@@ -2954,7 +2956,7 @@ def test_self_sufficient_desktop_objectives_execute_before_freeform_generation()
     """
     import pathlib
 
-    src = pathlib.Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    src = chat_lane_source()
     narrow = src.split(
         "async def _execute_narrow_desktop_objective_before_cognition", 1
     )[1].split("desktop_objective_response = await", 1)[0]

@@ -27,6 +27,7 @@ from datetime import datetime
 import pytest
 
 from core.conversation.grounded_claim_guard import verify_grounded_claims
+from tests.chat_lane_support import chat_lane_source
 
 MORNING = datetime(2026, 7, 27, 10, 52)
 SMALL_HOURS = datetime(2026, 7, 27, 0, 30)
@@ -143,9 +144,8 @@ def test_the_guard_never_invents_a_claim() -> None:
 
 
 def test_it_runs_on_the_text_about_to_be_spoken() -> None:
-    from pathlib import Path
 
-    src = Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    src = chat_lane_source()
     guard_at = src.index("from core.conversation.grounded_claim_guard import")
     contract_at = src.index("_final_reply = _enforce_final_requested_output_contract(")
     assert contract_at < guard_at, "the reading must settle the final text, not an earlier draft"

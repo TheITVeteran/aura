@@ -32,6 +32,7 @@ from core.conversation.response_reliability import (
     asks_for_a_number,
     numeric_answer_missing,
 )
+from tests.chat_lane_support import chat_lane_source
 
 # The reply that shipped, verbatim.
 LIVE_GARBAGE = (
@@ -112,9 +113,8 @@ def test_the_cognitive_engine_path_also_consults_it() -> None:
     change." — no number, served anyway, because that reply left by the
     cognitive_engine path and never reached the floor.
     """
-    from pathlib import Path
 
-    chat = Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    chat = chat_lane_source()
     # Imported where the engine path assesses its reply...
     block = chat[chat.index("            is_status_check_turn,") :]
     block = block[: block.index("_is_explicit_capability_inventory_request(visible)")]
@@ -128,9 +128,8 @@ def test_the_cognitive_engine_path_also_consults_it() -> None:
 
 def test_the_serving_gate_consults_it_before_the_arithmetic_verdict() -> None:
     """It must run on the path a reply actually leaves by."""
-    from pathlib import Path
 
-    chat = Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    chat = chat_lane_source()
     gate = chat[chat.index("async def _finalize_fastpath") :]
     gate = gate[: gate.index("requires_reasoning_lane(_semantic_user_message)")]
     assert "numeric_answer_missing(_semantic_user_message, final_text)" in gate

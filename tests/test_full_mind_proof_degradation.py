@@ -17,7 +17,6 @@ The contract now separates:
 from __future__ import annotations
 
 import pytest
-import interface.routes.chat_turn_contract as _chat_turn_contract
 from tests.chat_lane_support import patch_chat_lane
 
 pytestmark = pytest.mark.unit
@@ -141,7 +140,7 @@ def test_unavailable_subsystem_keeps_authorship_and_is_named(monkeypatch):
     from interface.routes import chat as chat_routes
 
     _force_full_mind_runtime(monkeypatch, chat_routes)
-    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: False)
+    patch_chat_lane(monkeypatch, "_runtime_memory_available", lambda: False)
     payload = _payload(chat_routes, _green_trace())
     assert payload["authentic_cognitive_reply"] is True
     assert payload["full_mind_path"] is False

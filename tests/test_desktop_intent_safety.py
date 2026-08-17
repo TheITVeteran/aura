@@ -3,8 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-import interface.routes.chat_desktop_repair as _chat_desktop_repair
 import interface.routes.chat_memory_state as _chat_memory_state
+from tests.chat_lane_support import patch_chat_lane
 
 INVENTORY_PROMPT = (
     "What tools can you hypothetically use externally on my computer? "
@@ -114,7 +114,7 @@ def test_bounded_capability_inventory_repair_handles_failed_desktop_engine(
         "with one concrete scenario?"
     )
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
 
     reply = chat_routes._build_bounded_capability_inventory_repair_reply(prompt)
 
@@ -216,7 +216,7 @@ def test_capability_inventory_reply_repairs_false_tool_limitation(monkeypatch: p
         return default
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
 
     assert chat_routes._capability_inventory_reply_is_inadequate(
         INVENTORY_PROMPT,
@@ -284,7 +284,7 @@ def test_runtime_status_grounding_does_not_replace_capability_inventory(
         return default
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_tool_governance_available", lambda: True)
 
     inventory = chat_routes._build_grounded_capability_inventory_reply(INVENTORY_PROMPT)
     grounded = chat_routes._ground_runtime_fact_status_reply(
