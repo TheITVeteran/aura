@@ -8,7 +8,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
-from .local_pipe_bus import LocalPipeBus
+from .local_pipe_bus import LocalPipeBus, _is_connection_pair
 
 logger = logging.getLogger("Kernel.ActorBus")
 
@@ -215,7 +215,7 @@ class ActorBus:
         if connection is None:
             logger.warning("📡 Refusing to register actor '%s' without a live transport.", name)
             return False
-        if not LocalPipeBus._is_connection_pair(connection):
+        if not _is_connection_pair(connection):
             logger.warning(
                 "📡 Refusing to register actor '%s' with legacy shared transport; "
                 "expected an explicit (read_conn, write_conn) pair.",
