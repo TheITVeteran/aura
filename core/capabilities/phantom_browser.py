@@ -16,9 +16,11 @@ Usage:
 import asyncio
 import hashlib
 import logging
+import os
 import random
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import (
@@ -56,6 +58,13 @@ except (ImportError, TypeError, ValueError) as stealth_import_error:
     STEALTH_AVAILABLE = False
 
 logger = logging.getLogger("PhantomBrowser")
+
+_SYSTEM_CHROMIUM_EXECUTABLES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+)
 
 
 def _record_browser_degradation(
@@ -184,6 +193,8 @@ class PhantomBrowser:
         self._startup_error = ""
         self._startup_failure_count = 0
         self._last_launch_attempts: list[str] = []
+        self._last_executable_attempts: list[str] = []
+        self._launched_executable = ""
         self._stealth_applied = False
         self._stealth_error = _STEALTH_IMPORT_ERROR
         self._driver_pid: int | None = None
@@ -266,6 +277,7 @@ class PhantomBrowser:
             "startup_failure_count": self._startup_failure_count,
             "startup_error": self._startup_error[:240],
             "last_launch_attempts": list(self._last_launch_attempts),
+            "last_executable_attempts": list(self._last_executable_attempts),
             "stealth_available": bool(STEALTH_AVAILABLE),
             "stealth_applied": bool(self._stealth_applied),
             "stealth_error": self._stealth_error[:240],
@@ -281,6 +293,7 @@ class PhantomBrowser:
             # else, and `active` alone could not tell a dead page from a
             # healthy one (CP126 ``97a07e2a``).
             "engine_launched": self._launched_engine or "none",
+            "executable_launched": self._launched_executable or "none",
             "browser_connected": bool(getattr(self.browser, "is_connected", lambda: False)())
             if self.browser is not None
             else False,
@@ -367,18 +380,28 @@ class PhantomBrowser:
 
             launch_error = None
             self._last_launch_attempts = []
+            self._last_executable_attempts = []
+            self._launched_executable = ""
             for bt in browser_attempts:
                 self._last_launch_attempts.append(bt)
                 try:
                     if bt == "firefox":
                         self.browser = await self.playwright.firefox.launch(headless=not self.visible)
+                        self._launched_executable = str(
+                            getattr(self.playwright.firefox, "executable_path", "")
+                            or "playwright_firefox"
+                        )
                     elif bt == "webkit":
                         self.browser = await self.playwright.webkit.launch(headless=not self.visible)
-                    else:
-                        self.browser = await self.playwright.chromium.launch(
-                            headless=not self.visible,
-                            args=['--disable-blink-features=AutomationControlled']
+                        self._launched_executable = str(
+                            getattr(self.playwright.webkit, "executable_path", "")
+                            or "playwright_webkit"
                         )
+                    else:
+                        (
+                            self.browser,
+                            self._launched_executable,
+                        ) = await self._launch_chromium()
                     if bt != self.browser_type:
                         logger.info("✓ Fell back to %s after %s was unavailable.", bt, self.browser_type)
                     # What ACTUALLY launched. `browser_type` stayed at the
@@ -481,6 +504,74 @@ class PhantomBrowser:
                 finally:
                     self.playwright = None
             return False
+
+    def _chromium_launch_candidates(self) -> list[tuple[str, str | None]]:
+        """Return existing bundled/system Chromium executables in priority order."""
+
+        chromium = getattr(self.playwright, "chromium", None)
+        bundled = str(getattr(chromium, "executable_path", "") or "").strip()
+        candidates: list[tuple[str, str | None]] = []
+        if not bundled:
+            # Test doubles and older Playwright versions may not expose a path;
+            # retain Playwright's own resolver in that case.
+            candidates.append(("playwright_default", None))
+        elif Path(bundled).is_file():
+            candidates.append(("playwright_bundled", None))
+
+        seen = {bundled} if bundled else set()
+        for raw_path in _SYSTEM_CHROMIUM_EXECUTABLES:
+            path = str(Path(raw_path).expanduser())
+            if (
+                path in seen
+                or not Path(path).is_file()
+                or not os.access(path, os.X_OK)
+            ):
+                continue
+            seen.add(path)
+            candidates.append(("system_browser", path))
+        return candidates
+
+    async def _launch_chromium(self) -> tuple[Any, str]:
+        """Launch the first usable Chromium without assuming a cache revision."""
+
+        candidates = self._chromium_launch_candidates()
+        if not candidates:
+            bundled = str(
+                getattr(
+                    getattr(self.playwright, "chromium", None),
+                    "executable_path",
+                    "",
+                )
+                or ""
+            ).strip()
+            raise DependencyUnavailable(
+                "no usable Chromium executable was found"
+                + (f" (Playwright expected {bundled})" if bundled else "")
+            )
+
+        failures: list[str] = []
+        for source, executable in candidates:
+            label = executable or source
+            self._last_executable_attempts.append(label)
+            kwargs: dict[str, Any] = {
+                "headless": not self.visible,
+                "args": ["--disable-blink-features=AutomationControlled"],
+            }
+            if executable:
+                kwargs["executable_path"] = executable
+            try:
+                browser = await self.playwright.chromium.launch(**kwargs)
+                return browser, label
+            except (
+                PlaywrightError,
+                PlaywrightTimeoutError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                failures.append(f"{label}:{type(exc).__name__}:{exc}")
+        raise RuntimeError("all Chromium executables failed: " + "; ".join(failures))
 
     def _get_random_ua(self) -> str:
         return random.choice(USER_AGENTS)

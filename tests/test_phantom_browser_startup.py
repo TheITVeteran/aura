@@ -32,8 +32,10 @@ class _Launcher:
     def __init__(self, *, fail=False):
         self.fail = fail
         self.launched = False
+        self.launch_kwargs = []
 
-    async def launch(self, **_kwargs):
+    async def launch(self, **kwargs):
+        self.launch_kwargs.append(dict(kwargs))
         if self.fail:
             raise RuntimeError("browser unavailable")
         self.launched = True
@@ -113,6 +115,44 @@ async def test_browser_startup_falls_back_to_chromium(monkeypatch):
     assert fake_playwright.chromium.launched is True
     last = get_degradation_tracker().recent(subsystem="phantom_browser")[-1]
     assert last.action == "trying next browser fallback after launch attempt failed"
+
+
+@pytest.mark.asyncio
+async def test_browser_uses_installed_chrome_when_playwright_cache_is_stale(
+    monkeypatch,
+    tmp_path,
+):
+    fake_playwright = _FakePlaywright(firefox_fail=True, chromium_fail=False)
+    missing_bundle = tmp_path / "missing-playwright-chromium"
+    system_chrome = tmp_path / "Google Chrome"
+    system_chrome.write_text("browser", encoding="utf-8")
+    system_chrome.chmod(0o755)
+    fake_playwright.chromium.executable_path = str(missing_bundle)
+    monkeypatch.setattr(phantom_module, "PLAYWRIGHT_AVAILABLE", True)
+    monkeypatch.setattr(
+        phantom_module,
+        "_SYSTEM_CHROMIUM_EXECUTABLES",
+        (str(system_chrome),),
+    )
+    monkeypatch.setattr(
+        phantom_module,
+        "async_playwright",
+        lambda: _AsyncPlaywrightFactory(fake_playwright),
+    )
+
+    browser = PhantomBrowser(browser_type="chromium")
+
+    assert await browser.ensure_ready() is True
+    assert fake_playwright.chromium.launch_kwargs == [
+        {
+            "headless": True,
+            "args": ["--disable-blink-features=AutomationControlled"],
+            "executable_path": str(system_chrome),
+        }
+    ]
+    status = browser.get_status()
+    assert status["executable_launched"] == str(system_chrome)
+    assert status["last_executable_attempts"] == [str(system_chrome)]
 
 
 @pytest.mark.asyncio
