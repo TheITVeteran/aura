@@ -282,6 +282,19 @@ class CognitiveIntegrationLayer:
 
         logger.info("🧠 CognitiveIntegrationLayer: Initializing Advanced Intelligence Pipeline...")
         try:
+            # The kernel's belief dependency is load-bearing: it snapshots the
+            # service during start and otherwise remains on axioms for the whole
+            # process. Advanced cognition can race the background autonomy boot,
+            # so establish the canonical dependency here before activating its
+            # consumer. Construction loads durable state and stays off-loop.
+            belief_engine = ServiceContainer.get("belief_revision_engine", default=None)
+            if belief_engine is None:
+                from core.epistemics.belief_revision import get_belief_revision_engine
+
+                belief_engine = await asyncio.to_thread(get_belief_revision_engine)
+            await belief_engine.start()
+            ServiceContainer.register_instance("belief_revision_engine", belief_engine)
+
             # 1. Resolve or Instantiate Components
             # We try to get them from the container first, then instantiate if missing
             self.kernel = ServiceContainer.get("cognitive_kernel", default=None)

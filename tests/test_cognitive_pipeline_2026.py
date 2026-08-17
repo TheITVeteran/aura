@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from core.agency_core import AgencyCore, AgencyState, EngagementMode, SovereignSwarm
@@ -51,6 +53,17 @@ class KernelProbe:
     async def evaluate(self, message, **kwargs):
         self.evaluate_calls.append({"message": message, "kwargs": kwargs})
         return self.brief
+
+
+class BeliefRevisionProbe:
+    def __init__(self, events=None):
+        self.events = events
+        self.started = False
+
+    async def start(self):
+        self.started = True
+        if self.events is not None:
+            self.events.append("belief_started")
 
 
 class MonologueProbe:
@@ -153,6 +166,7 @@ class FormattingRepairTrap:
 @pytest.fixture(autouse=True)
 def cleanup_container():
     ServiceContainer.reset()
+    ServiceContainer.register_instance("belief_revision_engine", BeliefRevisionProbe())
     yield
     ServiceContainer.reset()
 
@@ -214,6 +228,31 @@ async def test_cognitive_integration_segments():
     
     response = await cognition.process_turn("hello")
     assert response.startswith("Hello")
+
+
+@pytest.mark.asyncio
+async def test_cognitive_integration_starts_belief_dependency_before_kernel():
+    events = []
+
+    class OrderedKernel(KernelProbe):
+        async def start(self):
+            events.append("kernel_started")
+            await super().start()
+
+    belief = BeliefRevisionProbe(events)
+    kernel = OrderedKernel(SimpleNamespace())
+    monologue = MonologueProbe(SimpleNamespace())
+    language = LanguageCenterProbe("ready")
+    ServiceContainer.register_instance("belief_revision_engine", belief)
+    ServiceContainer.register_instance("cognitive_kernel", kernel)
+    ServiceContainer.register_instance("inner_monologue", monologue)
+    ServiceContainer.register_instance("language_center", language)
+
+    cognition = CognitiveIntegrationLayer(orchestrator=OrchestratorProbe())
+    await cognition.initialize()
+
+    assert events[:2] == ["belief_started", "kernel_started"]
+    assert ServiceContainer.get("belief_revision_engine") is belief
 
 
 @pytest.mark.asyncio

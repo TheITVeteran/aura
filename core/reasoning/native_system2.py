@@ -1326,6 +1326,8 @@ class NativeSystem2Engine:
     ) -> int:
         simulations = 0
         for _ in range(config.budget):
+            if simulations and simulations % 4 == 0:
+                await asyncio.sleep(0)
             if self._timed_out(started_at, config):
                 break
             node = root
@@ -1364,6 +1366,8 @@ class NativeSystem2Engine:
                 break
             next_frontier: List[NativePlanNode] = []
             for node in frontier:
+                if simulations and simulations % 4 == 0:
+                    await asyncio.sleep(0)
                 if simulations >= config.budget:
                     break
                 await self._expand_node(tree, node, goal, config, generator, model, scorer)
@@ -1401,6 +1405,8 @@ class NativeSystem2Engine:
         heap: List[Tuple[float, float, str]] = [(-0.5, rng.random(), root.id)]
         simulations = 0
         while heap and simulations < config.budget and not self._timed_out(started_at, config):
+            if simulations and simulations % 4 == 0:
+                await asyncio.sleep(0)
             _priority, _tie, node_id = heapq.heappop(heap)
             node = tree.nodes[node_id]
             if node.depth >= config.max_depth or node.terminal:

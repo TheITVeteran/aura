@@ -86,6 +86,47 @@ class BootAutonomyMixin:
     attention_summarizer: Any
     probe_manager: Any
 
+    def _start_skill_catalog_warmup(self) -> None:
+        """Start catalog validation early without publishing partial state."""
+        existing = getattr(self, "_skill_catalog_warmup_task", None)
+        if existing is not None and not existing.done():
+            return
+
+        from ....capability_engine import CapabilityEngine
+        from core.utils.task_tracker import get_task_tracker
+
+        engine = CapabilityEngine(orchestrator=self)
+        self._skill_catalog_warmup_engine = engine
+        self._skill_catalog_warmup_task = get_task_tracker().create_task(
+            asyncio.to_thread(lambda: len(engine.skills)),
+            name="orchestrator.skill_catalog_warmup",
+        )
+
+    async def _consume_skill_catalog_warmup(self) -> tuple[Any, int]:
+        """Return the one warmed engine only after its catalog is authoritative."""
+        from ....capability_engine import CapabilityEngine
+
+        engine = getattr(self, "_skill_catalog_warmup_engine", None)
+        if engine is None:
+            engine = CapabilityEngine(orchestrator=self)
+        warmup = getattr(self, "_skill_catalog_warmup_task", None)
+        if warmup is not None:
+            try:
+                loaded = await warmup
+            except _BOOT_AUTONOMY_BOUNDARY_ERRORS as exc:
+                _record_boot_autonomy_degradation(
+                    exc,
+                    "Early skill-catalog warmup failed; retrying at Phase 6: %s",
+                    action="retried the canonical catalog transaction before publishing it",
+                    severity="degraded",
+                )
+                loaded = await asyncio.to_thread(lambda: len(engine.skills))
+        else:
+            loaded = await asyncio.to_thread(lambda: len(engine.skills))
+        self._skill_catalog_warmup_task = None
+        self._skill_catalog_warmup_engine = None
+        return engine, int(loaded)
+
     async def _init_autonomous_evolution(self):
         """Initialize the background evolution and Curiosity Engine with granular error boundaries."""
         logger.info("🔎 Activating Autonomous Self-Modification...")
@@ -1125,9 +1166,7 @@ class BootAutonomyMixin:
 
     async def _init_skill_system(self):
         """Initialize unified capability engine."""
-        from ....capability_engine import CapabilityEngine
-
-        engine = CapabilityEngine(orchestrator=self)
+        engine, skills_loaded = await self._consume_skill_catalog_warmup()
         self._capability_engine = engine  # Unified reference
         ServiceContainer.register_instance("capability_engine", engine)
         ServiceContainer.register_instance("skill_manager", engine)  # Legacy shim
@@ -1151,7 +1190,7 @@ class BootAutonomyMixin:
         # I/O that lockdep measured as a loop-blocking hold. During boot the
         # loop is what serves /api/health/boot, and a loop that cannot answer
         # is a desktop stuck on "RESUMING LIVE SURFACE".
-        self.status.skills_loaded = await asyncio.to_thread(lambda: len(engine.skills))
+        self.status.skills_loaded = skills_loaded
         logger.info("✓ Capability Engine initialized with %d skills", self.status.skills_loaded)
 
         from core.skill_management.hephaestus import HephaestusEngine

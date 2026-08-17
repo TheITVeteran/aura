@@ -629,6 +629,11 @@ class OrchestratorBootMixin(
                     except (RuntimeError, AttributeError, TypeError, ValueError):
                         return get_task_tracker().create_task(coro, name=name)
 
+                # Discovery and isolated validation form one immutable catalog
+                # transaction. Start it before identity/guardian boot, but do
+                # not publish the engine until its Phase 6 owner consumes it.
+                self._start_skill_catalog_warmup()
+
                 # ZENITH LOCKDOWN: Start Deadlock Watchdog
                 if hasattr(self, "_deadlock_watchdog") and not lightweight_test_boot:
                     self._deadlock_watchdog_task = _spawn_boot_task(

@@ -831,6 +831,113 @@ def test_task_engine_loads_interrupted_plan_snapshot_as_resumable(tmp_path):
     assert "Interrupted" in restored.steps[1].error
 
 
+def test_task_engine_interruption_normalization_is_idempotent_and_bounded():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+    nested = "Interrupted before completion. Previous state: " * 20 + ("x" * 5000)
+    step = TaskStep(
+        step_id="resume_s0",
+        description="Resume safely",
+        tool="think",
+        args={},
+        success_criterion="resume completes",
+        error=nested,
+        status=StepStatus.RUNNING,
+    )
+    plan = TaskPlan(plan_id="resume", goal="Resume safely", steps=[step], trace_id="trace")
+
+    engine._normalize_loaded_plan(plan)
+    first = step.error
+    engine._normalize_loaded_plan(plan)
+
+    assert step.error == first
+    assert step.error.startswith("Interrupted before completion. Previous state: ")
+    assert len(step.error) <= engine.MAX_PERSISTED_ERROR_CHARS
+    assert step.error.count("Interrupted before completion") == 1
+
+
+def test_task_engine_repairs_unary_semantic_tool_contract_from_step_objective():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+
+    async def search(query: str):
+        return query
+
+    engine._tool_registry = {"web_search": search}
+    step = TaskStep(
+        step_id="research_s0",
+        description="Research the history of distributed consensus",
+        tool="web_search",
+        args={},
+        success_criterion="sources returned",
+    )
+    plan = TaskPlan(
+        plan_id="research",
+        goal="Write a consensus history",
+        steps=[step],
+        trace_id="trace",
+    )
+
+    assert engine._repair_plan_argument_contracts(plan) == []
+    assert step.args == {"query": step.description}
+
+
+def test_task_engine_does_not_guess_multi_field_effect_contracts():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+
+    async def write_file(path: str, content: str):
+        return path, content
+
+    engine._tool_registry = {"write_file": write_file}
+    step = TaskStep(
+        step_id="write_s0",
+        description="Write the completed report",
+        tool="write_file",
+        args={},
+        success_criterion="file written",
+    )
+    plan = TaskPlan(plan_id="write", goal="Write a report", steps=[step], trace_id="trace")
+
+    assert engine._repair_plan_argument_contracts(plan) == [
+        "write_s0:write_file:path,content"
+    ]
+    assert step.args == {}
+
+
+@pytest.mark.asyncio
+async def test_task_engine_invocation_reports_structured_missing_argument_contract():
+    engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)
+
+    async def search(query: str):
+        return query
+
+    engine._tool_registry = {"web_search": search}
+    engine._capability_manager = SimpleNamespace(
+        verify_access=lambda _tool, _token: True,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="tool_argument_contract_missing:web_search:query",
+    ):
+        await engine._invoke_tool("web_search", {})
+
+
+def test_task_step_runtime_persistence_bounds_untrusted_diagnostics():
+    step = TaskStep(
+        step_id="bounded_s0",
+        description="Bound persistence",
+        tool="think",
+        args={},
+        success_criterion="state remains bounded",
+        error="e" * 5000,
+        result_summary="r" * 5000,
+    )
+
+    payload = step.to_runtime_dict()
+
+    assert len(payload["error"]) == 1200
+    assert len(payload["result_summary"]) == 2400
+
+
 @pytest.mark.asyncio
 async def test_task_engine_execute_plan_resumes_from_completed_steps():
     engine = AutonomousTaskEngine.__new__(AutonomousTaskEngine)

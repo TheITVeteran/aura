@@ -118,12 +118,13 @@ class TaskStep:
 
     def to_runtime_dict(self) -> dict[str, Any]:
         payload = self.to_dict()
+        payload["error"] = str(self.error or "")[:1200] or None
         payload.update(
             {
                 "rollback_action": self.rollback_action,
                 "rollback_args": dict(self.rollback_args or {}),
                 "raw_result": self.raw_result,
-                "result_summary": self.result_summary,
+                "result_summary": str(self.result_summary or "")[:2400] or None,
                 "started_at": self.started_at,
                 "completed_at": self.completed_at,
             }
@@ -278,6 +279,10 @@ class AutonomousTaskEngine:
     APPROVAL_TIMEOUT = 300.0  # 5 minutes to approve before auto-reject
     MAX_PARALLEL_STEPS = 4
     MAX_RESULT_CHARS = 1200
+    MAX_PERSISTED_ERROR_CHARS = 1200
+    SEMANTIC_OBJECTIVE_PARAMETERS = frozenset(
+        {"query", "prompt", "goal", "objective", "question", "text"}
+    )
     SAFE_PARALLEL_TOOLS = frozenset({"think", "web_search", "read_file"})
     TERMINAL_PLAN_STATUSES = frozenset({"succeeded", "failed", "partial", "rejected"})
     NON_EXECUTING_TOOLS = frozenset({"think"})
@@ -406,6 +411,63 @@ class AutonomousTaskEngine:
                 return True
         return False
 
+    @staticmethod
+    def _required_callable_parameters(tool_fn: Callable[..., Any]) -> list[inspect.Parameter]:
+        """Return required caller-owned fields declared by a registered tool."""
+        try:
+            signature = inspect.signature(tool_fn)
+        except (TypeError, ValueError):
+            return []
+        return [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.name not in {"origin", "payload_context"}
+            and parameter.default is inspect.Parameter.empty
+            and parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            }
+        ]
+
+    @staticmethod
+    def _argument_is_supplied(args: dict[str, Any], name: str) -> bool:
+        if name not in args or args[name] is None:
+            return False
+        return not isinstance(args[name], str) or bool(args[name].strip())
+
+    def _repair_step_argument_contract(self, step: TaskStep, plan: TaskPlan) -> list[str]:
+        """Bind a missing unary semantic payload or report unsafe omissions.
+
+        The callable signature is the contract. A single missing semantic field
+        can be recovered from the step's explicit objective. Paths,
+        destinations, and multi-field effects are never guessed.
+        """
+        tool_fn = self._tool_registry.get(step.tool)
+        if tool_fn is None:
+            return []
+        required = self._required_callable_parameters(tool_fn)
+        missing = [
+            parameter
+            for parameter in required
+            if not self._argument_is_supplied(step.args, parameter.name)
+        ]
+        if len(missing) == 1 and missing[0].name in self.SEMANTIC_OBJECTIVE_PARAMETERS:
+            semantic_payload = str(step.description or plan.goal or "").strip()
+            if semantic_payload:
+                step.args[missing[0].name] = semantic_payload
+                missing = []
+        return [parameter.name for parameter in missing]
+
+    def _repair_plan_argument_contracts(self, plan: TaskPlan) -> list[str]:
+        errors: list[str] = []
+        for step in plan.steps:
+            missing = self._repair_step_argument_contract(step, plan)
+            if missing:
+                errors.append(f"{step.step_id or step.tool}:{step.tool}:{','.join(missing)}")
+        return errors
+
     def _persist_active_plans(self) -> None:
         try:
             payload = {
@@ -445,11 +507,17 @@ class AutonomousTaskEngine:
         for step in plan.steps:
             if step.status in {StepStatus.SUCCEEDED, StepStatus.SKIPPED, StepStatus.ROLLED_BACK}:
                 continue
+            previous = str(step.error or "").strip()
+            prefix = "Interrupted before completion. Previous state: "
+            while previous.startswith(prefix):
+                previous = previous[len(prefix) :].strip()
+            if previous == "Interrupted before this step could be fully verified.":
+                previous = ""
             interruption_note = (
-                f"Interrupted before completion. Previous state: {step.error}"
-                if step.error
+                f"{prefix}{previous}"
+                if previous
                 else "Interrupted before this step could be fully verified."
-            )
+            )[: self.MAX_PERSISTED_ERROR_CHARS]
             step.status = StepStatus.PENDING
             step.verified = False
             step.error = interruption_note
@@ -593,6 +661,15 @@ class AutonomousTaskEngine:
                 and self._callable_accepts_kwarg(tool_fn, "payload_context")
             ):
                 call_args["payload_context"] = dict(payload_context)
+            missing = [
+                parameter.name
+                for parameter in self._required_callable_parameters(tool_fn)
+                if not self._argument_is_supplied(call_args, parameter.name)
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"tool_argument_contract_missing:{tool_name}:{','.join(missing)}"
+                )
             result = tool_fn(**call_args)
             if inspect.isawaitable(result):
                 return await result
@@ -822,6 +899,25 @@ class AutonomousTaskEngine:
                 summary="I couldn't decompose this goal into executable steps.",
                 steps_completed=0,
                 steps_total=0,
+                trace_id=trace_id,
+            )
+
+        contract_errors = self._repair_plan_argument_contracts(plan)
+        if contract_errors:
+            plan.status = "failed"
+            plan.final_result = "invalid_tool_argument_contract"
+            self._active_plans.pop(plan.plan_id, None)
+            self._persist_active_plans()
+            return TaskResult(
+                plan_id=plan.plan_id,
+                goal=goal,
+                succeeded=False,
+                summary=(
+                    "The execution plan did not supply required tool fields: "
+                    + "; ".join(contract_errors)
+                )[:600],
+                steps_completed=0,
+                steps_total=len(plan.steps),
                 trace_id=trace_id,
             )
 
