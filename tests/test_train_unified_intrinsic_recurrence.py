@@ -3406,10 +3406,11 @@ def test_latest_checkpoint_uses_immutable_generation_over_compatibility_mirror(
     assert generation_weights.parent.name in pointer["checkpoint"]
     assert generation_weights.parent.stat().st_mode & 0o222 == 0
     assert generation_weights.stat().st_mode & 0o222 == 0
+    mirror = tmp_path / "checkpoint_latest.safetensors"
+    assert mirror.samefile(generation_weights)
 
     # A crash or writer failure in the compatibility mirror cannot strand the
     # authoritative immutable generation.
-    mirror = tmp_path / "checkpoint_latest.safetensors"
     mirror.unlink()
     mirror.write_bytes(b"torn compatibility mirror")
     (tmp_path / "checkpoint_latest.json").write_text("{}", encoding="utf-8")

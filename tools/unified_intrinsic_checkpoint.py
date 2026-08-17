@@ -31,6 +31,9 @@ SOURCE_MIGRATION_SCHEMA: Final = (
 CHECKPOINT_RETENTION_SCHEMA: Final = (
     "aura.unified_intrinsic.checkpoint_retention.v1"
 )
+CHECKPOINT_MIRROR_DEDUP_SCHEMA: Final = (
+    "aura.unified_intrinsic.checkpoint_mirror_dedup.v1"
+)
 _POINTER_FILENAME: Final = re.compile(
     r"(checkpoint_[a-z][a-z0-9_]{0,63})_pointer\.json"
 )
@@ -838,6 +841,179 @@ def prune_checkpoint_generations(
     return {**receipt, "receipt_path": str(receipt_path)}
 
 
+def deduplicate_checkpoint_compatibility_mirrors(
+    output_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Point fixed-name compatibility files at authoritative generations.
+
+    Every pointer and immutable generation is fully verified before any mirror
+    changes. Fixed-name files are explicitly non-authoritative; replacing a
+    separate copy with a hard link preserves legacy readers while reclaiming
+    the duplicate allocation. No generation, pointer, receipt, or rollback is
+    deleted.
+    """
+
+    expanded = output_dir.expanduser()
+    if expanded.is_symlink():
+        raise UnifiedCheckpointError("unified checkpoint output is a symlink")
+    output = expanded.resolve(strict=True)
+    _directory_identity(output, modes=frozenset({0o700}))
+
+    candidates: list[dict[str, Any]] = []
+    for pointer_path in sorted(output.glob("checkpoint_*_pointer.json")):
+        match = _POINTER_FILENAME.fullmatch(pointer_path.name)
+        if match is None or pointer_path.is_symlink():
+            raise UnifiedCheckpointError(
+                "unified recurrence checkpoint pointer differs"
+            )
+        stem = _validate_stem(match.group(1))
+        resolved = resolve_checkpoint_generation(output, stem=stem, required=True)
+        if resolved is None:  # pragma: no cover - required=True is exhaustive
+            raise UnifiedCheckpointError(
+                "unified recurrence checkpoint generation is unavailable"
+            )
+        source = resolved.weights_path
+        source_identity = source.lstat()
+        target = output / f"{stem}.safetensors"
+        target_identity: os.stat_result | None = None
+        already_linked = False
+        if target.is_symlink():
+            raise UnifiedCheckpointError(
+                "unified checkpoint compatibility mirror is a symlink"
+            )
+        if target.exists():
+            target_identity = target.lstat()
+            if (
+                not stat.S_ISREG(target_identity.st_mode)
+                or target_identity.st_uid != os.geteuid()
+            ):
+                raise UnifiedCheckpointError(
+                    "unified checkpoint compatibility mirror differs"
+                )
+            already_linked = (
+                target_identity.st_dev == source_identity.st_dev
+                and target_identity.st_ino == source_identity.st_ino
+            )
+        candidates.append(
+            {
+                "stem": stem,
+                "source": source,
+                "source_device": int(source_identity.st_dev),
+                "source_inode": int(source_identity.st_ino),
+                "target": target,
+                "target_device": (
+                    int(target_identity.st_dev) if target_identity is not None else None
+                ),
+                "target_inode": (
+                    int(target_identity.st_ino) if target_identity is not None else None
+                ),
+                "target_mtime_ns": (
+                    int(target_identity.st_mtime_ns)
+                    if target_identity is not None
+                    else None
+                ),
+                "reclaimable_bytes": (
+                    int(target_identity.st_blocks * 512)
+                    if target_identity is not None and not already_linked
+                    else 0
+                ),
+                "already_linked": already_linked,
+            }
+        )
+
+    material = {
+        "schema": CHECKPOINT_MIRROR_DEDUP_SCHEMA,
+        "output_dir": str(output),
+        "mirrors": [
+            {
+                "stem": row["stem"],
+                "source": str(Path(row["source"]).relative_to(output)),
+                "target": str(Path(row["target"]).relative_to(output)),
+                "reclaimable_bytes": row["reclaimable_bytes"],
+                "already_linked": row["already_linked"],
+            }
+            for row in candidates
+        ],
+    }
+    plan_sha256 = canonical_sha256(material)
+    if dry_run:
+        body = {
+            **material,
+            "state": "dry_run",
+            "plan_sha256": plan_sha256,
+            "replaced": [],
+        }
+        return {**body, "receipt_sha256": canonical_sha256(body)}
+
+    replaced: list[str] = []
+    receipt_id = uuid.uuid4().hex
+    receipt_directory = output / "checkpoint_storage_receipts"
+    from core.runtime.atomic_writer import (
+        atomic_hardlink_replace,
+        atomic_write_text,
+        ensure_private_directory,
+    )
+
+    ensure_private_directory(receipt_directory)
+    receipt_path = receipt_directory / f"mirror-dedup-{receipt_id}.json"
+    state = "failed"
+    error = "deduplication_interrupted"
+    try:
+        for row in candidates:
+            if row["already_linked"]:
+                continue
+            source = Path(row["source"])
+            target = Path(row["target"])
+            source_now = source.lstat()
+            if (
+                source_now.st_dev != row["source_device"]
+                or source_now.st_ino != row["source_inode"]
+            ):
+                raise UnifiedCheckpointError(
+                    "unified checkpoint generation changed before mirror deduplication"
+                )
+            if row["target_inode"] is not None:
+                target_now = target.lstat()
+                if (
+                    target_now.st_dev != row["target_device"]
+                    or target_now.st_ino != row["target_inode"]
+                    or target_now.st_mtime_ns != row["target_mtime_ns"]
+                ):
+                    raise UnifiedCheckpointError(
+                        "unified checkpoint mirror changed before deduplication"
+                    )
+            elif target.exists() or target.is_symlink():
+                raise UnifiedCheckpointError(
+                    "unified checkpoint mirror appeared before deduplication"
+                )
+            atomic_hardlink_replace(source, target)
+            replaced.append(str(row["stem"]))
+        state = "complete"
+        error = ""
+    except (OSError, RuntimeError) as exc:
+        state = "failed"
+        error = f"{type(exc).__name__}:{exc}"
+        raise
+    finally:
+        body = {
+            **material,
+            "state": state,
+            "plan_sha256": plan_sha256,
+            "replaced": replaced,
+            "error": error,
+        }
+        receipt = {**body, "receipt_sha256": canonical_sha256(body)}
+        atomic_write_text(
+            receipt_path,
+            (canonical_bytes(receipt) + b"\n").decode("ascii"),
+            encoding="ascii",
+            mode=0o600,
+        )
+    return {**receipt, "receipt_path": str(receipt_path)}
+
+
 def adopt_source_migration_identity(
     output_dir: Path,
     computed_identity: dict[str, Any],
@@ -988,12 +1164,17 @@ def adopt_source_migration_identity(
 
 __all__ = [
     "CHECKPOINT_GENERATION_SCHEMA",
+    "CHECKPOINT_MIRROR_DEDUP_SCHEMA",
     "CHECKPOINT_POINTER_SCHEMA",
+    "CHECKPOINT_RETENTION_SCHEMA",
     "SOURCE_MIGRATION_SCHEMA",
     "TRAINING_SCHEMA",
     "ResolvedUnifiedCheckpoint",
     "UnifiedCheckpointError",
     "adopt_source_migration_identity",
+    "checkpoint_retention_plan",
+    "deduplicate_checkpoint_compatibility_mirrors",
+    "prune_checkpoint_generations",
     "resolve_checkpoint_generation",
     "unpointed_checkpoint_inventory",
 ]

@@ -11652,6 +11652,38 @@
       "callee": "<pathlib.Path>.unlink",
       "canonical_owner": true,
       "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_hardlink_replace"
+    },
+    {
+      "callee": "os.link",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_hardlink_replace"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_hardlink_replace"
+    },
+    {
+      "callee": "parent.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.atomic_hardlink_replace"
+    },
+    {
+      "callee": "<pathlib.Path>.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
       "count": 1,
       "path": "core/runtime/atomic_writer.py",
       "scope": "<module>.atomic_write_bytes"
@@ -15890,6 +15922,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c0abee87b447437157ed6ac817689ff96cea3c55f135c35feb5ac853070aee54",
+  "inventory_sha256": "d7126137d9f621e8ad62fca5d863b778f79e8eabb15907a785e0b8c7f7322685",
   "schema_version": 1
 }

@@ -8,12 +8,62 @@ from pathlib import Path
 import pytest
 
 from core.runtime.atomic_writer import (
+    AtomicWriteError,
     async_durable_replace,
     async_durable_unlink,
+    atomic_hardlink_replace,
     atomic_append_text,
     durable_replace,
     durable_unlink,
 )
+
+
+def test_atomic_hardlink_replace_reuses_immutable_inode(tmp_path: Path) -> None:
+    source = tmp_path / "generation.safetensors"
+    target = tmp_path / "checkpoint_latest.safetensors"
+    source.write_bytes(b"immutable tensor bytes")
+    source.chmod(0o400)
+    target.write_bytes(b"obsolete mirror")
+
+    assert atomic_hardlink_replace(source, target) is True
+    assert source.samefile(target)
+    assert target.read_bytes() == b"immutable tensor bytes"
+    assert atomic_hardlink_replace(source, target) is False
+
+
+def test_atomic_hardlink_replace_rejects_symlink_source(tmp_path: Path) -> None:
+    source = tmp_path / "generation.safetensors"
+    source.write_bytes(b"immutable tensor bytes")
+    alias = tmp_path / "source-link"
+    alias.symlink_to(source)
+
+    with pytest.raises(AtomicWriteError, match="regular file"):
+        atomic_hardlink_replace(alias, tmp_path / "compatibility")
+
+
+def test_atomic_hardlink_replace_keeps_old_target_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from core.runtime import atomic_writer
+
+    source = tmp_path / "generation.safetensors"
+    target = tmp_path / "checkpoint_latest.safetensors"
+    source.write_bytes(b"new immutable bytes")
+    target.write_bytes(b"old complete bytes")
+
+    def fail_replace(_source, _target):
+        raise OSError("simulated rename failure")
+
+    monkeypatch.setattr(atomic_writer.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="rename failure"):
+        atomic_hardlink_replace(source, target)
+
+    assert target.read_bytes() == b"old complete bytes"
+    assert not any(
+        child.name.startswith(atomic_writer.DEFAULT_TEMP_PREFIX)
+        for child in tmp_path.iterdir()
+    )
 
 
 def _append_worker(path: str, prefix: str, count: int) -> None:

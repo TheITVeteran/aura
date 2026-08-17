@@ -16,6 +16,7 @@ from tools.unified_intrinsic_checkpoint import (
     TRAINING_SCHEMA,
     UnifiedCheckpointError,
     checkpoint_retention_plan,
+    deduplicate_checkpoint_compatibility_mirrors,
     prune_checkpoint_generations,
     resolve_checkpoint_generation,
     unpointed_checkpoint_inventory,
@@ -250,6 +251,73 @@ def test_retention_dry_run_reports_without_removing(tmp_path: Path) -> None:
     assert receipt["candidate_count"] == 2
     assert all(generation[0].exists() for generation in generations)
     assert not (output / "checkpoint_retention_receipts").exists()
+
+
+def test_compatibility_mirror_dedup_preserves_authority_and_reclaims_copy(
+    tmp_path: Path,
+) -> None:
+    output = _private(tmp_path / "output")
+    generation, receipt, receipt_raw = _generation(
+        output,
+        stem="checkpoint_latest",
+        step=3,
+        nonce=3,
+    )
+    _point(
+        output,
+        stem="checkpoint_latest",
+        generation=generation,
+        receipt=receipt,
+        receipt_raw=receipt_raw,
+    )
+    mirror = output / "checkpoint_latest.safetensors"
+    mirror.write_bytes((generation / "bundle.safetensors").read_bytes())
+    mirror.chmod(0o400)
+    original_generation_inode = (generation / "bundle.safetensors").stat().st_ino
+
+    dry_run = deduplicate_checkpoint_compatibility_mirrors(output, dry_run=True)
+    assert dry_run["state"] == "dry_run"
+    assert dry_run["replaced"] == []
+    assert not mirror.samefile(generation / "bundle.safetensors")
+
+    receipt = deduplicate_checkpoint_compatibility_mirrors(output)
+
+    assert receipt["state"] == "complete"
+    assert receipt["replaced"] == ["checkpoint_latest"]
+    assert mirror.samefile(generation / "bundle.safetensors")
+    assert (generation / "bundle.safetensors").stat().st_ino == original_generation_inode
+    assert resolve_checkpoint_generation(output, stem="checkpoint_latest") is not None
+    stored = json.loads(Path(receipt["receipt_path"]).read_text(encoding="ascii"))
+    stored_body = {key: value for key, value in stored.items() if key != "receipt_sha256"}
+    assert stored["receipt_sha256"] == canonical_sha256(stored_body)
+
+
+def test_compatibility_mirror_dedup_refuses_symlink_without_changing_generation(
+    tmp_path: Path,
+) -> None:
+    output = _private(tmp_path / "output")
+    generation, receipt, receipt_raw = _generation(
+        output,
+        stem="checkpoint_latest",
+        step=1,
+        nonce=1,
+    )
+    _point(
+        output,
+        stem="checkpoint_latest",
+        generation=generation,
+        receipt=receipt,
+        receipt_raw=receipt_raw,
+    )
+    outside = tmp_path / "outside.safetensors"
+    outside.write_bytes(b"must survive")
+    (output / "checkpoint_latest.safetensors").symlink_to(outside)
+
+    with pytest.raises(UnifiedCheckpointError, match="mirror is a symlink"):
+        deduplicate_checkpoint_compatibility_mirrors(output)
+
+    assert outside.read_bytes() == b"must survive"
+    assert generation.exists()
 
 
 def test_incomplete_generation_refuses_retention_before_any_delete(

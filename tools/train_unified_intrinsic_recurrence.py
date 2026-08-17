@@ -102,6 +102,7 @@ from core.learning.unified_intrinsic_recurrence import (  # noqa: E402
     unified_recurrent_logits,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
+    atomic_hardlink_replace,
     atomic_write_bytes,
     atomic_write_text,
     durable_unlink,
@@ -3417,7 +3418,10 @@ def _publish_latest_checkpoint_generation(
     # Preserve the historical fixed paths for evaluators without duplicating
     # the tensor payload. The immutable generation remains resume authority.
     compatibility_weights = out_dir / f"{stem}.safetensors"
-    atomic_write_bytes(compatibility_weights, payload, mode=0o400)
+    atomic_hardlink_replace(
+        generation_dir / "bundle.safetensors",
+        compatibility_weights,
+    )
     legacy_body = {
         key: value
         for key, value in body.items()

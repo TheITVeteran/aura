@@ -16,6 +16,7 @@ This module exposes:
 - atomic_write_text(path, text)
 - atomic_append_text(path, text)
 - atomic_write_json(path, obj, schema_version)
+- atomic_hardlink_replace(source, target)
 - durable_replace(source, target)
 - durable_unlink(path)
 
@@ -28,6 +29,7 @@ import fcntl
 import json
 import logging
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -327,6 +329,61 @@ def atomic_write_text(
         power_safe=power_safe,
         mode=mode,
     )
+
+
+def atomic_hardlink_replace(
+    source: PathLike,
+    target: PathLike,
+    *,
+    durable: bool = True,
+) -> bool:
+    """Atomically make ``target`` another name for a regular ``source`` file.
+
+    Immutable multi-gigabyte artifacts often need a compatibility filename.
+    Rewriting their bytes doubles storage and I/O; a hard link preserves the
+    exact inode while still giving legacy readers a stable path. Readers see
+    either the prior target or the complete source inode.
+
+    Returns ``True`` when the target changed and ``False`` when it already
+    names the source inode.
+    """
+
+    source_path = Path(source)
+    target_path = Path(target)
+    source_identity = source_path.lstat()
+    if source_path.is_symlink() or not stat.S_ISREG(source_identity.st_mode):
+        raise AtomicWriteError("hard-link source must be a regular file")
+    if target_path.exists() and not target_path.is_symlink():
+        try:
+            if os.path.samefile(source_path, target_path):
+                return False
+        except OSError:
+            pass
+
+    parent = target_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=DEFAULT_TEMP_PREFIX, dir=str(parent))
+    temporary = Path(temporary_name)
+    os.close(fd)
+    temporary.unlink()
+    try:
+        os.link(source_path, temporary, follow_symlinks=False)
+        linked_identity = temporary.lstat()
+        if (
+            not stat.S_ISREG(linked_identity.st_mode)
+            or linked_identity.st_dev != source_identity.st_dev
+            or linked_identity.st_ino != source_identity.st_ino
+        ):
+            raise AtomicWriteError("hard-link source changed during publication")
+        os.replace(temporary, target_path)
+        if durable:
+            _fsync_dir(parent)
+        return True
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 async def async_atomic_write_bytes(
