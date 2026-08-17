@@ -4540,6 +4540,11 @@ _COMPLETION_REPAIR_REASONS = frozenset(
         "final_answer_missing",
         "missing_final_answer",
         "incomplete_code_response",
+        # A substantive draft that answered only part of a compound request is
+        # unfinished work, not a reason to throw away correct authored text and
+        # sample a second answer from token zero. The continuation lane carries
+        # the draft as typed state and appends only the missing obligations.
+        "unanswered_question_part",
     }
 )
 
@@ -9644,6 +9649,7 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "
             "final_answer_missing",
             "missing_final_answer",
             "incomplete_code_response",
+            "unanswered_question_part",
         }
         if set(assessment.reasons or ()) & completion_failures:
             continue
@@ -15696,6 +15702,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "final_answer_missing",
                 "missing_final_answer",
                 "incomplete_code_response",
+                "unanswered_question_part",
             }
             reason_tuple = tuple(
                 str(reason).strip() for reason in (reasons or ()) if str(reason or "").strip()

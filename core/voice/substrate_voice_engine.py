@@ -299,14 +299,36 @@ class SubstrateVoiceEngine:
     # 3. RESPONSE SHAPING — post-LLM enforcement
     # ══════════════════════════════════════════════════════════════════════
 
-    def shape_response(self, raw: str) -> str | list[str]:
+    def shape_response(
+        self,
+        raw: str,
+        *,
+        preserve_semantic_content: bool | None = None,
+    ) -> str | list[str]:
         """Shape the raw LLM output according to the current profile.
+
+        Foreground answers are transactional content. Affect may influence how
+        they are generated, but it may not delete an explanation, code block,
+        requested item, or final result after generation. Background and
+        proactive speech retain the compact post-generation shaper.
 
         This is the enforcement layer. Whatever the LLM produced, this
         makes it conform to the substrate's dictates.
         """
         if not self._current_profile:
             return raw
+
+        if preserve_semantic_content is None:
+            preserve_semantic_content = self._last_profile_origin in {
+                "user",
+                "voice",
+                "admin",
+            }
+        if preserve_semantic_content:
+            self._last_response_time = time.time()
+            self._response_count += 1
+            self._silence_streak = 0
+            return str(raw or "").strip()
 
         shaped = ResponseShaper.shape(raw, self._current_profile)
         self._last_response_time = time.time()

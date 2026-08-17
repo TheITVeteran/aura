@@ -13068,9 +13068,33 @@ def test_mixed_timeout_and_semantic_defects_continue_instead_of_replacing_source
             "unanswered_question_part",
         ),
     )
-    assert not chat_routes._reply_needs_continuation(
+    assert chat_routes._reply_needs_continuation(
         "A complete but generic answer.",
         ("generic_assistant_language", "unanswered_question_part"),
+    )
+    assert not chat_routes._reply_needs_continuation(
+        "A complete but generic answer.",
+        ("generic_assistant_language",),
+    )
+
+
+def test_known_incomplete_compound_draft_is_not_published_as_salvage(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    class Assessment:
+        reasons = ("unanswered_question_part",)
+
+    monkeypatch.setattr(
+        "core.conversation.response_reliability.assess_user_facing_reply",
+        lambda *_args, **_kwargs: Assessment(),
+    )
+
+    assert (
+        chat_routes._servable_draft_or_none(
+            "I answered sections one through four completely.",
+            "Answer all five sections.",
+        )
+        == ""
     )
 
 

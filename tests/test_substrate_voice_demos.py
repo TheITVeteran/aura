@@ -651,7 +651,20 @@ class TestDemo_FullPipeline:
         # Assertions
         assert profile.word_budget > 0
         assert constraints  # Should have constraint block
-        assert "What's your take on it" not in (shaped if isinstance(shaped, str) else " ".join(shaped))
+        assert shaped == raw
+
+    def test_foreground_profile_cannot_truncate_requested_content(self):
+        engine = SubstrateVoiceEngine()
+        profile = engine.compile_profile(
+            state=None,
+            user_message="Explain all five requested parts.",
+            origin="user",
+        )
+        profile.word_budget = 8
+        raw = " ".join(f"required-{index}" for index in range(40)) + "."
+
+        assert engine.shape_response(raw) == raw
+        assert engine.shape_response(raw, preserve_semantic_content=False) != raw
 
 
 # ═════════════════════════════════════════════════════════════════════════════
