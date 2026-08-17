@@ -135,6 +135,33 @@ def test_semantic_stop_waits_for_all_requested_epistemic_facets():
     assert _semantic_surface_stop_ready(job, complete, generated_tokens=64)
 
 
+def test_semantic_stop_waits_for_every_compound_request_obligation():
+    prompt = (
+        "Explain Dijkstra's algorithm in one complete response. Include: "
+        "(1) its core invariant, (2) numbered pseudocode, (3) a worked example, "
+        "(4) heap and array complexity, and (5) negative-weight failure and the alternative."
+    )
+    job = {
+        "clean_user_surface_contract": True,
+        "semantic_completion_contract": True,
+        "user_surface_validation_prompt": prompt,
+    }
+    incomplete = (
+        "1. Its core invariant is that the unsettled vertex with minimum tentative "
+        "distance can be finalized when every edge weight is nonnegative."
+    )
+    complete = (
+        incomplete
+        + " 2. Numbered pseudocode initializes distances and repeatedly relaxes edges."
+        + " 3. A worked example follows vertices A, B, C, and D."
+        + " 4. The complexity is O((V+E) log V) with a heap and O(V^2) with an array."
+        + " 5. A negative-weight edge invalidates Dijkstra; Bellman-Ford is the alternative."
+    )
+
+    assert not _semantic_surface_stop_ready(job, incomplete, generated_tokens=48)
+    assert _semantic_surface_stop_ready(job, complete, generated_tokens=120)
+
+
 def test_semantic_eos_guard_blocks_termination_until_coverage_is_complete():
     mx = pytest.importorskip("mlx.core")
 
@@ -145,7 +172,11 @@ def test_semantic_eos_guard_blocks_termination_until_coverage_is_complete():
         def decode(token_ids):
             return "".join(chr(int(token_id)) for token_id in token_ids)
 
-    prompt = "Give one complete response with (1) alpha and (2) beta."
+    prompt = (
+        "Explain Dijkstra's algorithm. Include: (1) its core invariant, "
+        "(2) numbered pseudocode, (3) a worked example, (4) heap and array "
+        "complexity, and (5) negative-weight failure and the alternative."
+    )
     job = {
         "clean_user_surface_contract": True,
         "semantic_completion_contract": True,
@@ -159,16 +190,23 @@ def test_semantic_eos_guard_blocks_termination_until_coverage_is_complete():
     )
     assert guard is not None
 
-    incomplete = [1, 2, *map(ord, "1. Alpha is covered but the second")]
+    incomplete_text = (
+        "1. Its core invariant finalizes the minimum unsettled distance "
+        "when edge weights are nonnegative."
+    )
+    incomplete = [1, 2, *map(ord, incomplete_text)]
     logits = mx.zeros((1, 128))
     blocked = guard(mx.array(incomplete), logits)
     assert math.isinf(float(blocked[0, 9]))
     assert float(blocked[0, 9]) < 0
 
-    complete = [
-        1,
-        2,
-        *map(ord, "1. Alpha is covered. 2. Beta is covered."),
-    ]
+    complete_text = (
+        incomplete_text
+        + " 2. Numbered pseudocode initializes distances and repeatedly relaxes edges."
+        + " 3. A worked example follows vertices A, B, C, and D."
+        + " 4. The complexity is O((V+E) log V) with a heap and O(V^2) with an array."
+        + " 5. A negative-weight edge invalidates Dijkstra; Bellman-Ford is the alternative."
+    )
+    complete = [1, 2, *map(ord, complete_text)]
     allowed = guard(mx.array(complete), logits)
     assert float(allowed[0, 9]) == 0.0

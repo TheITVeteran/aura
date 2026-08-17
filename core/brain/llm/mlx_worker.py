@@ -1043,11 +1043,16 @@ def _semantic_surface_stop_ready(
     try:
         from core.conversation.request_coverage import (
             requested_epistemic_partition_is_covered,
+            unanswered_question_parts,
         )
+        from core.runtime.structured_input import analyze_prompt_shape
 
-        if not requested_epistemic_partition_is_covered(
-            _surface_validation_prompt(job),
+        validation_prompt = _surface_validation_prompt(job)
+        if not requested_epistemic_partition_is_covered(validation_prompt, candidate):
+            return False
+        if unanswered_question_parts(
             candidate,
+            analyze_prompt_shape(validation_prompt),
         ):
             return False
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
