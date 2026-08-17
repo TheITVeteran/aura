@@ -77,8 +77,12 @@ class TestBackgroundTiering(unittest.IsolatedAsyncioTestCase):
         self.router.logger = logger
         self.router.register(PRIMARY_ENDPOINT, "internal", "32B", is_local=True, tier="local")
         self.router.register(DEEP_ENDPOINT, "internal", "72B", is_local=True, tier="local_deep")
-        self.router.register("api_fast", "cloud", "7B-Cloud", is_local=False, tier="api_fast")
-        self.router.register("api_deep", "cloud", "GPT-4", is_local=False, tier="api_deep")
+        # These used to register two cloud endpoints. Remote model providers
+        # are gone, and the router refuses them at registration — so the
+        # fixture was building a router that could not exist and every test
+        # below it errored before reaching its own subject. Background
+        # tiering is about which LOCAL tier a background turn lands on, and
+        # nothing here needed a remote endpoint to say so.
         self.router.register(BRAINSTEM_ENDPOINT, "internal", "7B-Local", is_local=True, tier="local_fast")
         self.router.register(FALLBACK_ENDPOINT, "internal", "7B-Fallback", is_local=True, tier="local_fast")
         self.endpoint_calls = EndpointCallRecorder()

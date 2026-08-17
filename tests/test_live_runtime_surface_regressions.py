@@ -2933,7 +2933,11 @@ def test_desktop_objective_execution_routes_through_tracked_gate():
     import pathlib
 
     src = chat_lane_source()
-    direct_calls = src.count("await _execute_desktop_objective_from_chat(")
+    # Module-qualified since the executor moved to its own lane; the guarantee
+    # is the same one, and counting the bare name silently found nothing.
+    direct_calls = src.count("_execute_desktop_objective_from_chat(") - src.count(
+        "def _execute_desktop_objective_from_chat("
+    )
     assert direct_calls == 1, (
         f"{direct_calls} direct executor calls — all desktop objective "
         "execution must go through _run_desktop_objective_tracked"

@@ -927,6 +927,16 @@ def _hot_spare_is_ready(client: Any) -> bool:
     return state not in {"spawning", "handshaking", "warming", "recovering", "cold"}
 
 
+def _exception_reports_active_generation(error: BaseException) -> bool:
+    reason = str(error or "")
+    return any(token in reason for token in _ACTIVE_GENERATION_BUSY_REASONS)
+
+
+def _flatten_messages_for_local_model(messages: list[dict[str, str]]) -> str:
+    """Flatten Aura messages into a Qwen/ChatML prompt for local MLX models."""
+    return format_chatml_messages(messages)
+
+
 class InferenceGate:
     """Isolated inference gateway for Aura's managed local runtime."""
 
@@ -1925,10 +1935,6 @@ class InferenceGate:
             return True
         return any(token in reason for token in _ACTIVE_GENERATION_BUSY_REASONS)
 
-    @staticmethod
-    def _exception_reports_active_generation(error: BaseException) -> bool:
-        reason = str(error or "")
-        return any(token in reason for token in _ACTIVE_GENERATION_BUSY_REASONS)
 
     @staticmethod
     def _desktop_safe_boot_enabled() -> bool:
@@ -3858,7 +3864,7 @@ class InferenceGate:
                     logger.info("✅ Deferred cortex prewarm completed.")
                     return
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                    if self._exception_reports_active_generation(exc):
+                    if _exception_reports_active_generation(exc):
                         logger.info(
                             "⏸️ Deferred cortex prewarm postponed while foreground generation is active."
                         )
@@ -6088,7 +6094,7 @@ class InferenceGate:
         **kwargs,
     ) -> str | None:
         llm_messages = messages or self._build_messages(prompt, system_prompt, history)
-        local_prompt = self._flatten_messages_for_local_model(llm_messages)
+        local_prompt = _flatten_messages_for_local_model(llm_messages)
         gen_kwargs: dict = {
             "prompt": local_prompt,
             "messages": llm_messages,
@@ -8979,9 +8985,6 @@ class InferenceGate:
 
         return compact
 
-    def _flatten_messages_for_local_model(self, messages: list[dict[str, str]]) -> str:
-        """Flatten Aura messages into a Qwen/ChatML prompt for local MLX models."""
-        return format_chatml_messages(messages)
 
     async def generate(  # noqa: ASYNC109
         self,

@@ -24,6 +24,7 @@ LANE_MODULES = (
     "interface.routes.chat_common",
     "interface.routes.chat_conversation_repair",
     "interface.routes.chat_delivery",
+    "interface.routes.chat_desktop_objective",
     "interface.routes.chat_desktop_repair",
     "interface.routes.chat_memory_state",
     "interface.routes.chat_preflight",
