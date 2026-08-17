@@ -3179,6 +3179,9 @@ async def test_inference_gate_exposes_local_surface_control_receipt():
             "allow_mesh_cognition": False,
             "clean_user_surface_contract": True,
             "user_surface_validation_prompt": "What are you tracking?",
+            "semantic_completion_contract": True,
+            "user_surface_continuation_contract": True,
+            "user_surface_continuation_partial": "The answer already established the invariant.",
             "clean_user_surface_recurrent_loops": 2,
             "clean_user_surface_steering_alpha": 0.31,
             "live_mind_controls_bound": True,
@@ -3194,6 +3197,11 @@ async def test_inference_gate_exposes_local_surface_control_receipt():
     assert metadata["surface_control_receipt"]["applied"] is True
     assert receipt["surface_validation_prompt_present"] is True
     assert client.kwargs[0]["user_surface_validation_prompt"] == "What are you tracking?"
+    assert client.kwargs[0]["semantic_completion_contract"] is True
+    assert client.kwargs[0]["user_surface_continuation_contract"] is True
+    assert client.kwargs[0]["user_surface_continuation_partial"] == (
+        "The answer already established the invariant."
+    )
     assert client.kwargs[0]["live_mind_controls_bound"] is True
 
 
