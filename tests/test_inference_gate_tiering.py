@@ -4349,6 +4349,50 @@ async def test_deferred_cortex_prewarm_defers_active_generation_without_degradat
 
 
 @pytest.mark.asyncio
+async def test_deferred_cortex_prewarm_stands_down_for_chat_dependency_owner(
+    monkeypatch,
+):
+    gate = InferenceGate()
+    status_read = asyncio.Event()
+
+    monkeypatch.setattr(
+        gate,
+        "get_conversation_status",
+        lambda: (
+            status_read.set()
+            or {
+                "conversation_ready": False,
+                "state": "ready",
+                "warmup_in_flight": False,
+                "readiness_blockers": ["chat_dependencies_warming"],
+                "last_failure_reason": "chat_dependencies_warming",
+                "chat_dependencies_ready": False,
+                "active_generations": 0,
+            }
+        ),
+    )
+
+    foreground_probe = CallProbe(
+        side_effect=AssertionError(
+            "the model prewarmer must not race the chat-dependency owner"
+        )
+    )
+    degradation_probe = CallProbe(
+        side_effect=AssertionError("normal dependency warmup is not degradation")
+    )
+    monkeypatch.setattr(gate, "ensure_foreground_ready", foreground_probe)
+    monkeypatch.setattr("core.brain.inference_gate.record_degradation", degradation_probe)
+
+    gate._schedule_background_cortex_prewarm(delay=0.001)
+    assert gate._deferred_prewarm_task is not None
+    await asyncio.wait_for(status_read.wait(), timeout=2.0)
+    await asyncio.wait_for(gate._deferred_prewarm_task, timeout=2.0)
+
+    foreground_probe.assert_not_called()
+    degradation_probe.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_deferred_cortex_prewarm_treats_visible_probe_missing_as_unproven_readiness(
     monkeypatch,
 ):

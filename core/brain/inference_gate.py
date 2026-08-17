@@ -3796,6 +3796,28 @@ class InferenceGate:
                 lane_state = str(lane.get("state", "") or "").lower()
                 if lane.get("conversation_ready") or lane.get("warmup_in_flight"):
                     return
+                readiness_blockers = {
+                    str(blocker or "").strip()
+                    for blocker in (lane.get("readiness_blockers") or ())
+                    if str(blocker or "").strip()
+                }
+                if (
+                    lane.get("chat_dependencies_ready") is False
+                    and "chat_dependencies_warming" in readiness_blockers
+                ):
+                    # The resident model is already warm; the server's single
+                    # chat-dependency owner is materializing the evidence and
+                    # memory readers that must exist before public readiness.
+                    # Re-entering ensure_foreground_ready here is circular: its
+                    # public status includes this blocker, so a successful
+                    # model warmup raises ``chat_dependencies_warming`` and a
+                    # normal boot is recorded as a critical InferenceGate
+                    # failure. There is no work for this model prewarmer to do.
+                    logger.info(
+                        "⏸️ Deferred cortex prewarm standing down while the "
+                        "foreground chat-dependency owner finishes."
+                    )
+                    return
                 if self._lane_reports_active_generation(lane):
                     logger.info(
                         "⏸️ Deferred cortex prewarm postponed while foreground generation is active."

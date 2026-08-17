@@ -50,6 +50,7 @@ def _last_record(subsystem: str) -> dict:
         "resource_busy",
         "model_load_admission_denied",
         "crash_loop_backoff",
+        "chat_dependencies_warming",
     ],
 )
 def test_backpressure_records_as_warning_and_does_not_escalate(marker: str) -> None:

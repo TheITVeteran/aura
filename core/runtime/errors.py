@@ -544,6 +544,7 @@ def record_degradation(
         "resource_timeout",
         "spawn_gate_timeout",
         "crash_loop_backoff",
+        "chat_dependencies_warming",
     )
     # Actions that record the system SUCCESSFULLY CONTINUING. The action line
     # is the caller's own account of what it did about the error, and "I fell
