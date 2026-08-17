@@ -73,6 +73,26 @@ def test_the_protected_ceiling_comes_from_this_turn_s_own_profile():
     assert ceiling == max(_STAKES_DENIED_TOKEN_CAP, floor)
 
 
+def test_structural_completion_floor_can_raise_bounded_surface_ceiling():
+    context: dict = {}
+
+    tokens, ceiling = InferenceGate._stakes_capped_tokens(
+        2560,
+        envelope_cap=1536,
+        protected=True,
+        completion_floor=2560,
+        prompt="Explain a five-part algorithm in one complete response.",
+        context=context,
+        reason="envelope_allowed",
+    )
+
+    assert tokens == 2560
+    assert ceiling == 2560
+    assert context["resource_stakes_protected_override"]["derived_from"] == (
+        "user_surface_completion_floor"
+    )
+
+
 def test_the_raise_is_recorded_where_the_turn_can_be_audited():
     context: dict = {}
 

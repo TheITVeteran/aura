@@ -8524,31 +8524,35 @@ class InferenceGate:
         *,
         envelope_cap: int,
         protected: bool,
+        completion_floor: int = 0,
         prompt: str,
         context: dict[str, Any],
         reason: str,
     ) -> tuple[int, int]:
-        """Apply the viability ceiling, with a BOUNDED override for the
-        protected capability lane.
+        """Apply the viability ceiling with a bounded user-surface override.
 
-        The protected lane exists so a capability-inventory answer is not
-        truncated into uselessness. What it needs is the token floor this same
-        turn's compute profile already computed from the request — a derived
-        quantity, not an exemption — so the override raises the ceiling to that
-        floor and stops there. Under a denied envelope the ceiling is still a
-        ceiling; it is just high enough to finish a sentence.
+        Capability inventories and structurally compound desktop answers cannot
+        be made cheaper by truncating them. The override is derived from this
+        turn's measured compute profile and completion contract, so it remains
+        finite and auditable. Critical memory admission is enforced separately
+        before this method; an action-welfare envelope must not turn an admitted
+        text decode into an incomplete answer.
         """
         ceiling = max(1, int(envelope_cap))
         if protected:
             floor, _cap, _loops = cls._foreground_compute_profile(str(prompt or ""))
-            override = max(ceiling, int(floor))
+            override = max(ceiling, int(floor), max(0, int(completion_floor)))
             if override > ceiling:
                 context["resource_stakes_protected_override"] = {
                     "reason": reason,
                     "envelope_ceiling": ceiling,
                     "override_ceiling": override,
                     # Derived from the request, so the receipt can be checked.
-                    "derived_from": "foreground_compute_profile_floor",
+                    "derived_from": (
+                        "user_surface_completion_floor"
+                        if int(completion_floor) > int(floor)
+                        else "foreground_compute_profile_floor"
+                    ),
                 }
             ceiling = override
         return min(int(max_tokens), ceiling), ceiling
@@ -9795,13 +9799,14 @@ class InferenceGate:
                 explicit_max_tokens_cap = max(1, int(context.get("max_tokens") or 1))
             except (TypeError, ValueError, OverflowError):
                 explicit_max_tokens_cap = None
+        surface_completion_floor = 0
         if (
             desktop_cognitive_engine_contract
             and not bool(context.get("hard_output_token_ceiling", False))
             and not bool(context.get("resource_stakes_blocked", False))
         ):
             try:
-                completion_floor = max(
+                surface_completion_floor = max(
                     1,
                     int(
                         context.get("user_surface_completion_floor")
@@ -9809,17 +9814,22 @@ class InferenceGate:
                     ),
                 )
             except (TypeError, ValueError, OverflowError):
-                completion_floor = answer_surface_token_floor(initial_visible_user_prompt)
-            context["user_surface_completion_floor"] = completion_floor
-            if max_tokens < completion_floor:
+                surface_completion_floor = answer_surface_token_floor(
+                    initial_visible_user_prompt
+                )
+            context["user_surface_completion_floor"] = surface_completion_floor
+            if max_tokens < surface_completion_floor:
                 logger.info(
                     "🧠 Foreground completion contract raised the decode budget %d→%d.",
                     max_tokens,
-                    completion_floor,
+                    surface_completion_floor,
                 )
-                max_tokens = completion_floor
+                max_tokens = surface_completion_floor
             if explicit_max_tokens_cap is not None:
-                explicit_max_tokens_cap = max(explicit_max_tokens_cap, completion_floor)
+                explicit_max_tokens_cap = max(
+                    explicit_max_tokens_cap,
+                    surface_completion_floor,
+                )
                 context["max_tokens"] = explicit_max_tokens_cap
         if "max_tokens" not in context:
             max_tokens = self._adaptive_max_tokens_for_prompt(
@@ -9963,7 +9973,21 @@ class InferenceGate:
                 # every time, on a host with 14 GB free.
                 #
                 # Genuinely critical pressure still refuses outright, above.
-                capped_tokens = 768 if available < 12.0 or pressure >= 84.0 or near_process_limit else 1536
+                completion_floor_affordable = bool(
+                    desktop_cognitive_engine_contract
+                    and surface_completion_floor > 0
+                    and available >= 12.0
+                    and pressure < 84.0
+                    and not near_process_limit
+                )
+                capped_tokens = (
+                    768
+                    if available < 12.0 or pressure >= 84.0 or near_process_limit
+                    else max(
+                        1536,
+                        surface_completion_floor if completion_floor_affordable else 0,
+                    )
+                )
                 if max_tokens > capped_tokens:
                     logger.warning(
                         "🛡️ InferenceGate: capping primary foreground output to %d tokens under "
@@ -10008,6 +10032,13 @@ class InferenceGate:
             stakes = ServiceContainer.get("resource_stakes", default=None)
             if stakes is not None and hasattr(stakes, "action_envelope"):
                 envelope = stakes.action_envelope("high" if deep_handoff else "normal")
+                protected_surface_completion = bool(
+                    protected_compact_capability_contract
+                    or (
+                        desktop_cognitive_engine_contract
+                        and surface_completion_floor > 0
+                    )
+                )
                 # CP126 (critical): "A resource-stakes block can be undone by
                 # later token modifiers. A denied envelope caps max_tokens at
                 # 128, but later homeostatic modifiers impose a 384 minimum,
@@ -10037,7 +10068,8 @@ class InferenceGate:
                     max_tokens, stakes_token_ceiling = self._stakes_capped_tokens(
                         max_tokens,
                         envelope_cap=_STAKES_DENIED_TOKEN_CAP,
-                        protected=protected_compact_capability_contract,
+                        protected=protected_surface_completion,
+                        completion_floor=surface_completion_floor,
                         prompt=prompt,
                         context=context,
                         reason="envelope_denied",
@@ -10047,7 +10079,8 @@ class InferenceGate:
                     max_tokens, stakes_token_ceiling = self._stakes_capped_tokens(
                         max_tokens,
                         envelope_cap=max(1, int(envelope.max_tokens)),
-                        protected=protected_compact_capability_contract,
+                        protected=protected_surface_completion,
+                        completion_floor=surface_completion_floor,
                         prompt=prompt,
                         context=context,
                         reason="envelope_allowed",
