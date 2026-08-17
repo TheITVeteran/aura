@@ -11,8 +11,12 @@ import pytest
 from core.brain.llm.mlx_client import (
     MLXLocalClient,
     _bounded_progress_value,
+    _generation_wait_hard_cap_s,
     _sleep_inclusive_monotonic,
 )
+from core.runtime.response_policy import USER_FACING_COMPLETION_DEADLINE_MAX_S
+from core.utils.deadlines import get_deadline
+
 
 def _new_future():
     """A shared future of the same kind the client hands to waiters."""
@@ -87,6 +91,38 @@ class TestWorkerProgressIsBounded:
         }
         client._expire_latent_progress()
         assert "live" in client._latent_progress_by_request
+
+
+class TestGenerationWaitOwnership:
+    def test_foreground_owner_keeps_its_admitted_long_form_deadline(self, monkeypatch):
+        monkeypatch.setenv("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "240")
+
+        hard_cap = _generation_wait_hard_cap_s(
+            get_deadline(432.0),
+            foreground_request=True,
+        )
+
+        assert 431.0 <= hard_cap <= 432.0
+
+    def test_background_work_retains_the_local_containment_cap(self, monkeypatch):
+        monkeypatch.setenv("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "240")
+
+        hard_cap = _generation_wait_hard_cap_s(
+            get_deadline(432.0),
+            foreground_request=False,
+        )
+
+        assert hard_cap == 240.0
+
+    def test_foreground_owner_cannot_exceed_the_shared_completion_ceiling(self, monkeypatch):
+        monkeypatch.setenv("AURA_MLX_GENERATION_HARD_CAP_SECONDS", "240")
+
+        hard_cap = _generation_wait_hard_cap_s(
+            get_deadline(900.0),
+            foreground_request=True,
+        )
+
+        assert hard_cap == USER_FACING_COMPLETION_DEADLINE_MAX_S
 
 
 class TestStaleLaneWorkerTerminationNeedsAPositiveVerdict:

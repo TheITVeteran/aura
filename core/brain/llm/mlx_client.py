@@ -40,6 +40,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
 from core.runtime.process_privilege import Privilege, ProcessRole
 from core.runtime.resource_observation import get_resource_observer
+from core.runtime.response_policy import USER_FACING_COMPLETION_DEADLINE_MAX_S
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
@@ -107,6 +108,35 @@ _HEAVY_LANE_NAME_TOKENS = ("32b", "72b", "zenith", "solver", "cortex")
 # this is a throttle, and refusing generation for a metabolic hiccup would
 # take conversation down — but not the wide-open default either.
 _UNTHROTTLED_FALLBACK_MAX_TOKENS = 1024
+
+
+def _generation_wait_hard_cap_s(
+    deadline: Deadline,
+    *,
+    foreground_request: bool,
+) -> float:
+    """Return the terminal worker-wait bound for one generation owner.
+
+    Background and unowned calls retain the local MLX containment cap. A
+    foreground route, however, has already admitted a finite end-to-end
+    deadline based on the requested answer shape. Clipping that owner to the
+    historical 240-second local default discarded healthy long-form decodes
+    while their route still had more than three minutes left.
+    """
+    configured_cap = max(
+        30.0,
+        _env_duration_s("AURA_MLX_GENERATION_HARD_CAP_SECONDS", 240.0, minimum=30.0),
+    )
+    if not foreground_request:
+        return configured_cap
+
+    remaining = deadline.remaining
+    if remaining is None or not math.isfinite(remaining) or remaining <= 0.0:
+        return configured_cap
+    return min(
+        USER_FACING_COMPLETION_DEADLINE_MAX_S,
+        max(configured_cap, remaining),
+    )
 
 
 def _apply_unthrottled_fallback_ceiling(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -12186,9 +12216,9 @@ class MLXLocalClient:
         wait_started = time.monotonic()
         # Finite-bounded: a malformed value previously RAISED through the
         # generation wait path, and infinity disabled the hard cap entirely.
-        hard_cap = max(
-            30.0,
-            _env_duration_s("AURA_MLX_GENERATION_HARD_CAP_SECONDS", 240.0, minimum=30.0),
+        hard_cap = _generation_wait_hard_cap_s(
+            deadline,
+            foreground_request=foreground_request,
         )
         while (time.monotonic() - wait_started) <= hard_cap:
             remaining = deadline.remaining
