@@ -2161,7 +2161,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
 
         launchScript = auraRoot.appendingPathComponent("launch_aura.sh")
         auraMainScript = auraRoot.appendingPathComponent("aura_main.py")
-        pythonExecutable = try resolvePythonExecutable()
+        pythonExecutable = try resolvePythonExecutable(resourcesURL: resourcesURL)
 
         let semverFile = resourcesURL.appendingPathComponent("aura-version")
         if let text = try? String(contentsOf: semverFile, encoding: .utf8) {
@@ -2643,21 +2643,24 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
         ])
     }
 
-    private func resolvePythonExecutable() throws -> URL {
-        let candidates = [
-            auraRoot.appendingPathComponent(".venv/bin/python3"),
-            URL(fileURLWithPath: "/opt/homebrew/bin/python3.12"),
-            URL(fileURLWithPath: "/usr/local/bin/python3.12"),
-            URL(fileURLWithPath: "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"),
-        ]
-
-        for candidate in candidates where fileManager.isExecutableFile(atPath: candidate.path) {
-            return candidate
+    private func resolvePythonExecutable(resourcesURL: URL) throws -> URL {
+        let runtimePathFile = resourcesURL.appendingPathComponent("aura-python-path")
+        guard let runtimePath = try? String(contentsOf: runtimePathFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !runtimePath.isEmpty else {
+            throw NSError(domain: "AuraLauncher", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: "Aura.app has no signed repository Python path. Rebuild the installed app.",
+            ])
         }
-
-        throw NSError(domain: "AuraLauncher", code: 5, userInfo: [
-            NSLocalizedDescriptionKey: "Aura needs a Python 3.12 runtime, but the launcher could not find one.",
-        ])
+        let candidate = URL(fileURLWithPath: runtimePath)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        guard fileManager.isExecutableFile(atPath: candidate.path) else {
+            throw NSError(domain: "AuraLauncher", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: "Aura's signed repository Python runtime is unavailable. Restore the repo environment or rebuild the installed app.",
+            ])
+        }
+        return candidate
     }
 
     private func baseAuraEnvironment() -> [String: String] {

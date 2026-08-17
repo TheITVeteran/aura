@@ -85,6 +85,7 @@ EXECUTABLE_NAME="aura-launcher"
 EXECUTABLE_PATH="${MACOS_DIR}/${EXECUTABLE_NAME}"
 ICON_SOURCE="${ROOT_DIR}/aura_icon.icns"
 ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
+PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
 PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
@@ -98,8 +99,41 @@ cd "${ROOT_DIR}"
 
 echo "📦 Building ${APP_NAME} (live source mode)..."
 
-if [ -x "${ROOT_DIR}/.venv/bin/python3" ] && [ -f "${ROOT_DIR}/scripts/build_launcher_icon.py" ]; then
-    "${ROOT_DIR}/.venv/bin/python3" "${ROOT_DIR}/scripts/build_launcher_icon.py" >/dev/null
+PRIMARY_ROOT=""
+GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -n "${GIT_COMMON_DIR}" ] && [ "$(basename "${GIT_COMMON_DIR}")" = ".git" ]; then
+    PRIMARY_ROOT="$(dirname "${GIT_COMMON_DIR}")"
+fi
+
+PYTHON_RUNTIME=""
+PYTHON_CANDIDATES=(
+    "${AURA_PYTHON_RUNTIME:-}"
+    "${ROOT_DIR}/.venv/bin/python3"
+    "${ROOT_DIR}/.venv/bin/python"
+)
+if [ -n "${PRIMARY_ROOT}" ]; then
+    PYTHON_CANDIDATES+=(
+        "${PRIMARY_ROOT}/.venv/bin/python3"
+        "${PRIMARY_ROOT}/.venv/bin/python"
+    )
+fi
+for candidate in "${PYTHON_CANDIDATES[@]}"; do
+    if [ -z "${candidate}" ] || [ ! -x "${candidate}" ]; then
+        continue
+    fi
+    if "${candidate}" -c 'import sys, httpx; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)' >/dev/null 2>&1; then
+        PYTHON_RUNTIME="$("${candidate}" -c 'import sys; print(sys.executable)')"
+        break
+    fi
+done
+if [ -z "${PYTHON_RUNTIME}" ]; then
+    echo "❌ Aura needs the repository Python 3.12 environment with runtime dependencies installed." >&2
+    echo "   Expected .venv under ${ROOT_DIR}${PRIMARY_ROOT:+ or ${PRIMARY_ROOT}}." >&2
+    exit 1
+fi
+
+if [ -f "${ROOT_DIR}/scripts/build_launcher_icon.py" ]; then
+    "${PYTHON_RUNTIME}" "${ROOT_DIR}/scripts/build_launcher_icon.py" >/dev/null
 fi
 
 if [ ! -f "${LAUNCHER_SOURCE}" ]; then
@@ -128,16 +162,10 @@ rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 printf '%s\n' "${ROOT_DIR}" > "${ROOT_PATH_FALLBACK}"
+printf '%s\n' "${PYTHON_RUNTIME}" > "${PYTHON_RUNTIME_FILE}"
 cp "${SCREEN_CAPTURE_POLICY_SOURCE}" "${SCREEN_CAPTURE_POLICY_RESOURCE}"
 
-PYTHON_FOR_VERSION="${ROOT_DIR}/.venv/bin/python3"
-if [ ! -x "${PYTHON_FOR_VERSION}" ]; then
-    PYTHON_FOR_VERSION="$(command -v python3 || true)"
-fi
-if [ -z "${PYTHON_FOR_VERSION}" ]; then
-    echo "❌ python3 is required to write Aura.app metadata."
-    exit 1
-fi
+PYTHON_FOR_VERSION="${PYTHON_RUNTIME}"
 
 APP_SEMVER="2026.3.31"
 APP_FULL_VERSION="Aura Luna v${APP_SEMVER}"
