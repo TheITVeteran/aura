@@ -3988,19 +3988,20 @@ class CognitiveEngine:
         # A narrow budget requires a narrow turn.
         #
         # These caps are right for what they were written for: "what did I
-        # pin?", "how much RAM?", "how are you feeling?" are short factual
-        # answers and 256 tokens is generous. They are wrong the moment such a
-        # request shares a message with something substantive — the cap then
-        # sizes the whole turn by its smallest part. Measured live 2026-07-27:
+        # pin?" and "how much RAM?" have bounded, machine-readable answers.
+        # A self-condition question is natural conversation: its evidence is
+        # structured, but the answer is authored by the resident model and can
+        # legitimately need more than a status-line budget. These caps are
+        # wrong the moment such a request shares a message with something
+        # substantive — the cap then sizes the whole turn by its smallest part.
+        # Measured live 2026-07-27:
         # a pin-plus-philosophy message drew 172 tokens, ran out mid-sentence,
         # and the answer was discarded as a truncated tail.
         #
         # memory_state_contract_covers_turn is chat.py reporting what its own
         # parser found; the other two narrow contracts defer to the same
         # question-shape signal the comment above already establishes.
-        narrow_state_contract = bool(
-            runtime_fact_status_contract or self_condition_contract
-        )
+        narrow_state_contract = bool(runtime_fact_status_contract)
         if memory_state_contract and context.get(
             "memory_state_contract_covers_turn", True
         ):

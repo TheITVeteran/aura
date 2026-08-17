@@ -9056,6 +9056,7 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
     context = calls[0]["context"]
     assert context["self_condition_contract"] is True
     assert context["desktop_quick_reply_contract"] is True
+    assert context["max_tokens"] >= 896
     assert context["canonical_self_condition_projection"]["evidence_id"] == "condition-proof-1"
     assert "felt_coherence=0.93" in context["canonical_self_condition_context"]
     assert "Self-condition contract" not in calls[0]["objective"]
@@ -9244,6 +9245,9 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
         "cognitive_engine_required": True,
         "self_condition_contract": True,
         "self_condition_contract_covers_turn": True,
+        "spiking_active_inference": {
+            "sampling_bias": {"max_tokens_factor": 0.25}
+        },
         "canonical_self_condition_context": (
             "condition=well freshness=fresh distress=0.08 welfare=0.82 "
             "felt_coherence=0.93 continuity=0.96 agency=0.84"
@@ -9280,7 +9284,8 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
     call = router_calls[0]
     assert call["self_condition_contract"] is True
     assert call["self_condition_contract_covers_turn"] is True
-    assert call["max_tokens"] == 256
+    assert call["max_tokens"] == 512
+    assert call["user_surface_completion_floor"] == 512
     assert "CPU, RAM, host load" in call["messages"][0]["content"]
     assert "[LIVE MIND CONTEXT]" not in call["messages"][0]["content"]
     assert call["messages"][-1] == {"role": "user", "content": "Are you okay though?"}

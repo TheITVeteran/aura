@@ -2692,15 +2692,25 @@ def _bounded_generation_max_tokens(
     hard_output_ceiling: Any,
     fallback: int,
     requested_output_contract: Any = None,
+    *,
+    user_surface_completion_floor: Any = None,
+    preserve_user_surface_completion_floor: bool = False,
 ) -> int:
-    """Apply adaptive shrinkage without making a typed contract impossible."""
+    """Apply adaptive shrinkage without making an admitted contract impossible."""
 
     bounded = _bounded_max_tokens(requested, bridged, fallback)
     if hard_output_ceiling is not None and hard_output_ceiling != "":
         bounded = _bounded_max_tokens(bounded, hard_output_ceiling, fallback)
 
     contract_floor = _requested_output_contract_generation_floor(requested_output_contract)
-    if contract_floor <= 0:
+    surface_floor = 0
+    if preserve_user_surface_completion_floor:
+        try:
+            surface_floor = max(0, int(user_surface_completion_floor or 0))
+        except (TypeError, ValueError, OverflowError):
+            surface_floor = 0
+    completion_floor = max(contract_floor, surface_floor)
+    if completion_floor <= 0:
         return bounded
 
     try:
@@ -2713,8 +2723,8 @@ def _bounded_generation_max_tokens(
             admitted_cap = min(admitted_cap, max(1, int(hard_output_ceiling)))
         except (TypeError, ValueError, OverflowError):
             pass
-    admitted = max(bounded, min(contract_floor, admitted_cap))
-    if admitted > bounded:
+    admitted = max(bounded, min(completion_floor, admitted_cap))
+    if admitted > bounded and contract_floor > bounded:
         # CP126 a6db6c23. `bounded` is what adaptive shrinkage decided this
         # machine can afford right now; this line raises it back up because an
         # unsatisfiable typed contract produces a truncated reply, which is
@@ -13424,6 +13434,12 @@ class MLXLocalClient:
             hard_output_token_ceiling,
             self.max_tokens,
             requested_output_contract,
+            user_surface_completion_floor=kwargs.get(
+                "user_surface_completion_floor"
+            ),
+            preserve_user_surface_completion_floor=bool(
+                kwargs.get("clean_user_surface_contract", False)
+            ),
         )
 
         prompt = _prompt_within_prefill_ceiling(prompt, model_path=self.model_path)

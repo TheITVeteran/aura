@@ -6497,8 +6497,6 @@ async def _run_cognitive_engine_chat_turn(
             memory_state_contract=memory_state_contract,
             memory_state_contract_covers_turn=memory_state_contract_covers_turn,
         )
-        if self_condition_contract:
-            live_reply_token_budget = min(live_reply_token_budget, 384)
         context["max_tokens"] = live_reply_token_budget
         context["num_predict"] = live_reply_token_budget
     if private_cognitive_model_contract:
@@ -22665,7 +22663,6 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 #: The three inner values are bound conditionally, so the caller must be able
 #: to leave a name unbound exactly where the original code did — substituting a
 #: default would turn a path that raised into one that quietly proceeds.
-
 
 
 

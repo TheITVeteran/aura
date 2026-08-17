@@ -110,6 +110,46 @@ def test_adaptive_budget_preserves_word_and_sentence_contract_floor():
     assert _bounded_generation_max_tokens(20, 3, 48, 4096, contract) == 20
 
 
+def test_adaptive_bridge_cannot_erase_clean_user_surface_completion_reserve():
+    from core.brain.llm.mlx_client import _bounded_generation_max_tokens
+
+    assert (
+        _bounded_generation_max_tokens(
+            896,
+            128,
+            None,
+            4096,
+            user_surface_completion_floor=512,
+            preserve_user_surface_completion_floor=True,
+        )
+        == 512
+    )
+    # The post-pressure caller cap remains authoritative under a critical
+    # resource condition; the reserve cannot expand it back into danger.
+    assert (
+        _bounded_generation_max_tokens(
+            64,
+            32,
+            None,
+            4096,
+            user_surface_completion_floor=512,
+            preserve_user_surface_completion_floor=True,
+        )
+        == 64
+    )
+    assert (
+        _bounded_generation_max_tokens(
+            896,
+            128,
+            256,
+            4096,
+            user_surface_completion_floor=512,
+            preserve_user_surface_completion_floor=True,
+        )
+        == 256
+    )
+
+
 def test_mlx_main_generation_builds_contract_cap_after_bridge_lookup():
     import inspect
 
