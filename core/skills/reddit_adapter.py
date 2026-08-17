@@ -935,8 +935,21 @@ class RedditAdapterSkill(BaseSkill):
         )
 
         logger.info("📱 Found %d posts on r/%s", len(posts), subreddit)
+        if not posts:
+            return {
+                "ok": False,
+                "completed": False,
+                "status": "extraction_empty",
+                "error": f"Reddit loaded r/{subreddit}, but no posts were extracted.",
+                "subreddit": subreddit,
+                "sort": sort,
+                "posts": [],
+                "count": 0,
+                "navigated": True,
+            }
         response = {
             "ok": True,
+            "completed": True,
             "subreddit": subreddit,
             "sort": sort,
             "posts": posts,
@@ -977,9 +990,20 @@ class RedditAdapterSkill(BaseSkill):
 
         await asyncio.sleep(3)
         content = await browser.read_content()
+        if not str(content or "").strip():
+            return {
+                "ok": False,
+                "completed": False,
+                "status": "extraction_empty",
+                "error": f"Reddit loaded {url}, but no post content was extracted.",
+                "url": url,
+                "content": "",
+                "navigated": True,
+            }
 
         response = {
             "ok": True,
+            "completed": True,
             "url": url,
             "content": content[:15000],
             "message": f"Read post content from {url}",
@@ -1210,10 +1234,11 @@ class RedditAdapterSkill(BaseSkill):
         """Check Reddit inbox/notifications."""
         if not await self._ensure_logged_in(browser):
             return {
-                "ok": True,
+                "ok": False,
+                "completed": False,
                 "status": "login_unavailable",
                 "content": "",
-                "message": "Reddit inbox unavailable; login required or CAPTCHA present.",
+                "error": "Reddit inbox unavailable; login required, blocked, or provider validation failed.",
             }
 
         if not await browser.browse("https://www.reddit.com/message/inbox/"):
@@ -1221,9 +1246,19 @@ class RedditAdapterSkill(BaseSkill):
 
         await asyncio.sleep(3)
         content = await browser.read_content()
+        if not str(content or "").strip():
+            return {
+                "ok": False,
+                "completed": False,
+                "status": "extraction_empty",
+                "content": "",
+                "error": "Reddit inbox loaded, but no inbox content was extracted.",
+                "navigated": True,
+            }
 
         return {
             "ok": True,
+            "completed": True,
             "content": content[:10000],
             "message": "Reddit inbox checked.",
         }

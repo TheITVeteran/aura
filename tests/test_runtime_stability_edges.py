@@ -2031,7 +2031,7 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("email_adapter", engine.active_skills)
         self.assertIn("reddit_adapter", engine.active_skills)
 
-    async def test_reddit_inbox_login_unavailable_is_quiet_success(self):
+    async def test_reddit_inbox_login_unavailable_is_incomplete(self):
         from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
 
         skill = RedditAdapterSkill()
@@ -2039,7 +2039,8 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
 
         result = await skill._handle_check_inbox(_CallRecorder(), RedditInput(mode="check_inbox"))
 
-        self.assertTrue(result["ok"])
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["completed"])
         self.assertEqual(result["status"], "login_unavailable")
 
 

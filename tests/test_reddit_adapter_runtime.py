@@ -362,6 +362,98 @@ def test_reddit_playwright_timeout_becomes_bounded_provider_state(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_reddit_browse_does_not_claim_success_without_extracted_posts(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        class Page:
+            async def evaluate(self, *_args):
+                return []
+
+        class Browser:
+            page = Page()
+
+            async def browse(self, _url):
+                return True
+
+        async def no_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", no_sleep)
+        result = await RedditAdapterSkill()._handle_browse(
+            Browser(), RedditInput(mode="browse", subreddit="futurology")
+        )
+
+        assert result["ok"] is False
+        assert result["completed"] is False
+        assert result["status"] == "extraction_empty"
+        assert result["navigated"] is True
+        assert result["posts"] == []
+
+    asyncio.run(scenario())
+
+
+def test_reddit_read_does_not_claim_success_without_extracted_content(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        class Browser:
+            async def browse(self, _url):
+                return True
+
+            async def read_content(self):
+                return ""
+
+        async def no_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", no_sleep)
+        result = await RedditAdapterSkill()._handle_read_post(
+            Browser(),
+            RedditInput(mode="read_post", url="https://www.reddit.com/r/a/1"),
+        )
+
+        assert result["ok"] is False
+        assert result["completed"] is False
+        assert result["status"] == "extraction_empty"
+        assert result["navigated"] is True
+        assert result["content"] == ""
+
+    asyncio.run(scenario())
+
+
+def test_reddit_inbox_does_not_claim_success_without_extracted_content(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        class Browser:
+            async def browse(self, _url):
+                return True
+
+            async def read_content(self):
+                return ""
+
+        async def no_sleep(_seconds):
+            return None
+
+        skill = RedditAdapterSkill()
+        monkeypatch.setattr(skill, "_ensure_logged_in", lambda _browser: _true())
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", no_sleep)
+        result = await skill._handle_check_inbox(
+            Browser(), RedditInput(mode="check_inbox")
+        )
+
+        assert result["ok"] is False
+        assert result["completed"] is False
+        assert result["status"] == "extraction_empty"
+        assert result["navigated"] is True
+
+    async def _true():
+        return True
+
+    asyncio.run(scenario())
+
+
 def test_reddit_filters_expired_and_malformed_cookies():
     now = time.time()
 
