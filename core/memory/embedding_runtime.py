@@ -113,6 +113,8 @@ def _new_embedding_engine() -> Any:
 
 
 _RUNTIME = SharedEmbeddingRuntime(_new_embedding_engine)
+_PREWARM_LOCK = checked_lock("embedding_runtime.prewarm", reentrant=True)
+_PREWARM_LEASE: SharedEmbeddingLease | None = None
 
 
 def acquire_shared_embedding_engine(owner: str) -> SharedEmbeddingLease:
@@ -123,7 +125,40 @@ def shared_embedding_runtime_snapshot() -> dict[str, Any]:
     return _RUNTIME.snapshot()
 
 
+def prewarm_shared_embedding_runtime() -> dict[str, Any]:
+    """Load the shared encoder once outside the first foreground request.
+
+    The retained lease is process-owned.  Consumers still acquire and release
+    independent leases, while the encoder remains resident until runtime
+    shutdown instead of being closed between sparse recalls.
+    """
+
+    global _PREWARM_LEASE
+    with _PREWARM_LOCK:
+        lease = _PREWARM_LEASE
+        if lease is None:
+            lease = _RUNTIME.acquire("runtime-prewarm")
+            _PREWARM_LEASE = lease
+    try:
+        vector = lease.embed("Aura semantic memory readiness probe")
+    except Exception:
+        with _PREWARM_LOCK:
+            if _PREWARM_LEASE is lease:
+                _PREWARM_LEASE = None
+        lease.close()
+        raise
+    snapshot = _RUNTIME.snapshot()
+    snapshot["prewarmed"] = True
+    snapshot["vector_dimensions"] = int(getattr(vector, "size", len(vector)))
+    return snapshot
+
+
 def close_shared_embedding_runtime() -> None:
+    global _PREWARM_LEASE
+    with _PREWARM_LOCK:
+        lease, _PREWARM_LEASE = _PREWARM_LEASE, None
+    if lease is not None:
+        lease.close()
     _RUNTIME.close()
 
 

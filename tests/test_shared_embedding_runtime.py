@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -11,9 +12,14 @@ from core.memory.embedding_runtime import SharedEmbeddingRuntime
 class _Engine:
     close_count: int = 0
     marker: str = "shared"
+    embed_count: int = 0
 
     def close(self) -> None:
         self.close_count += 1
+
+    def embed(self, _text: str):
+        self.embed_count += 1
+        return [0.0, 1.0, 0.0]
 
 
 def test_all_owners_share_one_engine_until_the_last_release() -> None:
@@ -89,3 +95,60 @@ def test_runtime_close_invalidates_all_leases_and_closes_once() -> None:
         _ = left.marker
     with pytest.raises(RuntimeError, match="shared_embedding_lease_released"):
         _ = right.marker
+
+
+def test_process_prewarm_is_idempotent_and_retained_until_close(monkeypatch) -> None:
+    import core.memory.embedding_runtime as embedding_runtime
+
+    engine = _Engine()
+    runtime = SharedEmbeddingRuntime(lambda: engine)
+    monkeypatch.setattr(embedding_runtime, "_RUNTIME", runtime)
+    monkeypatch.setattr(embedding_runtime, "_PREWARM_LEASE", None)
+
+    first = embedding_runtime.prewarm_shared_embedding_runtime()
+    second = embedding_runtime.prewarm_shared_embedding_runtime()
+
+    assert first["vector_dimensions"] == 3
+    assert second["lease_count"] == 1
+    assert runtime.snapshot()["owners"] == ("runtime-prewarm",)
+    assert engine.embed_count == 2
+
+    embedding_runtime.close_shared_embedding_runtime()
+    assert engine.close_count == 1
+    assert runtime.snapshot()["engine_live"] is False
+
+
+def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
+    import core.memory.embedding_runtime as embedding_runtime
+    from interface import server
+
+    class _Gate:
+        def get_conversation_status(self):
+            return {"conversation_ready": True}
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        server.ServiceContainer,
+        "get",
+        classmethod(
+            lambda _cls, key, default=None: _Gate()
+            if key == "inference_gate"
+            else default
+        ),
+    )
+    monkeypatch.setattr(server, "is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        embedding_runtime,
+        "prewarm_shared_embedding_runtime",
+        lambda: calls.append("prewarmed")
+        or {"vector_dimensions": 1024, "lease_count": 1},
+    )
+
+    asyncio.run(
+        server._prewarm_embeddings_after_cortex_ready(
+            readiness_timeout_s=0.1,
+            poll_interval_s=0.01,
+        )
+    )
+
+    assert calls == ["prewarmed"]

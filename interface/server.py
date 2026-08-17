@@ -158,6 +158,49 @@ main_loop: asyncio.AbstractEventLoop | None = None
 _event_bridge_task: asyncio.Task | None = None
 
 
+async def _prewarm_embeddings_after_cortex_ready(
+    *,
+    readiness_timeout_s: float = 180.0,
+    poll_interval_s: float = 0.5,
+) -> None:
+    """Move semantic-memory model loading off the first user chat turn."""
+
+    deadline = asyncio.get_running_loop().time() + max(1.0, readiness_timeout_s)
+    while not is_shutdown_requested():
+        gate = ServiceContainer.get("inference_gate", default=None)
+        get_status = getattr(gate, "get_conversation_status", None)
+        if callable(get_status):
+            try:
+                lane = get_status()
+            except _SERVER_BOUNDARY_ERRORS as exc:
+                logger.debug("Embedding prewarm readiness probe deferred: %s", exc)
+            else:
+                if isinstance(lane, dict) and lane.get("conversation_ready") is True:
+                    break
+        if asyncio.get_running_loop().time() >= deadline:
+            logger.warning(
+                "Embedding prewarm skipped because Cortex did not become "
+                "conversation-ready within %.1fs.",
+                readiness_timeout_s,
+            )
+            return
+        await asyncio.sleep(max(0.05, poll_interval_s))
+    if is_shutdown_requested():
+        return
+
+    from core.memory.embedding_runtime import prewarm_shared_embedding_runtime
+
+    started = time.perf_counter()
+    snapshot = await asyncio.to_thread(prewarm_shared_embedding_runtime)
+    logger.info(
+        "Semantic embedding runtime prewarmed after Cortex readiness in %.2fs "
+        "(dimensions=%s, leases=%s).",
+        time.perf_counter() - started,
+        snapshot.get("vector_dimensions"),
+        snapshot.get("lease_count"),
+    )
+
+
 class _QueueHandler(logging.Handler):
     """Sends structured log records to the async broadcast queue.
     Implements a circular buffer for log_queue to prevent OOM/silencing.
@@ -481,6 +524,11 @@ async def lifespan(app: FastAPI):
         replace=True,
     )
     system_routes.start_health_read_model()
+    if not is_gui_proxy:
+        _spawn_server_task(
+            _prewarm_embeddings_after_cortex_ready(),
+            name="embedding_runtime_prewarm",
+        )
     from interface.routes.chat import start_chat_turn_memory_log_worker
 
     if not start_chat_turn_memory_log_worker():
