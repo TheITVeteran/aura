@@ -1045,7 +1045,9 @@ _system_collect_liquid_state_payload = system_routes._collect_liquid_state_paylo
 
 
 def _collect_conversation_lane_status() -> dict[str, Any]:
-    return chat_routes._collect_conversation_lane_status()
+    from interface.routes import chat_preflight
+
+    return chat_preflight._collect_conversation_lane_status()
 
 
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
@@ -1464,7 +1466,11 @@ async def websocket_endpoint(ws: WebSocket):
                         ):
                             """Process user message and send response back via WebSocket."""
                             try:
-                                lane_snapshot = chat_routes._collect_conversation_lane_status()
+                                from interface.routes import chat_preflight
+
+                                lane_snapshot = (
+                                    chat_preflight._collect_conversation_lane_status()
+                                )
                                 reply = await chat_routes._run_cognitive_engine_chat_turn(
                                     user_content,
                                     visible_user_message=user_content,

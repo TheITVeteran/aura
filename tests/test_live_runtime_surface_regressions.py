@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import interface.routes.chat_preflight as _chat_preflight
+from tests.chat_lane_support import patch_chat_lane
 
 
 def _clear_proof_run_signals(monkeypatch):
@@ -2259,10 +2261,10 @@ async def test_api_chat_live_proof_receipt_survives_quality_repair(monkeypatch, 
     monkeypatch.chdir(tmp_path)
     chat_module._locks.pop("fg", None)
     monkeypatch.setattr(chat_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_module, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_module, "_collect_conversation_lane_status", lambda: {"state": "ready"})
+    patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_chat_preflight, "_collect_conversation_lane_status", lambda: {"state": "ready"})
     monkeypatch.setattr(chat_module, "_emit_chat_output_receipt", no_op_async)
-    monkeypatch.setattr(chat_module, "_log_exchange", no_op_async)
+    monkeypatch.setattr(_chat_preflight, "_log_exchange", no_op_async)
     monkeypatch.setattr(chat_module, "_repair_final_degraded_reply", fail_if_repaired)
     monkeypatch.setattr(
         chat_module.ServiceContainer,

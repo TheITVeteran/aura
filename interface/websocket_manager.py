@@ -173,7 +173,7 @@ def conversation_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
 def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
     """Return live conversation readiness for transport heartbeat payloads."""
     try:
-        from interface.routes.chat import _collect_conversation_lane_status
+        from interface.routes.chat_preflight import _collect_conversation_lane_status
 
         lane = _collect_conversation_lane_status()
         if not isinstance(lane, dict):

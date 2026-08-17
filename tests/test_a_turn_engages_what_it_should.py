@@ -39,6 +39,7 @@ from interface.routes.chat import (
     _collect_expected_turn_organs,
     _collect_live_chat_required_subsystems,
 )
+from tests.chat_lane_support import chat_lane_source
 
 SOURCE = Path("interface/routes/chat.py")
 
@@ -75,7 +76,7 @@ def test_personality_is_reported_rather_than_required() -> None:
 
 def test_a_missing_persona_pass_is_recorded() -> None:
     """Shipping the base model's register as her voice must not be silent."""
-    src = SOURCE.read_text(encoding="utf-8")
+    src = chat_lane_source()
     assert "personality_engine absent; reply shaped by nothing" in src
 
 
@@ -126,7 +127,7 @@ def test_probing_never_raises_outside_a_runtime() -> None:
 
 def test_the_expected_tier_is_not_fatal() -> None:
     """Promoting these would recreate a failure already paid for once."""
-    src = SOURCE.read_text(encoding="utf-8")
+    src = chat_lane_source()
     required = src[src.index("def _collect_live_chat_required_subsystems") :]
     required = required[: required.index("def _assess_live_mind_snapshot")]
     for organ, _why in _EXPECTED_TURN_ORGANS:
@@ -138,7 +139,7 @@ def test_the_expected_tier_is_not_fatal() -> None:
 
 def test_the_turn_contract_carries_the_engagement() -> None:
     """Reported on the turn, or it is a probe nobody reads."""
-    src = SOURCE.read_text(encoding="utf-8")
+    src = chat_lane_source()
     assert '"expected_organs": _expected_organs,' in src
     assert '"absent_expected_organs": _absent_turn_organs(_expected_organs),' in src
     # Counted once per turn, beside the required-subsystem collection.
@@ -160,7 +161,7 @@ def _function_body(name: str) -> str:
     """
     import ast
 
-    src = SOURCE.read_text(encoding="utf-8")
+    src = chat_lane_source()
     tree = ast.parse(src)
     node = next(
         item
@@ -280,7 +281,7 @@ def test_escalation_never_refuses_the_turn() -> None:
     """The whole point: chronic absence is loud, and still not a gate."""
     from interface.routes.chat import _note_organ_engagement
 
-    src = SOURCE.read_text(encoding="utf-8")
+    src = chat_lane_source()
     fn = src[src.index("def _note_organ_engagement") :]
     fn = fn[: fn.index("def reset_organ_engagement_streaks_for_test")]
     assert "return" in fn

@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from tools.lint_module_size import (
     MAX_NEW_CLASS_METHODS,
@@ -111,9 +110,15 @@ def test_a_god_class_may_never_grow_even_while_its_file_shrinks():
     assert any("methods from a baseline" in f for f in failures), failures
 
 
-def test_the_budget_refuses_to_be_raised_by_a_refresh(tmp_path):
+def test_a_refresh_cannot_raise_the_budget(tmp_path):
     """`--write-baseline` is the escape hatch, and it must not become a way to
-    launder growth."""
+    launder growth.
+
+    It used to refuse outright, which meant a real shrink could never be
+    banked while any file anywhere had grown — and a gate that cannot be
+    satisfied is a gate somebody deletes. It clamps instead: the recorded
+    number is the tightest ever seen, and the growth still fails the gate.
+    """
     import json
 
     from tools.lint_module_size import write_baseline
@@ -122,8 +127,9 @@ def test_the_budget_refuses_to_be_raised_by_a_refresh(tmp_path):
     target.write_text(json.dumps({"oversize_budget_lines": 10, "modules": {}}))
     measurements, _ = _live()
 
-    with pytest.raises(ValueError, match="larger oversize budget"):
-        write_baseline(target, measurements)
+    write_baseline(target, measurements)
+
+    assert json.loads(target.read_text())["oversize_budget_lines"] == 10
 
 
 def test_the_budget_is_the_measured_total():

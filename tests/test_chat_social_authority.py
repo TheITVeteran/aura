@@ -19,6 +19,8 @@ from core.social.other_agent_model import OtherAgentStateEstimator
 from core.social.relational_memory import RelationalMemoryAuthority
 from core.utils.output_gate import AutonomousOutputGate
 from interface.routes import chat as chat_routes
+import interface.routes.chat_delivery as _chat_delivery
+from tests.chat_lane_support import patch_chat_lane
 
 
 def _authority(tmp_path) -> RelationalMemoryAuthority:
@@ -82,11 +84,11 @@ async def test_http_turn_applies_consent_and_observes_exact_principal_idempotent
     request = _request(idempotency_key="same-request")
     body = SimpleNamespace(message="Aura, remember always.", session_id="session-1")
     monkeypatch.setattr(
-        chat_routes,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda _request: "bryan",
     )
-    monkeypatch.setattr(chat_routes, "get_task_tracker", lambda: tracker)
+    patch_chat_lane(monkeypatch, "get_task_tracker", lambda: tracker)
     ServiceContainer.clear()
     ServiceContainer.register_instance("relational_memory", authority, required=False)
     ServiceContainer.register_instance("other_agent_model", estimator, required=False)
@@ -129,13 +131,11 @@ def test_http_turn_rebinds_empty_estimator_provenance_before_recursive_observati
     degradations = []
     observer = ObserverContextModel()
     monkeypatch.setattr(
-        chat_routes,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda _request: "bryan",
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "record_degradation",
+    patch_chat_lane(monkeypatch, "record_degradation",
         lambda *args, **kwargs: degradations.append((args, kwargs)),
     )
     ServiceContainer.clear()
@@ -186,7 +186,7 @@ async def test_http_feedback_window_opens_only_after_response_background_runs(
         lambda *args, **kwargs: store,
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda _request: "bryan",
     )
@@ -267,7 +267,7 @@ async def test_output_gate_receipt_preserves_valid_principal_binding(
 
 def test_http_social_path_abstains_without_authenticated_principal(monkeypatch):
     monkeypatch.setattr(
-        chat_routes,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda _request: "",
     )
@@ -318,7 +318,7 @@ async def test_paired_chat_boundary_holds_exact_principal_for_full_concurrent_tu
     observed: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        chat_routes,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda request: str(request.headers.get("x-test-principal") or ""),
     )

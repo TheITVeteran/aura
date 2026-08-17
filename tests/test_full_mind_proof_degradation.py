@@ -22,14 +22,18 @@ pytestmark = pytest.mark.unit
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
+    from interface.routes import chat_desktop_repair as _chat_desktop_repair
+
     for name in (
         "_runtime_kernel_available",
         "_runtime_cognitive_engine_available",
         "_runtime_memory_available",
-        "_runtime_tool_governance_available",
         "_runtime_substrate_voice_available",
     ):
         monkeypatch.setattr(chat_routes, name, lambda: True)
+    # This one is defined in the desktop-repair lane, and every caller reads it
+    # from there. Patching the chat module would leave the real check running.
+    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *a, **k: True)
 
 

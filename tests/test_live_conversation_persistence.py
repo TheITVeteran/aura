@@ -1,7 +1,14 @@
 import pytest
 
+from core.utils.injected_blocks import is_stamped_runtime_payload
+
 from core.conversation.persistence import ConversationPersistence
 from interface.routes import chat as chat_routes
+
+
+def _without_stamp(exchange: dict) -> dict:
+    """The exchange minus the per-process proof, for value comparison."""
+    return {key: value for key, value in exchange.items() if key != "aura_runtime_stamp"}
 
 
 class _PersistenceFixture:
@@ -65,15 +72,18 @@ async def test_completed_live_exchange_survives_process_memory_clear(monkeypatch
         limit=6,
     )
 
-    assert exchanges == [
-        {
-            "exchange_id": exchange_id,
-            "user": "The continuity codeword is restart-echo-742.",
-            "aura": "I will retain restart-echo-742 across a process restart.",
-            "timestamp": "2.0",
-            "session_id": "session-live",
-        }
-    ]
+    # Every reconstructed exchange carries this process's stamp. The stamp is
+    # what separates a row this runtime rebuilt from a dict a caller handed
+    # in, so assert it is there rather than assert it away.
+    assert len(exchanges) == 1
+    assert is_stamped_runtime_payload(exchanges[0])
+    assert _without_stamp(exchanges[0]) == {
+        "exchange_id": exchange_id,
+        "user": "The continuity codeword is restart-echo-742.",
+        "aura": "I will retain restart-echo-742 across a process restart.",
+        "timestamp": "2.0",
+        "session_id": "session-live",
+    }
 
 
 @pytest.mark.asyncio
@@ -265,14 +275,14 @@ def test_durable_reconstruction_retains_cidless_legacy_pair(monkeypatch):
         session_id=persistence.session_id,
     )
 
-    assert exchanges == [
-        {
-            "user": "legacy question",
-            "aura": "legacy answer",
-            "timestamp": "2.0",
-            "session_id": persistence.session_id,
-        }
-    ]
+    assert len(exchanges) == 1
+    assert is_stamped_runtime_payload(exchanges[0])
+    assert _without_stamp(exchanges[0]) == {
+        "user": "legacy question",
+        "aura": "legacy answer",
+        "timestamp": "2.0",
+        "session_id": persistence.session_id,
+    }
 
 
 class _MultiSessionPersistence:

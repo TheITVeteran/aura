@@ -14,6 +14,7 @@ from core.cognition.expressive_affordances import (
     get_affordance_registry,
     sanitize_affordance_control_syntax,
 )
+from tests.chat_lane_support import chat_lane_source
 
 
 def test_default_menu_lists_all_affordances():
@@ -215,11 +216,10 @@ def test_model_scenarios_needs_two_options():
 def test_menu_enabled_by_default_and_realize_wired():
     """The action menu is on by default AND the realize path is wired into the
     response flow (not merely defined) — strip-before-gate, realize-after."""
-    import inspect
 
     from interface.routes import chat as chat_routes
 
-    src = inspect.getsource(chat_routes)
+    src = chat_lane_source()
     # Off by default (zero-shot emission needs training first) — pinned at
     # the typed-flag layer, the canonical form since the C1 migration.
     assert '"AURA_EXPRESSIVE_AFFORDANCES"' in src

@@ -20,6 +20,7 @@ Position is not relevance.
 from __future__ import annotations
 
 import pytest
+from tests.chat_lane_support import chat_lane_source
 
 
 LIVE_MESSAGE = (
@@ -169,11 +170,7 @@ def test_query_terms_ignore_the_question_scaffolding() -> None:
 
 def test_the_route_passes_the_message_as_the_query() -> None:
     """A relevance excerpt with no query is just the head again."""
-    import inspect
-
-    from interface.routes import chat
-
-    source = inspect.getsource(chat)
+    source = chat_lane_source()
     # Anchor on the invocation, not the import list.
     index = source.find("operation_name=\"referenced_file_context\"")
     assert index != -1, "referenced-file preflight call site not found"

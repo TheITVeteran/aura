@@ -19,14 +19,13 @@ reported a transport error.
 
 from __future__ import annotations
 
-import inspect
+from tests.chat_lane_support import chat_lane_source
 
 
 def test_the_salvage_path_returns_a_json_response():
     """`_servable_draft_or_none` returns a str; the handler must not pass it through."""
-    from interface.routes import chat as chat_routes
 
-    source = inspect.getsource(chat_routes)
+    source = chat_lane_source()
     start = source.index("async def _fail_closed_degraded_desktop_reply")
     # The salvage function ends at the next sibling definition.
     end = source.index("async def _finalize_fastpath", start)
@@ -53,9 +52,8 @@ def test_the_salvage_path_returns_a_json_response():
 
 def test_the_delivery_boundary_delivers_text_instead_of_erasing_it():
     """The class-level guard: an envelope defect must not cost the answer."""
-    from interface.routes import chat as chat_routes
 
-    source = inspect.getsource(chat_routes)
+    source = chat_lane_source()
     marker = "if not isinstance(response, JSONResponse):"
     assert marker in source
     guard = source[source.index(marker) : source.index(marker) + 2600]

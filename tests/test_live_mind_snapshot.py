@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from tests.chat_lane_support import patch_chat_lane
 
 
 class GroundedAffectReadout:
@@ -349,8 +350,8 @@ def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
         "_runtime_tool_governance_available",
         "_runtime_substrate_voice_available",
     ):
-        monkeypatch.setattr(chat_routes, name, lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *args, **kwargs: True)
+        patch_chat_lane(monkeypatch, name, lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *args, **kwargs: True)
 
     payload = chat_routes._build_live_mind_context_payload(
         user_message="What are you attending to?",
@@ -398,8 +399,8 @@ def test_live_desktop_context_payload_carries_recent_voice_perception(monkeypatc
             "_runtime_tool_governance_available",
             "_runtime_substrate_voice_available",
         ):
-            monkeypatch.setattr(chat_routes, name, lambda: True)
-        monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *args, **kwargs: True)
+            patch_chat_lane(monkeypatch, name, lambda: True)
+        patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *args, **kwargs: True)
 
         payload = chat_routes._build_live_mind_context_payload(
             user_message="What did I say out loud?",

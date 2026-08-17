@@ -25,6 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from interface.routes.chat import _named_gate_failure, _reply_gate_proved_a_violation
+import interface.routes.chat_memory_state as _chat_memory_state
 
 
 @pytest.mark.parametrize(
@@ -120,7 +121,7 @@ async def test_the_rejection_path_serves_the_draft_when_nothing_is_named(
         "_desktop_secondary_model_repair_allowed",
         lambda **_kwargs: (False, "single_owner_test"),
     )
-    monkeypatch.setattr(chat, "_build_conversation_recall_reply", _no_recall)
+    monkeypatch.setattr(_chat_memory_state, "_build_conversation_recall_reply", _no_recall)
     trace: dict[str, object] = {}
 
     reply = await chat._run_cognitive_engine_chat_turn(

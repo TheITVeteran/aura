@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import interface.routes.chat_desktop_repair as _chat_desktop_repair
+import interface.routes.chat_memory_state as _chat_memory_state
 
 INVENTORY_PROMPT = (
     "What tools can you hypothetically use externally on my computer? "
@@ -17,7 +19,7 @@ def _reset_chat_route_state(monkeypatch):
     from interface.routes import chat as chat_routes
 
     cipher = SessionPinCipher(b"k" * 32)
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_cipher", lambda: cipher)
+    monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_cipher", lambda: cipher)
     chat_routes._conversation_log.clear()
     chat_routes._session_memory_pins.clear()
     yield
@@ -112,7 +114,7 @@ def test_bounded_capability_inventory_repair_handles_failed_desktop_engine(
         "with one concrete scenario?"
     )
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
 
     reply = chat_routes._build_bounded_capability_inventory_repair_reply(prompt)
 
@@ -214,7 +216,7 @@ def test_capability_inventory_reply_repairs_false_tool_limitation(monkeypatch: p
         return default
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
 
     assert chat_routes._capability_inventory_reply_is_inadequate(
         INVENTORY_PROMPT,
@@ -282,7 +284,7 @@ def test_runtime_status_grounding_does_not_replace_capability_inventory(
         return default
 
     monkeypatch.setattr(chat_routes.ServiceContainer, "get", fake_get)
-    monkeypatch.setattr(chat_routes, "_runtime_tool_governance_available", lambda: True)
+    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
 
     inventory = chat_routes._build_grounded_capability_inventory_reply(INVENTORY_PROMPT)
     grounded = chat_routes._ground_runtime_fact_status_reply(
@@ -303,8 +305,8 @@ async def test_owner_name_recall_repairs_thin_desktop_cognitive_reply(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
-    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
 
     repaired, stale, same_diff, off_topic, reason, did_repair = (
         await chat_routes._repair_final_degraded_reply(
@@ -331,8 +333,8 @@ async def test_verified_owner_direct_address_name_drift_is_repaired(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
-    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
 
     repaired, stale, same_diff, off_topic, reason, did_repair = (
         await chat_routes._repair_final_degraded_reply(
@@ -359,7 +361,7 @@ def test_owner_name_recall_does_not_disclose_without_owner_session(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: False)
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: False)
 
     reply = chat_routes._build_owner_name_recall_reply("What's my name?")
 
@@ -374,8 +376,8 @@ async def test_state_fastpath_serves_verified_owner_identity(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: True)
-    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: True)
+    monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
 
     result = await chat_routes._build_memory_state_fastpath_reply("Do you know my name?")
 
@@ -392,8 +394,8 @@ async def test_state_fastpath_blocks_owner_identity_without_verified_session(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **_kwargs: False)
-    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **_kwargs: False)
+    monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
 
     result = await chat_routes._build_memory_state_fastpath_reply("Do you know my name?")
 
@@ -410,8 +412,8 @@ async def test_state_fastpath_uses_restored_owner_session_flag(
 ) -> None:
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_owner_session_is_verified", lambda **kwargs: bool(kwargs.get("owner_session_restored")))
-    monkeypatch.setattr(chat_routes, "_resolve_primary_operator_name", lambda: "Bryan")
+    monkeypatch.setattr(_chat_memory_state, "_owner_session_is_verified", lambda **kwargs: bool(kwargs.get("owner_session_restored")))
+    monkeypatch.setattr(_chat_memory_state, "_resolve_primary_operator_name", lambda: "Bryan")
 
     result = await chat_routes._build_memory_state_fastpath_reply(
         "Do you know my name?",
@@ -558,7 +560,7 @@ async def test_session_memory_pin_does_not_overclaim_when_durable_write_fails(
         "get",
         staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
     )
-    monkeypatch.setattr(chat_routes, "_append_session_memory_pin_ledger", lambda *_args: False)
+    monkeypatch.setattr(_chat_memory_state, "_append_session_memory_pin_ledger", lambda *_args: False)
 
     result = await chat_routes._build_memory_state_fastpath_reply(
         "Remember this phrase for later in this session: ember-vault-93",
@@ -587,7 +589,7 @@ async def test_session_memory_pin_without_principal_or_session_never_persists(
             return True
 
     ledger_path = tmp_path / "session_memory_pins.jsonl"
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger_path)
+    monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_ledger_path", lambda: ledger_path)
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -628,7 +630,7 @@ async def test_session_memory_pin_handles_memory_facade_exception_truthfully(
         staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_memory_state,
         "_append_session_memory_pin_ledger",
         lambda content, source, timestamp, **_kwargs: ledger_calls.append(
             (content, source, timestamp)
@@ -701,7 +703,7 @@ async def test_anaphoric_memory_pin_uses_recent_conversation_thread(
         staticmethod(lambda name, default=None: MemoryFacade() if name == "memory_facade" else default),
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_memory_state,
         "_append_session_memory_pin_ledger_guarded",
         lambda *_args, **_kwargs: True,
     )

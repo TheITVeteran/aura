@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import interface.routes.chat_memory_state as _chat_memory_state
 
 
 @pytest.mark.asyncio
@@ -103,7 +104,7 @@ async def test_bounded_chat_work_rejects_saturation_without_running_operation(mo
 
     slots = threading.BoundedSemaphore(1)
     slots.acquire()
-    monkeypatch.setattr(chat_routes, "_chat_blocking_slots", slots)
+    monkeypatch.setattr(_chat_memory_state, "_chat_blocking_slots", slots)
     called = False
 
     def operation() -> None:
@@ -213,7 +214,7 @@ def test_memory_pin_recall_reads_bounded_tail(tmp_path, monkeypatch):
     from core.memory.session_pin_ledger import SESSION_PIN_LEDGER_MAX_BYTES
 
     cipher = SessionPinCipher(b"k" * 32)
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_cipher", lambda: cipher)
+    monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_cipher", lambda: cipher)
 
     # 3. The ledger pins its own filename (a governed write-scope
     #    constraint), so the fixture has to use the real one.
@@ -230,7 +231,7 @@ def test_memory_pin_recall_reads_bounded_tail(tmp_path, monkeypatch):
         principal_surface="owner",
     )
     ledger.write_bytes(prefix + json.dumps(record).encode() + b"\n")
-    monkeypatch.setattr(chat_routes, "_session_memory_pin_ledger_path", lambda: ledger)
+    monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_ledger_path", lambda: ledger)
 
     recalled = chat_routes._recall_session_memory_pin_from_ledger(
         session_id="owner-session",

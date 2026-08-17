@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+import interface.routes.chat_preflight as _chat_preflight
 
 
 def _request() -> SimpleNamespace:
@@ -37,7 +38,7 @@ async def test_broken_defensive_preflight_never_reaches_cognition(monkeypatch):
         capture_delivery,
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_preflight,
         "_collect_conversation_lane_status",
         lambda: pytest.fail("cognition admission ran after a failed security preflight"),
     )
@@ -75,7 +76,7 @@ async def test_broken_conscience_preflight_never_reaches_cognition(monkeypatch):
         lambda: (_ for _ in ()).throw(RuntimeError("conscience internals")),
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_preflight,
         "_collect_conversation_lane_status",
         lambda: pytest.fail("cognition admission ran after a failed conscience preflight"),
     )

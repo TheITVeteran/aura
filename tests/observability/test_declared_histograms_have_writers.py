@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.chat_lane_support import chat_lane_source
 
 REPO = Path(__file__).resolve().parents[2]
 SEARCH_ROOTS = ("core", "interface")
@@ -125,9 +126,13 @@ def test_chat_turn_latency_is_recorded_at_the_user_visible_boundary() -> None:
     "How long did that take?" means the whole turn, including queueing and
     every phase, which is what api_chat wraps.
     """
-    source = (REPO / "interface/routes/chat.py").read_text(errors="replace")
-    marker = "async def api_chat("
-    body = source[source.find(marker) : source.find(marker) + 4000]
+    import inspect
+
+    from interface.routes import chat
+
+    # The function itself, not a fixed character window into a file that has
+    # been split twice: a window drifts every time anything above it moves.
+    body = inspect.getsource(chat.api_chat.__wrapped__)
 
     assert "Aura.Chat.TurnMs" in body
     assert "perf_counter" in body

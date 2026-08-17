@@ -3,7 +3,7 @@
   "description": "Modules already above the size thresholds, and the total oversize budget. Individual entries may move; the total may only shrink. A file that has shrunk must be re-recorded, because a stale entry is headroom nobody earned.",
   "max_new_module_lines": 2000,
   "max_new_class_methods": 30,
-  "oversize_budget_lines": 153278,
+  "oversize_budget_lines": 149994,
   "modules": {
     "core/adaptation/adaptive_immunity.py": {
       "lines": 3959,
@@ -50,8 +50,8 @@
       "max_class_methods": 5
     },
     "core/brain/inference_gate.py": {
-      "lines": 13416,
-      "max_class_methods": 193
+      "lines": 12965,
+      "max_class_methods": 188
     },
     "core/brain/latent_cortex_service.py": {
       "lines": 5866,
@@ -103,7 +103,7 @@
     },
     "core/brain/llm/llm_router.py": {
       "lines": 2480,
-      "max_class_methods": 33
+      "max_class_methods": 32
     },
     "core/brain/llm/mlx_client.py": {
       "lines": 15423,
@@ -114,8 +114,8 @@
       "max_class_methods": 17
     },
     "core/brain/llm_health_router.py": {
-      "lines": 4892,
-      "max_class_methods": 53
+      "lines": 4684,
+      "max_class_methods": 52
     },
     "core/brain/personality_engine.py": {
       "lines": 1605,
@@ -286,7 +286,7 @@
       "max_class_methods": 24
     },
     "core/phases/response_generation_unitary.py": {
-      "lines": 7824,
+      "lines": 7821,
       "max_class_methods": 102
     },
     "core/reality_reach/attachments.py": {
@@ -386,8 +386,16 @@
       "max_class_methods": 33
     },
     "interface/routes/chat.py": {
-      "lines": 29481,
+      "lines": 23853,
       "max_class_methods": 6
+    },
+    "interface/routes/chat_memory_state.py": {
+      "lines": 2196,
+      "max_class_methods": 0
+    },
+    "interface/routes/chat_preflight.py": {
+      "lines": 2088,
+      "max_class_methods": 0
     },
     "interface/routes/system.py": {
       "lines": 5983,

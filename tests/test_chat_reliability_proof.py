@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+import interface.routes.chat_desktop_repair as _chat_desktop_repair
 
 
 def test_foreground_budgets_are_bounded_for_live_desktop_lane():
@@ -2393,7 +2394,7 @@ async def test_stabilizer_repairs_metric_status_page_self_reflection(monkeypatch
     from interface.routes import chat as chat_routes
 
     monkeypatch.setattr(
-        chat_routes,
+        _chat_desktop_repair,
         "_build_aura_expression_frame",
         lambda _message: {
             "mood": "tired",

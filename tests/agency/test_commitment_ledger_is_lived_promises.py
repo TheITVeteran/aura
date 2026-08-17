@@ -266,10 +266,31 @@ def test_one_definition_of_scaffold_preamble_across_subsystems() -> None:
     subset — no "[SWARM PROTOCOL" branch, no "the following" branch. Nobody
     noticed, because each copy is only ever exercised through its own layer.
     """
-    from core.brain import imagination
+    import ast
+    import pathlib
+
+    from core.brain import imagination_text
     from core.utils.scaffold_prompt_intent import SCAFFOLD_PREAMBLE_RE
 
-    assert imagination._SCAFFOLD_PREAMBLE_RE is SCAFFOLD_PREAMBLE_RE
+    assert imagination_text._SCAFFOLD_PREAMBLE_RE is SCAFFOLD_PREAMBLE_RE
+
+    # And no second copy has appeared anywhere else: the defect this test
+    # exists for was a private re-implementation that nobody diffed, so
+    # pinning one alias is not enough.
+    root = pathlib.Path(__file__).resolve().parent.parent.parent / "core"
+    for path in root.rglob("*.py"):
+        if path.name == "scaffold_prompt_intent.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(errors="ignore"))):
+            if not isinstance(node, ast.Assign):
+                continue
+            names = {getattr(t, "id", "") for t in node.targets}
+            if not names & {"SCAFFOLD_PREAMBLE_RE", "_SCAFFOLD_PREAMBLE_RE"}:
+                continue
+            assert isinstance(node.value, ast.Name), (
+                f"{path} defines its own scaffold preamble pattern instead of "
+                "aliasing the one in core/utils/scaffold_prompt_intent.py"
+            )
 
 
 # ── 5. The ledger heals itself on the next boot ────────────────────────────

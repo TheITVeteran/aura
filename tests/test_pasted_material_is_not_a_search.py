@@ -40,6 +40,7 @@ import pytest
 from core.phases.response_contract import build_response_contract
 from core.runtime.structured_input import carries_supplied_material, extract_supplied_material
 from core.state.aura_state import AuraState
+import interface.routes.chat_preflight as _chat_preflight
 
 pytestmark = pytest.mark.unit
 
@@ -253,7 +254,7 @@ def test_desktop_search_gate_does_not_fire_on_pasted_material(monkeypatch):
     """
     from interface.routes import chat
 
-    monkeypatch.setattr(chat, "_resolve_live_aura_state", _state_with_prior_search_evidence)
+    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", _state_with_prior_search_evidence)
 
     should_collect, query, contract = chat._should_collect_desktop_required_search_evidence(PASTED_NOTE)
 
@@ -265,7 +266,7 @@ def test_desktop_search_gate_does_not_fire_on_pasted_material(monkeypatch):
 def test_desktop_search_gate_still_fires_for_a_genuine_lookup(monkeypatch):
     from interface.routes import chat
 
-    monkeypatch.setattr(chat, "_resolve_live_aura_state", _state_with_prior_search_evidence)
+    monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", _state_with_prior_search_evidence)
 
     should_collect, query, _contract = chat._should_collect_desktop_required_search_evidence(
         "search the web for the latest tardigrade research"

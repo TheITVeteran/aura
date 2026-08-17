@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_it_finds_the_seam_inside_the_function_we_already_cut():
     """_run_chat_preflight is one big try; its body should read as one seam."""
-    seams = analyse(ROOT / "interface/routes/chat.py", "_run_chat_preflight")
+    seams = analyse(ROOT / "interface/routes/chat_preflight.py", "_run_chat_preflight")
     assert seams, "no seam found in a function that is a single try block"
     biggest = max(seams, key=lambda s: s.lines)
     assert biggest.lines > 300

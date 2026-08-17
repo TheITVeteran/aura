@@ -31,6 +31,7 @@ import re
 import pytest
 
 from core.brain.llm.context_assembler import ContextAssembler
+from tests.chat_lane_support import chat_lane_source
 
 
 def _classifier():
@@ -308,11 +309,7 @@ class TestASessionIsAConversationNotAMachine:
         assert mod._CONVERSATION_BOOT_ID in self._sid("h", 1000.0)
 
     def test_the_host_only_fallback_is_gone(self):
-        import inspect
-
-        from interface.routes import chat as mod
-
-        source = inspect.getsource(mod)
+        source = chat_lane_source()
         assert "client host is good enough for single-user local Aura" not in source
         assert "_conversation_session_id(_host)" in source
 

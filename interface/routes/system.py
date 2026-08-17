@@ -892,7 +892,7 @@ def _collect_conversation_lane_status_resilient() -> dict[str, Any]:
             return _fallback_conversation_lane_status(str(exc))
 
     try:
-        from interface.routes.chat import _collect_conversation_lane_status as _impl
+        from interface.routes.chat_preflight import _collect_conversation_lane_status as _impl
 
         lane = _impl(observe_only=True)
         if isinstance(lane, dict):

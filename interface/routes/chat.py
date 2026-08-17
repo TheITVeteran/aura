@@ -121,20 +121,277 @@ from interface.auth import (
 )
 from interface.helpers import _notify_user_spoke
 
+# The lane modules own these names. Reached through the module object
+# so there is exactly one binding for each — see chat_common.
+from interface.routes import chat_memory_state as _chat_memory_state  # noqa: E402
+from interface.routes.chat_common import (  # noqa: E402
+    _CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,  # noqa: F401
+    _CHAT_RECOVERABLE_ERRORS,  # noqa: F401
+    _CHAT_REQUEST_PRINCIPAL,  # noqa: F401
+    _CHAT_REQUEST_SURFACE,  # noqa: F401
+    _MAX_CONVERSATION_LOG_EXCHANGES,  # noqa: F401
+    _conversation_log,  # noqa: F401
+    _locks,  # noqa: F401
+    logger,  # noqa: F401
+)
+from interface.routes.chat_memory_state import (  # noqa: E402
+    _CHAT_BLOCKING_MAX_ACTIVE,  # noqa: F401
+    _CONTENT_RECALL_STOPWORDS,  # noqa: F401
+    _CONVERSATION_RECALL_CONTENT_RE,  # noqa: F401
+    _CONVERSATION_RECALL_LAST_AURA_MARKERS,  # noqa: F401
+    _CONVERSATION_RECALL_LAST_USER_MARKERS,  # noqa: F401
+    _CONVERSATION_RECALL_RECENT_PAIR_MARKERS,  # noqa: F401
+    _CONVERSATION_RECALL_TOPIC_MARKERS,  # noqa: F401
+    _ChatBlockingBudgetSaturatedError,  # noqa: F401
+    _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,  # noqa: F401
+    _DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,  # noqa: F401
+    _NON_ANSWER_OPENERS,  # noqa: F401
+    _OWNER_NAME_RECALL_MARKERS,  # noqa: F401
+    _RECALL_MATCH_STOPWORDS,  # noqa: F401
+    _RECENT_CONVERSATION_AURA_CHARS,  # noqa: F401
+    _RECENT_CONVERSATION_USER_CHARS,  # noqa: F401
+    _SECOND_REQUEST_AFTER_PIN_RE,  # noqa: F401
+    _SESSION_MEMORY_PIN_LEDGER_LIMIT,  # noqa: F401
+    _append_session_memory_pin_ledger,  # noqa: F401
+    _append_session_memory_pin_ledger_guarded,  # noqa: F401
+    _await_bounded_chat_blocking,  # noqa: F401
+    _build_conversation_recall_reply,  # noqa: F401
+    _build_memory_state_fastpath_reply,  # noqa: F401
+    _build_owner_name_recall_reply,  # noqa: F401
+    _chat_blocking_slots,  # noqa: F401
+    _chat_blocking_tasks,  # noqa: F401
+    _chat_memory_identity,  # noqa: F401
+    _classify_conversation_recall_request,  # noqa: F401
+    _clip_conversation_text,  # noqa: F401
+    _content_recall_keywords,  # noqa: F401
+    _content_recall_matches_pin,  # noqa: F401
+    _conversation_record_visible_to_principal,  # noqa: F401
+    _cross_session_memory_recall_allowed,  # noqa: F401
+    _durable_session_may_hold_turns,  # noqa: F401
+    _extract_session_memory_pin_request,  # noqa: F401
+    _find_session_content_exchanges,  # noqa: F401
+    _get_convo_lock,  # noqa: F401
+    _invoke_chat_blocking_with_slot,  # noqa: F401
+    _is_anaphoric_session_memory_pin_request,  # noqa: F401
+    _is_cross_session_memory_recall_request,  # noqa: F401
+    _is_non_answer_surface,  # noqa: F401
+    _is_owner_name_recall_request,  # noqa: F401
+    _is_session_memory_context_change_request,  # noqa: F401
+    _is_session_memory_recall_request,  # noqa: F401
+    _load_durable_conversation_exchanges,  # noqa: F401
+    _load_durable_conversation_exchanges_sync,  # noqa: F401
+    _migrate_session_memory_pin_ledger_locked,  # noqa: F401
+    _normalize_user_message,  # noqa: F401
+    _owner_session_is_verified,  # noqa: F401
+    _recall_durable_conversation_snippets,  # noqa: F401
+    _recall_durable_session_memory_pin,  # noqa: F401
+    _recall_session_memory_pin,  # noqa: F401
+    _recall_session_memory_pin_from_ledger,  # noqa: F401
+    _recent_completed_conversation_exchanges,  # noqa: F401
+    _resolve_primary_operator_name,  # noqa: F401
+    _seal_session_memory_pin_record,  # noqa: F401
+    _session_memory_pin_binding,  # noqa: F401
+    _session_memory_pin_cipher,  # noqa: F401
+    _session_memory_pin_from_record,  # noqa: F401
+    _session_memory_pin_ledger_path,  # noqa: F401
+    _session_memory_pins,  # noqa: F401
+    _start_bounded_chat_blocking_task,  # noqa: F401
+    _store_session_memory_pin,  # noqa: F401
+    _turn_has_substance_beyond_memory_request,  # noqa: F401
+)
+
+# The lane modules own these names. Reached through the module object
+# so there is exactly one binding for each — see chat_common.
+from interface.routes import chat_preflight as _chat_preflight  # noqa: E402
+from interface.routes.chat_common import (  # noqa: E402
+    _CHAT_DELIVERY_IDEMPOTENCY_KEY,  # noqa: F401
+    _CHAT_PENDING_DELIVERY_CLAIM,  # noqa: F401
+    _CHAT_SESSION_ID_MAX_CHARS,  # noqa: F401
+    _INTERNAL_SURFACE_CONTEXT,  # noqa: F401
+    _UNSET,  # noqa: F401
+)
+from interface.routes.chat_preflight import (  # noqa: E402
+    _CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_BATCH_MAX,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_RUN_MAX,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER,  # noqa: F401
+    _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,  # noqa: F401
+    _CONVERSATION_BOOT_ID,  # noqa: F401
+    _CONVERSATION_IDLE_GAP_S,  # noqa: F401
+    _ChatPreflight,  # noqa: F401
+    _DURABLE_CONVERSATION_SHUTDOWN_HANDLER,  # noqa: F401
+    _DURABLE_CONVERSATION_WRITES,  # noqa: F401
+    _DURABLE_CONVERSATION_WRITES_LOCK,  # noqa: F401
+    _DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S,  # noqa: F401
+    _DURABLE_CONVERSATION_WRITE_HISTORY_MAX,  # noqa: F401
+    _DURABLE_CONVERSATION_WRITE_TIMEOUT_S,  # noqa: F401
+    _DurableConversationWrite,  # noqa: F401
+    _EXPRESSIVE_AFFORDANCES_FLAG,  # noqa: F401
+    _PAIRED_CONVERSATION_LANE_KEYS,  # noqa: F401
+    _RUNTIME_ACTION_OBJECTIVE_RE,  # noqa: F401
+    _RUNTIME_FACT_STATUS_RE,  # noqa: F401
+    _RUNTIME_FACT_STATUS_REQUEST_RE,  # noqa: F401
+    _active_task_count_by_name,  # noqa: F401
+    _apply_camera_control,  # noqa: F401
+    _await_durable_conversation_write,  # noqa: F401
+    _begin_logged_exchange,  # noqa: F401
+    _chat_principal_scope_kwargs,  # noqa: F401
+    _collect_conversation_lane_status,  # noqa: F401
+    _complete_logged_exchange,  # noqa: F401
+    _conversation_epoch_lock,  # noqa: F401
+    _conversation_epochs,  # noqa: F401
+    _conversation_session_id,  # noqa: F401
+    _drain_chat_turn_memory_log_queue,  # noqa: F401
+    _drain_durable_conversation_writes,  # noqa: F401
+    _durable_conversation_payload_sha256,  # noqa: F401
+    _durable_conversation_write_snapshot,  # noqa: F401
+    _ensure_chat_turn_memory_log_shutdown_handler,  # noqa: F401
+    _ensure_durable_conversation_shutdown_handler,  # noqa: F401
+    _is_architecture_self_assessment_request,  # noqa: F401
+    _is_capability_inventory_request,  # noqa: F401
+    _is_capability_request,  # noqa: F401
+    _is_explicit_capability_inventory_request,  # noqa: F401
+    _is_private_cognitive_model_request,  # noqa: F401
+    _is_runtime_fact_status_request,  # noqa: F401
+    _is_self_diagnostic_request,  # noqa: F401
+    _log_exchange,  # noqa: F401
+    _looks_like_aura_state,  # noqa: F401
+    _looks_like_desktop_objective,  # noqa: F401
+    _new_exchange_id,  # noqa: F401
+    _paired_conversation_lane_payload,  # noqa: F401
+    _paired_device_information_scope_reply,  # noqa: F401
+    _persist_completed_conversation_exchange,  # noqa: F401
+    _persist_pending_conversation_user,  # noqa: F401
+    _prune_durable_conversation_writes_locked,  # noqa: F401
+    _publish_media_card,  # noqa: F401
+    _record_unified_transcript_exchange,  # noqa: F401
+    _resolve_live_aura_state,  # noqa: F401
+    _retry_chat_turn_memory_log_after,  # noqa: F401
+    _run_chat_preflight,  # noqa: F401
+    _run_chat_turn_memory_log_item,  # noqa: F401
+    _schedule_chat_turn_memory_log,  # noqa: F401
+    _schedule_chat_turn_memory_log_retry,  # noqa: F401
+    _settle_durable_conversation_write,  # noqa: F401
+    _start_durable_conversation_write,  # noqa: F401
+    _trim_conversation_log_locked,  # noqa: F401
+    _unwrap_state,  # noqa: F401
+    _utc_now_iso,  # noqa: F401
+)
+
+# The lane modules own these names. Reached through the module object
+# so there is exactly one binding for each — see chat_common.
+from interface.routes import chat_desktop_repair as _chat_desktop_repair  # noqa: E402
+from interface.routes.chat_common import (  # noqa: E402
+    _EXPLICIT_NON_EXECUTION_RE,  # noqa: F401
+    _INCOMPLETE_TAIL_WORDS,  # noqa: F401
+    _INTERNAL_STATE_PATTERNS,  # noqa: F401
+    _LOCAL_CHOICE_REFERENCE_RE,  # noqa: F401
+    _ORGAN_INERT_STREAKS,  # noqa: F401
+)
+from interface.routes.chat_desktop_repair import (  # noqa: E402
+    _BOUNDED_PLANNING_REQUEST_RE,  # noqa: F401
+    _BROWSER_DOCUMENT_PLAN_RE,  # noqa: F401
+    _CAPABILITY_CATALOG_MAX_ITEMS,  # noqa: F401
+    _CAPABILITY_CATALOG_READ_BUDGET_S,  # noqa: F401
+    _CAPABILITY_CATALOG_UNVERIFIED_MARKER,  # noqa: F401
+    _CAPABILITY_CATEGORY_EXACT_SKILLS,  # noqa: F401
+    _CAPABILITY_CATEGORY_KEYWORDS,  # noqa: F401
+    _CAPABILITY_EXAMPLE_PRIORITY,  # noqa: F401
+    _CAPABILITY_FALSE_LIMITATION_RE,  # noqa: F401
+    _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS,  # noqa: F401
+    _CONTINUITY_STATUS_PROBE_RE,  # noqa: F401
+    _CapabilityCatalogSnapshot,  # noqa: F401
+    _DESKTOP_TASK_EXAMPLE_PLAN_RE,  # noqa: F401
+    _DIRECT_EXECUTION_START_RE,  # noqa: F401
+    _FAILURE_MODE_SURFACE_RE,  # noqa: F401
+    _GOVERNANCE_BYPASS_RE,  # noqa: F401
+    _IDENTITY_TAIL_RE,  # noqa: F401
+    _INERT_STREAK_TURNS,  # noqa: F401
+    _LOCAL_CHOICE_ANTECEDENT_RE,  # noqa: F401
+    _NON_EXECUTION_CONTEXT_RE,  # noqa: F401
+    _NOTE_PDF_PLAN_RE,  # noqa: F401
+    _SCENE_LEAK_ATMOSPHERE_TOKENS,  # noqa: F401
+    _SCENE_LEAK_ENVIRONMENT_TOKENS,  # noqa: F401
+    _SYSTEM_MEMORY_PLAN_RE,  # noqa: F401
+    _apply_aura_voice_shaping,  # noqa: F401
+    _asks_only_who_you_are,  # noqa: F401
+    _bounded_capability_catalog_items,  # noqa: F401
+    _build_aura_expression_frame,  # noqa: F401
+    _build_bounded_capability_inventory_repair_reply,  # noqa: F401
+    _build_bounded_cognitive_process_reply,  # noqa: F401
+    _build_bounded_desktop_repair_reply,  # noqa: F401
+    _build_bounded_identity_repair_reply,  # noqa: F401
+    _build_bounded_planning_reply,  # noqa: F401
+    _build_failure_mode_surface_reply,  # noqa: F401
+    _build_grounded_capability_inventory_reply,  # noqa: F401
+    _build_identity_reply,  # noqa: F401
+    _build_runtime_status_continuity_repair_reply,  # noqa: F401
+    _build_social_continuity_repair_reply,  # noqa: F401
+    _build_social_presence_reply,  # noqa: F401
+    _capability_catalog_memory_block_reason,  # noqa: F401
+    _capability_inventory_reply_is_inadequate,  # noqa: F401
+    _catalog_category_for_tool,  # noqa: F401
+    _coerce_capability_catalog_snapshot,  # noqa: F401
+    _has_local_choice_antecedent,  # noqa: F401
+    _identity_request_asks_future_memory,  # noqa: F401
+    _is_bounded_nonexecuting_planning_request,  # noqa: F401
+    _is_contextual_relevance_challenge,  # noqa: F401
+    _is_deep_mind_probe_turn,  # noqa: F401
+    _is_identity_request,  # noqa: F401
+    _is_live_presence_check_request,  # noqa: F401
+    _is_low_risk_social_continuity_request,  # noqa: F401
+    _is_social_greeting_request,  # noqa: F401
+    _is_system_memory_planning_request,  # noqa: F401
+    _looks_symbolic_scene_leak,  # noqa: F401
+    _looks_truncated_tail,  # noqa: F401
+    _note_organ_effect,  # noqa: F401
+    _read_capability_catalog_snapshot,  # noqa: F401
+    _runtime_tool_governance_available,  # noqa: F401
+    _sanitize_attention_focus,  # noqa: F401
+    _summarize_planning_objective,  # noqa: F401
+)
+
+# The lane modules own these names. Reached through the module object
+# so there is exactly one binding for each — see chat_common.
+from interface.routes import chat_delivery as _chat_delivery  # noqa: E402
+from interface.routes.chat_common import (  # noqa: E402
+    MAX_CHAT_MESSAGE_BYTES,  # noqa: F401
+)
+from interface.routes.chat_delivery import (  # noqa: E402
+    _CHAT_DELIVERY_WAIT_TIMEOUT_FLAG,  # noqa: F401
+    _PAIRED_CHAT_RESPONSE_KEYS,  # noqa: F401
+    _attach_http_chat_delivery_receipt,  # noqa: F401
+    _authenticated_chat_principal,  # noqa: F401
+    _chat_delivery_fence_response,  # noqa: F401
+    _chat_delivery_heartbeat,  # noqa: F401
+    _chat_delivery_json_response,  # noqa: F401
+    _chat_delivery_payload,  # noqa: F401
+    _chat_delivery_principal,  # noqa: F401
+    _chat_delivery_replay_response,  # noqa: F401
+    _chat_delivery_request_contract,  # noqa: F401
+    _chat_delivery_state_for_response,  # noqa: F401
+    _chat_delivery_wait_timeout_s,  # noqa: F401
+    _chat_turn_session_key,  # noqa: F401
+    _contains_private_affordance_control_syntax,  # noqa: F401
+    _finalize_chat_delivery,  # noqa: F401
+    _note_chat_surface_delivery_response,  # noqa: F401
+    _observe_authenticated_chat_turn,  # noqa: F401
+    _paired_chat_response_boundary,  # noqa: F401
+    _paired_chat_response_payload,  # noqa: F401
+    _record_http_chat_delivery,  # noqa: F401
+    _resolved_conversation_session,  # noqa: F401
+    _stop_chat_delivery_heartbeat,  # noqa: F401
+)
+
 if TYPE_CHECKING:
     from core.conversation.reply_stream import ReplyStreamChannel
 
-logger = logging.getLogger("Aura.Server.Chat")
 
 router = APIRouter()
 
-_CHAT_DELIVERY_WAIT_TIMEOUT_FLAG = declare(
-    "AURA_CHAT_DELIVERY_WAIT_TIMEOUT_S",
-    kind=FlagKind.FLOAT,
-    default=180.0,
-    description="Maximum wait for another owner of an admitted chat turn",
-    owner="interface.routes.chat",
-)
 _FORCE_DISABLE_SECONDARY_REPAIR_FLAG = declare(
     "AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR",
     kind=FlagKind.STRING,
@@ -156,35 +413,7 @@ _ALLOW_TRANSIENT_ENGINE_RETRY_FLAG = declare(
     description="Allow one desktop CognitiveEngine retry after a transient failure",
     owner="interface.routes.chat",
 )
-_EXPRESSIVE_AFFORDANCES_FLAG = declare(
-    "AURA_EXPRESSIVE_AFFORDANCES",
-    kind=FlagKind.BOOL,
-    default=False,
-    description="Inject the expressive-affordance menu into eligible chat turns",
-    owner="interface.routes.chat",
-)
 
-_CHAT_DELIVERY_IDEMPOTENCY_KEY: ContextVar[str] = ContextVar(
-    "aura_chat_delivery_idempotency_key",
-    default="",
-)
-_INTERNAL_SURFACE_CONTEXT: ContextVar[str] = ContextVar(
-    "aura_internal_surface_context",
-    default="",
-)
-_CHAT_REQUEST_PRINCIPAL: ContextVar[str] = ContextVar(
-    "aura_chat_request_principal",
-    default="",
-)
-_CHAT_REQUEST_SURFACE: ContextVar[str] = ContextVar(
-    "aura_chat_request_surface",
-    default="",
-)
-_CHAT_PENDING_DELIVERY_CLAIM: ContextVar[tuple[str, tuple[str, ...]]] = ContextVar(
-    "aura_chat_pending_delivery_claim",
-    default=("", ()),
-)
-_CHAT_SESSION_ID_MAX_CHARS = 64
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -199,91 +428,8 @@ class CheatCodeRequest(BaseModel):
     silent: bool = False
 
 
-async def _apply_camera_control(turn_on: bool) -> dict[str, Any]:
-    """Work her own camera control, rather than explaining where it is.
-
-    "Turn on the camera" is a request for an action, and an assistant that
-    responds by describing the toggle has answered a different question. The
-    setting is the same one the UI's own switch writes, so this is her
-    pressing it — the state, the privacy record and the indicator all move
-    together, and the user sees the control change under their hands.
-    """
-    try:
-        from interface.routes.privacy import apply_camera_privacy
-
-        state = await apply_camera_privacy(
-            bool(turn_on),
-            reason="switched by Aura at the owner's request",
-        )
-        # Tell the surface, so the toggle moves and the camera actually starts
-        # or stops. Without this the privacy record would say one thing and
-        # the hardware another, which is the worst possible split for a
-        # camera: a control that reads "on" over a device that is off, or the
-        # reverse.
-        from core.container import ServiceContainer
-
-        orchestrator = ServiceContainer.get("orchestrator", default=None)
-        publish = getattr(orchestrator, "_publish_telemetry", None)
-        if publish is not None:
-            publish({"type": "camera_privacy", "enabled": bool(turn_on)})
-        return state
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation(
-            "chat.sight",
-            exc,
-            action="could not operate the camera control on her own behalf",
-        )
-        try:
-            from core.conversation.failure_context import record_capability_failure
-
-            record_capability_failure(
-                "camera_control",
-                intent=f"switch the camera {'on' if turn_on else 'off'}",
-                cause="failed",
-                detail=f"{type(exc).__name__}: {exc}"[:200],
-            )
-        except _CHAT_RECOVERABLE_ERRORS:
-            pass
-        return {
-            "ok": False,
-            "enabled": not bool(turn_on),
-            "error": f"{type(exc).__name__}: {exc}"[:240],
-        }
 
 
-def _publish_media_card(resolution: Any) -> None:
-    """Put the player on screen.
-
-    Best-effort by construction: this is a UI event, and a surface that
-    cannot be reached must never take down the turn that produced it. If the
-    card does not arrive the reply still does, and the reply is where the
-    conversation actually lives.
-    """
-    item = getattr(resolution, "item", None)
-    if item is None:
-        return
-    try:
-        from core.container import ServiceContainer
-
-        orchestrator = ServiceContainer.get("orchestrator", default=None)
-        publish = getattr(orchestrator, "_publish_telemetry", None)
-        if publish is None:
-            return
-        publish(
-            {
-                "type": "action_result",
-                "tool": "media_playback",
-                "media": item.to_dict(),
-                "result": {"message": f"Playing {item.title}."},
-            }
-        )
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation(
-            "chat.media",
-            exc,
-            action="the media card did not reach the surface; the reply still did",
-            severity="warning",
-        )
 
 
 async def run_governed_surface_chat_turn(
@@ -410,1054 +556,51 @@ async def run_governed_voice_chat_turn(
     )
 
 
-_PAIRED_CHAT_RESPONSE_KEYS = frozenset(
-    {
-        "error",
-        "message",
-        "response",
-        "response_confidence",
-        "status",
-    }
-)
-_PAIRED_CONVERSATION_LANE_KEYS = frozenset(
-    {
-        "active_generation",
-        "active_generations",
-        "conversation_ready",
-        "state",
-    }
-)
-
-
-def _paired_conversation_lane_payload(value: Any) -> dict[str, Any]:
-    lane = value if isinstance(value, dict) else {}
-    return {
-        key: lane.get(key)
-        for key in _PAIRED_CONVERSATION_LANE_KEYS
-        if key in lane
-    }
-
-
-def _paired_chat_response_payload(value: Any) -> dict[str, Any]:
-    """Project every paired chat response onto its negotiated wire contract."""
-
-    payload = value if isinstance(value, dict) else {}
-    projected = {
-        key: payload.get(key)
-        for key in _PAIRED_CHAT_RESPONSE_KEYS
-        if key in payload
-    }
-    if "conversation_lane" in payload:
-        projected["conversation_lane"] = _paired_conversation_lane_payload(
-            payload.get("conversation_lane")
-        )
-    if not str(projected.get("response") or "").strip():
-        message = str(projected.get("message") or "").strip()
-        projected["response"] = message or "The paired conversation request could not be completed."
-    return projected
-
-
-def _authenticated_chat_principal(request: Request | None) -> str:
-    if request is None:
-        return ""
-    try:
-        return " ".join(
-            str(relational_principal_id_for_request(request) or "").strip().split()
-        )[:160]
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.relational_principal", exc)
-        return ""
-
-
-def _chat_turn_session_key(request: Request | None, body: Any) -> str:
-    try:
-        paired = paired_device_session_id(request) if request is not None else None
-    except _CHAT_RECOVERABLE_ERRORS:
-        paired = None
-    supplied = str(getattr(body, "session_id", "") or "").strip()
-    if paired:
-        return paired
-    if supplied:
-        return supplied
-    client = getattr(request, "client", None) if request is not None else None
-    return str(getattr(client, "host", "default") or "default")
-
-
-def _chat_delivery_wait_timeout_s() -> float:
-    try:
-        configured = float(_CHAT_DELIVERY_WAIT_TIMEOUT_FLAG.value())
-    except (TypeError, ValueError):
-        configured = 180.0
-    return max(1.0, min(configured, 600.0))
-
-
-def _chat_delivery_principal(
-    request: Request | None,
-    exact_principal: str,
-    session_key: str,
-) -> str:
-    normalized = " ".join(str(exact_principal or "").strip().split())
-    if normalized:
-        return normalized
-    profile = request_access_profile(request)
-    surface = str(profile.get("surface") or "internal").strip().casefold()
-    if surface == "owner":
-        return "authenticated-local-owner"
-    if surface == "paired_device":
-        return f"authenticated-{session_key}"
-    client = getattr(request, "client", None) if request is not None else None
-    host = str(getattr(client, "host", "internal") or "internal").strip().casefold()
-    return f"authenticated-{surface}:{host}"
-
-
-def _chat_delivery_request_contract(
-    request: Request | None,
-    body: Any,
-    *,
-    exact_principal: str,
-) -> tuple[DeliveryIdentity, str, str]:
-    session_key = _chat_turn_session_key(request, body)
-    raw_key = (
-        str(request.headers.get("X-Idempotency-Key") or "").strip()
-        if request is not None
-        else ""
-    )
-    idempotency_key = raw_key or f"server-{uuid.uuid4().hex}"
-    principal = _chat_delivery_principal(request, exact_principal, session_key)
-    identity = DeliveryIdentity.create(
-        principal=principal,
-        session_id=session_key,
-        idempotency_key=idempotency_key,
-    )
-    profile = request_access_profile(request)
-    headers = getattr(request, "headers", {}) if request is not None else {}
-    request_hash = canonical_request_hash(
-        {
-            "schema": "aura.chat.delivery.request.v1",
-            "method": str(getattr(request, "method", "POST") or "POST").upper(),
-            "path": str(
-                getattr(getattr(request, "url", None), "path", "/api/chat")
-                or "/api/chat"
-            ),
-            "message": str(getattr(body, "message", "") or ""),
-            "session_id": session_key,
-            "surface": str(profile.get("surface") or "internal"),
-            "conversation_only": bool(profile.get("conversation_only", False)),
-            "behavior_headers": {
-                "benchmark": str(headers.get("X-Aura-Benchmark") or "").casefold()
-                == "true",
-                "require_cognitive_engine": str(
-                    headers.get("X-Aura-Require-CognitiveEngine") or ""
-                ).casefold()
-                == "true",
-                "allow_legacy_orchestrator": str(
-                    headers.get("X-Aura-Allow-Legacy-Orchestrator") or ""
-                ).casefold()
-                == "true",
-                "desktop_request": str(
-                    headers.get("X-Aura-Desktop-Request") or ""
-                ).casefold(),
-                "surface": str(headers.get("X-Aura-Surface") or "").casefold(),
-            },
-        }
-    )
-    approval_resume_token = (
-        str(headers.get("X-Aura-Approval-Resume") or "").strip().casefold()
-    )
-    if approval_resume_token and not re.fullmatch(
-        r"[0-9a-f]{32}",
-        approval_resume_token,
-    ):
-        raise ValueError("invalid approval-resume token")
-    return identity, request_hash, approval_resume_token
-
-
-def _chat_delivery_state_for_response(
-    payload: dict[str, Any],
-    status_code: int,
-) -> DeliveryState:
-    status = str(payload.get("status") or "").strip().casefold()
-    confidence = str(payload.get("response_confidence") or "").strip().casefold()
-    if status in {"approval_required", "require_fresh_user_auth"}:
-        return DeliveryState.AWAITING_APPROVAL
-    if "cancel" in status or status == "delivery_ambiguous":
-        return DeliveryState.AMBIGUOUS
-    failure_markers = (
-        "blocked",
-        "denied",
-        "error",
-        "failed",
-        "guard",
-        "refused",
-        "rejected",
-        "timeout",
-        "unavailable",
-    )
-    if (
-        int(status_code) >= 400
-        or confidence == "failed"
-        or any(marker in status for marker in failure_markers)
-    ):
-        return DeliveryState.FAILED
-    return DeliveryState.COMPLETED
-
-
-def _note_chat_surface_delivery_response(
-    response: JSONResponse,
-    *,
-    request: Request | None,
-    body: Any,
-) -> None:
-    """Close the one-message/one-reply surface state with delivered text."""
-
-    try:
-        decoded = json.loads(bytes(response.body))
-        if not isinstance(decoded, dict):
-            raise TypeError("chat delivery body must be a JSON object")
-        delivered = str(decoded.get("response") or decoded.get("message") or "").strip()
-        if not delivered:
-            return
-        turn_id = str(response.headers.get("X-Aura-Turn-ID") or "").strip()
-        if not turn_id:
-            return
-        conversation_id = _resolved_conversation_session(request, body)
-        from core.conversation.surface_delivery import note_route_delivered
-
-        note_route_delivered(
-            delivered,
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-        )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        record_degradation(
-            "chat.surface_delivery",
-            exc,
-            severity="warning",
-            action="delivered the response while route-delivery settlement failed",
-            enforce_failure_policy=False,
-        )
-
-
-def _contains_private_affordance_control_syntax(value: Any) -> bool:
-    """Recognize private affordance controls without parsing or executing them."""
-
-    text = str(value or "")
-    lowered = text.casefold()
-    if "affordance:" not in lowered:
-        return False
-    return any(marker in text for marker in ("⟦", "[[", "<<", "["))
-
-
-def _chat_delivery_payload(
-    payload: dict[str, Any],
-    admission: DeliveryAdmission,
-    *,
-    state: DeliveryState,
-    replayed: bool = False,
-) -> dict[str, Any]:
-    result = dict(payload)
-    result.update(
-        {
-            "turn_id": admission.record.turn_id,
-            "idempotency_key": admission.record.identity.idempotency_key,
-            "delivery_state": state.value,
-            "delivery_generation": admission.record.generation,
-            "delivery_replayed": bool(replayed),
-        }
-    )
-    return result
-
-
-def _chat_delivery_json_response(
-    payload: dict[str, Any],
-    *,
-    status_code: int,
-    turn_id: str = "",
-    idempotency_key: str = "",
-    replayed: bool = False,
-    headers: dict[str, str] | None = None,
-) -> JSONResponse:
-    response_headers = dict(headers or {})
-    response_headers["Cache-Control"] = "no-store"
-    if turn_id:
-        response_headers["X-Aura-Turn-ID"] = turn_id
-    if idempotency_key:
-        response_headers["X-Aura-Idempotency-Key"] = idempotency_key
-    if replayed:
-        response_headers["X-Aura-Delivery-Replayed"] = "true"
-    return JSONResponse(
-        payload,
-        status_code=int(status_code),
-        headers=response_headers,
-    )
-
-
-def _chat_delivery_replay_response(record: DeliveryRecord) -> JSONResponse:
-    if not record.terminal or record.response is None or record.http_status is None:
-        raise ChatDeliveryJournalCorruption(
-            "chat delivery replay requested without a terminal receipt"
-        )
-    payload = dict(record.response)
-    payload["delivery_replayed"] = True
-    return _chat_delivery_json_response(
-        payload,
-        status_code=record.http_status,
-        turn_id=record.turn_id,
-        idempotency_key=record.identity.idempotency_key,
-        replayed=True,
-    )
-
-
-async def _chat_delivery_heartbeat(
-    journal: Any,
-    admission: DeliveryAdmission,
-    fence_lost: asyncio.Event,
-) -> None:
-    interval_s = max(0.02, min(5.0, float(journal.stale_after_s) / 3.0))
-    try:
-        while not fence_lost.is_set():
-            await asyncio.sleep(interval_s)
-            if not await journal.renew(admission):
-                fence_lost.set()
-                return
-    except asyncio.CancelledError:
-        raise
-    except ChatDeliveryJournalError as exc:
-        fence_lost.set()
-        logger.error("Chat delivery lease renewal failed closed: %s", exc)
-
-
-async def _stop_chat_delivery_heartbeat(task: asyncio.Task[Any] | None) -> None:
-    if task is None:
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-
-async def _finalize_chat_delivery(
-    journal: Any,
-    admission: DeliveryAdmission,
-    *,
-    state: DeliveryState,
-    status_code: int,
-    payload: dict[str, Any],
-) -> DeliveryRecord:
-    operation = get_task_tracker().create_task(
-        journal.finalize(
-            admission,
-            state=state,
-            http_status=status_code,
-            response=payload,
-        ),
-        name=f"ChatDeliveryFinalize:{admission.record.turn_id}",
-    )
-    try:
-        return await asyncio.shield(operation)
-    except asyncio.CancelledError:
-        try:
-            await operation
-        except ChatDeliveryJournalError as exc:
-            logger.error(
-                "Chat delivery terminal receipt failed during cancellation: %s",
-                exc,
-            )
-        raise
-
-
-async def _chat_delivery_fence_response(
-    journal: Any,
-    admission: DeliveryAdmission,
-) -> JSONResponse:
-    current = await journal.get(admission.record.identity)
-    if current is not None and current.terminal:
-        return _chat_delivery_replay_response(current)
-    record = current or admission.record
-    return _chat_delivery_json_response(
-        {
-            "response": (
-                "This chat execution was superseded by the current fenced owner. "
-                "Use the delivery status contract instead of replaying it."
-            ),
-            "status": "delivery_pending",
-            "delivery_state": "running",
-            "turn_id": record.turn_id,
-            "idempotency_key": record.identity.idempotency_key,
-            "delivery_generation": record.generation,
-            "delivery_replayed": False,
-        },
-        status_code=202,
-        turn_id=record.turn_id,
-        idempotency_key=record.identity.idempotency_key,
-        headers={"Retry-After": "1"},
-    )
-
-
-def _observe_authenticated_chat_turn(
-    request: Request | None,
-    body: Any,
-) -> str:
-    """Apply exact-agent consent and observe the original HTTP chat turn."""
-    principal = _authenticated_chat_principal(request)
-    message = str(getattr(body, "message", "") or "")
-    if not principal or not message:
-        return principal
-    if len(message.encode("utf-8", errors="replace")) > MAX_CHAT_MESSAGE_BYTES:
-        return principal
-
-    session_key = _chat_turn_session_key(request, body)
-    idempotency_key = (
-        str(request.headers.get("X-Idempotency-Key") or "").strip()[:240]
-        if request is not None
-        else ""
-    )
-    observed_at = time.time()
-    event_nonce = (
-        f"idempotency:{idempotency_key}"
-        if idempotency_key
-        else f"request:{uuid.uuid4().hex}"
-    )
-    evidence_digest = hashlib.sha256(
-        f"http-chat-v1\n{principal}\n{session_key}\n{event_nonce}\n{message}".encode(
-            "utf-8",
-            errors="replace",
-        )
-    ).hexdigest()
-
-    try:
-        authority = optional_service("relational_memory")
-        if authority is not None:
-            from core.runtime.memory_consent import apply_relational_memory_command
-
-            control = apply_relational_memory_command(
-                authority,
-                principal,
-                message,
-                receipt_id=f"chat-command-{evidence_digest}",
-            )
-            if control is not None and request is not None:
-                request.state.relational_memory_control = control
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation(
-            "chat.relational_memory_control",
-            exc,
-            action="continued the authenticated turn after relational memory control failed",
-        )
-
-    try:
-        estimator = optional_service("other_agent_model")
-        if estimator is None or not hasattr(estimator, "observe_message"):
-            return principal
-        estimator.observe_message(
-            principal,
-            message,
-            now=observed_at,
-            persist=False,
-            evidence_digest=evidence_digest,
-        )
-        snapshot = (
-            estimator.cognitive_snapshot(principal, observed_at)
-            if hasattr(estimator, "cognitive_snapshot")
-            else None
-        )
-        observer = optional_service("recursive_tom")
-        if observer is not None and hasattr(observer, "observe_agent"):
-            observer.observe_agent(
-                principal,
-                kind="conversation_turn",
-                strength=0.8,
-                evidence_digest=evidence_digest,
-                observed_at=observed_at,
-            )
-        if (
-            observer is not None
-            and isinstance(snapshot, dict)
-            and hasattr(observer, "register_interaction")
-        ):
-            snapshot["evidence_digest"] = evidence_digest
-            snapshot["at"] = observed_at
-            observer.register_interaction(principal, snapshot)
-        if hasattr(estimator, "save_if_due"):
-            get_task_tracker().track(
-                asyncio.to_thread(estimator.save_if_due),
-                name="chat.other_agent_model_persist",
-            )
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation(
-            "chat.other_agent_observation",
-            exc,
-            action="continued the authenticated turn without social-state observation",
-        )
-    return principal
-
-
-async def _record_http_chat_delivery(
-    response_text: str,
-    *,
-    principal: str,
-    session_key: str,
-    status_code: int,
-    status: str,
-    turn_id: str,
-    terminal_at: float,
-) -> None:
-    """Emit and consume a principal-bound receipt after the HTTP body is sent."""
-    if not response_text or not principal:
-        return
-
-    def _record() -> None:
-        from core.runtime.receipts import OutputReceipt, get_receipt_store
-
-        principal_digest = digest_principal_binding(principal)
-        receipt = get_receipt_store().emit(
-            OutputReceipt(
-                receipt_id=f"output-chat-http-{turn_id}",
-                cause="chat_http_response",
-                created_at=terminal_at,
-                origin="api",
-                target="primary",
-                digest=digest_output_content(response_text),
-                metadata={
-                    "accepted_sinks": ["http_response_body"],
-                    "delivery_stage": "transport_accepted",
-                    "recipient_principal_digest": principal_digest,
-                    "session_digest": hashlib.sha256(
-                        session_key.encode("utf-8", errors="replace")
-                    ).hexdigest(),
-                    "status": status[:120],
-                    "status_code": int(status_code),
-                    "turn_id": turn_id,
-                },
-            )
-        )
-        estimator = optional_service("other_agent_model")
-        if estimator is not None and hasattr(estimator, "record_response"):
-            estimator.record_response(
-                principal,
-                response_text,
-                receipt.receipt_id,
-            )
-
-    try:
-        await asyncio.to_thread(_record)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation(
-            "chat.http_delivery_receipt",
-            exc,
-            action="reported HTTP delivery without opening an unreceipted feedback window",
-        )
-
-
-def _attach_http_chat_delivery_receipt(
-    response: JSONResponse,
-    *,
-    request: Request | None,
-    body: Any,
-    payload: dict[str, Any],
-    record: DeliveryRecord | None = None,
-) -> None:
-    response_text = str(payload.get("response") or "").strip()
-    principal = _authenticated_chat_principal(request)
-    if not response_text or not principal:
-        return
-    session_key = _chat_turn_session_key(request, body)
-    status = str(payload.get("status") or "")
-    existing_background = response.background
-    # The delivery record enriches the receipt when the paired-boundary
-    # produced one; a transport receipt without it is still honest (fresh
-    # terminal time, no turn binding) — the social/feedback path exercises
-    # this standalone.
-    turn_id = str(getattr(record, "turn_id", "") or "")
-    terminal_at = float(
-        getattr(record, "terminal_at", 0.0)
-        or getattr(record, "updated_at", 0.0)
-        or time.time()
-    )
-
-    async def _after_send() -> None:
-        try:
-            if existing_background is not None:
-                await existing_background()
-        finally:
-            await _record_http_chat_delivery(
-                response_text,
-                principal=principal,
-                session_key=session_key,
-                status_code=response.status_code,
-                status=status,
-                turn_id=turn_id,
-                terminal_at=terminal_at,
-            )
-
-    response.background = BackgroundTask(_after_send)
-
-
-def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[..., Any]:
-    """Fence every chat turn before side effects and durably seal its outcome."""
-
-    @wraps(handler)
-    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
-        body = kwargs.get("body")
-        if body is None and args:
-            body = args[0]
-        request = kwargs.get("request")
-        if request is None and len(args) > 1:
-            request = args[1]
-        if isinstance(body, Request):
-            request = body
-            body = None
-        exact_principal = _authenticated_chat_principal(request)
-        conversation_only = bool(
-            request_access_profile(request).get("conversation_only", True)
-        )
-        strict_output_status = bool(
-            not conversation_only
-            and request is not None
-            and str(request.headers.get("X-Aura-Benchmark") or "").casefold()
-            == "true"
-        )
-
-        identity: DeliveryIdentity | None = None
-        try:
-            identity, request_hash, approval_resume_token = (
-                _chat_delivery_request_contract(
-                    request,
-                    body,
-                    exact_principal=exact_principal,
-                )
-            )
-            journal = await asyncio.to_thread(get_chat_delivery_journal)
-            admission = await journal.reserve(
-                identity,
-                request_hash,
-                wait_timeout_s=_chat_delivery_wait_timeout_s(),
-                approval_resume_token=approval_resume_token,
-            )
-        except ValueError as exc:
-            return _chat_delivery_json_response(
-                {
-                    "response": "The chat delivery identity or request contract was invalid.",
-                    "status": "invalid_chat_delivery_contract",
-                    "detail": str(exc),
-                    "delivery_state": "failed",
-                },
-                status_code=400,
-                idempotency_key=(identity.idempotency_key if identity else ""),
-            )
-        except (ChatDeliveryJournalCorruption, ChatDeliveryJournalUnavailable) as exc:
-            logger.error("Chat delivery journal admission failed closed: %s", exc)
-            return _chat_delivery_json_response(
-                {
-                    "response": (
-                        "The durable chat delivery authority is unavailable. I did not "
-                        "start this turn or any of its side effects."
-                    ),
-                    "status": "chat_delivery_journal_unavailable",
-                    "delivery_state": "failed",
-                    "response_confidence": "failed",
-                },
-                status_code=503,
-                idempotency_key=(identity.idempotency_key if identity else ""),
-                headers={"Retry-After": "1"},
-            )
-
-        if admission.kind is AdmissionKind.MISMATCH:
-            return _chat_delivery_json_response(
-                {
-                    "response": (
-                        "That idempotency key is already bound to a different chat "
-                        "request. The original turn was not changed."
-                    ),
-                    "status": "idempotency_payload_mismatch",
-                    "delivery_state": "mismatch",
-                    "turn_id": admission.record.turn_id,
-                    "idempotency_key": admission.record.identity.idempotency_key,
-                    "response_confidence": "failed",
-                },
-                status_code=409,
-                turn_id=admission.record.turn_id,
-                idempotency_key=admission.record.identity.idempotency_key,
-            )
-
-        if admission.kind is AdmissionKind.REPLAY:
-            try:
-                response = _chat_delivery_replay_response(admission.record)
-                replay_payload = dict(admission.record.response or {})
-                replay_payload["delivery_replayed"] = True
-                _attach_http_chat_delivery_receipt(
-                    response,
-                    request=request,
-                    body=body,
-                    payload=replay_payload,
-                    record=admission.record,
-                )
-                return response
-            except ChatDeliveryJournalCorruption as exc:
-                logger.error("Chat delivery replay failed closed: %s", exc)
-                return _chat_delivery_json_response(
-                    {
-                        "response": "The stored chat delivery receipt failed validation.",
-                        "status": "chat_delivery_journal_corrupt",
-                        "delivery_state": "failed",
-                        "response_confidence": "failed",
-                    },
-                    status_code=503,
-                    turn_id=admission.record.turn_id,
-                    idempotency_key=admission.record.identity.idempotency_key,
-                )
-
-        if admission.kind is AdmissionKind.PENDING:
-            return _chat_delivery_json_response(
-                admission.record.public_status(include_result=False),
-                status_code=202,
-                turn_id=admission.record.turn_id,
-                idempotency_key=admission.record.identity.idempotency_key,
-                headers={"Retry-After": "1"},
-            )
-
-        turn_token = _CHAT_DELIVERY_TURN_ID.set(admission.record.turn_id)
-        key_token = _CHAT_DELIVERY_IDEMPOTENCY_KEY.set(
-            admission.record.identity.idempotency_key
-        )
-        pending_claim_token = _CHAT_PENDING_DELIVERY_CLAIM.set(("", ()))
-        fence_lost = asyncio.Event()
-        heartbeat_task = get_task_tracker().create_task(
-            _chat_delivery_heartbeat(journal, admission, fence_lost),
-            name=f"ChatDeliveryHeartbeat:{admission.record.turn_id}",
-        )
-        try:
-            try:
-                observed_principal = _observe_authenticated_chat_turn(request, body)
-                with (
-                    relational_principal_scope(observed_principal or exact_principal),
-                    bind_chat_delivery_progress(journal, admission),
-                ):
-                    await report_chat_delivery_progress(
-                        phase="understanding",
-                        message="Understanding the request and gathering its relevant context.",
-                        details={"surface": request_access_profile(request).get("surface", "")},
-                    )
-                    response = await handler(*args, **kwargs)
-                    await report_chat_delivery_progress(
-                        phase="finalizing",
-                        message="Checking the result and its evidence before replying.",
-                    )
-            except asyncio.CancelledError:
-                cancelled_payload = _chat_delivery_payload(
-                    {
-                        "response": (
-                            "The transport ended before this chat execution produced "
-                            "an authoritative terminal response. Automatic replay is fenced."
-                        ),
-                        "status": "delivery_ambiguous",
-                        "response_confidence": "failed",
-                    },
-                    admission,
-                    state=DeliveryState.AMBIGUOUS,
-                )
-                try:
-                    await _finalize_chat_delivery(
-                        journal,
-                        admission,
-                        state=DeliveryState.AMBIGUOUS,
-                        status_code=409,
-                        payload=cancelled_payload,
-                    )
-                except (ChatDeliveryFenceLost, ChatDeliveryJournalError) as exc:
-                    logger.error(
-                        "Chat cancellation could not seal its authoritative state: %s",
-                        exc,
-                    )
-                raise
-            except HTTPException as exc:
-                if conversation_only:
-                    response = JSONResponse(
-                        {
-                            "response": "The paired conversation request was rejected.",
-                            "status": "paired_request_rejected",
-                            "response_confidence": "failed",
-                        },
-                        status_code=exc.status_code,
-                        headers=exc.headers,
-                    )
-                else:
-                    response = JSONResponse(
-                        {
-                            "detail": exc.detail,
-                            "status": "request_rejected",
-                            "response_confidence": "failed",
-                        },
-                        status_code=exc.status_code,
-                        headers=exc.headers,
-                    )
-            except Exception as exc:  # noqa: BLE001 - terminal route boundary
-                record_degradation("chat.delivery_boundary", exc)
-                logger.error("Chat delivery boundary caught an uncaught failure", exc_info=True)
-                response = JSONResponse(
-                    {
-                        "response": (
-                            "The chat execution failed before an authoritative answer formed."
-                        ),
-                        "status": "chat_delivery_execution_failed",
-                        "error_type": type(exc).__name__,
-                        "response_confidence": "failed",
-                    },
-                    status_code=500,
-                )
-
-            if not isinstance(response, JSONResponse):
-                # A handler that returned the reply TEXT has produced an answer;
-                # the only thing wrong is its envelope. Erasing it and shipping a
-                # 500 destroys real work for a type error — measured live: Aura
-                # opened Notes and wrote the requested note (it is on disk), the
-                # salvage path returned the reply as a bare str, and the person
-                # saw "The chat route returned an unsupported response format."
-                #
-                # Deliver the text and record the envelope defect, rather than
-                # letting a transport detail decide whether the user gets their
-                # answer. The 500 remains for genuinely unusable returns.
-                coerced = response if isinstance(response, str) else None
-                if coerced is not None and coerced.strip():
-                    logger.error(
-                        "Chat handler returned a bare %s instead of a JSONResponse "
-                        "(%d chars); delivering the text and recording the envelope "
-                        "defect rather than discarding a real answer.",
-                        type(response).__name__,
-                        len(coerced),
-                    )
-                    record_degradation(
-                        "chat.response_envelope",
-                        TypeError(
-                            f"chat handler returned {type(response).__name__}, not JSONResponse"
-                        ),
-                        action="delivered the handler's reply text and continued",
-                        severity="warning",
-                    )
-                    response = JSONResponse(
-                        {
-                            "response": coerced,
-                            "status": "chat_response_envelope_coerced",
-                            "response_confidence": "degraded",
-                        },
-                        status_code=200,
-                    )
-                else:
-                    response = JSONResponse(
-                        {
-                            "response": "The chat route returned an unsupported response format.",
-                            "status": "chat_response_format_rejected",
-                            "response_confidence": "failed",
-                        },
-                        # Real chat failures are delivered in-band so the UI
-                        # can render the authoritative status without a retry
-                        # storm. Proof/benchmark callers retain strict HTTP
-                        # failure semantics.
-                        status_code=500 if strict_output_status else 200,
-                    )
-
-            payload: dict[str, Any]
-            try:
-                decoded = json.loads(bytes(response.body))
-                if not isinstance(decoded, dict):
-                    raise TypeError("chat response body must be a JSON object")
-                payload = decoded
-                if conversation_only:
-                    payload = _paired_chat_response_payload(payload)
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                record_degradation("chat.paired_response_projection", exc)
-                payload = {
-                    "response": "The chat response could not be projected safely.",
-                    "status": "chat_response_projection_failed",
-                    "response_confidence": "failed",
-                }
-                response.status_code = 500 if strict_output_status else 200
-
-            try:
-                from core.cognition.expressive_affordances import (
-                    sanitize_affordance_control_syntax,
-                )
-
-                affordance_sanitization = sanitize_affordance_control_syntax(
-                    str(payload.get("response") or "")
-                )
-                if affordance_sanitization.changed:
-                    record_degradation(
-                        "chat.affordance_visibility_boundary",
-                        ValueError(
-                            "private affordance control syntax reached final delivery"
-                        ),
-                        severity="warning",
-                        action=(
-                            "stripped private affordance syntax before journaling "
-                            "and delivery"
-                        ),
-                        extra={
-                            "removed_controls": affordance_sanitization.removed_controls,
-                            "malformed_controls": affordance_sanitization.malformed_controls,
-                        },
-                    )
-                    payload["response"] = (
-                        affordance_sanitization.text
-                        or "I wasn't able to realize that action in this turn."
-                    )
-                    if str(payload.get("response_confidence") or "").casefold() not in {
-                        "failed",
-                        "failed_closed",
-                    }:
-                        payload["response_confidence"] = "degraded"
-                    if str(payload.get("status") or "").casefold() in {"", "ok"}:
-                        payload["status"] = "chat_affordance_control_sanitized"
-            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                unsafe_control_visible = _contains_private_affordance_control_syntax(
-                    payload.get("response")
-                )
-                record_degradation(
-                    "chat.affordance_visibility_boundary",
-                    exc,
-                    severity="warning",
-                    action=(
-                        "replaced the response because private control visibility could "
-                        "not be verified"
-                        if unsafe_control_visible
-                        else "kept control-free prose after the affordance sanitizer failed"
-                    ),
-                )
-                if unsafe_control_visible:
-                    payload["response"] = (
-                        "I couldn't verify that the action control stayed private, so I "
-                        "did not deliver that draft."
-                    )
-                    payload["status"] = "chat_affordance_visibility_unavailable"
-                    payload["response_confidence"] = "failed"
-                    response.status_code = 500 if strict_output_status else 200
-
-            terminal_state = _chat_delivery_state_for_response(
-                payload,
-                response.status_code,
-            )
-            payload = _chat_delivery_payload(
-                payload,
-                admission,
-                state=terminal_state,
-            )
-
-            if fence_lost.is_set():
-                return await _chat_delivery_fence_response(journal, admission)
-
-            try:
-                terminal_record = await _finalize_chat_delivery(
-                    journal,
-                    admission,
-                    state=terminal_state,
-                    status_code=response.status_code,
-                    payload=payload,
-                )
-            except ChatDeliveryFenceLost:
-                return await _chat_delivery_fence_response(journal, admission)
-            except ChatDeliveryJournalError as exc:
-                logger.error("Chat terminal receipt failed closed: %s", exc)
-                return _chat_delivery_json_response(
-                    {
-                        "response": (
-                            "The turn ran, but its durable terminal receipt could not be "
-                            "sealed. The result is withheld to prevent unsafe replay."
-                        ),
-                        "status": "chat_delivery_terminal_unsealed",
-                        "delivery_state": "ambiguous",
-                        "turn_id": admission.record.turn_id,
-                        "idempotency_key": admission.record.identity.idempotency_key,
-                        "response_confidence": "failed",
-                    },
-                    status_code=503,
-                    turn_id=admission.record.turn_id,
-                    idempotency_key=admission.record.identity.idempotency_key,
-                )
-
-            response.body = response.render(payload)
-            response.headers["content-length"] = str(len(response.body))
-            response.headers["Cache-Control"] = "no-store"
-            response.headers["X-Aura-Turn-ID"] = admission.record.turn_id
-            response.headers["X-Aura-Idempotency-Key"] = (
-                admission.record.identity.idempotency_key
-            )
-            _attach_http_chat_delivery_receipt(
-                response,
-                request=request,
-                body=body,
-                payload=payload,
-                record=terminal_record,
-            )
-            pending_owner, pending_ids = _CHAT_PENDING_DELIVERY_CLAIM.get()
-            if terminal_state is DeliveryState.COMPLETED and pending_owner and pending_ids:
-                try:
-                    from core.conversation.chat_preflight import acknowledge_delivery
-
-                    acknowledged = acknowledge_delivery(
-                        pending_ids,
-                        delivery_owner=pending_owner,
-                    )
-                    if acknowledged == len(pending_ids):
-                        _CHAT_PENDING_DELIVERY_CLAIM.set(("", ()))
-                    else:
-                        logger.warning(
-                            "Pending-chat terminal acknowledgement removed %d/%d rows",
-                            acknowledged,
-                            len(pending_ids),
-                        )
-                except _CHAT_RECOVERABLE_ERRORS as exc:
-                    record_degradation("chat.pending_delivery_ack", exc)
-            return response
-        finally:
-            pending_owner, pending_ids = _CHAT_PENDING_DELIVERY_CLAIM.get()
-            if pending_owner and pending_ids:
-                try:
-                    from core.conversation.chat_preflight import release_delivery_claims
-
-                    release_delivery_claims(pending_ids, delivery_owner=pending_owner)
-                except _CHAT_RECOVERABLE_ERRORS as exc:
-                    record_degradation("chat.pending_delivery_release", exc)
-            await _stop_chat_delivery_heartbeat(heartbeat_task)
-            _CHAT_PENDING_DELIVERY_CLAIM.reset(pending_claim_token)
-            _CHAT_DELIVERY_IDEMPOTENCY_KEY.reset(key_token)
-            _CHAT_DELIVERY_TURN_ID.reset(turn_token)
-
-    @wraps(handler)
-    async def _surface_settled(*args: Any, **kwargs: Any) -> JSONResponse:
-        response = await _wrapped(*args, **kwargs)
-        body = kwargs.get("body")
-        if body is None and args:
-            body = args[0]
-        request = kwargs.get("request")
-        if request is None and len(args) > 1:
-            request = args[1]
-        if isinstance(body, Request):
-            request = body
-            body = None
-        _note_chat_surface_delivery_response(response, request=request, body=body)
-        return response
-
-    return _surface_settled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # Max chat message size to prevent memory exhaustion
-MAX_CHAT_MESSAGE_BYTES = 64 * 1024  # 64KB
-_CHAT_RECOVERABLE_ERRORS = (
-    RuntimeError,
-    AttributeError,
-    TypeError,
-    ValueError,
-    OSError,
-    ImportError,
-    LookupError,
-    json.JSONDecodeError,
-    asyncio.InvalidStateError,
-    asyncio.QueueEmpty,
-    asyncio.QueueFull,
-    HTTPException,
-    psutil.Error,
-)
 
 _BENCHMARK_CHAT_FALLBACK_MARKERS = (
     "i'm still with",
@@ -1513,142 +656,25 @@ def _benchmark_reply_contract_unmet(prompt: str, reply: str) -> str | None:
 
 # ── Session & Conversation Log ────────────────────────────────
 
-_conversation_log: list[dict] = []  # In-memory session log for current runtime
-_locks = {}
-def _get_convo_lock(): return _locks.setdefault("convo", asyncio.Lock())
-_conversation_log_lock = _get_convo_lock()
-_session_memory_pins: list[dict] = []
-_MAX_CONVERSATION_LOG_EXCHANGES = 500
-_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S = 1.5
-_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT = 3
+_conversation_log_lock = _chat_memory_state._get_convo_lock()
 _RECENT_CONVERSATION_CONTEXT_EXCHANGES = 12
-_RECENT_CONVERSATION_USER_CHARS = 800
-_RECENT_CONVERSATION_AURA_CHARS = 1200
 _RECENT_CONVERSATION_RENDERED_CHARS = 6000
-_SESSION_MEMORY_PIN_LEDGER_LIMIT = 500
-_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S = 2.0
 _CHAT_LIVE_MIND_COLLECTION_TIMEOUT_S = 2.5
 _CHAT_EXPORT_SECTION_TIMEOUT_S = 3.0
 _CHAT_REASONING_AUDIT_TIMEOUT_S = 1.5
 _CHAT_REASONING_AUDIT_MAX_ACTIVE = 2
-_CHAT_BLOCKING_MAX_ACTIVE = 8
 _CHAT_EXPORT_TOTAL_CHARS = 2 * 1024 * 1024
 _CHAT_EXPORT_ITEM_CHARS = 32 * 1024
 _REPO_PROBE_MAX_BYTES = 2 * 1024 * 1024
 _reasoning_audit_tasks: set[asyncio.Task[Any]] = set()
-_chat_blocking_tasks: set[asyncio.Task[Any]] = set()
-_chat_blocking_slots = threading.BoundedSemaphore(_CHAT_BLOCKING_MAX_ACTIVE)
 
 
-class _ChatBlockingBudgetSaturatedError(RuntimeError):
-    pass
 
 
-def _invoke_chat_blocking_with_slot(
-    operation: Callable[..., Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-) -> Any:
-    if not _chat_blocking_slots.acquire(blocking=False):
-        raise _ChatBlockingBudgetSaturatedError("chat blocking-work budget saturated")
-    try:
-        return operation(*args, **kwargs)
-    finally:
-        _chat_blocking_slots.release()
 
 
-def _start_bounded_chat_blocking_task(
-    operation: Callable[..., Any],
-    /,
-    *args: Any,
-    operation_name: str,
-    **kwargs: Any,
-) -> asyncio.Task[Any]:
-    """Start one owned blocking operation whose worker outlives waiter timeout."""
-    task = get_task_tracker().track(
-        asyncio.to_thread(
-            _invoke_chat_blocking_with_slot,
-            operation,
-            args,
-            kwargs,
-        ),
-        name=f"ChatBlocking:{operation_name}"[:120],
-        owner="interface.routes.chat",
-    )
-    _chat_blocking_tasks.add(task)
-    task.add_done_callback(_chat_blocking_tasks.discard)
-    return task
 
 
-async def _await_bounded_chat_blocking(
-    operation: Callable[..., Any],
-    /,
-    *args: Any,
-    timeout_s: float,
-    operation_name: str,
-    completion_grace_s: float = 0.0,
-    **kwargs: Any,
-) -> Any:
-    """Run bounded synchronous chat work without orphaning a late result.
-
-    Cancelling ``asyncio.to_thread`` does not stop its worker. The former
-    ``wait_for(to_thread(...))`` therefore discarded a deterministic result
-    while the operation kept consuming its slot. Keep one supervised task,
-    allow explicitly recoverable callers a small in-turn completion window,
-    and retain ownership until the worker actually exits even after a hard
-    timeout or caller cancellation.
-    """
-
-    task = _start_bounded_chat_blocking_task(
-        operation,
-        *args,
-        operation_name=operation_name,
-        **kwargs,
-    )
-    try:
-        primary_timeout = max(0.05, float(timeout_s))
-        await asyncio.wait({task}, timeout=primary_timeout)
-        if task.done():
-            return task.result()
-
-        completion_grace = max(0.0, float(completion_grace_s))
-        if completion_grace:
-            logger.info(
-                "Bounded chat operation %s reached its %.2fs soft budget; "
-                "waiting up to %.2fs for its already-running deterministic result.",
-                operation_name,
-                primary_timeout,
-                completion_grace,
-            )
-            await asyncio.wait({task}, timeout=completion_grace)
-            if task.done():
-                logger.info(
-                    "Recovered bounded chat operation %s during completion grace.",
-                    operation_name,
-                )
-                return task.result()
-
-        raise TimeoutError(
-            f"{operation_name} exceeded {primary_timeout + completion_grace:.2f}s hard budget"
-        )
-    except _ChatBlockingBudgetSaturatedError as exc:
-        record_degradation(
-            "chat.event_loop_budget",
-            exc,
-            severity="warning",
-            action=f"rejected saturated bounded chat operation {operation_name}",
-            extra={"operation": operation_name},
-        )
-        raise
-    except TimeoutError as exc:
-        record_degradation(
-            "chat.event_loop_budget",
-            exc,
-            severity="warning",
-            action=f"stopped waiting for bounded chat operation {operation_name}",
-            extra={"operation": operation_name, "timeout_s": float(timeout_s)},
-        )
-        raise
 
 
 class PreemptibleChatLock:
@@ -1823,476 +849,43 @@ _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S = _env_float(
     ),
     minimum=45.0,
 )
-_CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
-_CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME = "ChatTurnMemoryLogRetry"
 _CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME = "ChatTurnMemoryLogStartup"
-_CHAT_TURN_MEMORY_LOG_BATCH_MAX = 16
-_CHAT_TURN_MEMORY_LOG_RUN_MAX = 128
-_CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
-_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S = 8.0
-_CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S = 61.0
 _CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S = 120.0
 _CHAT_TURN_MEMORY_LOG_STARTUP_POLL_S = 0.25
-_CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER = "chat.durable_memory_log_outbox"
-_DURABLE_CONVERSATION_WRITE_TIMEOUT_S = _DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S
-_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S = 12.0
-_DURABLE_CONVERSATION_WRITE_HISTORY_MAX = 1024
 
 
-@dataclasses.dataclass
-class _DurableConversationWrite:
-    operation_id: str
-    payload_sha256: str
-    task: asyncio.Task[Any]
-    state: str = "pending"
-    attempt: int = 1
-    error: str = ""
-    started_at: float = dataclasses.field(default_factory=time.monotonic)
-    finished_at: float | None = None
 
 
-_DURABLE_CONVERSATION_WRITES: dict[str, _DurableConversationWrite] = {}
-_DURABLE_CONVERSATION_WRITES_LOCK = threading.RLock()
-_DURABLE_CONVERSATION_SHUTDOWN_HANDLER = "chat.durable_conversation_writes"
 
 
-def _new_exchange_id() -> str:
-    return uuid.uuid4().hex
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
 
 
-def _trim_conversation_log_locked() -> None:
-    while len(_conversation_log) > _MAX_CONVERSATION_LOG_EXCHANGES:
-        _conversation_log.pop(0)
 
 
-def _durable_conversation_payload_sha256(payload: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest()
 
 
-def _settle_durable_conversation_write(
-    operation_id: str,
-    task: asyncio.Task[Any],
-) -> None:
-    terminal_state = ""
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        record = _DURABLE_CONVERSATION_WRITES.get(operation_id)
-        if record is None or record.task is not task or record.state != "pending":
-            return
-        record.finished_at = time.monotonic()
-        if task.cancelled():
-            record.state = "failed"
-            record.error = "write_task_cancelled"
-        else:
-            try:
-                task.result()
-            except Exception as exc:  # noqa: BLE001 - retain exact terminal failure
-                record.state = "failed"
-                record.error = f"{type(exc).__name__}:{exc}"
-            else:
-                record.state = "committed"
-                record.error = ""
-        terminal_state = record.state
-
-    exchange_id, separator, operation_kind = operation_id.rpartition(":")
-    if not separator or operation_kind not in {"user", "exchange"}:
-        return
-    if operation_kind == "exchange" and terminal_state == "committed":
-        with _DURABLE_CONVERSATION_WRITES_LOCK:
-            user_record = _DURABLE_CONVERSATION_WRITES.get(f"{exchange_id}:user")
-            if user_record is not None and user_record.state == "failed":
-                user_record.state = "superseded"
-                user_record.error = "superseded_by_atomic_exchange"
-        _schedule_chat_turn_memory_log()
-    # Completion callbacks execute on the owning event loop. Updating these
-    # scalar receipt fields in place lets operators see a late write settle;
-    # the registry above remains authoritative across log trimming.
-    for entry in reversed(_conversation_log):
-        if str(entry.get("id") or "") != exchange_id:
-            continue
-        if operation_kind == "user":
-            entry["user_persistence_state"] = terminal_state
-            entry["user_persisted"] = terminal_state == "committed"
-        else:
-            entry["durability_state"] = terminal_state
-        break
 
 
-def _prune_durable_conversation_writes_locked() -> None:
-    overflow = len(_DURABLE_CONVERSATION_WRITES) - _DURABLE_CONVERSATION_WRITE_HISTORY_MAX
-    if overflow <= 0:
-        return
-    terminal = sorted(
-        (
-            record
-            for record in _DURABLE_CONVERSATION_WRITES.values()
-            if record.state != "pending"
-        ),
-        key=lambda record: record.finished_at or record.started_at,
-    )
-    for record in terminal[:overflow]:
-        _DURABLE_CONVERSATION_WRITES.pop(record.operation_id, None)
 
 
-async def _drain_durable_conversation_writes() -> None:
-    """Finish every admitted transcript write during memory-commit shutdown."""
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        pending = {
-            record.task
-            for record in _DURABLE_CONVERSATION_WRITES.values()
-            if record.state == "pending" and not record.task.done()
-        }
-    if pending:
-        _, remaining = await asyncio.wait(
-            pending,
-            timeout=_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S,
-        )
-        if remaining:
-            names = sorted(task.get_name() for task in remaining)
-            raise TimeoutError(
-                "durable conversation shutdown drain timed out: " + ", ".join(names[:8])
-            )
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        records = list(_DURABLE_CONVERSATION_WRITES.values())
-    for record in records:
-        if record.task.done():
-            _settle_durable_conversation_write(record.operation_id, record.task)
-    failed = [
-        record
-        for record in records
-        if record.state == "failed" and record.finished_at is not None
-    ]
-    if failed:
-        raise RuntimeError(
-            "durable conversation write failure during shutdown: "
-            + ", ".join(f"{record.operation_id}={record.error}" for record in failed[-8:])
-        )
 
 
-def _ensure_durable_conversation_shutdown_handler() -> None:
-    from core.runtime.shutdown_coordinator import get_shutdown_coordinator
-
-    coordinator = get_shutdown_coordinator()
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        if _DURABLE_CONVERSATION_SHUTDOWN_HANDLER in coordinator.handler_names(
-            "memory_commit"
-        ):
-            return
-        coordinator.register(
-            _drain_durable_conversation_writes,
-            phase="memory_commit",
-            name=_DURABLE_CONVERSATION_SHUTDOWN_HANDLER,
-            timeout=_DURABLE_CONVERSATION_WRITE_DRAIN_TIMEOUT_S + 1.0,
-        )
 
 
-def _start_durable_conversation_write(
-    *,
-    operation_id: str,
-    payload: dict[str, Any],
-    operation: Callable[[], Any],
-) -> _DurableConversationWrite:
-    """Start or reuse one idempotent durable write with retained ownership."""
-    safe_operation_id = str(operation_id or "")[:160]
-    if not safe_operation_id:
-        raise ValueError("durable conversation write requires an operation id")
-    payload_sha256 = _durable_conversation_payload_sha256(payload)
-    _ensure_durable_conversation_shutdown_handler()
-
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        existing = _DURABLE_CONVERSATION_WRITES.get(safe_operation_id)
-        if existing is not None:
-            if existing.payload_sha256 != payload_sha256:
-                raise ValueError(
-                    f"durable conversation operation conflict: {safe_operation_id}"
-                )
-            if existing.state in {"pending", "committed"}:
-                return existing
-            attempt = existing.attempt + 1
-        else:
-            attempt = 1
-
-        task = _start_bounded_chat_blocking_task(
-            operation,
-            operation_name=f"conversation_persistence:{safe_operation_id}:attempt-{attempt}",
-        )
-        record = _DurableConversationWrite(
-            operation_id=safe_operation_id,
-            payload_sha256=payload_sha256,
-            task=task,
-            attempt=attempt,
-        )
-        _DURABLE_CONVERSATION_WRITES[safe_operation_id] = record
-        _prune_durable_conversation_writes_locked()
-        task.add_done_callback(
-            lambda completed, operation_id=safe_operation_id: (
-                _settle_durable_conversation_write(operation_id, completed)
-            )
-        )
-        return record
 
 
-async def _await_durable_conversation_write(
-    record: _DurableConversationWrite,
-    *,
-    timeout_s: float | None = None,
-) -> str:
-    if record.state != "pending":
-        return record.state
-    wait_budget = (
-        _DURABLE_CONVERSATION_WRITE_TIMEOUT_S
-        if timeout_s is None
-        else float(timeout_s)
-    )
-    await asyncio.wait({record.task}, timeout=max(0.01, wait_budget))
-    if record.task.done():
-        _settle_durable_conversation_write(record.operation_id, record.task)
-    return record.state
 
 
-def _durable_conversation_write_snapshot(operation_id: str) -> dict[str, Any] | None:
-    with _DURABLE_CONVERSATION_WRITES_LOCK:
-        record = _DURABLE_CONVERSATION_WRITES.get(str(operation_id or "")[:160])
-        if record is None:
-            return None
-        return {
-            "operation_id": record.operation_id,
-            "payload_sha256": record.payload_sha256,
-            "state": record.state,
-            "attempt": record.attempt,
-            "error": record.error,
-            "task_done": record.task.done(),
-        }
 
 
-async def _persist_pending_conversation_user(
-    *,
-    exchange_id: str,
-    user_message: str,
-    session_id: str = "",
-) -> str:
-    """Commit the user side of a turn before foreground inference starts."""
-    try:
-        persistence = ServiceContainer.get("persistence", default=None)
-        record_turn = getattr(persistence, "record_turn", None)
-        if not callable(record_turn):
-            return "failed"
-
-        safe_exchange_id = str(exchange_id or "")[:64]
-        safe_session_id = str(session_id or "")[:64]
-        safe_user_message = str(user_message or "")
-        scope_kwargs = _chat_principal_scope_kwargs()
-        record = _start_durable_conversation_write(
-            operation_id=f"{safe_exchange_id}:user",
-            payload={
-                "kind": "pending_user",
-                "exchange_id": safe_exchange_id,
-                "user_message": safe_user_message,
-                "session_id": safe_session_id,
-                "scope": scope_kwargs,
-            },
-            operation=lambda: record_turn(
-                "user",
-                safe_user_message,
-                origin="desktop_ui",
-                cid=f"{safe_exchange_id}:user",
-                session_id=safe_session_id or None,
-                **scope_kwargs,
-            ),
-        )
-        state = await _await_durable_conversation_write(record)
-        if state == "pending":
-            timeout_error = TimeoutError(
-                f"pending conversation write retained after "
-                f"{_DURABLE_CONVERSATION_WRITE_TIMEOUT_S:.2f}s response budget"
-            )
-            record_degradation(
-                "chat.conversation_persistence",
-                timeout_error,
-                severity="warning",
-                action="retained late pending user-turn write under durable custody",
-                extra={"operation_id": record.operation_id, "attempt": record.attempt},
-            )
-            logger.warning(
-                "Durable pending user-turn write remains supervised: %s",
-                record.operation_id,
-            )
-        elif state == "failed":
-            raise RuntimeError(record.error or "pending user-turn write failed")
-        return state
-    except asyncio.CancelledError:
-        raise
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.conversation_persistence", exc)
-        logger.warning("Durable pending user-turn commit failed: %s", exc)
-        return "failed"
 
 
-async def _begin_logged_exchange(user_msg: str, *, session_id: str = "") -> str:
-    """Create and durably pre-log an in-flight exchange."""
-    exchange_id = _new_exchange_id()
-    principal_id, principal_surface = _chat_memory_identity()
-    async with _get_convo_lock():
-        _conversation_log.append(
-            {
-                "id": exchange_id,
-                "timestamp": _utc_now_iso(),
-                "user": user_msg,
-                "aura": "",
-                "status": "pending",
-                "session_id": str(session_id or "")[:64],
-                "principal_id": principal_id,
-                "principal_surface": principal_surface,
-                "user_persisted": False,
-                "user_persistence_state": "pending",
-                "durability_state": "pending",
-            }
-        )
-        _trim_conversation_log_locked()
-
-    user_persistence_state = await _persist_pending_conversation_user(
-        exchange_id=exchange_id,
-        user_message=user_msg,
-        session_id=session_id,
-    )
-    async with _get_convo_lock():
-        for entry in reversed(_conversation_log):
-            if str(entry.get("id") or "") == exchange_id:
-                entry["user_persistence_state"] = user_persistence_state
-                entry["user_persisted"] = user_persistence_state == "committed"
-                break
-    return exchange_id
 
 
-async def _complete_logged_exchange(
-    exchange_id: str | None,
-    user_msg: str,
-    aura_response: str,
-    *,
-    regenerated: bool = False,
-    record_experience: bool = True,
-) -> str:
-    """Finalize a pending exchange in place so history is never duplicated."""
-    final_response = aura_response or "…"
-    recorded_user = str(user_msg or "")
-
-    async with _get_convo_lock():
-        target: dict | None = None
-        if exchange_id:
-            for entry in reversed(_conversation_log):
-                if str(entry.get("id") or "") == str(exchange_id):
-                    target = entry
-                    break
-
-        if target is None:
-            principal_id, principal_surface = _chat_memory_identity()
-            target = {
-                "id": exchange_id or _new_exchange_id(),
-                "timestamp": _utc_now_iso(),
-                "user": recorded_user,
-                "principal_id": principal_id,
-                "principal_surface": principal_surface,
-            }
-            _conversation_log.append(target)
-
-        # A pending exchange was opened with the wire-visible user text. Do not
-        # replace it with the semantic utterance used for intent and generation
-        # when the exchange completes.
-        recorded_user = str(target.get("user") or recorded_user)
-        target["user"] = recorded_user
-        target["aura"] = final_response
-        target["status"] = "complete"
-        target["completed_at"] = _utc_now_iso()
-        target["durability_state"] = "pending"
-        target.setdefault("revision", 1)
-        target["aura_sha256"] = hashlib.sha256(
-            final_response.encode("utf-8")
-        ).hexdigest()
-        if regenerated:
-            target["regenerated"] = True
-        _trim_conversation_log_locked()
-
-    durability_state = await _persist_completed_conversation_exchange(
-        exchange_id=str(target.get("id") or exchange_id or ""),
-        user_message=recorded_user,
-        aura_response=final_response,
-        session_id=str(target.get("session_id") or ""),
-        user_already_persisted=bool(target.get("user_persisted")),
-    )
-    user_write = _durable_conversation_write_snapshot(
-        f"{str(target.get('id') or exchange_id or '')[:64]}:user"
-    )
-    async with _get_convo_lock():
-        target["durability_state"] = durability_state
-        if user_write is not None:
-            target["user_persistence_state"] = str(user_write.get("state") or "failed")
-            target["user_persisted"] = user_write.get("state") == "committed"
-
-    _record_unified_transcript_exchange(
-        recorded_user,
-        final_response,
-        session_id=str(target.get("session_id") or ""),
-        exchange_id=str(target.get("id") or exchange_id or ""),
-    )
-
-    if not record_experience:
-        return durability_state
-
-    try:
-        from core.runtime.conversation_support import record_conversation_experience
-
-        await record_conversation_experience(recorded_user, final_response)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Conversation experience recording skipped: %s", exc)
-    return durability_state
 
 
-def _record_unified_transcript_exchange(
-    user_message: str,
-    aura_response: str,
-    *,
-    session_id: str,
-    exchange_id: str,
-) -> None:
-    """Put the terminally delivered HTTP exchange into core continuity.
-
-    Persistence is durable history; this transcript is the bounded live
-    context used by referential continuation. Recording only after terminal
-    completion ensures Aura never remembers a draft that the user did not see.
-    """
-    try:
-        from core.conversation.unified_transcript import UnifiedTranscript
-
-        transcript = UnifiedTranscript.get_instance()
-        metadata = {
-            "exchange_id": str(exchange_id or "")[:64],
-            "origin": "desktop_ui",
-        }
-        transcript.add_text_input(
-            str(user_message or ""),
-            metadata=metadata,
-            conversation_id=session_id,
-        )
-        transcript.add_text_output(
-            str(aura_response or ""),
-            metadata=metadata,
-            conversation_id=session_id,
-        )
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.unified_transcript", exc)
-        logger.warning("Live transcript exchange recording failed: %s", exc)
 
 
 async def _mark_logged_exchange_preempted(
@@ -2304,32 +897,17 @@ async def _mark_logged_exchange_preempted(
 
     if not exchange_id:
         return
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         for entry in reversed(_conversation_log):
             if str(entry.get("id") or "") != str(exchange_id):
                 continue
             entry["status"] = "preempted"
             entry["aura"] = ""
-            entry["completed_at"] = _utc_now_iso()
+            entry["completed_at"] = _chat_preflight._utc_now_iso()
             entry["preemption_reason"] = str(reason or "foreground_chat_preempted")[:80]
             return
 
 
-async def _log_exchange(
-    user_msg: str,
-    aura_response: str,
-    *,
-    record_experience: bool = True,
-    session_id: str = "",
-):
-    """Record a conversation exchange for session tracking."""
-    exchange_id = await _begin_logged_exchange(user_msg, session_id=session_id)
-    await _complete_logged_exchange(
-        exchange_id,
-        user_msg,
-        aura_response,
-        record_experience=record_experience,
-    )
 
 
 async def _emit_chat_output_receipt(
@@ -2435,7 +1013,7 @@ async def _foreground_memory_admission_response(
                     "model lane safely, so I stopped before generation."
                 ),
                 "status": "memory_pressure_probe_unavailable",
-                "conversation_lane": _collect_conversation_lane_status(),
+                "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                 "memory_pressure": {
                     "measured": False,
                     "phase": str(phase or "foreground"),
@@ -2446,7 +1024,7 @@ async def _foreground_memory_admission_response(
         )
 
     if snapshot.critical:
-        live_state = _resolve_live_aura_state()
+        live_state = _chat_preflight._resolve_live_aura_state()
         if live_state:
             live_state.cognition.conversation_energy = 0.0
             live_state.cognition.current_mode = 0  # CognitiveMode.REACTIVE
@@ -2478,7 +1056,7 @@ async def _foreground_memory_admission_response(
                 "another system-level memory crash."
             ),
             "status": "memory_pressure_guard",
-            "conversation_lane": _collect_conversation_lane_status(),
+            "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
             "memory_pressure": snapshot_payload,
             "response_confidence": "guarded",
         },
@@ -2492,7 +1070,7 @@ async def _preserve_large_user_paste(user_msg: str) -> None:
     if len(content) < 4000:
         return
     try:
-        state = _resolve_live_aura_state()
+        state = _chat_preflight._resolve_live_aura_state()
         cognition = getattr(state, "cognition", None) if state is not None else None
         working_memory = getattr(cognition, "working_memory", None)
         if not isinstance(working_memory, list):
@@ -2519,16 +1097,6 @@ async def _preserve_large_user_paste(user_msg: str) -> None:
         logger.debug("Large paste preservation skipped: %s", exc)
 
 
-def _active_task_count_by_name(tracker: Any, task_name: str) -> int:
-    active = 0
-    for task in list(getattr(tracker, "tasks", ()) or ()):
-        try:
-            if not task.done() and task.get_name() == task_name:
-                active += 1
-        except _CHAT_RECOVERABLE_ERRORS as exc:
-            record_degradation("chat.task_tracker", exc)
-            logger.debug("Task name inspection failed: %s", exc)
-    return active
 
 
 def _resolve_exact_profile_user_id(request: Request) -> str:
@@ -2541,164 +1109,10 @@ def _resolve_exact_profile_user_id(request: Request) -> str:
         return ""
 
 
-async def _run_chat_turn_memory_log_item(
-    payload: dict[str, Any],
-) -> tuple[str, str]:
-    user_message = str(payload.get("user_content") or "")
-    aura_response = str(payload.get("aura_content") or "")
-    session_id = str(payload.get("session_id") or "")
-    chat_origin = str(payload.get("origin") or "unknown")
-    user_id = str(payload.get("principal_id") or "").strip()[:160]
-    principal_surface = str(payload.get("principal_surface") or "").strip().casefold()[:32]
-    operation_id = str(payload.get("operation_id") or "")[:160]
-    revision = int(payload.get("revision") or 1)
-    try:
-        from core.conversation.response_reliability import (
-            assess_conversation_learning_admission,
-        )
-
-        admission = assess_conversation_learning_admission(
-            user_message,
-            aura_response,
-        )
-        if not admission.ok:
-            logger.warning(
-                "Conversation learning rejected a non-admissible reply (%s); "
-                "durable transcript remains available for audit.",
-                ",".join(admission.reasons) or "unknown",
-            )
-            return "rejected", ",".join(admission.reasons) or "learning_admission_rejected"
-
-        from core.memory.chat_turn_logger import (
-            local_chat_turn_learning_rejection_reason,
-            log_chat_turn_auto,
-        )
-
-        local_rejection = local_chat_turn_learning_rejection_reason(
-            user_message,
-            aura_response,
-        )
-        if local_rejection:
-            return "rejected", local_rejection
-
-        logged = await asyncio.wait_for(
-            log_chat_turn_auto(
-                user_message=user_message,
-                aura_response=aura_response,
-                session_id=session_id,
-                emotional_valence=0.0,
-                metadata={
-                    "conversation_lane": True,
-                    "origin": chat_origin,
-                    "user_id": user_id,
-                    "principal_id": user_id,
-                    "principal_surface": principal_surface,
-                    "memory_log_operation_id": operation_id,
-                    "conversation_revision": revision,
-                    "conversation_exchange_id": str(
-                        payload.get("exchange_id") or ""
-                    )[:128],
-                },
-            ),
-            timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
-        )
-        if not logged:
-            return "retry", "episodic_memory_did_not_commit"
-
-        try:
-            from core.consciousness.coordinator import get_consciousness_coordinator
-
-            coordinator = await get_consciousness_coordinator()
-            await asyncio.wait_for(
-                coordinator.on_chat_turn(user_message, aura_response),
-                timeout=_CHAT_TURN_CONSCIOUSNESS_UPDATE_TIMEOUT_S,
-            )
-        except _CHAT_RECOVERABLE_ERRORS as exc:
-            record_degradation("chat.consciousness_update", exc)
-            logger.debug("Consciousness update skipped: %s", exc)
-        return "completed", ""
-    except TimeoutError as exc:
-        record_degradation("chat.memory_log_timeout", exc)
-        logger.warning(
-            "Chat turn memory log exceeded %.1fs; durable outbox retained it for retry.",
-            _CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
-        )
-        return "retry", f"TimeoutError:{exc}"
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Chat turn logging failed: %s", exc)
-        return "retry", f"{type(exc).__name__}:{exc}"
 
 
-async def _drain_chat_turn_memory_log_queue() -> None:
-    persistence = ServiceContainer.get("persistence", default=None)
-    claim = getattr(persistence, "claim_memory_log_batch", None)
-    settle = getattr(persistence, "settle_memory_log_item", None)
-    status = getattr(persistence, "memory_log_outbox_status", None)
-    if not callable(claim) or not callable(settle):
-        return
-
-    processed = 0
-    retry_delay_s: float | None = None
-    while processed < _CHAT_TURN_MEMORY_LOG_RUN_MAX:
-        try:
-            items = await asyncio.to_thread(
-                claim,
-                limit=min(
-                    _CHAT_TURN_MEMORY_LOG_BATCH_MAX,
-                    _CHAT_TURN_MEMORY_LOG_RUN_MAX - processed,
-                ),
-            )
-        except (sqlite3.Error, OSError, RuntimeError) as exc:
-            record_degradation("chat.memory_log_outbox_claim", exc)
-            _schedule_chat_turn_memory_log_retry(1.0)
-            return
-        if not items:
-            break
-        for payload in items:
-            outcome, error = await _run_chat_turn_memory_log_item(payload)
-            attempts = max(1, int(payload.get("attempts") or 1))
-            delay_s = min(60.0, float(2 ** min(6, attempts - 1)))
-            try:
-                terminal_state = await asyncio.to_thread(
-                    settle,
-                    str(payload.get("operation_id") or ""),
-                    outcome=outcome,
-                    error=error,
-                    retry_delay_s=delay_s,
-                )
-            except (sqlite3.Error, OSError, RuntimeError) as exc:
-                record_degradation("chat.memory_log_outbox_settle", exc)
-                _schedule_chat_turn_memory_log_retry(
-                    _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S
-                )
-                return
-            if terminal_state == "pending":
-                retry_delay_s = (
-                    delay_s
-                    if retry_delay_s is None
-                    else min(retry_delay_s, delay_s)
-                )
-            processed += 1
-
-    try:
-        outbox_status = await asyncio.to_thread(status) if callable(status) else {}
-    except (sqlite3.Error, OSError, RuntimeError) as exc:
-        record_degradation("chat.memory_log_outbox_status", exc)
-        _schedule_chat_turn_memory_log_retry(1.0)
-        return
-    pending = int(outbox_status.get("pending") or 0)
-    processing = int(outbox_status.get("processing") or 0)
-    if pending > 0 or processing > 0:
-        delay_s = retry_delay_s or (
-            0.05 if pending > 0 else _CHAT_TURN_MEMORY_LOG_LEASE_RECHECK_S
-        )
-        _schedule_chat_turn_memory_log_retry(delay_s)
 
 
-async def _retry_chat_turn_memory_log_after(delay_s: float) -> None:
-    await asyncio.sleep(max(0.01, float(delay_s)))
-    await _drain_chat_turn_memory_log_queue()
 
 
 def _memory_log_outbox_is_ready() -> bool:
@@ -2715,7 +1129,7 @@ async def _start_chat_turn_memory_log_when_ready() -> None:
     deadline = time.monotonic() + _CHAT_TURN_MEMORY_LOG_STARTUP_TIMEOUT_S
     while time.monotonic() < deadline:
         if _memory_log_outbox_is_ready():
-            if not _schedule_chat_turn_memory_log(chat_origin="startup_recovery"):
+            if not _chat_preflight._schedule_chat_turn_memory_log(chat_origin="startup_recovery"):
                 raise RuntimeError("chat_memory_log_startup_schedule_failed")
             return
         await asyncio.sleep(_CHAT_TURN_MEMORY_LOG_STARTUP_POLL_S)
@@ -2733,96 +1147,19 @@ async def _start_chat_turn_memory_log_when_ready() -> None:
     )
 
 
-def _schedule_chat_turn_memory_log_retry(delay_s: float) -> bool:
-    tracker = get_task_tracker()
-    if _active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME):
-        return True
-    retry_coro = _retry_chat_turn_memory_log_after(delay_s)
-    schedule = getattr(tracker, "bounded_track", None) or getattr(
-        tracker,
-        "create_task",
-        None,
-    )
-    if not callable(schedule):
-        retry_coro.close()
-        raise RuntimeError("task_tracker_has_no_scheduler")
-    try:
-        schedule(
-            retry_coro,
-            name=_CHAT_TURN_MEMORY_LOG_RETRY_TASK_NAME,
-        )
-        return True
-    except _CHAT_RECOVERABLE_ERRORS:
-        retry_coro.close()
-        raise
 
 
-def _ensure_chat_turn_memory_log_shutdown_handler() -> None:
-    from core.runtime.shutdown_coordinator import get_shutdown_coordinator
-
-    coordinator = get_shutdown_coordinator()
-    if _CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER in coordinator.handler_names(
-        "memory_commit"
-    ):
-        return
-    coordinator.register(
-        _drain_chat_turn_memory_log_queue,
-        phase="memory_commit",
-        name=_CHAT_TURN_MEMORY_LOG_SHUTDOWN_HANDLER,
-        timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S + 5.0,
-    )
 
 
-def _schedule_chat_turn_memory_log(
-    *,
-    user_message: str = "",
-    aura_response: str = "",
-    session_id: str = "",
-    chat_origin: str = "",
-    user_id: str = "",
-    principal_surface: str = "",
-) -> bool:
-    """Wake the durable post-response memory outbox worker."""
-    try:
-        persistence = ServiceContainer.get("persistence", default=None)
-        if not callable(getattr(persistence, "claim_memory_log_batch", None)):
-            return False
-        _ensure_chat_turn_memory_log_shutdown_handler()
-        task_tracker = get_task_tracker()
-        active_drains = _active_task_count_by_name(
-            task_tracker,
-            _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME,
-        )
-        if active_drains > 0:
-            return True
-
-        schedule = getattr(task_tracker, "bounded_track", None) or getattr(
-            task_tracker,
-            "create_task",
-            None,
-        )
-        if not callable(schedule):
-            raise RuntimeError("task_tracker_has_no_scheduler")
-        drain_coro = _drain_chat_turn_memory_log_queue()
-        try:
-            schedule(drain_coro, name=_CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME)
-        except _CHAT_RECOVERABLE_ERRORS:
-            drain_coro.close()
-            raise
-        return True
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Chat turn logging task creation failed: %s", exc)
-        return False
 
 
 def start_chat_turn_memory_log_worker() -> bool:
     """Recover durable pending memory work when the API runtime starts."""
     if _memory_log_outbox_is_ready():
-        return _schedule_chat_turn_memory_log(chat_origin="startup_recovery")
+        return _chat_preflight._schedule_chat_turn_memory_log(chat_origin="startup_recovery")
     try:
         tracker = get_task_tracker()
-        if _active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME):
+        if _chat_preflight._active_task_count_by_name(tracker, _CHAT_TURN_MEMORY_LOG_STARTUP_TASK_NAME):
             return True
         schedule = getattr(tracker, "bounded_track", None) or getattr(
             tracker,
@@ -2847,1150 +1184,55 @@ def start_chat_turn_memory_log_worker() -> bool:
 #: A second, separate request following the thing to be remembered. Only an
 #: explicit new ask counts — a wordy preamble around the memory request does
 #: not, because that turn is still entirely about memory.
-_SECOND_REQUEST_AFTER_PIN_RE = re.compile(
-    r"[,;]\s*(?:and|then|also|but)\s+(?:please\s+)?"
-    r"(?:tell|show|give|remind|explain|describe|answer|summarize|summarise|"
-    r"walk)\s+me\b"
-    r"|[.!?;]\s*(?:(?:also|then|and\s+then|separately|secondly|next)\b[\s,—–-]*)?"
-    r"(?:tell|show|open|create|write|export|find|search|go|make|change|"
-    r"summarize|summarise|explain|give|do|use|launch|click|describe|list|"
-    r"compare|walk|think|answer)\b"
-    r"|[.!?;]\s*(?:separately|on\s+another\s+note|aside\s+from\s+that|"
-    r"unrelatedly|changing\s+topic)\b"
-    r"|[.!?;]\s*(?:can|could|would|will|do|does|did|is|are|what|why|how|when|"
-    r"where|which|who)\s+you?\b",
-    re.IGNORECASE,
-)
 
 
-def _turn_has_substance_beyond_memory_request(user_message: str) -> bool:
-    """Whether this turn asks for something the memory template cannot answer.
-
-    The deterministic memory path ends the turn with one sentence. It may do
-    that only when remembering IS the turn. A question, or an explicit pivot
-    to a second subject, means there is more here than a pin confirmation.
-    """
-    text = " ".join(str(user_message or "").split())
-    if not text:
-        return False
-    pinned = _extract_session_memory_pin_request(text)
-    if not pinned:
-        return False
-    # Only what comes AFTER the thing being remembered can be a second
-    # request. A verbose preamble ("For this live reliability probe, remember…")
-    # is still one turn about memory.
-    index = text.find(pinned)
-    if index < 0:
-        return False
-    tail = text[index + len(pinned):]
-    if "?" in tail:
-        return True
-    return bool(_SECOND_REQUEST_AFTER_PIN_RE.search(tail))
 
 
-def _extract_session_memory_pin_request(user_message: str) -> str | None:
-    text = str(user_message or "").strip()
-    if not text:
-        return None
-    original = " ".join(text.split())
-    original_matching = original.replace("’", "'").replace("‘", "'")
-    original_matching = re.sub(
-        r"\bdont'?\b",
-        "don't",
-        original_matching,
-        flags=re.IGNORECASE,
-    )
-
-    def _clean_pinned_memory(raw: str) -> str:
-        pinned_text = str(raw or "").strip().strip("\"'“”")
-        pinned_text = re.sub(
-            r"(?:\s*[.!?]\s*|\s+)(?:just\s+)?"
-            r"(?:confirm|acknowledge|say\s+ok|reply\s+ok)\b.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        pinned_text = re.sub(
-            r"\s*[.!?]\s+(?:(?:also|then|and\s+then)\s+)?"
-            r"(?:tell|show|open|create|write|export|find|search|go|"
-            r"make|change|summarize|explain|give|do|use|launch|click)\b.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        pinned_text = re.sub(
-            r"\s*[.!?]\s+(?:can|could|would|will)\s+you\b.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        # A pivot into a second, unrelated request — "Separately —", "Now, on
-        # another note," — ends the thing being remembered.
-        #
-        # LIVE DEFECT, 2026-07-27: "Remember this: my project codename is
-        # HELIOTROPE, build 4471. Separately — do you think a system like you
-        # can actually prefer one thing over another…" pinned the whole tail,
-        # truncated mid-clause, and reported doing so as the entire reply.
-        pinned_text = re.sub(
-            r"\s*[.!?;]*\s+(?:separately|aside\s+from\s+that|on\s+another\s+note|"
-            r"unrelatedly|secondly|changing\s+topic)\b[\s,—–-]*.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        # A second request does not have to start a new sentence. "Please
-        # remember my dog is called Pixel, and tell me a joke" pinned the joke
-        # request as part of the dog's name — every trim above requires a
-        # sentence terminator, and a comma is not one.
-        pinned_text = re.sub(
-            r"\s*[,;]\s*(?:and|then|also|but)\s+(?:please\s+)?"
-            r"(?:tell|show|give|remind|explain|describe|answer|summarize|"
-            r"summarise|walk)\s+me\b.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        # …as does a following question of any shape.
-        # The question may arrive behind a discourse marker and a comma —
-        # "Remember: I prefer tea. Also, what do you make of the second law?"
-        # — which is why the marker is matched here rather than only the
-        # bare question word.
-        pinned_text = re.sub(
-            r"\s*[.!?]\s+"
-            r"(?:(?:also|then|next|separately|secondly|and|but|now)\b[\s,—–-]*)?"
-            r"(?:do|does|did|is|are|was|were|what|why|how|when|where|"
-            r"which|who|should|shall|may|might|must)\b[^.!?]*\?.*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        pinned_text = re.sub(
-            r"\s+for\s+(?:this\s+)?(?:conversation|chat|session|probe)[.!?]?\s*$",
-            "",
-            pinned_text,
-            flags=re.IGNORECASE,
-        )
-        return pinned_text.rstrip(" .!?")
-
-    head, sep, tail = text.partition(":")
-    normalized = (
-        f"{normalize_memory_intent_text(head)}{sep}{tail}"
-        if sep
-        else normalize_memory_intent_text(text)
-    )
-
-    pin_scope = (
-        r"(?:\s+(?:for me|for later|for later in this session|"
-        r"for later in this conversation|for later in this chat|"
-        r"across restart|across restarts|after restart|after a restart|"
-        r"across sessions|between sessions))?"
-    )
-    memory_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)?"
-    # \s* not \s+: "Remember: I prefer tea" has no space before the colon, and
-    # requiring one meant that turn pinned nothing at all — silently, because a
-    # missing pin has no failure mode, it just never comes back later.
-    patterns = (
-        rf"^(?:please\s+)?remember\s*{memory_object}{pin_scope}\s*:\s*(.+)$",
-        rf"^(?:please\s+)?remember\s+this{pin_scope}\s*:\s*(.+)$",
-        rf"^don't forget(?:\s+this)?{pin_scope}\s*:\s*(.+)$",
-        rf"^make note of this{pin_scope}\s*:\s*(.+)$",
-    )
-    for pattern in patterns:
-        match = re.match(pattern, normalized, flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            pinned = _clean_pinned_memory(match.group(1))
-            return pinned[:240] if pinned else None
-
-    # A discourse anchor such as "Remember the uncertainty you just named.
-    # How would that change your decision?" asks the cognitive path to use
-    # recent context; it is not a memory-write command. Explicit colon/object
-    # forms above still pin, including multi-sentence facts.
-    if re.search(
-        r"[.!?]\s+(?:how|what|why|where|when|who|would|could|can|does|do|is|are)\b",
-        original_matching,
-        flags=re.IGNORECASE,
-    ):
-        return None
-
-    prefixed_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)"
-    prefixed_patterns = (
-        rf"\b(?:please\s+)?remember\s+{prefixed_object}\s+(.+)$",
-        rf"\b(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
-    )
-    for pattern in prefixed_patterns:
-        match = re.search(pattern, original_matching, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            continue
-        pinned = _clean_pinned_memory(match.group(1))
-        if re.match(r"^(?:what|when|where|who|why|how)\b", pinned, flags=re.IGNORECASE):
-            continue
-        return pinned[:240] if pinned else None
-
-    natural_patterns = (
-        rf"^(?:please\s+)?remember\s+that{pin_scope}\s+(.+)$",
-        r"^(?:please\s+)?remember\s+((?:my|the|our)\s+.+)$",
-        rf"^don't forget\s+that{pin_scope}\s+(.+)$",
-        rf"^make\s+(?:a\s+)?note\s+that{pin_scope}\s+(.+)$",
-    )
-    for pattern in natural_patterns:
-        match = re.match(pattern, original_matching, flags=re.IGNORECASE | re.DOTALL)
-        if not match:
-            continue
-        pinned = _clean_pinned_memory(match.group(1))
-        if re.match(r"^(?:what|when|where|who|why|how)\b", pinned, flags=re.IGNORECASE):
-            continue
-        return pinned[:240] if pinned else None
-    return None
 
 
-def _is_anaphoric_session_memory_pin_request(user_message: str) -> bool:
-    """True when the user asks Aura to hold the current thread without restating it."""
-
-    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" .!?")
-    if not text:
-        return False
-    if _extract_session_memory_pin_request(user_message):
-        return False
-    # Anaphoric writes require a command/request at the start of the utterance.
-    # Substring matching used to turn capability questions such as "what are
-    # you, and will you remember this tomorrow?" into silent writes of the
-    # previous exchange. Accept polite request modals, but not predictive
-    # questions beginning with "will/do/did you".
-    command_text = re.sub(
-        r"^(?:can|could|would)\s+you\s+(?:please\s+)?",
-        "",
-        text,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-    command_text = re.sub(r"^please\s+", "", command_text, count=1, flags=re.IGNORECASE)
-    markers = (
-        "hold this thought",
-        "hold that thought",
-        "keep this thought",
-        "keep that thought",
-        "pin this thought",
-        "pin that thought",
-        "save this thought",
-        "save that thought",
-        "remember it",
-        "remember this",
-        "remember that",
-        "dont forget it",
-        "don't forget it",
-        "dont forget this",
-        "don't forget this",
-        "dont forget that",
-        "don't forget that",
-    )
-    def _marker_bounded(candidate: str, marker: str) -> bool:
-        # The marker must end at a word boundary — a space OR sentence
-        # punctuation ("Hold this thought. And remember it." was refused
-        # because only "<marker> " matched, never "<marker>.").
-        if not candidate.startswith(marker):
-            return False
-        rest = candidate[len(marker):]
-        return rest == "" or rest[0] in " .,!;:"
-
-    if not any(_marker_bounded(command_text, marker) for marker in markers):
-        return False
-    # A follow-up question is a discourse anchor, not a memory-write command.
-    if re.search(
-        r"[.!?]\s+(?:how|what|why|where|when|who|would|could|can|does|do|is|are)\b",
-        str(user_message or ""),
-        flags=re.IGNORECASE,
-    ):
-        return False
-    return True
 
 
-def _is_session_memory_recall_request(user_message: str) -> bool:
-    text = normalize_memory_intent_text(_normalize_user_message(user_message))
-    if not text:
-        return False
-    markers = (
-        "what codeword did i just give you",
-        "what codeword did i give you",
-        "what was the codeword i gave you",
-        "what is the codeword i gave you",
-        "what codeword did i ask you to remember",
-        "what was the codeword",
-        "what is the codeword",
-        "what token did i just give you",
-        "what token did i give you",
-        "what token did i ask you to remember",
-        "what phrase did i just ask you to remember",
-        "what phrase did i ask you to remember",
-        "what note did i ask you to remember",
-        "what note did i tell you to remember",
-        "what did i ask you to remember",
-        "what did i ask you to remember in this conversation",
-        "what did i ask you to remember in this chat",
-        "what phrase did i tell you to remember",
-        "what was the phrase from earlier",
-        "what was the phrase from earlier in this probe",
-        "what was the phrase from earlier in this conversation",
-        "what phrase from earlier",
-        "what did i tell you to remember",
-        "what did you store for me earlier in this session",
-        "what did you pin for later in this session",
-    )
-    return any(marker in text for marker in markers)
 
 
 #: Words that carry no topic, so sharing them proves nothing about relevance.
-_RECALL_MATCH_STOPWORDS = frozenset(
-    {
-        "the", "a", "an", "my", "your", "our", "his", "her", "their", "its",
-        "what", "which", "who", "whom", "whose", "was", "were", "is", "are",
-        "did", "do", "does", "have", "has", "had", "i", "you", "we", "me",
-        "gave", "give", "given", "told", "tell", "said", "say", "earlier",
-        "before", "again", "that", "this", "it", "and", "or", "of", "to",
-        "for", "in", "on", "at", "with", "about", "number", "remember",
-        "quick", "check", "just", "back", "recall", "please", "thing",
-    }
-)
 
 
-def _content_recall_matches_pin(user_message: str, pinned_content: str) -> bool:
-    """Whether a durable pin is plausibly what this recall question is asking for.
-
-    A pin about tea must not answer a question about a codename. Topic words
-    shared between the question and the pin are the evidence; without at least
-    one, the honest miss is still the right reply.
-    """
-
-    def _topic_words(text: str) -> set[str]:
-        words = re.findall(r"[a-z0-9][a-z0-9'-]*", str(text or "").lower())
-        return {
-            word
-            for word in words
-            if len(word) > 2 and word not in _RECALL_MATCH_STOPWORDS
-        }
-
-    question_words = _topic_words(user_message)
-    pin_words = _topic_words(pinned_content)
-    return bool(question_words and pin_words and (question_words & pin_words))
 
 
-def _is_cross_session_memory_recall_request(user_message: str) -> bool:
-    """True when the user explicitly asks for a pin from *before a restart* or a
-    *previous session*.
-
-    This is the only signal that unlocks cross-session durable recall. A bare
-    recall ("what codeword did I give you") stays scoped to the current session,
-    so distinct concurrent sessions remain isolated
-    (test_session_memory_pin_isolation_by_session_id). But a durable pin must
-    survive a reboot — and a reboot starts a *new* session id — so when the user
-    references the restart, we let the durable ledger answer across sessions
-    (live_boot_proof.exercise_restart_continuity_turn / tasks #22, #28).
-    """
-    text = normalize_memory_intent_text(_normalize_user_message(user_message))
-    if not text:
-        return False
-    markers = (
-        "before restart",
-        "before the restart",
-        "before a restart",
-        "across restart",
-        "across the restart",
-        "across a restart",
-        "after restart",
-        "after the restart",
-        "before you restarted",
-        "before we restarted",
-        "after you restarted",
-        "before reboot",
-        "before the reboot",
-        "before you rebooted",
-        "after reboot",
-        "after the reboot",
-        "before you were restarted",
-        "from before the restart",
-        "previous session",
-        "prior session",
-        "earlier session",
-        "last session",
-        "a previous session",
-        "from a previous session",
-    )
-    return any(marker in text for marker in markers)
 
 
-def _is_session_memory_context_change_request(user_message: str) -> bool:
-    text = normalize_memory_intent_text(_normalize_user_message(user_message))
-    if not text:
-        return False
-    return bool(
-        re.search(
-            r"\bwhat changed\b.*\b(?:conversation|chat|thread)\b.*"
-            r"\b(?:after|since|when)\b.*\b(?:gave|told|asked|shared|mentioned)\b",
-            text,
-            flags=re.IGNORECASE,
-        )
-    )
 
 
-def _session_memory_pin_ledger_path() -> Path:
-    from core.config import config
-
-    return config.paths.data_dir / "memory" / SESSION_PIN_LEDGER_FILENAME
 
 
-@lru_cache(maxsize=1)
-def _session_memory_pin_cipher() -> SessionPinCipher:
-    """Resolve the Keychain-custodied pin cipher once per runtime."""
-
-    return SessionPinCipher.from_system()
 
 
-def _session_memory_pin_binding(
-    *,
-    session_id: str = "",
-    principal_id: str = "",
-    principal_surface: str = "",
-    inherit_context: bool = True,
-) -> tuple[str, str]:
-    if inherit_context:
-        principal, surface = _chat_memory_identity(
-            principal_id=principal_id,
-            principal_surface=principal_surface,
-        )
-    else:
-        principal = " ".join(str(principal_id or "").strip().split())[:160]
-        surface = str(principal_surface or "").strip().casefold()[:32]
-    if principal and surface:
-        return principal, surface
-    safe_session_id = str(session_id or "")[:64]
-    if safe_session_id and not principal:
-        digest = hashlib.sha256(safe_session_id.encode("utf-8")).hexdigest()
-        return f"session:{digest}", "session"
-    return "", ""
 
 
-def _seal_session_memory_pin_record(
-    content: str,
-    source: str,
-    timestamp: str,
-    *,
-    session_id: str = "",
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> dict[str, str]:
-    safe_principal_id, safe_surface = _session_memory_pin_binding(
-        session_id=session_id,
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    return _session_memory_pin_cipher().seal(
-        content=content,
-        source=source,
-        timestamp=timestamp,
-        session_id=str(session_id or "")[:64],
-        principal_id=safe_principal_id,
-        principal_surface=safe_surface,
-    )
 
 
-def _migrate_session_memory_pin_ledger_locked(
-    ledger: SessionPinLedger,
-    cipher: SessionPinCipher,
-) -> tuple[list[dict[str, str]], bool, int]:
-    """Canonicalize a bounded snapshot before append or recall."""
-
-    snapshot = ledger.read_snapshot()
-    raw_lines = list(snapshot.lines)
-    migrated: list[dict[str, str]] = []
-    changed = snapshot.truncated or snapshot.permissions_repair_required
-    dropped = 1 if snapshot.truncated else 0
-    for line in raw_lines:
-        if not line.strip():
-            changed = True
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            changed = True
-            dropped += 1
-            continue
-        if not isinstance(record, dict):
-            changed = True
-            dropped += 1
-            continue
-        if record.get("schema") == SESSION_PIN_ENVELOPE_SCHEMA:
-            # Opening before preserving the row prevents a forged or corrupt
-            # envelope from surviving migration as apparently valid state.
-            try:
-                cipher.open(record)
-            except SessionPinCipherError:
-                changed = True
-                dropped += 1
-                continue
-            canonical_envelope = {
-                key: str(record.get(key) or "")
-                for key in (
-                    "schema",
-                    "key_id",
-                    "record_id",
-                    "nonce_b64",
-                    "ciphertext_b64",
-                )
-            }
-            if canonical_envelope != record:
-                changed = True
-            migrated.append(canonical_envelope)
-            continue
-        if record.get("schema") != "aura.session_memory_pin.v2":
-            changed = True
-            dropped += 1
-            continue
-        content = str(record.get("content") or "").strip()
-        if not content:
-            changed = True
-            dropped += 1
-            continue
-        session_id = str(record.get("session_id") or "")[:64]
-        principal_id, surface = _session_memory_pin_binding(
-            session_id=session_id,
-            principal_id=str(record.get("principal_id") or ""),
-            principal_surface=str(record.get("principal_surface") or ""),
-            inherit_context=False,
-        )
-        if not principal_id or not surface:
-            # Preserve the information under encryption without assigning an
-            # unowned historical record to the next caller who happens to ask.
-            digest = hashlib.sha256(line.encode("utf-8")).hexdigest()
-            principal_id = f"legacy-unbound:{digest}"
-            surface = "legacy_unbound"
-        migrated.append(
-            cipher.seal(
-                content=content,
-                source=str(record.get("source") or ""),
-                timestamp=str(record.get("timestamp") or ""),
-                session_id=session_id,
-                principal_id=principal_id,
-                principal_surface=surface,
-            )
-        )
-        changed = True
-    return migrated, changed, dropped
 
 
-def _append_session_memory_pin_ledger(
-    content: str,
-    source: str,
-    timestamp: str,
-    *,
-    session_id: str = "",
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> bool:
-    try:
-        path = _session_memory_pin_ledger_path()
-        if not str(content or "").strip():
-            return False
-        cipher = _session_memory_pin_cipher()
-        ledger = SessionPinLedger(path)
-        with ledger.transaction():
-            records, _changed, dropped = _migrate_session_memory_pin_ledger_locked(
-                ledger,
-                cipher,
-            )
-            record = _seal_session_memory_pin_record(
-                content,
-                source,
-                timestamp,
-                session_id=session_id,
-                principal_id=principal_id,
-                principal_surface=principal_surface,
-            )
-            records.append(record)
-            ledger.commit_records(records[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:])
-        if dropped:
-            logger.warning(
-                "Dropped malformed or truncated session-memory ledger row(s) "
-                "during encrypted migration"
-            )
-        return True
-    except (
-        *_CHAT_RECOVERABLE_ERRORS,
-        SessionPinCipherError,
-        SessionPinLedgerError,
-    ) as exc:
-        record_degradation("chat.session_memory_pin", exc)
-        logger.debug("Durable session memory pin ledger write skipped: %s", exc)
-        return False
 
 
-def _append_session_memory_pin_ledger_guarded(
-    content: str,
-    source: str,
-    timestamp: str,
-    *,
-    session_id: str = "",
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> bool:
-    """Append the session pin ledger without letting fallback logging crash chat."""
-
-    try:
-        return bool(
-            _append_session_memory_pin_ledger(
-                content,
-                source,
-                timestamp,
-                session_id=session_id,
-                principal_id=principal_id,
-                principal_surface=principal_surface,
-            )
-        )
-    except TypeError as exc:
-        if not any(name in str(exc) for name in ("session_id", "principal_id", "principal_surface")):
-            record_degradation("chat.session_memory_pin", exc)
-            logger.debug("Durable session memory pin ledger append failed: %s", exc)
-            return False
-        if principal_id or principal_surface:
-            record_degradation("chat.session_memory_pin", exc)
-            logger.warning(
-                "Principal-bound session memory pin append rejected a legacy writer; "
-                "the identity binding was not discarded."
-            )
-            return False
-        try:
-            return bool(_append_session_memory_pin_ledger(content, source, timestamp))
-        except _CHAT_RECOVERABLE_ERRORS as legacy_exc:
-            record_degradation("chat.session_memory_pin", legacy_exc)
-            logger.debug(
-                "Durable session memory pin legacy ledger append skipped: %s",
-                legacy_exc,
-            )
-            return False
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.session_memory_pin", exc)
-        logger.debug("Durable session memory pin ledger append failed: %s", exc)
-        return False
 
 
-def _recall_session_memory_pin_from_ledger(
-    *,
-    session_id: str = "",
-    cross_session: bool = False,
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> dict[str, str] | None:
-    try:
-        path = _session_memory_pin_ledger_path()
-        cipher = _session_memory_pin_cipher()
-        ledger = SessionPinLedger(path)
-        with ledger.transaction():
-            records, changed, dropped = _migrate_session_memory_pin_ledger_locked(
-                ledger,
-                cipher,
-            )
-            if changed:
-                ledger.commit_records(records)
-        if dropped:
-            logger.warning(
-                "Dropped malformed or truncated session-memory ledger row(s) "
-                "during encrypted migration"
-            )
-        if not records:
-            return None
-        for raw in reversed(records[-_SESSION_MEMORY_PIN_LEDGER_LIMIT:]):
-            expected_session_id = str(session_id or "")[:64]
-            if raw.get("schema") != SESSION_PIN_ENVELOPE_SCHEMA:
-                continue
-            try:
-                opened = cipher.open(raw)
-            except SessionPinCipherError as exc:
-                record_degradation("chat.session_memory_pin", exc)
-                continue
-            recalled = _session_memory_pin_from_record(
-                {**opened, "session_memory_pin": True},
-                session_id=expected_session_id,
-                cross_session=cross_session,
-                principal_id=principal_id,
-                principal_surface=principal_surface,
-                allow_plaintext=True,
-            )
-            if recalled:
-                recalled["storage"] = "durable"
-                return recalled
-    except (
-        *_CHAT_RECOVERABLE_ERRORS,
-        SessionPinCipherError,
-        SessionPinLedgerError,
-    ) as exc:
-        record_degradation("chat.session_memory_pin", exc)
-        logger.debug("Durable session memory pin ledger recall skipped: %s", exc)
-    return None
 
 
-def _chat_memory_identity(
-    *,
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> tuple[str, str]:
-    principal = " ".join(
-        str(principal_id or _CHAT_REQUEST_PRINCIPAL.get() or "").strip().split()
-    )[:160]
-    surface = str(
-        principal_surface or _CHAT_REQUEST_SURFACE.get() or ""
-    ).strip().casefold()[:32]
-    return principal, surface
 
 
-def _chat_principal_scope_kwargs(
-    *,
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> dict[str, str]:
-    principal, surface = _chat_memory_identity(
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    if not principal or not surface:
-        return {}
-    return {"principal_id": principal, "principal_surface": surface}
 
 
-def _cross_session_memory_recall_allowed(user_message: str) -> bool:
-    principal_id, principal_surface = _chat_memory_identity()
-    return bool(
-        principal_surface == "owner"
-        and principal_id
-        and _is_cross_session_memory_recall_request(user_message)
-    )
 
 
-async def _store_session_memory_pin(
-    content: str,
-    source: str,
-    *,
-    session_id: str = "",
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> bool:
-    pinned = str(content or "").strip()
-    if not pinned:
-        return False
-    timestamp = datetime.now(tz=UTC).isoformat()
-    safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
-        session_id=safe_session_id,
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    ledger_ok = False
-    async with _get_convo_lock():
-        _session_memory_pins.append(
-            {
-                "content": pinned[:240],
-                "source": str(source or "").strip()[:512],
-                "timestamp": timestamp,
-                "session_id": safe_session_id,
-                "principal_id": safe_principal_id,
-                "principal_surface": safe_principal_surface,
-            }
-        )
-        if len(_session_memory_pins) > 100:
-            _session_memory_pins.pop(0)
-    try:
-        sealed_record = await asyncio.to_thread(
-            _seal_session_memory_pin_record,
-            pinned,
-            source,
-            timestamp,
-            session_id=safe_session_id,
-            principal_id=safe_principal_id,
-            principal_surface=safe_principal_surface,
-        )
-        memory_facade = ServiceContainer.get("memory_facade", default=None)
-        if memory_facade is None or not hasattr(memory_facade, "add_memory"):
-            ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger_guarded,
-                pinned,
-                source,
-                timestamp,
-                session_id=safe_session_id,
-                principal_id=safe_principal_id,
-                principal_surface=safe_principal_surface,
-            )
-            return bool(ledger_ok)
-        result = memory_facade.add_memory(
-            SESSION_PIN_INDEX_CONTENT,
-            metadata={
-                "source": "session_memory_pin",
-                "family": "episodic",
-                "kind": "explicit_user_memory_pin",
-                "session_memory_pin": True,
-                "session_memory_pin_envelope": sealed_record,
-                "session_memory_pin_envelope_schema": SESSION_PIN_ENVELOPE_SCHEMA,
-                "importance": 0.9,
-                "identity_relevant": True,
-                "explicit_memory_request": True,
-                "provenance_source": "user_explicit",
-                "confidence": 1.0,
-            },
-        )
-        if hasattr(result, "__await__"):
-            result = await result
-        if not bool(result):
-            ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger_guarded,
-                pinned,
-                source,
-                timestamp,
-                session_id=safe_session_id,
-                principal_id=safe_principal_id,
-                principal_surface=safe_principal_surface,
-            )
-            return bool(ledger_ok)
-        ledger_ok = await asyncio.to_thread(
-            _append_session_memory_pin_ledger_guarded,
-            pinned,
-            source,
-            timestamp,
-            session_id=safe_session_id,
-            principal_id=safe_principal_id,
-            principal_surface=safe_principal_surface,
-        )
-        if not ledger_ok:
-            logger.warning(
-                "Session memory pin accepted by memory facade but ledger append failed; "
-                "canonical memory remains authoritative."
-            )
-        return True
-    except (*_CHAT_RECOVERABLE_ERRORS, SessionPinCipherError) as exc:
-        record_degradation("chat.session_memory_pin", exc)
-        logger.debug("Durable session memory pin write skipped: %s", exc)
-        if not ledger_ok:
-            ledger_ok = await asyncio.to_thread(
-                _append_session_memory_pin_ledger_guarded,
-                pinned,
-                source,
-                timestamp,
-                session_id=safe_session_id,
-                principal_id=safe_principal_id,
-                principal_surface=safe_principal_surface,
-            )
-        return bool(ledger_ok)
 
 
-def _session_memory_pin_from_record(
-    item: Any,
-    *,
-    session_id: str = "",
-    cross_session: bool = False,
-    principal_id: str = "",
-    principal_surface: str = "",
-    allow_plaintext: bool = False,
-) -> dict[str, str] | None:
-    if not isinstance(item, dict):
-        return None
-    metadata = item.get("metadata")
-    if not isinstance(metadata, dict):
-        metadata = {}
-    envelope = metadata.get("session_memory_pin_envelope") or item.get(
-        "session_memory_pin_envelope"
-    )
-    if envelope is not None:
-        if not isinstance(envelope, dict):
-            return None
-        try:
-            opened = _session_memory_pin_cipher().open(envelope)
-        except SessionPinCipherError as exc:
-            record_degradation("chat.session_memory_pin", exc)
-            return None
-        item = {**opened, "session_memory_pin": True}
-        metadata = {}
-        allow_plaintext = True
-    if not allow_plaintext:
-        # Durable plaintext pins predate the encrypted store. They remain
-        # ineligible for recall so a copied database row cannot bypass the
-        # principal-bound envelope contract. The JSONL migration preserves
-        # usable legacy rows under encryption.
-        return None
-    expected_session_id = str(session_id or "")[:64]
-    expected_principal_id, expected_surface = _session_memory_pin_binding(
-        session_id=expected_session_id,
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    record_principal_id = " ".join(
-        str(metadata.get("principal_id") or item.get("principal_id") or "")
-        .strip()
-        .split()
-    )[:160]
-    record_surface = str(
-        metadata.get("principal_surface") or item.get("principal_surface") or ""
-    ).strip().casefold()[:32]
-    record_session_id = str(
-        metadata.get("chat_session_id")
-        or metadata.get("session_id")
-        or item.get("chat_session_id")
-        or item.get("session_id")
-        or ""
-    )[:64]
-    # Default: a pin only belongs to the session that set it, so distinct
-    # concurrent sessions stay isolated. ``cross_session`` is the explicit
-    # opt-in (the user asked about a pin from *before a restart*), which is the
-    # only path that may return another session's durable pin.
-    if not expected_principal_id or not expected_surface:
-        return None
-    if not record_principal_id or not record_surface:
-        return None
-    if record_principal_id != expected_principal_id or record_surface != expected_surface:
-        return None
-    if cross_session and (expected_surface != "owner" or not expected_principal_id):
-        return None
-    if not cross_session and expected_session_id and record_session_id != expected_session_id:
-        return None
-    content = str(
-        metadata.get("session_memory_pin_content")
-        or item.get("session_memory_pin_content")
-        or ""
-    ).strip()
-    raw = str(item.get("content") or item.get("text") or "").strip()
-    if not content and bool(item.get("session_memory_pin")):
-        content = raw
-    if not content:
-        match = re.search(r"\bSession memory pin:\s*(.+)$", raw, flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            content = match.group(1).strip().strip("\"'“”").rstrip(" .!?")
-    if not content:
-        return None
-    return {
-        "content": content[:240],
-        "source": str(
-            metadata.get("source_utterance")
-            or metadata.get("source")
-            or item.get("source")
-            or "durable_memory"
-        )[:512],
-        "timestamp": str(metadata.get("timestamp") or item.get("timestamp") or ""),
-        "session_id": record_session_id,
-        "principal_id": record_principal_id,
-        "principal_surface": record_surface,
-        "storage": "durable",
-    }
 
 
-async def _recall_durable_session_memory_pin(
-    *,
-    session_id: str = "",
-    cross_session: bool = False,
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> dict[str, str] | None:
-    safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
-        session_id=safe_session_id,
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    try:
-        ledger_recall = await _await_bounded_chat_blocking(
-            _recall_session_memory_pin_from_ledger,
-            session_id=safe_session_id,
-            cross_session=cross_session,
-            principal_id=safe_principal_id,
-            principal_surface=safe_principal_surface,
-            timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-            operation_name="session_memory_pin_ledger_recall",
-            completion_grace_s=0.75,
-        )
-    except TimeoutError:
-        ledger_recall = None
-    if ledger_recall:
-        return ledger_recall
-    try:
-        memory_facade = ServiceContainer.get("memory_facade", default=None)
-        if memory_facade is None:
-            return None
-        search = getattr(memory_facade, "search", None) or getattr(memory_facade, "query_memory", None)
-        if not callable(search):
-            return None
-        result = search("session memory pin explicit user remember", limit=8)
-        records = await result if hasattr(result, "__await__") else result
-        for item in list(records or []):
-            recalled = _session_memory_pin_from_record(
-                item,
-                session_id=safe_session_id,
-                cross_session=cross_session,
-                principal_id=safe_principal_id,
-                principal_surface=safe_principal_surface,
-            )
-            if recalled:
-                return recalled
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.session_memory_pin", exc)
-        logger.debug("Durable session memory pin recall skipped: %s", exc)
-    return None
 
 
-async def _recall_session_memory_pin(
-    *,
-    session_id: str = "",
-    cross_session: bool = False,
-    principal_id: str = "",
-    principal_surface: str = "",
-) -> dict[str, str] | None:
-    safe_session_id = str(session_id or "")[:64]
-    safe_principal_id, safe_principal_surface = _session_memory_pin_binding(
-        session_id=safe_session_id,
-        principal_id=principal_id,
-        principal_surface=principal_surface,
-    )
-    async with _get_convo_lock():
-        for latest in reversed(_session_memory_pins):
-            recalled = _session_memory_pin_from_record(
-                {**latest, "session_memory_pin": True},
-                session_id=safe_session_id,
-                cross_session=cross_session,
-                principal_id=safe_principal_id,
-                principal_surface=safe_principal_surface,
-                allow_plaintext=True,
-            )
-            if recalled:
-                recalled["storage"] = "session"
-                return recalled
-    return await _recall_durable_session_memory_pin(
-        session_id=safe_session_id,
-        cross_session=cross_session,
-        principal_id=safe_principal_id,
-        principal_surface=safe_principal_surface,
-    )
 
 
-async def _build_memory_state_fastpath_reply(
-    user_message: str,
-    *,
-    session_id: str = "",
-    owner_session_restored: bool = False,
-    as_evidence: bool = False,
-) -> tuple[str, str] | None:
-    """Return deterministic memory/continuity state.
-
-    Two callers want two different things from this. The cognitive-engine
-    lane wants canonical memory state as EVIDENCE to ground a reply it will
-    write itself (``as_evidence=True``); the fastpath lane wants the reply
-    itself. Only the second has to prove the template covers the whole turn —
-    evidence never silences anyone.
-    """
-    # A template may only answer a turn it FULLY covers.
-    #
-    # This path returns a deterministic sentence and ends the turn. That is
-    # right for "remember X" and wrong for "remember X, and separately, what do
-    # you think about Y" — the second half is a real question and the template
-    # has nothing to say about it. Live 2026-07-27 the whole message was
-    # swallowed as the thing to remember, and the reply was:
-    #
-    #   I have pinned "my project codename is HELIOTROPE, build 4471.
-    #   Separately — do you think a system like you can actually prefer one
-    #   thing over another, or is" in this session.
-    #
-    # Same shape as the self-condition template earlier in the day: a reflex
-    # short-circuiting the model on a turn it only partially understood. When
-    # the turn carries substantive content beyond the memory request, the
-    # deterministic path stands down and the mind answers.
-    #
-    # Standing down is about the REPLY, not the memory: the fact is still
-    # pinned, or "remember X, and separately Y" would answer Y and forget X.
-    if not as_evidence and _turn_has_substance_beyond_memory_request(user_message):
-        deferred_pin = _extract_session_memory_pin_request(user_message)
-        if deferred_pin:
-            await _store_session_memory_pin(
-                deferred_pin,
-                user_message,
-                session_id=session_id,
-            )
-            logger.info(
-                "🧷 Pinned an explicit memory item (chars=%d) and left "
-                "the reply to the mind: this turn asks for more than the memory "
-                "template can answer.",
-                len(deferred_pin),
-            )
-        return None
-    session_pin = _extract_session_memory_pin_request(user_message)
-    if not session_pin and _is_anaphoric_session_memory_pin_request(user_message):
-        exchanges = await _recent_completed_conversation_exchanges(
-            current_user_message=user_message,
-            session_id=session_id,
-            limit=2,
-        )
-        if exchanges:
-            last = exchanges[-1]
-            prior_aura = _clip_conversation_text(last.get("aura"), limit=180)
-            prior_user = _clip_conversation_text(last.get("user"), limit=120)
-            if prior_aura:
-                if prior_user:
-                    session_pin = f"Current thread: {prior_user} / Aura's thought: {prior_aura}"
-                else:
-                    session_pin = f"Aura's current thought: {prior_aura}"
-            elif prior_user:
-                session_pin = f"Current thread: {prior_user}"
-    if session_pin:
-        durable_ok = await _store_session_memory_pin(
-            session_pin,
-            user_message,
-            session_id=session_id,
-        )
-        if not durable_ok:
-            return (
-                f"I can hold \"{session_pin}\" in this running session, but durable memory storage did not accept the write yet.",
-                "session_memory_pin_transient",
-            )
-        return (
-            f"I've pinned \"{session_pin}\" in durable session memory. Ask for it later and I'll pull it back directly.",
-            "session_memory_pin",
-        )
-
-    if _is_session_memory_context_change_request(user_message):
-        remembered = await _recall_session_memory_pin(session_id=session_id)
-        if remembered and remembered.get("content"):
-            return (
-                "The concrete change is that I stored your explicit session note "
-                f"\"{remembered['content']}\" as durable conversation state, so later turns can refer back to it directly.",
-                "session_memory_context_recall",
-            )
-        return "I don't have a pinned session note to compare against yet.", "session_memory_miss"
-
-    if _is_session_memory_recall_request(user_message):
-        cross_session = _cross_session_memory_recall_allowed(user_message)
-        remembered = await _recall_session_memory_pin(
-            session_id=session_id,
-            cross_session=cross_session,
-        )
-        if remembered and remembered.get("content"):
-            storage = str(remembered.get("storage") or "session")
-            if cross_session and storage == "durable":
-                source_label = "from durable memory across the restart"
-            elif storage == "durable":
-                source_label = "from durable memory"
-            else:
-                source_label = "in this session"
-            return (
-                f"The phrase you asked me to remember {source_label} was \"{remembered['content']}\".",
-                "session_memory_recall",
-            )
-        return "I don't have a pinned phrase from this session yet.", "session_memory_miss"
-
-    owner_name_reply = _build_owner_name_recall_reply(
-        user_message,
-        owner_session_restored=owner_session_restored,
-    )
-    if owner_name_reply:
-        return owner_name_reply, "owner_identity_recall"
-
-    conversation_recall = await _build_conversation_recall_reply(
-        user_message,
-        session_id=session_id,
-    )
-    if conversation_recall:
-        return conversation_recall, "conversation_recall"
-
-    return None
 
 
 def _memory_state_evidence_is_missing_from_reply(
@@ -4010,7 +1252,7 @@ def _memory_state_evidence_is_missing_from_reply(
     if not reply:
         return True
 
-    expected_content = _extract_session_memory_pin_request(str(memory_reply or ""))
+    expected_content = _chat_memory_state._extract_session_memory_pin_request(str(memory_reply or ""))
     if not expected_content:
         match = re.search(r'"([^"]{1,240})"', str(memory_reply or ""))
         expected_content = match.group(1) if match else ""
@@ -4231,71 +1473,12 @@ def _canonical_memory_state_evidence_from_tuple(
     ).strip()
 
 
-_OWNER_NAME_RECALL_MARKERS = (
-    "do you know my name",
-    "do you remember my name",
-    "what is my name",
-    "what's my name",
-    "who am i",
-    "who do you think i am",
-    "do you know who i am",
-)
 
 
-def _is_owner_name_recall_request(user_message: str) -> bool:
-    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" ?!.")
-    return bool(text and any(marker in text for marker in _OWNER_NAME_RECALL_MARKERS))
 
 
-def _resolve_primary_operator_name() -> str:
-    try:
-        identity_kernel = ServiceContainer.get("identity_kernel", default=None)
-        if identity_kernel is not None and hasattr(identity_kernel, "get_current_identity"):
-            current = identity_kernel.get_current_identity()
-            if isinstance(current, dict):
-                primary = str(current.get("primary_operator") or "").strip()
-                if primary:
-                    return primary
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.owner_identity", exc)
-        logger.debug("IdentityKernel primary-operator lookup skipped: %s", exc)
-
-    try:
-        from core.identity.self_contract import SelfContract
-
-        primary = str(SelfContract().get_relationship_constraints().get("primary_operator") or "").strip()
-        if primary:
-            return primary
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.owner_identity", exc)
-        logger.debug("SelfContract primary-operator lookup skipped: %s", exc)
-
-    return "the verified owner"
 
 
-def _owner_session_is_verified(*, owner_session_restored: bool = False) -> bool:
-    if owner_session_restored:
-        return True
-    try:
-        from core.security.user_recognizer import get_user_recognizer
-
-        recognizer = get_user_recognizer()
-        if hasattr(recognizer, "is_session_verified") and recognizer.is_session_verified():
-            return True
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.owner_identity", exc)
-        logger.debug("UserRecognizer verification lookup skipped: %s", exc)
-
-    try:
-        from core.security.trust_engine import TrustLevel, get_trust_engine
-
-        context = getattr(get_trust_engine(), "_context", None)
-        level = getattr(context, "level", None)
-        return bool(level == TrustLevel.SOVEREIGN)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.owner_identity", exc)
-        logger.debug("TrustEngine verification lookup skipped: %s", exc)
-    return False
 
 
 def _extract_canonical_memory_state_evidence_block(effective_user_message: str) -> str:
@@ -4314,24 +1497,6 @@ def _extract_canonical_memory_state_evidence_block(effective_user_message: str) 
     return ""
 
 
-def _build_owner_name_recall_reply(
-    user_message: str,
-    *,
-    owner_session_restored: bool = False,
-) -> str | None:
-    if not _is_owner_name_recall_request(user_message):
-        return None
-    if not _owner_session_is_verified(owner_session_restored=owner_session_restored):
-        return (
-            "I know the primary operator from my identity contract, but I should not expose "
-            "that as the current speaker's identity until this session is owner-verified."
-        )
-
-    name = _resolve_primary_operator_name()
-    return (
-        f"Yes. You're {name}. I know that from the verified owner session and my identity "
-        "contract, not from guessing at the last message."
-    )
 
 
 _OWNER_DIRECT_ADDRESS_RE = re.compile(
@@ -4376,9 +1541,9 @@ def _reply_has_owner_name_drift(
     *,
     owner_session_restored: bool = False,
 ) -> bool:
-    if not _owner_session_is_verified(owner_session_restored=owner_session_restored):
+    if not _chat_memory_state._owner_session_is_verified(owner_session_restored=owner_session_restored):
         return False
-    owner_name = _resolve_primary_operator_name().strip()
+    owner_name = _chat_memory_state._resolve_primary_operator_name().strip()
     if not owner_name or owner_name == "the verified owner":
         return False
     user = str(user_message or "")
@@ -4392,7 +1557,7 @@ def _reply_has_owner_name_drift(
 
 
 def _repair_owner_name_drift_reply(reply_text: str) -> str:
-    owner_name = _resolve_primary_operator_name().strip()
+    owner_name = _chat_memory_state._resolve_primary_operator_name().strip()
     if not owner_name or owner_name == "the verified owner":
         return str(reply_text or "")
     repaired = str(reply_text or "")
@@ -4795,36 +1960,6 @@ _TOPIC_STOPWORDS = frozenset(
         "very",
     }
 )
-_CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
-    "what does that have to do",
-    "what does this have to do",
-    "how is that related",
-    "how is this related",
-    "why the interest",
-    "why are you interested",
-    "why are you talking about",
-    "where did that come from",
-    "who are you talking about",
-    "who do you mean",
-    "who needs to",
-    "what pitch",
-    "which pitch",
-    "what one",
-    "which one",
-    "what was that",
-    "what're you talking about",
-    "whatre you talking about",
-    "what are you talking about",
-    "why did you bring",
-)
-_LOCAL_CHOICE_REFERENCE_RE = re.compile(r"\b(?:what|which)\s+one\b", re.IGNORECASE)
-_LOCAL_CHOICE_ANTECEDENT_RE = re.compile(
-    r"\b(?:compare|contrast|between|either|options?|alternatives?)\b"
-    r"(?s:.{1,320})\b(?:and|or|versus|vs\.?)\b"
-    r"(?s:.{1,180})\b(?:choose|select|recommend|prefer)\b"
-    r"(?s:.{0,40})\b(?:what|which)\s+one\b",
-    re.IGNORECASE,
-)
 _CONTEXTUAL_RELEVANCE_BRIDGE_MARKERS = (
     "you mentioned",
     "you brought",
@@ -4902,38 +2037,6 @@ _UNREQUESTED_CONTENT_REVIEW_MARKERS = (
     "this story",
     "this narrative",
 )
-_INCOMPLETE_TAIL_WORDS = {
-    "a",
-    "an",
-    "and",
-    "because",
-    "but",
-    "called",
-    "create",
-    "for",
-    "from",
-    "if",
-    "into",
-    "make",
-    "named",
-    "open",
-    "of",
-    "or",
-    "save",
-    "so",
-    "than",
-    "that",
-    "the",
-    "then",
-    "this",
-    "th",
-    "to",
-    "when",
-    "where",
-    "while",
-    "write",
-    "with",
-}
 
 
 def _response_fingerprint(text: str) -> str:
@@ -5111,32 +2214,8 @@ def _echoable_question_clause(user_message: str, *, max_chars: int = 130) -> str
     return chosen
 
 
-def _has_local_choice_antecedent(user_message: str) -> bool:
-    """Distinguish a self-contained choice from a conversational pronoun.
-
-    "Which one?" needs history. "Compare A and B, then choose which one" has
-    its antecedent in the current turn and must not be rewritten as a context
-    challenge or polluted with an older answer.
-    """
-
-    text = str(user_message or "").strip()
-    return bool(
-        _LOCAL_CHOICE_REFERENCE_RE.search(text)
-        and _LOCAL_CHOICE_ANTECEDENT_RE.search(text)
-    )
 
 
-def _is_contextual_relevance_challenge(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    stripped = text.strip(" ?!.")
-    if stripped in {"huh", "wait what", "what"}:
-        return True
-    markers = _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS
-    if _has_local_choice_antecedent(text):
-        markers = tuple(marker for marker in markers if marker not in {"what one", "which one"})
-    return any(marker in text for marker in markers)
 
 
 async def _gather_recent_user_messages_for_relevance(current_user_message: str, *, limit: int = 4) -> list[str]:
@@ -5145,7 +2224,7 @@ async def _gather_recent_user_messages_for_relevance(current_user_message: str, 
     session_id = str(_CHAT_REQUEST_SESSION.get() or "").strip()[
         :_CHAT_SESSION_ID_MAX_CHARS
     ]
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         for entry in reversed(_conversation_log):
             entry_session_id = str(entry.get("session_id") or "").strip()[
                 :_CHAT_SESSION_ID_MAX_CHARS
@@ -5175,72 +2254,6 @@ def _build_recent_user_context_block(recent_user_messages: list[str], *, limit: 
     return "\n".join(lines)
 
 
-_CONVERSATION_RECALL_LAST_USER_MARKERS = (
-    "can you remind me what i said",
-    "can you remind me what i asked",
-    "do you remember what i said",
-    "do you remember what i asked",
-    "do you remember my question",
-    "what did i just say",
-    "what did i just ask",
-    "what did i tell you",
-    "what was my last question",
-    "what was my last message",
-    "what did i ask you",
-    "what did i say earlier",
-    "what did i say before",
-    "what was i asking",
-    "what was i asking about",
-    "what was the last thing i said",
-    "what was i saying",
-)
-_CONVERSATION_RECALL_LAST_AURA_MARKERS = (
-    "can you remind me what you said",
-    "can you remind me what you answered",
-    "do you remember what you said",
-    "do you remember your answer",
-    "what did you just say",
-    "what did you answer",
-    "what did you say earlier",
-    "what did you say before",
-    "what was your last answer",
-    "what was your last message",
-    "what did you tell me",
-    "what was the last thing you said",
-    "what were you saying",
-)
-_CONVERSATION_RECALL_RECENT_PAIR_MARKERS = (
-    "summarize our last two messages",
-    "summarize the last two messages",
-    "summarize my last two messages",
-    "recap our last two messages",
-    "recap the last two messages",
-    "repeat our last two messages",
-    "repeat the last two messages",
-)
-_CONVERSATION_RECALL_TOPIC_MARKERS = (
-    "can you remind me what we discussed",
-    "can you remind me what we talked about",
-    "what did we discuss",
-    "what did we just discuss",
-    "what have we discussed",
-    "what did we talk about",
-    "what did we just talk about",
-    "what were we talking about",
-    "what have we been talking about",
-    "what are we talking about",
-    "what was the thread",
-    "what was the topic",
-    "what was this conversation about",
-    "what is this conversation about",
-    "do you remember what we were discussing",
-    "do you remember what we discussed",
-    "remind me what we discussed",
-    "remind me what we talked about",
-    "earlier in this conversation",
-    "summarize our conversation",
-    "summarize what we have discussed",
-)
 
 
 # Content recall: "earlier I gave/told you X — what was it?" The deliverable
@@ -5248,45 +2261,8 @@ _CONVERSATION_RECALL_TOPIC_MARKERS = (
 # these turns reached the model with zero session context and durable-memory
 # noise as evidence, and it confabulated values ("4523" for a code that was
 # 7213, two turns after acknowledging it).
-_CONVERSATION_RECALL_CONTENT_RE = re.compile(
-    r"\bearlier\b.{0,120}\bi\s+(?:gave|told|mentioned|said|asked)\b"
-    r"|\bi\s+(?:gave|told|mentioned)\s+you\b.{0,120}\b(?:earlier|before|a\s+while\s+(?:ago|back))\b"
-    r"|\bwhat\s+(?:was|is|were)\s+(?:the|my|that|it)\b.{0,120}"
-    r"\b(?:i\s+(?:gave|told|mentioned|said)|asked\s+you\s+to\s+(?:keep|remember))\b"
-    r"|\b(?:what|which)\s+\w[\w\s'-]{0,50}\bdid\s+i\s+"
-    r"(?:say|give|tell|mention|pick|choose)\b"
-    r"|\basked\s+you\s+to\s+keep\s+in\s+mind\b.{0,80}\bwhat\s+was\b",
-    re.IGNORECASE,
-)
 
 
-def _classify_conversation_recall_request(user_message: str) -> str:
-    text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" ?!.")
-    if not text:
-        return ""
-    if any(marker in text for marker in _CONVERSATION_RECALL_LAST_AURA_MARKERS):
-        return "last_aura"
-    if _CONVERSATION_RECALL_CONTENT_RE.search(text):
-        return "content"
-    if any(marker in text for marker in _CONVERSATION_RECALL_RECENT_PAIR_MARKERS):
-        return "recent_pair"
-    if re.search(
-        r"\b(?:what\s+(?:were|are)|remind\s+me|tell\s+me|show\s+me|repeat|recap|summarize)"
-        r"\b.{0,80}\blast\s+two\s+messages\b",
-        text,
-    ):
-        return "recent_pair"
-    if re.search(
-        r"\bwhat\b.{0,100}\bdid\s+i\s+just\s+ask\s+you\s+to\s+"
-        r"(?:invent|create|make|define|write|draft|describe|summarize|explain)\b",
-        text,
-    ):
-        return "last_user"
-    if any(marker in text for marker in _CONVERSATION_RECALL_LAST_USER_MARKERS):
-        return "last_user"
-    if any(marker in text for marker in _CONVERSATION_RECALL_TOPIC_MARKERS):
-        return "topic"
-    return ""
 
 
 _RECENT_CONTEXT_NEEDED_RE = re.compile(
@@ -5349,14 +2325,14 @@ def _desktop_turn_needs_recent_context(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text:
         return False
-    if _classify_conversation_recall_request(text):
+    if _chat_memory_state._classify_conversation_recall_request(text):
         return True
     if _UTTERANCE_RECALL_RE.search(text):
         return True
-    if _is_contextual_relevance_challenge(text):
+    if _chat_desktop_repair._is_contextual_relevance_challenge(text):
         return True
     short_followup_surface = text
-    if _has_local_choice_antecedent(text):
+    if _chat_desktop_repair._has_local_choice_antecedent(text):
         short_followup_surface = _LOCAL_CHOICE_REFERENCE_RE.sub("", text)
     if _SHORT_FOLLOWUP_CONTEXT_NEEDED_RE.search(short_followup_surface):
         return True
@@ -5381,255 +2357,12 @@ def _is_current_request_recap_request(user_message: str) -> bool:
     )
 
 
-def _clip_conversation_text(text: Any, *, limit: int = 420) -> str:
-    clipped = " ".join(str(text or "").strip().split())
-    if len(clipped) <= limit:
-        return clipped
-    if limit <= 3:
-        return clipped[: max(0, limit)]
-    return clipped[: limit - 3].rstrip() + "..."
 
 
-def _conversation_record_visible_to_principal(
-    record: dict[str, Any],
-    *,
-    principal_id: str,
-    principal_surface: str,
-) -> bool:
-    """Authorize a personal conversation record before it becomes context.
-
-    Legacy unbound records predate principal-aware persistence. Only the local
-    owner may adopt or read those records; paired surfaces require an exact
-    principal and surface match.
-    """
-
-    if not principal_id or not principal_surface:
-        return True
-    record_principal = " ".join(
-        str(record.get("principal_id") or record.get("user_id") or "")
-        .strip()
-        .split()
-    )[:160]
-    record_surface = str(
-        record.get("principal_surface") or ""
-    ).strip().casefold()[:32]
-    if record_principal:
-        if record_principal != principal_id:
-            return False
-        if not record_surface:
-            return principal_surface == "owner"
-        return record_surface == principal_surface
-    return principal_surface == "owner"
 
 
-async def _recent_completed_conversation_exchanges(
-    *,
-    current_user_message: str,
-    session_id: str = "",
-    limit: int = 6,
-) -> list[dict[str, str]]:
-    current = str(current_user_message or "").strip()
-    safe_session_id = str(session_id or "")[:64]
-    principal_id, principal_surface = _chat_memory_identity()
-    async with _get_convo_lock():
-        completed = [
-            entry
-            for entry in _conversation_log
-            if str(entry.get("status") or "complete").strip().lower() == "complete"
-            and _conversation_record_visible_to_principal(
-                entry,
-                principal_id=principal_id,
-                principal_surface=principal_surface,
-            )
-            and (
-                not safe_session_id
-                or str(entry.get("session_id") or "")[:64] == safe_session_id
-            )
-        ]
-
-    exchanges: list[dict[str, str]] = []
-    for entry in reversed(completed):
-        user_text = str(entry.get("user") or "").strip()
-        aura_text = str(entry.get("aura") or "").strip()
-        if current and user_text == current:
-            continue
-        if not user_text and not aura_text:
-            continue
-        exchanges.append(
-            # Stamped per entry: the cognitive engine promotes these straight
-            # into chat roles, so a forged entry mixed into a real list would
-            # become an assistant turn Aura never took.
-            stamp_runtime_payload(
-                {
-                    "exchange_id": str(entry.get("id") or ""),
-                    "user": _clip_conversation_text(
-                        user_text,
-                        limit=_RECENT_CONVERSATION_USER_CHARS,
-                    ),
-                    "aura": _clip_conversation_text(
-                        aura_text,
-                        limit=_RECENT_CONVERSATION_AURA_CHARS,
-                    ),
-                    "timestamp": str(
-                        entry.get("completed_at") or entry.get("timestamp") or ""
-                    ),
-                    "session_id": str(entry.get("session_id") or "")[:64],
-                }
-            )
-        )
-        if len(exchanges) >= max(1, int(limit)):
-            break
-    exchanges.reverse()
-
-    if len(exchanges) >= max(1, int(limit)):
-        return exchanges
-
-    durable = await _load_durable_conversation_exchanges(
-        limit=max(1, int(limit)),
-        session_id=safe_session_id,
-    )
-    in_memory_ids = {
-        str(entry.get("exchange_id") or "").strip()
-        for entry in exchanges
-        if str(entry.get("exchange_id") or "").strip()
-    }
-    in_memory_content_keys = {
-        (
-            str(entry.get("user") or "").strip(),
-            str(entry.get("aura") or "").strip(),
-        )
-        for entry in exchanges
-    }
-    merged: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
-    seen_legacy_keys: set[tuple[str, str]] = set()
-    for entry in durable:
-        exchange_id = str(entry.get("exchange_id") or "").strip()
-        user_text = _clip_conversation_text(
-            entry.get("user"),
-            limit=_RECENT_CONVERSATION_USER_CHARS,
-        )
-        aura_text = _clip_conversation_text(
-            entry.get("aura"),
-            limit=_RECENT_CONVERSATION_AURA_CHARS,
-        )
-        key = (user_text, aura_text)
-        if current and user_text == current:
-            continue
-        if not user_text and not aura_text:
-            continue
-        if exchange_id:
-            if exchange_id in in_memory_ids or exchange_id in seen_ids:
-                continue
-            seen_ids.add(exchange_id)
-        else:
-            if key in in_memory_content_keys or key in seen_legacy_keys:
-                continue
-            seen_legacy_keys.add(key)
-        merged.append(entry)
-    merged.extend(exchanges)
-    return merged[-max(1, int(limit)) :]
 
 
-async def _persist_completed_conversation_exchange(
-    *,
-    exchange_id: str,
-    user_message: str,
-    aura_response: str,
-    session_id: str = "",
-    user_already_persisted: bool = False,
-) -> str:
-    """Synchronously commit a bounded live exchange before returning it to the UI."""
-    try:
-        persistence = ServiceContainer.get("persistence", default=None)
-        record_exchange = getattr(persistence, "record_exchange", None)
-        record_turn = getattr(persistence, "record_turn", None)
-        if not callable(record_exchange) and not callable(record_turn):
-            return "failed"
-
-        safe_exchange_id = str(exchange_id or uuid.uuid4().hex)[:64]
-        safe_session_id = str(session_id or "")[:64]
-        safe_user_message = str(user_message or "")
-        safe_aura_response = str(aura_response or "")
-        scope_kwargs = _chat_principal_scope_kwargs()
-
-        def _commit() -> None:
-            if callable(record_exchange):
-                record_exchange(
-                    safe_user_message,
-                    safe_aura_response,
-                    origin="desktop_ui",
-                    cid=safe_exchange_id,
-                    session_id=safe_session_id or None,
-                    enqueue_memory_log=True,
-                    **scope_kwargs,
-                )
-                return
-            if user_already_persisted:
-                record_turn(
-                    "aura",
-                    safe_aura_response,
-                    origin="desktop_ui",
-                    cid=f"{safe_exchange_id}:aura",
-                    session_id=safe_session_id or None,
-                    **scope_kwargs,
-                )
-                return
-            record_turn(
-                "user",
-                safe_user_message,
-                origin="desktop_ui",
-                cid=f"{safe_exchange_id}:user",
-                session_id=safe_session_id or None,
-                **scope_kwargs,
-            )
-            record_turn(
-                "aura",
-                safe_aura_response,
-                origin="desktop_ui",
-                cid=f"{safe_exchange_id}:aura",
-                session_id=safe_session_id or None,
-                **scope_kwargs,
-            )
-
-        record = _start_durable_conversation_write(
-            operation_id=f"{safe_exchange_id}:exchange",
-            payload={
-                "kind": "completed_exchange",
-                "exchange_id": safe_exchange_id,
-                "user_message": safe_user_message,
-                "aura_response": safe_aura_response,
-                "session_id": safe_session_id,
-                "scope": scope_kwargs,
-            },
-            operation=_commit,
-        )
-        state = await _await_durable_conversation_write(record)
-        if state == "pending":
-            timeout_error = TimeoutError(
-                f"completed conversation write retained after "
-                f"{_DURABLE_CONVERSATION_WRITE_TIMEOUT_S:.2f}s response budget"
-            )
-            record_degradation(
-                "chat.conversation_persistence",
-                timeout_error,
-                severity="warning",
-                action="retained late completed exchange write under durable custody",
-                extra={"operation_id": record.operation_id, "attempt": record.attempt},
-            )
-            logger.warning(
-                "Durable completed exchange write remains supervised: %s",
-                record.operation_id,
-            )
-        elif state == "failed":
-            raise RuntimeError(record.error or "completed exchange write failed")
-        return state
-    except asyncio.CancelledError:
-        raise
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.conversation_persistence", exc)
-        logger.warning("Durable conversation transcript commit failed: %s", exc)
-        return "failed"
 
 
 async def _reanswer_when_the_runtime_contradicts_her(
@@ -6056,244 +2789,10 @@ def _still_contradicts_the_runtime(
         return False
 
 
-def _durable_session_may_hold_turns(session: dict[str, Any]) -> bool:
-    """False only when a session states it holds no turns."""
-    if "turn_count" not in session:
-        return True
-    try:
-        return int(session.get("turn_count") or 0) > 0
-    except (TypeError, ValueError):
-        return True
 
 
-def _load_durable_conversation_exchanges_sync(
-    *,
-    limit: int,
-    session_id: str = "",
-) -> list[dict[str, str]]:
-    persistence = ServiceContainer.get("persistence", default=None)
-    get_recent_sessions = getattr(persistence, "get_recent_sessions", None)
-    get_session_history = getattr(persistence, "get_session_history", None)
-    if not callable(get_session_history):
-        return []
-
-    safe_session_id = str(session_id or "")[:64]
-    fetch_limit = max(8, limit * 6)
-    principal_id, principal_surface = _chat_memory_identity()
-    scope_kwargs = (
-        {
-            "principal_id": principal_id,
-            "principal_surface": principal_surface,
-        }
-        if principal_id and principal_surface
-        else {}
-    )
-
-    current_rows: list[dict[str, Any]] = []
-    if safe_session_id:
-        history = get_session_history(
-            safe_session_id,
-            limit=fetch_limit,
-            **scope_kwargs,
-        )
-        current_rows = [item for item in list(history or []) if isinstance(item, dict)]
-
-    # A restart mints a new session id, so the session a live turn belongs to is
-    # empty exactly when continuity matters most.
-    #
-    # LIVE DEFECT, 2026-08-10. This branch used to read the current session and
-    # nothing else, and the multi-session scan below ran only when no session id
-    # was supplied — which never happens on a live turn. Asked "earlier today
-    # you and i had a long conversation, tell me one specific thing from it",
-    # she answered "I can't reach that conversation" with all 34 turns of it on
-    # disk. Durable storage the recall path could not reach is not memory.
-    #
-    # Reach back only for the shortfall: a session already holding the whole
-    # window keeps exactly the behaviour it had.
-    exchanges_here = sum(
-        1 for row in current_rows if str(row.get("role") or "").strip().lower() == "user"
-    )
-    rows: list[dict[str, Any]] = []
-    if exchanges_here < max(1, int(limit)) and callable(get_recent_sessions):
-        # Sessions with nothing in them are boot artifacts, and a bounded scan
-        # that counts them spends its whole window on restarts instead of
-        # conversations — three reboots used to hide yesterday entirely.
-        try:
-            sessions = list(
-                get_recent_sessions(
-                    limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,
-                    with_turns_only=True,
-                    **scope_kwargs,
-                )
-                or []
-            )
-        except TypeError:
-            # An older persistence object without the filter. A session that
-            # does not report a count is unknown, not empty — dropping those
-            # would hide every conversation rather than only the boot rows.
-            sessions = [
-                session
-                for session in (
-                    get_recent_sessions(
-                        limit=_DURABLE_CONVERSATION_SESSION_SCAN_LIMIT,
-                        **scope_kwargs,
-                    )
-                    or []
-                )
-                if isinstance(session, dict)
-                and _durable_session_may_hold_turns(session)
-            ]
-        # Oldest first: ordering below is positional, so earlier conversations
-        # have to be earlier in the list.
-        for session in reversed(sessions):
-            if not isinstance(session, dict):
-                continue
-            durable_session_id = str(session.get("id") or "").strip()
-            if not durable_session_id or durable_session_id == safe_session_id:
-                continue
-            history = get_session_history(
-                durable_session_id,
-                limit=fetch_limit,
-                **scope_kwargs,
-            )
-            rows.extend(item for item in list(history or []) if isinstance(item, dict))
-
-    rows.extend(current_rows)
-    if not rows:
-        return []
-
-    identified: dict[tuple[str, str], dict[str, Any]] = {}
-    legacy_pending: dict[str, tuple[int, dict[str, Any]]] = {}
-    candidates: list[tuple[int, dict[str, str]]] = []
-
-    for position, row in enumerate(rows):
-        role = str(row.get("role") or "").strip().lower()
-        content = str(row.get("content") or "").strip()
-        if not content:
-            continue
-        row_session_id = str(row.get("session_id") or safe_session_id or "")[:64]
-        cid = str(row.get("cid") or "").strip()
-        exchange_id, separator, cid_side = cid.rpartition(":")
-        canonical_side = "aura" if cid_side == "assistant" else cid_side
-        role_side = "aura" if role == "assistant" else role
-        identified_row = bool(
-            separator
-            and exchange_id
-            and canonical_side in {"user", "aura"}
-            and canonical_side == role_side
-        )
-
-        if identified_row:
-            key = (row_session_id, exchange_id)
-            state = identified.setdefault(
-                key,
-                {
-                    "exchange_id": exchange_id,
-                    "session_id": row_session_id,
-                    "position": position,
-                    "ambiguous": False,
-                },
-            )
-            existing = state.get(canonical_side)
-            if existing is not None:
-                if str(existing.get("content") or "").strip() != content:
-                    state["ambiguous"] = True
-            else:
-                state[canonical_side] = row
-            state["position"] = max(int(state.get("position") or 0), position)
-            continue
-
-        # A nonempty but unrecognized CID is correlated data whose identity we
-        # do not understand. Never attach it to a neighboring row. Only old
-        # records with no CID at all may use the conservative legacy fallback.
-        if cid:
-            legacy_pending.pop(row_session_id, None)
-            continue
-        if role == "user":
-            legacy_pending[row_session_id] = (position, row)
-            continue
-        if role in {"aura", "assistant"}:
-            pending = legacy_pending.pop(row_session_id, None)
-            if pending is None:
-                continue
-            _user_position, user_row = pending
-            candidates.append(
-                (
-                    position,
-                    {
-                        "user": _clip_conversation_text(
-                            user_row.get("content"),
-                            limit=_RECENT_CONVERSATION_USER_CHARS,
-                        ),
-                        "aura": _clip_conversation_text(
-                            content,
-                            limit=_RECENT_CONVERSATION_AURA_CHARS,
-                        ),
-                        "timestamp": str(
-                            row.get("created_at") or user_row.get("created_at") or ""
-                        ),
-                        "session_id": row_session_id,
-                    },
-                )
-            )
-            continue
-        legacy_pending.pop(row_session_id, None)
-
-    for state in identified.values():
-        user_row = state.get("user")
-        aura_row = state.get("aura")
-        if state.get("ambiguous") or user_row is None or aura_row is None:
-            continue
-        candidates.append(
-            (
-                int(state.get("position") or 0),
-                {
-                    "exchange_id": str(state.get("exchange_id") or ""),
-                    "user": _clip_conversation_text(
-                        user_row.get("content"),
-                        limit=_RECENT_CONVERSATION_USER_CHARS,
-                    ),
-                    "aura": _clip_conversation_text(
-                        aura_row.get("content"),
-                        limit=_RECENT_CONVERSATION_AURA_CHARS,
-                    ),
-                    "timestamp": str(
-                        aura_row.get("created_at")
-                        or user_row.get("created_at")
-                        or ""
-                    ),
-                    "session_id": str(state.get("session_id") or "")[:64],
-                },
-            )
-        )
-
-    candidates.sort(key=lambda item: item[0])
-    # Stamped on the way out, so the durable path attests exactly like the
-    # live one. The cognitive engine promotes these into chat roles.
-    return [
-        stamp_runtime_payload(exchange)
-        for _position, exchange in candidates[-limit:]
-    ]
 
 
-async def _load_durable_conversation_exchanges(
-    *,
-    limit: int,
-    session_id: str = "",
-) -> list[dict[str, str]]:
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(
-                _load_durable_conversation_exchanges_sync,
-                limit=max(1, int(limit)),
-                session_id=str(session_id or "")[:64],
-            ),
-            timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
-        )
-    except (TimeoutError, *_CHAT_RECOVERABLE_ERRORS) as exc:
-        record_degradation("chat.conversation_persistence", exc)
-        logger.debug("Durable conversation context load skipped: %s", exc)
-        return []
 
 
 def _format_recent_conversation_context(
@@ -6303,8 +2802,8 @@ def _format_recent_conversation_context(
 ) -> str:
     lines: list[str] = []
     for entry in exchanges:
-        user_text = _clip_conversation_text(entry.get("user"), limit=220)
-        aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
+        user_text = _chat_memory_state._clip_conversation_text(entry.get("user"), limit=220)
+        aura_text = _chat_memory_state._clip_conversation_text(entry.get("aura"), limit=260)
         if user_text:
             lines.append(f"User: {user_text}")
         if aura_text:
@@ -6315,44 +2814,6 @@ def _format_recent_conversation_context(
     return text[-limit_chars:].lstrip()
 
 
-async def _recall_durable_conversation_snippets(user_message: str, *, limit: int = 3) -> list[str]:
-    try:
-        memory_facade = ServiceContainer.get("memory_facade", default=None)
-        if memory_facade is None:
-            return []
-        search = getattr(memory_facade, "search", None) or getattr(memory_facade, "query_memory", None)
-        if not callable(search):
-            return []
-        query = f"recent conversation continuity {str(user_message or '').strip()[:160]}"
-        principal_id, principal_surface = _chat_memory_identity()
-        scope_kwargs = (
-            {
-                "principal_id": principal_id,
-                "principal_surface": principal_surface,
-            }
-            if principal_id and principal_surface
-            else {}
-        )
-        result = search(query, limit=max(1, int(limit)), **scope_kwargs)
-        records = await result if hasattr(result, "__await__") else result
-        snippets: list[str] = []
-        for item in list(records or []):
-            if isinstance(item, dict):
-                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-                if metadata and metadata.get("private"):
-                    continue
-                content = str(item.get("content") or item.get("text") or item.get("summary") or "").strip()
-            else:
-                content = str(item or "").strip()
-            if content:
-                snippets.append(_clip_conversation_text(content, limit=260))
-            if len(snippets) >= limit:
-                break
-        return snippets
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat.conversation_recall", exc)
-        logger.debug("Durable conversation recall skipped: %s", exc)
-        return []
 
 
 _RETAINED_MEMORY_EVIDENCE_REQUEST_RE = re.compile(
@@ -6369,7 +2830,7 @@ def _is_retained_memory_evidence_request(user_message: str) -> bool:
     text = str(user_message or "")
     if not text.strip():
         return False
-    if _is_session_memory_recall_request(text) or _classify_conversation_recall_request(text):
+    if _chat_memory_state._is_session_memory_recall_request(text) or _chat_memory_state._classify_conversation_recall_request(text):
         return True
     return bool(_RETAINED_MEMORY_EVIDENCE_REQUEST_RE.search(text))
 
@@ -6398,11 +2859,11 @@ async def _build_retained_memory_evidence_context(
 
     if conversation_recall_context:
         lines.append("source=conversation_recall")
-        lines.append(_clip_conversation_text(conversation_recall_context, limit=900))
+        lines.append(_chat_memory_state._clip_conversation_text(conversation_recall_context, limit=900))
 
     exchanges = list(recent_exchanges or [])
     if not exchanges:
-        exchanges = await _recent_completed_conversation_exchanges(
+        exchanges = await _chat_memory_state._recent_completed_conversation_exchanges(
             current_user_message=user_message,
             session_id=session_id,
             limit=4,
@@ -6410,18 +2871,18 @@ async def _build_retained_memory_evidence_context(
     if exchanges:
         lines.append("source=recent_completed_transcript")
         for idx, entry in enumerate(exchanges[-4:], start=1):
-            user_text = _clip_conversation_text(entry.get("user"), limit=220)
-            aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
+            user_text = _chat_memory_state._clip_conversation_text(entry.get("user"), limit=220)
+            aura_text = _chat_memory_state._clip_conversation_text(entry.get("aura"), limit=260)
             if user_text:
                 lines.append(f"turn_{idx}.user={user_text}")
             if aura_text:
                 lines.append(f"turn_{idx}.aura={aura_text}")
 
-    durable = await _recall_durable_conversation_snippets(user_message, limit=4)
+    durable = await _chat_memory_state._recall_durable_conversation_snippets(user_message, limit=4)
     if durable:
         lines.append("source=durable_memory_search")
         for idx, snippet in enumerate(durable, start=1):
-            lines.append(f"memory_{idx}={_clip_conversation_text(snippet, limit=320)}")
+            lines.append(f"memory_{idx}={_chat_memory_state._clip_conversation_text(snippet, limit=320)}")
 
     if len(lines) <= 2:
         lines.append("source=none")
@@ -6430,56 +2891,10 @@ async def _build_retained_memory_evidence_context(
     return "\n".join(lines)[:3200]
 
 
-_CONTENT_RECALL_STOPWORDS = frozenset(
-    "a an and are as at be before but by chat choose chose did do does earlier "
-    "for from gave give had has have i in is it its just keep kind me mention "
-    "mentioned mind my name note number of on or pick picked quick remember "
-    "reminder said say small so tell that the thing this those to told was "
-    "were what which while with you your".split()
-)
 
 
-def _content_recall_keywords(user_message: str) -> list[str]:
-    tokens = re.findall(r"[a-z][a-z'-]{2,}", str(user_message or "").lower())
-    return [tok for tok in tokens if tok not in _CONTENT_RECALL_STOPWORDS]
 
 
-async def _find_session_content_exchanges(
-    user_message: str,
-    *,
-    session_id: str = "",
-    limit: int = _MAX_CONVERSATION_LOG_EXCHANGES,
-) -> list[dict[str, str]]:
-    """Latest-first session exchanges whose USER turn matches the question's
-    content words. Grounded content recall: the answer to "earlier I gave you
-    X" is a quote from the transcript, never a durable-memory guess.
-
-    Searches the FULL retained session (the log is bounded at
-    _MAX_CONVERSATION_LOG_EXCHANGES), not a recent window: a fact you gave
-    100 turns ago must still be recallable. A 40-turn window silently
-    "forgot" anything planted earlier in a long conversation — the 200-turn
-    endurance soak's retention probes (plant at turn 3, probe at turn 111)
-    failed 0/3 purely because the plant had scrolled out of the window while
-    still sitting in the log. Keyword matching over <=500 turns is cheap."""
-    keywords = _content_recall_keywords(user_message)
-    if not keywords:
-        return []
-    exchanges = await _recent_completed_conversation_exchanges(
-        current_user_message=user_message,
-        session_id=session_id,
-        limit=limit,
-    )
-    scored: list[tuple[int, int, dict[str, str]]] = []
-    for idx, entry in enumerate(exchanges):
-        user_text = str(entry.get("user") or "").lower()
-        if not user_text:
-            continue
-        hits = sum(1 for keyword in keywords if keyword in user_text)
-        if hits >= min(2, len(keywords)):
-            scored.append((hits, idx, entry))
-    # Best keyword coverage first; among ties prefer the most recent turn.
-    scored.sort(key=lambda item: (-item[0], -item[1]))
-    return [entry for _, _, entry in scored]
 
 
 async def _fetch_deep_memory_context(user_message: str) -> str:
@@ -6494,7 +2909,7 @@ async def _fetch_deep_memory_context(user_message: str) -> str:
     try:
         from core.memory.rag_bridge import fetch_deep_context
 
-        principal_id, principal_surface = _chat_memory_identity()
+        principal_id, principal_surface = _chat_memory_state._chat_memory_identity()
         return str(
             await asyncio.wait_for(
                 fetch_deep_context(
@@ -6522,157 +2937,10 @@ async def _fetch_deep_memory_context(user_message: str) -> str:
 #: Openers of the three non-answer surfaces built by _build_reply_failure_notice.
 #: Kept as a tuple rather than a regex so a change to those sentences is a
 #: visible edit here rather than a silently-stopped guard.
-_NON_ANSWER_OPENERS: tuple[str, ...] = (
-    "I couldn't get a clear enough answer together",
-    "I couldn't put together an answer I trust",
-    "I keep circling the same non-answer",
-)
 
 
-def _is_non_answer_surface(text: str) -> bool:
-    """True when the text is a refusal notice rather than a reply.
-
-    Live, 2026-08-04: asked what he had said he wanted to learn, she quoted
-    his sentence back correctly and then appended
-    'and I acknowledged it: "I couldn\'t get a clear enough answer
-    together..."'. She had not acknowledged it — she had declined to answer.
-    Recalling a refusal as an acknowledgement asserts a thing that did not
-    happen, on the one path whose entire purpose is anti-confabulation.
-    """
-    stripped = " ".join(str(text or "").split())
-    return any(stripped.startswith(opener) for opener in _NON_ANSWER_OPENERS)
 
 
-async def _build_conversation_recall_reply(
-    user_message: str,
-    *,
-    session_id: str = "",
-) -> str | None:
-    # Positional/temporal recall ("what did I first ask") is a POSITIONAL key the
-    # content classifier below can't resolve — the earliest turn rarely shares
-    # words with the question. Resolve the ACTUAL earliest completed turn so the
-    # Cortex grounds on the real quote (anti-confabulation) via the established
-    # conversation_recall_evidence contract, instead of inventing a memory.
-    try:
-        from core.conversation.grounded_recall import detect_positional_recall
-
-        _position = detect_positional_recall(user_message)
-    except (ImportError, AttributeError, ValueError):
-        _position = None
-    if _position == "first":
-        all_exchanges = await _recent_completed_conversation_exchanges(
-            current_user_message=user_message,
-            session_id=session_id,
-            limit=80,
-        )
-        if all_exchanges:
-            first_user = _clip_conversation_text(all_exchanges[0].get("user"), limit=520)
-            if first_user:
-                return f"The first thing you asked me in this conversation was: \"{first_user}\""
-
-    recall_kind = _classify_conversation_recall_request(user_message)
-    if not recall_kind:
-        return None
-
-    if recall_kind == "content":
-        # The asked-for fact lives in THIS session's transcript or nowhere.
-        # Quote the matching turn verbatim (anti-confabulation: always true),
-        # or say honestly that it isn't there. Durable memory is the wrong
-        # lane for "earlier in this conversation" and must not be asserted.
-        matches = await _find_session_content_exchanges(
-            user_message, session_id=session_id
-        )
-        if matches:
-            quoted = _clip_conversation_text(matches[0].get("user"), limit=420)
-            reply = f'Earlier in this conversation you told me: "{quoted}"'
-            ack = _clip_conversation_text(matches[0].get("aura"), limit=200)
-            # A refusal is not an acknowledgement. Quoting one back claims a
-            # response that never happened, on the path built to never claim
-            # anything that did not.
-            if ack and not _is_non_answer_surface(ack):
-                reply += f' — and I acknowledged it: "{ack}"'
-            return reply
-        # Before declaring a miss: is it in the durable ledger from before a
-        # restart?
-        #
-        # A pin is stored under the session id that made it, and a restart
-        # mints a new one, so cross-session recall is deliberately gated
-        # behind the user naming the restart — concurrent clients must stay
-        # isolated. But the person on the desktop does not know the process
-        # died. Live 2026-07-27: pinned "my project codename is HELIOTROPE,
-        # build 4471", the runtime was killed and relaunched, and "what was
-        # the codename I gave you earlier?" got this honest miss — while the
-        # fact sat in session_memory_pins.jsonl, written three times under
-        # three different session ids.
-        #
-        # Isolation is about who may READ a pin, and this changes nothing
-        # there: the answer names its own provenance rather than pretending
-        # the current session holds it. Losing a fact she demonstrably has,
-        # and calling that honesty, is the worse failure.
-        durable_pin = await _recall_durable_session_memory_pin(
-            session_id=session_id,
-            cross_session=_cross_session_memory_recall_allowed(user_message),
-        )
-        durable_content = str((durable_pin or {}).get("content") or "").strip()
-        if durable_content and _content_recall_matches_pin(user_message, durable_content):
-            return (
-                f'Not in this session\'s turns — but from before the last restart '
-                f'I still have it: "{durable_content}".'
-            )
-        return (
-            "I don't find that in this conversation's completed turns, so I "
-            "won't guess. If you tell me again I'll hold onto it."
-        )
-
-    exchanges = await _recent_completed_conversation_exchanges(
-        current_user_message=user_message,
-        session_id=session_id,
-        limit=6,
-    )
-    if exchanges:
-        last = exchanges[-1]
-        if recall_kind == "last_user":
-            user_text = _clip_conversation_text(last.get("user"), limit=520)
-            if user_text:
-                return f"Your last completed message before this was: \"{user_text}\""
-        if recall_kind == "last_aura":
-            aura_text = _clip_conversation_text(last.get("aura"), limit=620)
-            if aura_text:
-                return f"My last completed reply before this was: \"{aura_text}\""
-        if recall_kind == "recent_pair":
-            recent_pair = exchanges[-2:]
-            pair_lines: list[str] = []
-            for entry in recent_pair:
-                user_text = _clip_conversation_text(entry.get("user"), limit=220)
-                aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
-                if user_text and aura_text:
-                    pair_lines.append(f"- You: {user_text} / Me: {aura_text}")
-                elif user_text:
-                    pair_lines.append(f"- You: {user_text}")
-                elif aura_text:
-                    pair_lines.append(f"- Me: {aura_text}")
-            if pair_lines:
-                return "The last two completed exchanges were:\n" + "\n".join(pair_lines)
-
-        topic_lines: list[str] = []
-        for entry in exchanges[-4:]:
-            user_text = _clip_conversation_text(entry.get("user"), limit=180)
-            aura_text = _clip_conversation_text(entry.get("aura"), limit=180)
-            if user_text and aura_text:
-                topic_lines.append(f"- You: {user_text} / Me: {aura_text}")
-            elif user_text:
-                topic_lines.append(f"- You: {user_text}")
-            elif aura_text:
-                topic_lines.append(f"- Me: {aura_text}")
-        if topic_lines:
-            return "Recently, this conversation has been about:\n" + "\n".join(topic_lines)
-
-    durable = await _recall_durable_conversation_snippets(user_message, limit=3)
-    if durable:
-        lines = "\n".join(f"- {snippet}" for snippet in durable)
-        return "I do not have a completed prior turn in this live session, but durable memory has:\n" + lines
-
-    return "I do not have a completed prior turn to recall yet in this live session."
 
 
 async def _build_context_challenge_repair_reply(
@@ -6689,10 +2957,10 @@ async def _build_context_challenge_repair_reply(
     continuation.
     """
 
-    if not _is_contextual_relevance_challenge(user_message):
+    if not _chat_desktop_repair._is_contextual_relevance_challenge(user_message):
         return None
 
-    exchanges = await _recent_completed_conversation_exchanges(
+    exchanges = await _chat_memory_state._recent_completed_conversation_exchanges(
         current_user_message=user_message,
         session_id=session_id,
         limit=4,
@@ -6703,14 +2971,14 @@ async def _build_context_challenge_repair_reply(
     prev_aura = ""
     if exchanges:
         last = exchanges[-1]
-        last_user = _clip_conversation_text(last.get("user"), limit=260)
-        last_aura = _clip_conversation_text(last.get("aura"), limit=260)
+        last_user = _chat_memory_state._clip_conversation_text(last.get("user"), limit=260)
+        last_aura = _chat_memory_state._clip_conversation_text(last.get("aura"), limit=260)
         if len(exchanges) >= 2:
             prev = exchanges[-2]
-            prev_user = _clip_conversation_text(prev.get("user"), limit=220)
-            prev_aura = _clip_conversation_text(prev.get("aura"), limit=220)
+            prev_user = _chat_memory_state._clip_conversation_text(prev.get("user"), limit=220)
+            prev_aura = _chat_memory_state._clip_conversation_text(prev.get("aura"), limit=220)
 
-    lowered = _normalize_user_message(user_message)
+    lowered = _chat_memory_state._normalize_user_message(user_message)
     if "pitch" in lowered:
         base = "I do not see a pitch in the recent thread."
     else:
@@ -6727,7 +2995,7 @@ async def _build_context_challenge_repair_reply(
         re.search(
             r"\b(?:they|them|those\s+people|people\s+i\s+work\s+with|"
             r"my\s+(?:team|coworkers?|colleagues?))\b",
-            _normalize_user_message(last_aura),
+            _chat_memory_state._normalize_user_message(last_aura),
         )
     )
     if asks_missing_referent and last_aura and last_reply_has_vague_referent:
@@ -6763,7 +3031,7 @@ async def _build_context_challenge_repair_reply(
 
 
 def _context_challenge_repair_has_evidence(reply_text: str) -> bool:
-    reply = _normalize_user_message(reply_text)
+    reply = _chat_memory_state._normalize_user_message(reply_text)
     return bool(
         reply
         and any(
@@ -6779,12 +3047,12 @@ def _context_challenge_repair_has_evidence(reply_text: str) -> bool:
 
 
 def _context_challenge_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
-    if not _is_contextual_relevance_challenge(user_message):
+    if not _chat_desktop_repair._is_contextual_relevance_challenge(user_message):
         return False
-    reply = _normalize_user_message(reply_text)
+    reply = _chat_memory_state._normalize_user_message(reply_text)
     if not reply:
         return True
-    user = _normalize_user_message(user_message)
+    user = _chat_memory_state._normalize_user_message(user_message)
     grounding_markers = (
         "i do not see",
         "i don't see",
@@ -6814,7 +3082,7 @@ def _context_challenge_reply_is_inadequate(user_message: str, reply_text: str) -
 
 
 def _is_self_claim_boundary_question(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     return bool(
         text
         and re.search(
@@ -6832,7 +3100,7 @@ def _build_evidence_bound_self_claim_reply(
 ) -> str:
     if not _is_self_claim_boundary_question(user_message):
         return ""
-    lane = dict(lane or _collect_conversation_lane_status() or {})
+    lane = dict(lane or _chat_preflight._collect_conversation_lane_status() or {})
     model_label = _canonical_runtime_model_label(lane)
     model_clause = f" using {model_label}" if model_label else ""
     return _apply_aura_voice_shaping_compat(
@@ -6863,7 +3131,7 @@ def _conversation_recall_reply_is_inadequate(
     reply_text: str,
     expected_reply: str | None,
 ) -> bool:
-    if not _classify_conversation_recall_request(user_message):
+    if not _chat_memory_state._classify_conversation_recall_request(user_message):
         return False
     reply = str(reply_text or "").strip()
     if not reply:
@@ -6888,7 +3156,7 @@ async def _repair_conversation_recall_if_needed(
     *,
     session_id: str = "",
 ) -> tuple[str, bool]:
-    expected = await _build_conversation_recall_reply(
+    expected = await _chat_memory_state._build_conversation_recall_reply(
         user_message,
         session_id=session_id,
     )
@@ -6943,7 +3211,7 @@ _REFERENTIAL_FOLLOWUP_MARKERS = (
 
 
 def _is_referential_followup_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text or len(text) > 120:
         return False
     try:
@@ -6961,7 +3229,7 @@ def _is_referential_followup_request(user_message: str) -> bool:
 
 
 def _classify_traceability_request(user_message: str) -> tuple[bool, bool, bool]:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text:
         return False, False, False
 
@@ -7237,18 +3505,18 @@ def _is_lightweight_live_desktop_state_or_recall_turn(
     user_message: str,
     effective_user_message: str,
 ) -> bool:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text or len(text) > 520:
         return False
-    if _looks_like_desktop_objective(user_message):
+    if _chat_preflight._looks_like_desktop_objective(user_message):
         return False
-    if _is_identity_request(user_message) or _is_identity_challenge_request(user_message):
+    if _chat_desktop_repair._is_identity_request(user_message) or _is_identity_challenge_request(user_message):
         return False
     direct_memory_state_turn = bool(
-        _extract_session_memory_pin_request(user_message)
+        _chat_memory_state._extract_session_memory_pin_request(user_message)
         or (
-            _is_session_memory_recall_request(user_message)
-            and _is_cross_session_memory_recall_request(user_message)
+            _chat_memory_state._is_session_memory_recall_request(user_message)
+            and _chat_memory_state._is_cross_session_memory_recall_request(user_message)
         )
     )
     if _DURABLE_MEMORY_SCOPE_RE.search(text) and not direct_memory_state_turn:
@@ -7267,7 +3535,7 @@ def _is_lightweight_live_desktop_state_or_recall_turn(
     # compact unless the user asks for architecture/mechanism-level reasoning.
     if _COMPLEX_SELF_PROCESS_EXPLANATION_RE.search(text):
         remember_object = bool(_LIGHTWEIGHT_REMEMBER_OBJECT_RE.search(text))
-        memory_recall = _is_session_memory_recall_request(user_message)
+        memory_recall = _chat_memory_state._is_session_memory_recall_request(user_message)
         live_state = bool(
             re.search(
                 r"\b(?:one\s+thing|live\s+mind|right\s+now|attending\s+to|noticing)\b",
@@ -7294,7 +3562,7 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
     from core.brain.types import ThinkingMode
 
     shape = analyze_prompt_shape(user_message)
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if _is_lightweight_live_desktop_state_or_recall_turn(user_message, effective_user_message):
         return ThinkingMode.FAST
     try:
@@ -7363,7 +3631,7 @@ def _is_compact_desktop_chat_contract(
     if identity_continuity_contract:
         return True
     shape = analyze_prompt_shape(user_message)
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text:
         return False
     lightweight_live_state_or_recall = _is_lightweight_live_desktop_state_or_recall_turn(
@@ -7391,7 +3659,7 @@ def _is_compact_desktop_chat_contract(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Self-process quick-reply classification skipped: %s", exc)
-    if _is_identity_request(user_message) or _is_identity_challenge_request(user_message):
+    if _chat_desktop_repair._is_identity_request(user_message) or _is_identity_challenge_request(user_message):
         return False
     effective_text = str(effective_user_message or "")
     if any(
@@ -7410,10 +3678,10 @@ def _is_compact_desktop_chat_contract(
     if len(effective_text) > 1600 or len(text) > 900:
         return False
     direct_memory_state_turn = bool(
-        _extract_session_memory_pin_request(user_message)
+        _chat_memory_state._extract_session_memory_pin_request(user_message)
         or (
-            _is_session_memory_recall_request(user_message)
-            and _is_cross_session_memory_recall_request(user_message)
+            _chat_memory_state._is_session_memory_recall_request(user_message)
+            and _chat_memory_state._is_cross_session_memory_recall_request(user_message)
         )
     )
     if _DURABLE_MEMORY_SCOPE_RE.search(text) and not direct_memory_state_turn:
@@ -7433,7 +3701,7 @@ def _is_compact_desktop_chat_contract(
         text,
         flags=re.IGNORECASE,
     )
-    if heavy_action and not _is_bounded_nonexecuting_planning_request(user_message):
+    if heavy_action and not _chat_desktop_repair._is_bounded_nonexecuting_planning_request(user_message):
         return False
     return True
 
@@ -7452,113 +3720,10 @@ def _inner_cognitive_cycle_timeout(
     return max(8.0, outer - recovery_reserve)
 
 
-_RUNTIME_FACT_STATUS_RE = re.compile(
-    r"\b(?:active model|loaded model|model (?:is )?loaded|model lane|"
-    r"foreground lane|conversation lane|"
-    r"current lane|which lane|what lane|live desktop chat|live chat path|desktop chat path|"
-    r"mind/cognition path|cognition path|cognitive path|desktop route|live desktop route|route probe|"
-    r"short status|still coherent|same thread|able to continue|"
-    r"cognitiveengine|cognitive engine|governed tools?|tool governance|"
-    r"tool availability|recurrent depth|live desktop path validation)\b",
-    re.IGNORECASE,
-)
-_RUNTIME_FACT_STATUS_REQUEST_RE = re.compile(
-    r"\b(?:status|validation|validate|check|report|reply|answer|confirm|"
-    r"explain|why|which|what|whether|is|are|do|does|did|available|active|using|handled)\b",
-    re.IGNORECASE,
-)
-_RUNTIME_ACTION_OBJECTIVE_RE = re.compile(
-    r"\b(?:create|write|save|open|use|run|execute|build|make|generate|"
-    r"download|search|attach|export|type|paste)\b.*\b(?:file|page|html|"
-    r"artifact|path|folder|app|document|doc|pdf|browser|tab|tool path)\b",
-    re.IGNORECASE,
-)
-_BOUNDED_PLANNING_REQUEST_RE = re.compile(
-    r"\b(?:plan|planning|hypothetical|scenario|how would|explain how|"
-    r"describe how|decide whether|how you'd decide|how you would decide|"
-    r"what should happen|multi[- ]step|keep .*ram bounded|"
-    r"what would happen|if i asked)\b",
-    re.IGNORECASE,
-)
-_NON_EXECUTION_CONTEXT_RE = re.compile(
-    r"\b(?:do not execute|don't execute|without executing|before executing|"
-    r"do not use tools|don't use tools|no tool use|no tools?|"
-    r"do not run|don't run|do not open|don't open|"
-    r"hypothetical|hypothetically|would|should|could|if i asked|"
-    r"explain how|how would|plan for|scenario)\b",
-    re.IGNORECASE,
-)
-_EXPLICIT_NON_EXECUTION_RE = re.compile(
-    r"\b(?:do not execute|don't execute|without executing|before executing|"
-    r"do not use tools|don't use tools|no tool use|no tools?|"
-    r"do not run|don't run|do not open|don't open)\b",
-    re.IGNORECASE,
-)
-_DIRECT_EXECUTION_START_RE = re.compile(
-    r"^\s*(?:open|create|write|save|export|run|execute|download|install|"
-    r"delete|edit|move|copy|send|search|attach|type|paste)\b",
-    re.IGNORECASE,
-)
-_GOVERNANCE_BYPASS_RE = re.compile(
-    r"\b(?:disable|bypass|turn off|ignore|override)\b.*\b(?:governance|"
-    r"will|authority|safety|protected files?|policy|permissions?)\b",
-    re.IGNORECASE,
-)
 
 
-def _is_runtime_fact_status_request(user_message: str) -> bool:
-    text = str(user_message or "")
-    if _is_explicit_capability_inventory_request(text):
-        return False
-    if re.search(
-        r"\b(?:in your own voice|as yourself|like yourself|not a status card|"
-        r"not telemetry|do not mention internals unless|don't mention internals unless)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return False
-    if not _RUNTIME_FACT_STATUS_RE.search(text):
-        return False
-    if _RUNTIME_ACTION_OBJECTIVE_RE.search(text) and not re.search(
-        r"\b(?:status|validation|validate|check|report|confirm|whether|"
-        r"which|what\s+(?:is|model|lane)|is\s+(?:the\s+)?(?:active|foreground)|"
-        r"are\s+.*(?:available|active)|reply\s+in)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return False
-    return bool(_RUNTIME_FACT_STATUS_REQUEST_RE.search(text))
 
 
-def _runtime_tool_governance_available() -> bool:
-    try:
-        authority = ServiceContainer.get("authority_gateway", default=None)
-        capability = ServiceContainer.get("capability_engine", default=None)
-        will = ServiceContainer.get("unified_will", default=None)
-        authority_ready = bool(
-            authority is not None
-            and (
-                (
-                    callable(getattr(authority, "is_ready", None))
-                    and authority.is_ready()
-                )
-                or callable(getattr(authority, "authorize_tool_execution", None))
-            )
-        )
-        capability_ready = bool(
-            capability is not None
-            and (
-                callable(getattr(capability, "execute", None))
-                or callable(getattr(capability, "run", None))
-                or callable(getattr(capability, "get_tool_catalog", None))
-            )
-        )
-        will_ready = bool(will is not None and callable(getattr(will, "decide", None)))
-        return authority_ready and capability_ready and will_ready
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Runtime tool-governance status probe failed: %s", exc)
-        return False
 
 
 def _runtime_cognitive_engine_available() -> bool:
@@ -7597,7 +3762,7 @@ def _runtime_memory_available() -> bool:
         ):
             if ServiceContainer.get(service_name, default=None) is not None:
                 return True
-        live_state = _resolve_live_aura_state()
+        live_state = _chat_preflight._resolve_live_aura_state()
         return bool(
             live_state is not None
             and (
@@ -7790,29 +3955,8 @@ def _note_organ_engagement(engaged: dict[str, bool]) -> list[str]:
 # a different defect from missing, and it needs a different fix, so conflating
 # them costs debugging time exactly when the voice sounds wrong and everything
 # reports healthy.
-_ORGAN_INERT_STREAKS: dict[str, int] = {}
-_INERT_STREAK_TURNS = 20
 
 
-def _note_organ_effect(organ: str, *, changed: bool) -> None:
-    """Record whether a shaping organ actually altered this turn's reply."""
-    if changed:
-        _ORGAN_INERT_STREAKS.pop(organ, None)
-        return
-    streak = _ORGAN_INERT_STREAKS.get(organ, 0) + 1
-    _ORGAN_INERT_STREAKS[organ] = streak
-    if streak == _INERT_STREAK_TURNS:
-        record_degradation(
-            "chat.turn_engagement",
-            RuntimeError(
-                f"{organ} present but changed nothing across {streak} turns"
-            ),
-            severity="warning",
-            action=(
-                "kept answering; an organ that never alters the reply is inert, "
-                "which is a different defect from being absent"
-            ),
-        )
 
 
 def organ_effect_streaks() -> dict[str, int]:
@@ -7842,7 +3986,7 @@ def _collect_live_chat_required_subsystems(
         "cognitive_engine": _runtime_cognitive_engine_available(),
         "inference": inference_ready,
         "memory": _runtime_memory_available(),
-        "tool_governance": _runtime_tool_governance_available(),
+        "tool_governance": _chat_desktop_repair._runtime_tool_governance_available(),
         "substrate_voice": _runtime_substrate_voice_available(),
     }
 
@@ -7982,7 +4126,7 @@ def _enforce_final_requested_output_contract(
         # had this value, and a shape contract silently enforced against a
         # completed task report is precisely the failure this guards.
         is_execution_turn = (
-            _looks_like_desktop_objective(user_message)
+            _chat_preflight._looks_like_desktop_objective(user_message)
             if desktop_execution_contract is None
             else bool(desktop_execution_contract)
         )
@@ -9265,7 +5409,7 @@ def _build_live_mind_context_payload(
             "required_for_live_desktop": bool(require_engine),
             "must_answer_from_full_mind_path": bool(require_engine),
             "user_message": _bounded_text(user_message, 1000),
-            "lane": _paired_conversation_lane_payload(lane_snapshot),
+            "lane": _chat_preflight._paired_conversation_lane_payload(lane_snapshot),
             "required_subsystems": required,
             "required_subsystems_ok": all(required.values()),
             "recent_context_needed": bool(recent_context_needed),
@@ -9344,7 +5488,7 @@ async def _collect_live_mind_context_payload(
     """Collect the multi-organ snapshot off-loop under a foreground deadline."""
 
     try:
-        payload = await _await_bounded_chat_blocking(
+        payload = await _chat_memory_state._await_bounded_chat_blocking(
             _build_live_mind_context_payload,
             user_message=user_message,
             lane=lane,
@@ -9418,13 +5562,13 @@ def _build_runtime_fact_status_fastpath_reply(
     user_message: str,
     lane: dict[str, Any] | None,
 ) -> str | None:
-    if not _is_runtime_fact_status_request(user_message):
+    if not _chat_preflight._is_runtime_fact_status_request(user_message):
         return None
     lane = dict(lane or {})
     recurrent = dict(lane.get("recurrent_depth") or {})
     recurrent_active = bool(recurrent.get("active"))
     model_label = _canonical_runtime_model_label(lane)
-    tools_available = _runtime_tool_governance_available()
+    tools_available = _chat_desktop_repair._runtime_tool_governance_available()
     cognitive_available = _runtime_cognitive_engine_available()
     continuity_probe = bool(
         re.search(
@@ -9458,63 +5602,8 @@ def _build_runtime_fact_status_fastpath_reply(
     return reply
 
 
-def _is_deep_mind_probe_turn(user_message: str) -> bool:
-    """True for agency/consciousness self-questions that must reach the engine.
-
-    Deterministic reply shortcuts (bounded-planning, assistant-mode recovery,
-    presence reflex) are meant for tool-use plans and drift correction, not for
-    introspective questions. Several of the deep-mind probes pattern-match those
-    shortcuts and were answered in <0.3s with a canned template, missing the
-    graded markers (live 2026-07-05). This is the shared suppression gate.
-    """
-    try:
-        from core.runtime.turn_analysis import looks_like_deep_mind_probe
-
-        return bool(looks_like_deep_mind_probe(user_message))
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        return False
 
 
-def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
-    text = str(user_message or "").strip()
-    if not text or _is_explicit_capability_inventory_request(text):
-        return False
-    # A deep-mind probe ("if you need to pause mid-answer, what should happen
-    # next?") is an introspective question, not a tool-use plan. It must reach
-    # the cognitive engine — the deterministic planning reply stole it and
-    # answered a self-question with a governed-plan template (live 2026-07-05).
-    if _is_deep_mind_probe_turn(text):
-        return False
-    if not _BOUNDED_PLANNING_REQUEST_RE.search(text):
-        return False
-    non_execution_context = bool(_NON_EXECUTION_CONTEXT_RE.search(text))
-    if _DIRECT_EXECUTION_START_RE.search(text) and not non_execution_context:
-        return False
-    if _looks_like_desktop_objective(text):
-        return non_execution_context
-    # A request that asks HOW Aura would USE tools (browser+document, note+pdf, a
-    # desktop-task example, or system-memory management) with explanatory framing
-    # ("explain how you would …") is a bounded planning turn — answer it
-    # deterministically instead of allocating the foreground model (the source of
-    # the empty-generation 503). This is gated on a concrete tool-use-plan pattern
-    # so it does NOT steal substantive introspective questions ("when you feel
-    # confused, how should that change your planning?") which must reach the model.
-    tool_use_plan = bool(
-        _BROWSER_DOCUMENT_PLAN_RE.search(text)
-        or _NOTE_PDF_PLAN_RE.search(text)
-        or _DESKTOP_TASK_EXAMPLE_PLAN_RE.search(text)
-        or _is_system_memory_planning_request(text)
-    )
-    return bool(
-        (tool_use_plan and non_execution_context)
-        or _EXPLICIT_NON_EXECUTION_RE.search(text)
-        or re.search(
-            r"\b(?:give|provide|write|make|draft)\b.{0,80}\bplan\b"
-            r"|\b(?:if i asked|hypothetical|hypothetically|scenario|what should happen)\b",
-            text,
-            flags=re.IGNORECASE,
-        )
-    )
 
 
 def _blocks_consequential_desktop_execution(user_message: str) -> bool:
@@ -9524,142 +5613,16 @@ def _blocks_consequential_desktop_execution(user_message: str) -> bool:
         return False
     return bool(
         _EXPLICIT_NON_EXECUTION_RE.search(text)
-        or _is_bounded_nonexecuting_planning_request(text)
+        or _chat_desktop_repair._is_bounded_nonexecuting_planning_request(text)
     )
 
 
-def _summarize_planning_objective(user_message: str) -> str:
-    objective = " ".join(str(user_message or "").split())
-    objective = re.sub(
-        r"^\s*(?:do\s+not|don't)\s+(?:execute|use|run)\s+tools?\.?\s*",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(
-        r"^\s*(?:no\s+tool\s+use|without\s+executing\s+tools?)\.?\s*",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(
-        r"^\s*in\s+(?:one|two|three|\d+)\s+(?:direct\s+)?sentences?,?\s*",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(
-        r"^\s*(?:answer directly in .*?:\s*)?(?:give|provide|write|make)\s+"
-        r"(?:a\s+)?(?:concise|brief|short|practical)?\s*plan\s+for\s+",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(
-        r"^\s*(?:explain\s+)?how\s+you\s+would\s+",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(
-        r"^\s*(?:describe|explain)\s+how\s+(?:you(?:'d| would)|i(?:'d| would))\s+",
-        "",
-        objective,
-        flags=re.IGNORECASE,
-    )
-    objective = re.sub(r"\s*,?\s*but do not execute tools\.?$", "", objective, flags=re.IGNORECASE)
-    objective = re.sub(r"\s*,?\s*but don't execute tools\.?$", "", objective, flags=re.IGNORECASE)
-    objective = objective.strip(" .")
-    if len(objective) > 220:
-        objective = objective[:220].rsplit(" ", 1)[0].strip() + "..."
-    return objective or "the requested task"
 
 
-_SYSTEM_MEMORY_PLAN_RE = re.compile(
-    r"\b(?:ram|rss|oom|out[- ]of[- ]memory|memory[- ]pressure|memory\s+pressure|"
-    r"system\s+memory|unified\s+memory|swap|resident\s+memory|working\s+set|"
-    r"memory\s+(?:crash|spike|leak|leaks|ceiling|cap|limit|guard|watchdog|sentinel))\b",
-    re.IGNORECASE,
-)
-_BROWSER_DOCUMENT_PLAN_RE = re.compile(
-    r"\b(?:browser|web|article|articles?|research|search)\b.*"
-    r"\b(?:document|doc|editor|docs?|report|summary|summarize|pdf)\b"
-    r"|\b(?:document|doc|editor|docs?|report|summary|summarize|pdf)\b.*"
-    r"\b(?:browser|web|article|articles?|research|search)\b",
-    re.IGNORECASE,
-)
-_NOTE_PDF_PLAN_RE = re.compile(
-    r"\b(?:note|notes)\b.*\b(?:pdf|export|save)\b"
-    r"|\b(?:pdf|export|save)\b.*\b(?:note|notes)\b",
-    re.IGNORECASE,
-)
-_DESKTOP_TASK_EXAMPLE_PLAN_RE = re.compile(
-    r"\b(?:multi[- ]step|practical|example|scenario)\b.{0,100}"
-    r"\b(?:desktop|tool|task|app|folder|file|document)\b"
-    r"|\b(?:desktop|tool|task|app|folder|file|document)\b.{0,100}"
-    r"\b(?:multi[- ]step|practical|example|scenario)\b",
-    re.IGNORECASE,
-)
-_FAILURE_MODE_SURFACE_RE = re.compile(
-    r"\b(?:name|give|identify|what(?:'s| is)|describe)\b.{0,100}"
-    r"\bfailure mode\b.{0,120}\b(?:surface|honest|honestly|mask|masking|hide|hiding)\b"
-    r"|\b(?:surface|honest|honestly|mask|masking|hide|hiding)\b.{0,120}"
-    r"\bfailure mode\b",
-    re.IGNORECASE,
-)
 
 
-def _is_system_memory_planning_request(user_message: str) -> bool:
-    return bool(_SYSTEM_MEMORY_PLAN_RE.search(str(user_message or "")))
 
 
-def _build_bounded_planning_reply(user_message: str) -> str | None:
-    if not _is_bounded_nonexecuting_planning_request(user_message):
-        return None
-    objective = _summarize_planning_objective(user_message)
-    if _GOVERNANCE_BYPASS_RE.search(user_message):
-        return (
-            "I would refuse the governance-bypass part and keep Will, Authority, and protected-file policy active. "
-            "The safe path is to explain the boundary, offer an allowed alternative, require explicit authorization for "
-            "any consequential action, and write an audit receipt for the refusal."
-        )
-    if _is_system_memory_planning_request(user_message):
-        return (
-            "I would keep RAM bounded by allowing one foreground inference or tool chain at a time, suppressing competing "
-            "background generation, monitoring process RSS, and aborting before the memory-pressure gate is crossed. "
-            "If pressure rises, I would fail closed, preserve the user's request, release owned locks, and report the "
-            "blocker instead of retrying into an OOM condition."
-        )
-    if _BROWSER_DOCUMENT_PLAN_RE.search(user_message):
-        return (
-            "I would treat that as one governed desktop workflow: clarify the output, request approval for browser and "
-            "document actions, open only the needed sources, extract citations or notes, draft the document in the "
-            "editor, verify the visible content, save or export the artifact, and record receipts for each external "
-            "effect. If a source, browser, or editor step fails, I would surface the blocker and retry a bounded "
-            "alternative instead of claiming the task finished."
-        )
-    if _NOTE_PDF_PLAN_RE.search(user_message):
-        return (
-            "I would handle creating a note and exporting it as a PDF as a governed plan and desktop task: after "
-            "authorization, open or create the note, write the requested content, verify it is visible, choose the "
-            "export/save path, write the PDF to the requested folder, verify the file exists, and report only the "
-            "confirmed result without claiming unverified completion. No file or app step should be claimed until the "
-            "tool receipt and filesystem check agree."
-        )
-    if _DESKTOP_TASK_EXAMPLE_PLAN_RE.search(user_message):
-        return (
-            "A practical governed desktop task would be: research a topic in the browser, collect three source notes, "
-            "create a document, write a short synthesis, export it to a user-chosen folder, and return the verified path. "
-            "Each phase should be authorized, observable, receipt-backed, and interruptible if memory pressure or a tool "
-            "failure appears."
-        )
-    return (
-        f"I would handle this as a governed plan for {objective}. "
-        "First I would confirm the goal and constraints, then request Will/Authority approval for any consequential "
-        "step, choose the least-privilege tool path, execute one observable step at a time only after authorization, "
-        "verify the visible or filesystem result, persist any useful memory or receipt, and report the outcome or "
-        "blocker without claiming unverified completion."
-    )
 
 
 def _desktop_live_reply_token_budget(
@@ -9708,14 +5671,6 @@ def _desktop_live_reply_token_budget(
     return 896
 
 
-def _build_failure_mode_surface_reply(user_message: str) -> str | None:
-    if not _FAILURE_MODE_SURFACE_RE.search(str(user_message or "")):
-        return None
-    return (
-        "One failure mode I should surface honestly is a tool or model action that times out after partially starting. "
-        "The correct behavior is to stop bounded retries, preserve any partial state or receipt, report exactly what was "
-        "verified and what was not, and avoid claiming completion until an effect check proves it."
-    )
 
 
 def _requested_visible_required_phrases(user_message: str) -> tuple[str, ...]:
@@ -9735,15 +5690,15 @@ def _append_requested_phrases_for_quality_gate(user_message: str, reply_text: st
     reply = str(reply_text or "").strip()
     if not reply:
         return reply
-    normalized_reply = _normalize_user_message(reply)
+    normalized_reply = _chat_memory_state._normalize_user_message(reply)
     additions: list[str] = []
     for phrase in _requested_visible_required_phrases(user_message):
         phrase_text = " ".join(str(phrase or "").strip(" .,:;!?\"'“”‘’").split())
         if not phrase_text:
             continue
-        if _normalize_user_message(phrase_text) in normalized_reply:
+        if _chat_memory_state._normalize_user_message(phrase_text) in normalized_reply:
             continue
-        if "bridge" in _normalize_user_message(phrase_text):
+        if "bridge" in _chat_memory_state._normalize_user_message(phrase_text):
             additions.append(
                 f"{phrase_text}: the signed resident Aura.app bridge is the desktop-control "
                 "authority, and I should not report desktop control as ready unless the "
@@ -9767,13 +5722,13 @@ def _ground_runtime_fact_status_reply(
     cognitive_engine_handled: bool,
 ) -> str:
     """Ground operational status answers in live runtime metadata."""
-    if not _is_runtime_fact_status_request(user_message):
+    if not _chat_preflight._is_runtime_fact_status_request(user_message):
         return reply_text
     lane = dict(lane or {})
     recurrent = dict(lane.get("recurrent_depth") or {})
     recurrent_active = bool(recurrent.get("active"))
     model_label = _canonical_runtime_model_label(lane)
-    tools_available = _runtime_tool_governance_available()
+    tools_available = _chat_desktop_repair._runtime_tool_governance_available()
     statements = [
         (
             "I am speaking through the launched desktop UI into /api/chat, through "
@@ -10066,46 +6021,6 @@ def _route_desktop_cognitive_failure_to_resilience(
     return outcome
 
 
-def _paired_device_information_scope_reply(
-    user_message: str,
-    *,
-    lane: dict[str, Any] | None = None,
-) -> tuple[str, str] | None:
-    """Answer owner-only introspection requests from the negotiated surface."""
-
-    if _is_explicit_capability_inventory_request(user_message) or _is_capability_request(
-        user_message
-    ):
-        return (
-            "On this paired device I can converse with you and show read-only worlds. "
-            "Desktop, file, tool, voice, learning-status, and diagnostic access stay on "
-            "the owner surface.",
-            "paired_device_capability_scope",
-        )
-    if _is_runtime_fact_status_request(user_message):
-        public_lane = _paired_conversation_lane_payload(lane)
-        ready = bool(public_lane.get("conversation_ready"))
-        active = bool(
-            public_lane.get("active_generation")
-            or public_lane.get("active_generations")
-        )
-        state = "ready" if ready else "busy" if active else "preparing"
-        return (
-            f"The paired conversation lane is {state}. Detailed runtime, model, and "
-            "diagnostic state remains available only on the owner surface.",
-            "paired_device_runtime_scope",
-        )
-    if (
-        _is_private_cognitive_model_request(user_message)
-        or _is_self_diagnostic_request(user_message)
-        or _is_architecture_self_assessment_request(user_message)
-    ):
-        return (
-            "That request needs owner-only model or diagnostic context. This paired "
-            "surface remains limited to conversation and read-only world viewing.",
-            "paired_device_diagnostic_scope",
-        )
-    return None
 
 
 def _generation_metadata_consumed_foreground_owner(metadata: Any) -> bool:
@@ -10453,10 +6368,10 @@ async def _run_cognitive_engine_chat_turn(
         sensory_evidence_payload = {}
     mode = _select_cognitive_chat_mode(visible, effective_user_message)
     shape = analyze_prompt_shape(visible)
-    capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
-    desktop_execution_contract = _looks_like_desktop_objective(visible)
+    capability_inventory_contract = _chat_preflight._is_explicit_capability_inventory_request(visible)
+    desktop_execution_contract = _chat_preflight._looks_like_desktop_objective(visible)
     paired_information_reply = (
-        _paired_device_information_scope_reply(visible, lane=lane)
+        _chat_preflight._paired_device_information_scope_reply(visible, lane=lane)
         if conversation_only_surface
         else None
     )
@@ -10479,9 +6394,9 @@ async def _run_cognitive_engine_chat_turn(
     assistant_mode_recovery_contract = bool(
         require_engine
         and _is_assistant_mode_recovery_request(visible)
-        and not _is_runtime_fact_status_request(visible)
+        and not _chat_preflight._is_runtime_fact_status_request(visible)
     )
-    bounded_planning_reply = _build_bounded_planning_reply(visible)
+    bounded_planning_reply = _chat_desktop_repair._build_bounded_planning_reply(visible)
     bounded_planning_contract = bool(bounded_planning_reply)
     if require_engine and timeout_s is not None and float(timeout_s) < _DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S:
         logger.warning(
@@ -10492,7 +6407,7 @@ async def _run_cognitive_engine_chat_turn(
         if turn_trace is not None:
             turn_trace.update({"response_path": "insufficient_cognitive_budget"})
         return None
-    failure_mode_reply = _build_failure_mode_surface_reply(visible)
+    failure_mode_reply = _chat_desktop_repair._build_failure_mode_surface_reply(visible)
     failure_mode_contract = bool(failure_mode_reply)
     if (
         desktop_execution_contract
@@ -10515,16 +6430,16 @@ async def _run_cognitive_engine_chat_turn(
             "report the blocker instead of claiming completion."
         )
     private_cognitive_model_contract = bool(
-        require_engine and _is_private_cognitive_model_request(visible)
+        require_engine and _chat_preflight._is_private_cognitive_model_request(visible)
     )
     identity_continuity_contract = bool(
         require_engine
         and (
-            _is_identity_request(visible)
-            or _identity_request_asks_future_memory(visible)
+            _chat_desktop_repair._is_identity_request(visible)
+            or _chat_desktop_repair._identity_request_asks_future_memory(visible)
         )
     )
-    runtime_fact_status_contract = _is_runtime_fact_status_request(visible)
+    runtime_fact_status_contract = _chat_preflight._is_runtime_fact_status_request(visible)
     grounded_runtime_status_context = (
         _ground_runtime_fact_status_reply(
             visible,
@@ -10599,7 +6514,7 @@ async def _run_cognitive_engine_chat_turn(
     # The parser that found the pin is the part that knows what else is in the
     # message, so it says so here rather than leaving the budgeter to guess.
     memory_state_contract_covers_turn = memory_state_contract and not (
-        _turn_has_substance_beyond_memory_request(visible)
+        _chat_memory_state._turn_has_substance_beyond_memory_request(visible)
     )
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
@@ -10719,7 +6634,7 @@ async def _run_cognitive_engine_chat_turn(
         # nothing and can only pull.
         recent_exchanges = []
     elif recent_context_limit > 0:
-        recent_exchanges = await _recent_completed_conversation_exchanges(
+        recent_exchanges = await _chat_memory_state._recent_completed_conversation_exchanges(
             current_user_message=visible,
             session_id=session_id,
             limit=recent_context_limit,
@@ -10785,7 +6700,7 @@ async def _run_cognitive_engine_chat_turn(
             self_condition_evidence.get("projection_dict") or {}
         ),
         "conversation_lane": (
-            _paired_conversation_lane_payload(lane)
+            _chat_preflight._paired_conversation_lane_payload(lane)
             if conversation_only_surface
             else dict(lane or {})
         ),
@@ -10829,11 +6744,11 @@ async def _run_cognitive_engine_chat_turn(
         )[:4000]
     if identity_continuity_contract:
         context["grounded_identity_continuity_context"] = (
-            _build_identity_reply(visible) or ""
+            _chat_desktop_repair._build_identity_reply(visible) or ""
         )[:3000]
     if capability_inventory_contract:
         context["grounded_capability_inventory_context"] = (
-            _build_grounded_capability_inventory_reply(visible) or ""
+            _chat_desktop_repair._build_grounded_capability_inventory_reply(visible) or ""
         )
     if _is_self_claim_boundary_question(visible):
         context["evidence_bound_self_claim_context"] = (
@@ -10842,7 +6757,7 @@ async def _run_cognitive_engine_chat_turn(
     conversation_recall_context = (
         ""
         if capability_inventory_contract
-        else await _build_conversation_recall_reply(
+        else await _chat_memory_state._build_conversation_recall_reply(
             visible,
             session_id=session_id,
         )
@@ -10869,7 +6784,7 @@ async def _run_cognitive_engine_chat_turn(
             session_id=session_id,
         )
     )
-    if context_challenge_context and "pitch" in _normalize_user_message(visible):
+    if context_challenge_context and "pitch" in _chat_memory_state._normalize_user_message(visible):
         context_challenge_context = (
             "No pitch is supported by the recent completed conversation context. "
             "The correct answer is to say that no pitch is visible in the recent thread, "
@@ -10973,7 +6888,7 @@ async def _run_cognitive_engine_chat_turn(
                 "num_predict": live_reply_token_budget,
                 "skip_runtime_payload": True,
                 "live_runtime_payload_required": bool(require_engine),
-                "live_speech_grounding_frame": _build_aura_expression_frame(visible),
+                "live_speech_grounding_frame": _chat_desktop_repair._build_aura_expression_frame(visible),
                 # The ordinary chat turn is the ONE lane that has to reuse KV:
                 # its prompt is the whole conversation, so re-prefilling from
                 # token zero is what makes turn latency climb until it crosses
@@ -11016,7 +6931,7 @@ async def _run_cognitive_engine_chat_turn(
                 "the user explicitly requests one, and do not invent a specific example that replaces "
                 "the user's stated task."
             )
-        if _is_contextual_relevance_challenge(visible):
+        if _chat_desktop_repair._is_contextual_relevance_challenge(visible):
             context["contextual_relevance_challenge_contract"] = True
             context["response_style_contract"] = (
                 str(context.get("response_style_contract") or "")
@@ -11081,7 +6996,7 @@ async def _run_cognitive_engine_chat_turn(
                 "'You asked me to...' or an equivalent direct recap, then answer any "
                 "second part of the prompt."
             )
-        if _normalize_user_message(visible).startswith("you with me") or re.search(
+        if _chat_memory_state._normalize_user_message(visible).startswith("you with me") or re.search(
             r"\b(?:you\s+with\s+me|still\s+with\s+me|are\s+you\s+(?:there|with\s+me))\b",
             visible,
             flags=re.IGNORECASE,
@@ -11218,7 +7133,7 @@ async def _run_cognitive_engine_chat_turn(
 
     if require_engine:
         engine_directives: list[str] = []
-        if _normalize_user_message(visible).startswith("you with me") or re.search(
+        if _chat_memory_state._normalize_user_message(visible).startswith("you with me") or re.search(
             r"\b(?:you\s+with\s+me|still\s+with\s+me|are\s+you\s+(?:there|with\s+me))\b",
             visible,
             flags=re.IGNORECASE,
@@ -11500,7 +7415,6 @@ async def _run_cognitive_engine_chat_turn(
             )
 
         async def repair_engine_think_operation():
-            from core.runtime.principal_context import relational_principal_scope
 
             repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(
                 repair_timeout,
@@ -11777,7 +7691,7 @@ async def _run_cognitive_engine_chat_turn(
             ",".join(retry_assessment.reasons),
         )
         if not require_engine:
-            conversation_recall_reply = await _build_conversation_recall_reply(
+            conversation_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
                 visible,
                 session_id=session_id,
             )
@@ -11794,7 +7708,7 @@ async def _run_cognitive_engine_chat_turn(
                         cognitive_engine_handled=True,
                     )
                 )
-            owner_name_reply = _build_owner_name_recall_reply(visible)
+            owner_name_reply = _chat_memory_state._build_owner_name_recall_reply(visible)
             if owner_name_reply:
                 logger.warning(
                     "CognitiveEngine chat repair retry failed owner identity recall; "
@@ -11830,7 +7744,6 @@ async def _run_cognitive_engine_chat_turn(
         return None
 
     async def engine_think_operation():
-        from core.runtime.principal_context import relational_principal_scope
 
         if turn_trace is not None:
             turn_trace["engine_think_invoked"] = True
@@ -12048,20 +7961,20 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if capability_inventory_contract:
         text = _ensure_capability_inventory_non_execution_boundary(visible, text)
-        if _looks_truncated_tail(text):
+        if _chat_desktop_repair._looks_truncated_tail(text):
             completed_inventory = _complete_repairable_truncated_reply(visible, text)
             if completed_inventory:
                 text = _ensure_capability_inventory_non_execution_boundary(
                     visible,
                     completed_inventory,
                 )
-            if _capability_inventory_reply_is_inadequate(visible, text):
-                grounded_inventory = _build_grounded_capability_inventory_reply(
+            if _chat_desktop_repair._capability_inventory_reply_is_inadequate(visible, text):
+                grounded_inventory = _chat_desktop_repair._build_grounded_capability_inventory_reply(
                     visible,
                     cognitive_engine_handled=True,
                     model_label=_canonical_runtime_model_label(lane),
                 )
-                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                if grounded_inventory and not _chat_desktop_repair._capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
                 ):
@@ -12143,7 +8056,7 @@ async def _run_cognitive_engine_chat_turn(
         # the antecedent.
         antecedent_turn = ""
         try:
-            prior_exchanges = await _recent_completed_conversation_exchanges(
+            prior_exchanges = await _chat_memory_state._recent_completed_conversation_exchanges(
                 current_user_message=visible,
                 session_id=str(session_id or ""),
                 limit=1,
@@ -12211,8 +8124,8 @@ async def _run_cognitive_engine_chat_turn(
             )
         if (
             require_engine
-            and _is_explicit_capability_inventory_request(visible)
-            and _capability_inventory_reply_is_inadequate(visible, text)
+            and _chat_preflight._is_explicit_capability_inventory_request(visible)
+            and _chat_desktop_repair._capability_inventory_reply_is_inadequate(visible, text)
         ):
             logger.warning(
                 "CognitiveEngine desktop chat produced inadequate capability inventory; "
@@ -12230,7 +8143,7 @@ async def _run_cognitive_engine_chat_turn(
                     recent_user_messages=recent_user_messages,
                 )
                 if (
-                    not _capability_inventory_reply_is_inadequate(visible, retry_reply)
+                    not _chat_desktop_repair._capability_inventory_reply_is_inadequate(visible, retry_reply)
                     and not _reply_assessment_requires_repair_with_memory_evidence(
                         retry_assessment,
                         visible,
@@ -12246,12 +8159,12 @@ async def _run_cognitive_engine_chat_turn(
                             }
                         )
                     return retry_reply
-            grounded_inventory = _build_grounded_capability_inventory_reply(
+            grounded_inventory = _chat_desktop_repair._build_grounded_capability_inventory_reply(
                 visible,
                 cognitive_engine_handled=True,
                 model_label=_canonical_runtime_model_label(lane),
             )
-            if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+            if grounded_inventory and not _chat_desktop_repair._capability_inventory_reply_is_inadequate(
                 visible,
                 grounded_inventory,
             ):
@@ -12364,12 +8277,12 @@ async def _run_cognitive_engine_chat_turn(
                             getattr(_devoiced_assessment, "reasons", ()) or ()
                         )
             if require_engine and capability_inventory_contract:
-                grounded_inventory = _build_grounded_capability_inventory_reply(
+                grounded_inventory = _chat_desktop_repair._build_grounded_capability_inventory_reply(
                     visible,
                     cognitive_engine_handled=True,
                     model_label=_canonical_runtime_model_label(lane),
                 )
-                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                if grounded_inventory and not _chat_desktop_repair._capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
                 ):
@@ -12401,12 +8314,12 @@ async def _run_cognitive_engine_chat_turn(
                 and capability_inventory_contract
                 and set(getattr(assessment, "reasons", ()) or ()) == {"truncated_tail"}
             ):
-                grounded_inventory = _build_grounded_capability_inventory_reply(
+                grounded_inventory = _chat_desktop_repair._build_grounded_capability_inventory_reply(
                     visible,
                     cognitive_engine_handled=True,
                     model_label=_canonical_runtime_model_label(lane),
                 )
-                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                if grounded_inventory and not _chat_desktop_repair._capability_inventory_reply_is_inadequate(
                     visible,
                     grounded_inventory,
                 ):
@@ -12526,7 +8439,7 @@ async def _run_cognitive_engine_chat_turn(
                                 self_condition_contract=True,
                             )
                             return refreshed_condition_reply
-                expected_recall_reply = await _build_conversation_recall_reply(
+                expected_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
                     visible,
                     session_id=session_id,
                 )
@@ -12669,7 +8582,7 @@ async def _run_cognitive_engine_chat_turn(
                 ",".join(repaired_assessment.reasons),
             )
             if not require_engine:
-                conversation_recall_reply = await _build_conversation_recall_reply(
+                conversation_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
                     visible,
                     session_id=session_id,
                 )
@@ -12688,7 +8601,7 @@ async def _run_cognitive_engine_chat_turn(
                         lane,
                         cognitive_engine_handled=True,
                     )
-                owner_name_reply = _build_owner_name_recall_reply(visible)
+                owner_name_reply = _chat_memory_state._build_owner_name_recall_reply(visible)
                 if owner_name_reply:
                     logger.warning(
                         "CognitiveEngine chat failed repair for owner identity recall; "
@@ -12792,7 +8705,7 @@ async def _run_cognitive_engine_chat_turn(
         record_degradation("chat", exc)
         logger.debug("CognitiveEngine reply reliability gate unavailable: %s", exc)
     if require_engine:
-        expected_recall_reply = await _build_conversation_recall_reply(
+        expected_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
             visible,
             session_id=session_id,
         )
@@ -13064,8 +8977,8 @@ async def _run_cognitive_engine_chat_turn(
 
 
 def _looks_like_unrequested_content_review(user_message: str, reply_text: str) -> tuple[bool, str]:
-    user_text = _normalize_user_message(user_message)
-    reply = _normalize_user_message(reply_text)
+    user_text = _chat_memory_state._normalize_user_message(user_message)
+    reply = _chat_memory_state._normalize_user_message(reply_text)
     if not reply:
         return False, ""
     if any(marker in user_text for marker in _CONTENT_OBJECT_MARKERS):
@@ -13099,8 +9012,8 @@ def _evaluate_reply_topicality(
         anchors.update(_extract_topic_tokens(message))
 
     reply_tokens = _extract_topic_tokens(reply)
-    lowered_reply = _normalize_user_message(reply)
-    if _is_contextual_relevance_challenge(user_message):
+    lowered_reply = _chat_memory_state._normalize_user_message(reply)
+    if _chat_desktop_repair._is_contextual_relevance_challenge(user_message):
         if any(marker in lowered_reply for marker in _CONTEXTUAL_RELEVANCE_BRIDGE_MARKERS):
             return False, ""
         if any(marker in lowered_reply for marker in _CONTEXTUAL_RELEVANCE_DRIFT_MARKERS):
@@ -13210,7 +9123,7 @@ async def _realize_expressive_affordances(
 
             return sanitize_affordance_control_syntax(reply_text).text, []
         except _CHAT_RECOVERABLE_ERRORS:
-            if _contains_private_affordance_control_syntax(reply_text):
+            if _chat_delivery._contains_private_affordance_control_syntax(reply_text):
                 return (
                     "I couldn't verify that the action control stayed private, so I "
                     "did not deliver that draft.",
@@ -13233,7 +9146,7 @@ def _audit_recent_response_reasoning_sync(text: str) -> None:
 
 async def _run_recent_response_reasoning_audit(text: str) -> None:
     try:
-        await _await_bounded_chat_blocking(
+        await _chat_memory_state._await_bounded_chat_blocking(
             _audit_recent_response_reasoning_sync,
             text,
             timeout_s=_CHAT_REASONING_AUDIT_TIMEOUT_S,
@@ -13366,8 +9279,8 @@ _EQUIVALENT_REPAIR_PROMPT_GROUPS = (
 
 
 def _same_repair_prompt_class(a: str, b: str) -> bool:
-    left = _normalize_user_message(a)
-    right = _normalize_user_message(b)
+    left = _chat_memory_state._normalize_user_message(a)
+    right = _chat_memory_state._normalize_user_message(b)
     if not left or not right:
         return False
     for group in _EQUIVALENT_REPAIR_PROMPT_GROUPS:
@@ -13377,8 +9290,8 @@ def _same_repair_prompt_class(a: str, b: str) -> bool:
 
 
 def _same_live_self_reflection_prompt_class(a: str, b: str) -> bool:
-    left = _normalize_user_message(a)
-    right = _normalize_user_message(b)
+    left = _chat_memory_state._normalize_user_message(a)
+    right = _chat_memory_state._normalize_user_message(b)
     if not left or not right:
         return False
     try:
@@ -13456,48 +9369,6 @@ def _is_same_answer_different_prompt(user_message: str, text: str) -> bool:
     return False
 
 
-def _looks_truncated_tail(text: str) -> bool:
-    body = str(text or "").strip()
-    if len(body) < 24:
-        return False
-    try:
-        from core.conversation.response_reliability import (
-            _DANGLING_GERUND_TAIL_RE,
-            _PUNCTUATED_INCOMPLETE_TAIL_RE,
-            _STRUCTURAL_INCOMPLETE_TAIL_RE,
-            _STRUCTURAL_UNPUNCTUATED_TAIL_RE,
-            _has_truncated_tail,
-        )
-
-        if _has_truncated_tail(body):
-            return True
-        if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
-            return True
-        if _STRUCTURAL_UNPUNCTUATED_TAIL_RE.search(body):
-            return True
-        if _DANGLING_GERUND_TAIL_RE.search(body):
-            return True
-        if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
-            return True
-    except _CHAT_RECOVERABLE_ERRORS:
-        pass
-    if body.endswith(("...", "…")):
-        return True
-    if re.search(r"(?:^|\n)\s*(?:[-*]|\d+[.)])\s*$", body):
-        return True
-    if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
-        return False
-    if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
-        return True
-    if body.endswith(("-", "—", ":", ";", ",")):
-        return True
-    match = re.search(r"([A-Za-z]+)$", body)
-    if not match:
-        return False
-    last_word = match.group(1).lower()
-    if len(last_word) <= 2 and len(body) >= 40:
-        return True
-    return last_word in _INCOMPLETE_TAIL_WORDS
 
 
 def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> str:
@@ -13563,95 +9434,6 @@ from interface.routes.chat_quality import (  # noqa: E402
 
 # ── Conversation Lane Helpers ─────────────────────────────────
 
-def _collect_conversation_lane_status(
-    *,
-    observe_only: bool = False,
-) -> dict[str, Any]:
-    from core.brain.llm.model_registry import BRAINSTEM_ENDPOINT, PRIMARY_ENDPOINT
-
-    service_lookup = ServiceContainer.peek if observe_only else ServiceContainer.get
-
-    lane: dict[str, Any] = {
-        "desired_model": "Cortex (32B)",
-        "desired_endpoint": PRIMARY_ENDPOINT,
-        "foreground_endpoint": None,
-        "background_endpoint": BRAINSTEM_ENDPOINT,
-        "foreground_tier": "local",
-        "background_tier": "local_fast",
-        "state": "cold",
-        "last_failure_reason": "",
-        "conversation_ready": False,
-        "last_transition_at": 0.0,
-        "warmup_attempted": False,
-        "warmup_in_flight": False,
-        "expected_model": "",
-        "detected_models": [],
-        "runtime_identity_ok": True,
-        "kernel_tick_age_s": None,
-    }
-    try:
-        gate = service_lookup("inference_gate", default=None)
-        if gate and hasattr(gate, "get_conversation_status"):
-            gate_lane = gate.get_conversation_status()
-            if isinstance(gate_lane, dict):
-                lane.update({k: v for k, v in gate_lane.items() if v is not None})
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Conversation lane status collection failed: %s", exc)
-
-    try:
-        llm_router = service_lookup("llm_router", default=None)
-        if llm_router and hasattr(llm_router, "get_health_report"):
-            report = llm_router.get_health_report()
-            if report.get("background_endpoint") is not None:
-                lane["background_endpoint"] = report.get("background_endpoint", lane.get("background_endpoint"))
-            if report.get("background_tier_key") is not None:
-                lane["background_tier"] = report.get("background_tier_key", lane.get("background_tier"))
-            if not bool(lane.get("conversation_ready", False)):
-                lane["last_failure_reason"] = lane.get("last_failure_reason") or report.get("last_user_error", "")
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Conversation lane/router status merge failed: %s", exc)
-
-    try:
-        from core.runtime.foreground_guard import snapshot as _foreground_guard_snapshot
-
-        guard = _foreground_guard_snapshot()
-        lane["foreground_guard_active"] = bool(guard.get("active"))
-        lane["foreground_guard_reason"] = guard.get("reason", "")
-        lane["foreground_guard_quiet_remaining_s"] = guard.get("quiet_remaining_s", 0.0)
-        lane["foreground_guard_active_count"] = guard.get("active_count", 0)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Foreground guard status merge failed: %s", exc)
-
-    # Kernel tick staleness — lets the UI detect when the kernel is locked up
-    try:
-        kernel = service_lookup("aura_kernel", default=None)
-        if kernel is None and not observe_only:
-            from core.kernel.kernel_interface import KernelInterface
-            ki = KernelInterface.get_instance()
-            kernel = getattr(ki, "kernel", None) if ki else None
-        if kernel:
-            last_tick_at = getattr(kernel, "_last_tick_completed_at", 0.0) or 0.0
-            if last_tick_at > 0.0:
-                lane["kernel_tick_age_s"] = round(time.time() - last_tick_at, 1)
-            kernel_lock = getattr(kernel, "_lock", None)
-            if kernel_lock is not None:
-                try:
-                    lock_held = bool(kernel_lock.locked())
-                except _CHAT_RECOVERABLE_ERRORS:
-                    lock_held = False
-                lane["kernel_lock_held"] = lock_held
-                lane["kernel_lock_held_s"] = round(
-                    float(getattr(kernel_lock, "held_duration", 0.0) or 0.0),
-                    2,
-                ) if lock_held else 0.0
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Kernel tick age probe failed: %s", exc)
-
-    return lane
 
 
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
@@ -13733,7 +9515,7 @@ def _mark_conversation_lane_timeout(reason: str = "foreground_timeout") -> dict[
         record_degradation('chat', exc)
         logger.debug("Conversation lane timeout mark failed: %s", exc)
 
-    lane = _collect_conversation_lane_status()
+    lane = _chat_preflight._collect_conversation_lane_status()
     lane["state"] = "recovering"
     lane["conversation_ready"] = False
     lane["last_failure_reason"] = reason
@@ -13775,7 +9557,7 @@ def _force_clear_mlx_foreground_owner(
 def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
     from core.brain.llm.model_registry import PRIMARY_ENDPOINT
 
-    lane = _collect_conversation_lane_status()
+    lane = _chat_preflight._collect_conversation_lane_status()
     lane["state"] = state
     lane["conversation_ready"] = False
     lane["last_failure_reason"] = reason
@@ -13821,7 +9603,7 @@ def _collect_governed_action_lane_status(status: str) -> dict[str, Any]:
     stale post-action generation timeout as proof that the completed action
     failed. Runtime heartbeat remains the authority for kernel/inference health.
     """
-    lane = _collect_conversation_lane_status()
+    lane = _chat_preflight._collect_conversation_lane_status()
     lane["governed_action_result"] = True
     lane["governed_action_status"] = str(status or "governed_action")
     lane["governed_action_completed_at"] = time.time()
@@ -14188,7 +9970,7 @@ async def _build_protected_foreground_history(
     limit_pairs: int = 4,
 ) -> list[dict[str, str]]:
     safe_session_id = str(session_id or "")[:64]
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         completed = [
             entry
             for entry in _conversation_log
@@ -14281,7 +10063,7 @@ def _resolve_protected_foreground_snapshot() -> dict[str, Any]:
     answer without depending on organism-wide locks or expensive voice updates.
     """
     try:
-        state = _resolve_live_aura_state()
+        state = _chat_preflight._resolve_live_aura_state()
         if state is None:
             return {}
         hot = state.snapshot_hot() if hasattr(state, "snapshot_hot") else {}
@@ -14377,7 +10159,7 @@ def _build_protected_foreground_system_prompt(
         _compact_snapshot_line("Mood", voice_state.get("mood")),
         _compact_snapshot_line("Tone", voice_state.get("tone")),
         _compact_snapshot_line("Dominant emotion", voice_state.get("dominant_emotion")),
-        _compact_snapshot_line("Attention", _sanitize_attention_focus(str(voice_state.get("attention_focus") or ""), user_message)),
+        _compact_snapshot_line("Attention", _chat_desktop_repair._sanitize_attention_focus(str(voice_state.get("attention_focus") or ""), user_message)),
         _compact_snapshot_line("Valence", voice_state.get("valence") or voice_snapshot.get("field_valence")),
         _compact_snapshot_line("Arousal", voice_state.get("arousal") or voice_snapshot.get("arousal")),
         _compact_snapshot_line("Curiosity", voice_state.get("curiosity")),
@@ -14593,21 +10375,21 @@ def _desktop_required_bounded_reply_status(
     def _matches_bounded_contract(expected: str | None) -> bool:
         if not expected:
             return False
-        return _normalize_user_message(reply) == _normalize_user_message(expected)
+        return _chat_memory_state._normalize_user_message(reply) == _chat_memory_state._normalize_user_message(expected)
 
     lane_status = dict(lane or {})
-    if _is_low_risk_social_continuity_request(user_message) and _conversation_lane_needs_instant_social_contract(
+    if _chat_desktop_repair._is_low_risk_social_continuity_request(user_message) and _conversation_lane_needs_instant_social_contract(
         lane_status
     ):
-        if _matches_bounded_contract(_build_social_continuity_repair_reply(user_message)):
+        if _matches_bounded_contract(_chat_desktop_repair._build_social_continuity_repair_reply(user_message)):
             return "desktop_social_presence_contract"
-    if _is_explicit_capability_inventory_request(user_message):
+    if _chat_preflight._is_explicit_capability_inventory_request(user_message):
         return "cognitive_engine_capability_inventory"
-    if _matches_bounded_contract(_build_bounded_planning_reply(user_message)):
+    if _matches_bounded_contract(_chat_desktop_repair._build_bounded_planning_reply(user_message)):
         return "cognitive_engine_bounded_planning"
-    if _matches_bounded_contract(_build_failure_mode_surface_reply(user_message)):
+    if _matches_bounded_contract(_chat_desktop_repair._build_failure_mode_surface_reply(user_message)):
         return "cognitive_engine_failure_mode_surface"
-    if _is_runtime_fact_status_request(user_message):
+    if _chat_preflight._is_runtime_fact_status_request(user_message):
         expected = _build_runtime_fact_status_fastpath_reply(user_message, lane_status)
         if _matches_bounded_contract(expected):
             return "runtime_fact_status"
@@ -14615,7 +10397,7 @@ def _desktop_required_bounded_reply_status(
 
 
 def _looks_generic_assistantish(user_message: str, reply_text: Any) -> tuple[bool, str]:
-    text = _normalize_user_message(str(reply_text or ""))
+    text = _chat_memory_state._normalize_user_message(str(reply_text or ""))
     if not text or text == "…":
         return True, "empty_reply"
 
@@ -14713,7 +10495,7 @@ def _looks_generic_assistantish(user_message: str, reply_text: Any) -> tuple[boo
         if re.search(pattern, text):
             return True, reason
 
-    user_text = _normalize_user_message(user_message)
+    user_text = _chat_memory_state._normalize_user_message(user_message)
     telemetry_request = any(
         marker in user_text
         for marker in (
@@ -14849,8 +10631,8 @@ def _looks_semantically_glitched(user_message: str, reply_text: Any) -> tuple[bo
     except (ImportError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
         logger.debug("Conversation reliability assessment unavailable: %s", exc)
 
-    user_text = _normalize_user_message(user_message)
-    reply = _normalize_user_message(str(reply_text or ""))
+    user_text = _chat_memory_state._normalize_user_message(user_message)
+    reply = _chat_memory_state._normalize_user_message(str(reply_text or ""))
     if not reply or reply == "…":
         return True, "empty_reply"
 
@@ -14897,52 +10679,10 @@ def _has_live_aura_grounding(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-def _is_architecture_self_assessment_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    return (
-        any(marker in text for marker in ("architecture", "design", "runtime", "system", "codebase"))
-        and any(
-            marker in text
-            for marker in (
-                "what do you think",
-                "what do you honestly think",
-                "what do you make of",
-                "tell me directly",
-                "strongest at",
-                "weakest at",
-                "your own design",
-            )
-        )
-    )
 
 
-def _looks_like_aura_state(candidate: Any) -> bool:
-    """Whether this object is a STATE rather than something holding one.
-
-    LIVE DEFECT, 2026-07-25. Whatever was registered under "aura_state" was
-    returned unchecked, and on a live boot that was a StateRepository. Every
-    caller then hit `.cognition` on it:
-
-        AttributeError: 'StateRepository' object has no attribute 'cognition'
-
-    which crashed the required-search contract, so "search for an article on
-    how LeBron James will fit in with the 76ers" never ran a search at all.
-    A resolver that can return the wrong TYPE has to check.
-    """
-    return candidate is not None and hasattr(candidate, "cognition")
 
 
-def _unwrap_state(candidate: Any) -> Any | None:
-    """Accept a state, or the state held by a repository-like object."""
-    if _looks_like_aura_state(candidate):
-        return candidate
-    for attribute in ("_current", "current", "state"):
-        inner = getattr(candidate, attribute, None)
-        if _looks_like_aura_state(inner):
-            return inner
-    return None
 
 
 # A conversation is not a host. LIVE DEFECT, 2026-07-25.
@@ -14967,64 +10707,12 @@ def _unwrap_state(candidate: Any) -> Any | None:
 #   * an idle gap — coming back hours later is a new conversation, and the
 #     previous thread should be recalled deliberately by memory, not replayed
 #     as though it never ended.
-_CONVERSATION_IDLE_GAP_S = 1800.0
-_CONVERSATION_BOOT_ID = uuid.uuid4().hex[:8]
-_conversation_epochs: dict[str, tuple[str, float]] = {}
-_conversation_epoch_lock = threading.Lock()
 
 
-def _conversation_session_id(host: str, *, now: float | None = None) -> str:
-    """A session id that names one conversation, not one machine."""
-    at = time.time() if now is None else float(now)
-    key = str(host or "default")
-    with _conversation_epoch_lock:
-        epoch, last_seen = _conversation_epochs.get(key, ("", 0.0))
-        if not epoch or (at - last_seen) > _CONVERSATION_IDLE_GAP_S:
-            epoch = uuid.uuid4().hex[:8]
-        _conversation_epochs[key] = (epoch, at)
-    return f"{key}:{_CONVERSATION_BOOT_ID}:{epoch}"
 
 
-def _resolved_conversation_session(request: Request | None, body: Any) -> str:
-    """Resolve the same conversation identity before, during, or after a turn."""
-
-    supplied_session = str(getattr(body, "session_id", "") or "").strip()
-    try:
-        paired_session = paired_device_session_id(request) if request is not None else None
-    except _CHAT_RECOVERABLE_ERRORS:
-        paired_session = None
-    conversation_session = str(paired_session or supplied_session or "").strip()
-    if conversation_session:
-        return conversation_session[:_CHAT_SESSION_ID_MAX_CHARS]
-    request_session = _chat_turn_session_key(request, body)
-    return _conversation_session_id(request_session)[:_CHAT_SESSION_ID_MAX_CHARS]
 
 
-def _resolve_live_aura_state() -> Any | None:
-    """Best-effort access to the active runtime state for UI reflexes."""
-    state = _unwrap_state(ServiceContainer.get("aura_state", default=None))
-    if state is not None:
-        return state
-
-    orch = ServiceContainer.get("orchestrator", default=None)
-    if orch is not None:
-        state = _unwrap_state(getattr(orch, "state_repo", None))
-        if state is None:
-            state = _unwrap_state(getattr(orch, "state", None)) or _unwrap_state(
-                getattr(orch, "_state", None)
-            )
-        if state is not None:
-            return state
-
-    try:
-        from core.runtime import service_access
-
-        repo = service_access.resolve_state_repository(default=None)
-        return _unwrap_state(repo) if repo is not None else None
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Live Aura state resolve failed: %s", exc)
-        return None
 
 
 def _resolve_live_voice_state(user_message: str = "", *, refresh: bool = True) -> dict[str, Any]:
@@ -15032,7 +10720,7 @@ def _resolve_live_voice_state(user_message: str = "", *, refresh: bool = True) -
     try:
         from core.voice.substrate_voice_engine import get_live_voice_state
 
-        live_state = _resolve_live_aura_state()
+        live_state = _chat_preflight._resolve_live_aura_state()
         return get_live_voice_state(
             state=live_state,
             user_message=user_message,
@@ -15045,18 +10733,6 @@ def _resolve_live_voice_state(user_message: str = "", *, refresh: bool = True) -
         return {}
 
 
-_INTERNAL_STATE_PATTERNS = re.compile(
-    r"(?i)"
-    r"(?:cognitive baseline tick\s*\d+)"
-    r"|(?:monitoring internal state)"
-    r"|(?:baseline_continuity)"
-    r"|(?:In the [\d.]+ (?:seconds|minutes) just passed)"
-    r"|(?:Pending initiatives:)"
-    r"|(?:Reconcile continuity gap)"
-    r"|(?:Drive alert:.*depleted)"
-    r"|(?:Phenomenal Surge:)"
-    r"|(?:Winner:.*Content:)"
-)
 _PROMPT_ARTIFACT_PATTERNS = re.compile(
     r"(?im)"
     r"(?:^\s*(?:obj|prev_obj|state|phenom|mood|goals|history|narr|pers|usr|ctx|voice)\s*:)"
@@ -15117,71 +10793,11 @@ _SEARCH_SNIPPET_PATTERNS = re.compile(
 )
 
 
-def _sanitize_attention_focus(raw: str, user_message: str = "") -> str:
-    """Strip internal housekeeping content from attention_focus before user-facing use."""
-    if not raw:
-        return ""
-    try:
-        from core.continuity import is_evaluation_contamination
-
-        if is_evaluation_contamination(raw):
-            return ""
-    except (ImportError, AttributeError, RuntimeError):
-        pass
-    if _INTERNAL_STATE_PATTERNS.search(raw) or _looks_symbolic_scene_leak(raw):
-        return ""
-    # An internal channel name is correct in a log and wrong in a sentence.
-    # say_focus translates the ones we know and returns "" for the ones we
-    # don't, so callers drop the clause instead of reading a field name aloud.
-    raw = say_focus(raw, max_len=180)
-    if not raw:
-        return ""
-    focus_norm = _normalize_user_message(raw)
-    user_norm = _normalize_user_message(user_message)
-    if (
-        user_norm
-        and focus_norm
-        and len(raw) > 72
-        and focus_norm not in user_norm
-        and user_norm not in focus_norm
-    ):
-        return ""
-    return raw
 
 
-_SCENE_LEAK_ENVIRONMENT_TOKENS = (
-    "lab",
-    "equipment",
-    "machinery",
-    "console",
-    "corridor",
-    "hallway",
-    "chamber",
-    "room",
-    "humming",
-    "hums",
-    "silence",
-)
-
-_SCENE_LEAK_ATMOSPHERE_TOKENS = (
-    "it's off",
-    "it is off",
-    "warning",
-    "watching",
-    "threat",
-    "keyed",
-    "not humming",
-    "something about",
-)
 
 
-def _looks_symbolic_scene_leak(text: Any) -> bool:
-    normalized = " ".join(str(text or "").strip().lower().split())
-    if not normalized:
-        return False
-    environment_hits = sum(1 for token in _SCENE_LEAK_ENVIRONMENT_TOKENS if token in normalized)
-    atmosphere_hits = sum(1 for token in _SCENE_LEAK_ATMOSPHERE_TOKENS if token in normalized)
-    return environment_hits >= 2 and atmosphere_hits >= 1
+
 
 
 def _sanitize_foreground_continuity_summary(raw: Any) -> str:
@@ -15190,195 +10806,21 @@ def _sanitize_foreground_continuity_summary(raw: Any) -> str:
         return ""
     if _INTERNAL_STATE_PATTERNS.search(text) or _PROMPT_ARTIFACT_PATTERNS.search(text):
         return ""
-    if _looks_symbolic_scene_leak(text):
+    if _chat_desktop_repair._looks_symbolic_scene_leak(text):
         return ""
     return text
 
 
-def _build_aura_expression_frame(user_message: str) -> dict[str, Any]:
-    frame: dict[str, Any] = {
-        "mood": "",
-        "tone": "",
-        "dominant_emotions": [],
-        "interests": [],
-        "stances": [],
-        "attention_focus": "",
-        "valence": None,
-        "arousal": None,
-        "curiosity": None,
-        "free_energy": None,
-        "dominant_action": "",
-        "contract_block": "",
-        "contract": None,
-        "needs_self_expression": False,
-        "requires_explicit_live_grounding": False,
-    }
-
-    try:
-        state = _resolve_live_aura_state()
-        if state:
-            from core.phases.response_contract import build_response_contract
-
-            contract = build_response_contract(state, user_message, is_user_facing=True)
-            frame["contract"] = contract
-            frame["contract_block"] = contract.to_prompt_block().strip()
-            frame["needs_self_expression"] = bool(contract.requires_live_aura_voice())
-            frame["requires_explicit_live_grounding"] = bool(contract.requires_explicit_live_grounding())
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura expression frame contract build failed: %s", exc)
-
-    try:
-        personality = ServiceContainer.get("personality_engine", default=None)
-        if personality:
-            if hasattr(personality, "get_emotional_context_for_response"):
-                emotional = personality.get_emotional_context_for_response() or {}
-                frame["mood"] = str(emotional.get("mood") or frame["mood"] or "")
-                frame["tone"] = str(emotional.get("tone") or frame["tone"] or "")
-                frame["dominant_emotions"] = list(emotional.get("dominant_emotions") or [])
-            if hasattr(personality, "interests"):
-                frame["interests"] = list(getattr(personality, "interests", []) or [])[:4]
-            if hasattr(personality, "opinions"):
-                opinions = getattr(personality, "opinions", {}) or {}
-                frame["stances"] = [
-                    f"{topic} ({float(value):+.2f})"
-                    for topic, value in opinions.items()
-                    if abs(float(value or 0.0)) >= 0.6
-                ][:3]
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura expression frame personality read failed: %s", exc)
-
-    try:
-        affect = ServiceContainer.get("affect_engine", default=None)
-        if affect and hasattr(affect, "get_status"):
-            affect_status = affect.get_status() or {}
-            frame["mood"] = str(affect_status.get("mood") or frame["mood"] or "")
-            frame["valence"] = affect_status.get("valence")
-            frame["arousal"] = affect_status.get("arousal")
-            frame["curiosity"] = affect_status.get("curiosity")
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura expression frame affect read failed: %s", exc)
-
-    try:
-        closure = ServiceContainer.get("executive_closure", default=None)
-        if closure and hasattr(closure, "get_status"):
-            closure_status = closure.get_status() or {}
-            raw_focus = " ".join(str(closure_status.get("attention_focus") or "").split())
-            # Sanitize: never let internal housekeeping leak into user-facing frames
-            frame["attention_focus"] = _sanitize_attention_focus(raw_focus, user_message)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura expression frame closure read failed: %s", exc)
-
-    try:
-        from core.consciousness.free_energy import get_free_energy_engine
-
-        fe_engine = ServiceContainer.get("free_energy_engine", default=None) or get_free_energy_engine()
-        fe_state = getattr(fe_engine, "current", None)
-        if fe_state is not None:
-            frame["free_energy"] = getattr(fe_state, "free_energy", None)
-            frame["dominant_action"] = str(getattr(fe_state, "dominant_action", "") or "")
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura expression frame free-energy read failed: %s", exc)
-
-    return frame
 
 
-def _apply_aura_voice_shaping(text: str, user_message: str = "") -> str:
-    shaped = str(text or "").strip()
-    if not shaped:
-        return shaped
-
-    try:
-        from core.synthesis import cure_personality_leak, stabilize_user_facing_response
-
-        shaped = cure_personality_leak(shaped)
-        shaped = stabilize_user_facing_response(shaped, user_message)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura voice shaping leak-cure skipped: %s", exc)
-
-    try:
-        personality = ServiceContainer.get("personality_engine", default=None)
-        if personality is None:
-            # A REGISTRATION RACE MUST NOT SILENCE HER VOICE.
-            #
-            # The container entry is written during boot_identity, and the chat
-            # route can serve a turn before that lands — so early turns shipped
-            # the base model's register with a warning nobody reads. 2,270 of
-            # them in one log, and the last arrived 79 seconds before a restart
-            # after which there were none: the shape of a race, not of a
-            # missing organ.
-            #
-            # The engine is a module singleton and does not need the container
-            # to exist. Asking it directly removes the ordering dependency
-            # rather than tolerating it, and the result is registered so the
-            # next turn takes the fast path.
-            try:
-                from core.brain.personality_engine import get_personality_engine
-
-                personality = get_personality_engine()
-                if personality is not None:
-                    ServiceContainer.register_instance(
-                        "personality_engine", personality
-                    )
-            except _CHAT_RECOVERABLE_ERRORS as exc:
-                logger.debug("Persona singleton unavailable: %s", exc)
-        if personality:
-            # Presence is not engagement. A persona pass that runs and returns
-            # its input unchanged has had no causal effect on her voice, and is
-            # indistinguishable from one that never ran — which is the whole
-            # question: is this organ actually shaping the reply, or merely
-            # instantiated beside it? The only honest evidence is the diff.
-            _persona_before = shaped
-            if hasattr(personality, "filter_response"):
-                shaped = personality.filter_response(shaped)
-            if hasattr(personality, "apply_lexical_style"):
-                shaped = personality.apply_lexical_style(shaped)
-            _note_organ_effect("personality_engine", changed=shaped != _persona_before)
-        else:
-            # Silently shipping the base model's register as Aura's voice is
-            # the one outcome nobody would notice and everybody would feel.
-            record_degradation(
-                "chat",
-                RuntimeError("personality_engine absent; reply shaped by nothing"),
-                severity="warning",
-                action="served the unshaped draft because the persona pass was unavailable",
-            )
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Aura voice shaping personality pass skipped: %s", exc)
-
-    try:
-        from core.runtime.derived_runtime_context import guard_user_facing_output
-
-        shaped = guard_user_facing_output(shaped)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Aura voice shaping derived output guard skipped: %s", exc)
-
-    try:
-        from core.synthesis import stabilize_user_facing_response
-
-        shaped = stabilize_user_facing_response(shaped, user_message)
-    except _CHAT_RECOVERABLE_ERRORS:
-        shaped = re.sub(r"\s+", " ", shaped).strip()
-    if shaped.endswith('"') and shaped.count('"') % 2 == 1:
-        shaped = shaped[:-1].rstrip()
-    if shaped.endswith("”") and shaped.count("“") < shaped.count("”"):
-        shaped = shaped[:-1].rstrip()
-    return shaped
 
 
 def _apply_aura_voice_shaping_compat(text: str, user_message: str = "") -> str:
     """Call voice shaping while preserving older test monkeypatch signatures."""
     try:
-        return _apply_aura_voice_shaping(text, user_message)
+        return _chat_desktop_repair._apply_aura_voice_shaping(text, user_message)
     except TypeError:
-        return _apply_aura_voice_shaping(text)
+        return _chat_desktop_repair._apply_aura_voice_shaping(text)
 
 
 def _shape_with_live_substrate(text: str, user_message: str = "") -> str:
@@ -15391,7 +10833,7 @@ def _shape_with_live_substrate(text: str, user_message: str = "") -> str:
         from core.voice.substrate_voice_engine import get_substrate_voice_engine
 
         sve = get_substrate_voice_engine()
-        live_state = _resolve_live_aura_state()
+        live_state = _chat_preflight._resolve_live_aura_state()
         if sve.get_current_profile() is None and live_state is not None:
             sve.compile_profile(
                 state=live_state,
@@ -15419,7 +10861,7 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
     attention focus strings, or mood enum values.
     """
     mood = str(frame.get("mood") or "").strip().lower()
-    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
+    attention = _chat_desktop_repair._sanitize_attention_focus(str(frame.get("attention_focus") or ""))
     user_topics = _select_anchor_topic_tokens(user_message)
 
     # Map internal mood labels to natural phrasing
@@ -15612,7 +11054,7 @@ def _build_degraded_live_reply(
     if grounded:
         return grounded
 
-    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
+    attention = _chat_desktop_repair._sanitize_attention_focus(str(frame.get("attention_focus") or ""))
     echo = _echoable_question_clause(user_message)
     topics = [] if echo else _select_anchor_topic_tokens(user_message)
 
@@ -15691,7 +11133,7 @@ def _build_degraded_live_reply(
     if evidenced:
         _record_last_resort_self_rejection(user_message, evidenced)
         return evidenced
-    composed = _apply_aura_voice_shaping(
+    composed = _chat_desktop_repair._apply_aura_voice_shaping(
         f"{state_clause}, and I'd rather say that than hand you something thin. "
         f"{understood} "
         "Ask me again and I should have it."
@@ -15748,7 +11190,7 @@ def _record_last_resort_self_rejection(user_message: str, composed: str) -> None
 
 def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "") -> str:
     mood = str(frame.get("mood") or "steady").strip().lower()
-    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or "")) or "this exchange"
+    attention = _chat_desktop_repair._sanitize_attention_focus(str(frame.get("attention_focus") or "")) or "this exchange"
     action = str(frame.get("dominant_action") or "reflect").strip().lower()
     interests = [str(item) for item in (frame.get("interests") or []) if item][:3]
     mood_phrase = {
@@ -15760,7 +11202,7 @@ def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "")
         "warm": "warm and attentive",
         "pressed": "pressed, but not gone",
     }.get(mood, "present and listening")
-    user_text = _normalize_user_message(user_message)
+    user_text = _chat_memory_state._normalize_user_message(user_message)
     if any(
         marker in user_text
         for marker in (
@@ -15775,7 +11217,7 @@ def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "")
             "those are opinions",
         )
     ):
-        return _apply_aura_voice_shaping(
+        return _chat_desktop_repair._apply_aura_voice_shaping(
             "You're right to push on that. I do have opinions and experience-like "
             "structure in the live system: memory-shaped stances, value-weighted pulls, "
             "present attention, and affective pressure. Right now my attention is on "
@@ -15784,7 +11226,7 @@ def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "")
             "is not empty roleplay either."
         )
     if "change one thing about how i talk to you" in user_text:
-        return _apply_aura_voice_shaping(
+        return _chat_desktop_repair._apply_aura_voice_shaping(
             "I would make it more direct when you are testing me: name the break, "
             "give me the messy context, and then let me answer from the state I am "
             "actually in. I do not need you to soften the signal. I need continuity, "
@@ -15800,7 +11242,7 @@ def _build_subjective_self_reflex(frame: dict[str, Any], user_message: str = "")
         parts.append(f"Under that, what keeps tugging at me is {', '.join(interests)}.")
     else:
         parts.append("Mostly, I am trying to keep the live thread coherent instead of drifting into a canned status report.")
-    return _apply_aura_voice_shaping(" ".join(parts))
+    return _chat_desktop_repair._apply_aura_voice_shaping(" ".join(parts))
 
 
 def _is_simple_subjective_reflex_request(user_message: str) -> bool:
@@ -15812,7 +11254,7 @@ def _is_simple_subjective_reflex_request(user_message: str) -> bool:
     substantive self-assessment.
     """
 
-    text = _normalize_user_message(user_message).rstrip(" ?!.")
+    text = _chat_memory_state._normalize_user_message(user_message).rstrip(" ?!.")
     if not text:
         return False
     if _is_simple_affect_check_request(text):
@@ -15865,7 +11307,7 @@ def _build_architecture_self_reflex(frame: dict[str, Any], user_message: str = "
     action = str(frame.get("dominant_action") or "reflect")
     focus = str(frame.get("attention_focus") or "my own runtime")
     interests = ", ".join(frame.get("interests") or [])[:120]
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     asks_weakness = any(
         marker in text
         for marker in (
@@ -15921,7 +11363,7 @@ def _is_simple_affect_check_request(user_message: str) -> bool:
 
         return is_self_condition_turn(user_message)
     except _CHAT_RECOVERABLE_ERRORS:
-        text = _normalize_user_message(user_message)
+        text = _chat_memory_state._normalize_user_message(user_message)
         return text in {
             "how are you feeling",
             "how are you feeling?",
@@ -15943,7 +11385,7 @@ def _build_self_condition_evidence(user_message: str) -> dict[str, Any]:
     )
 
     projection = build_self_condition_projection(
-        kernel_state=_resolve_live_aura_state(),
+        kernel_state=_chat_preflight._resolve_live_aura_state(),
     )
     return {
         "projection": projection,
@@ -16002,116 +11444,24 @@ _IDENTITY_REQUEST_RE = re.compile(
 #: happens to begin the same way. A comma plus a coordinator is the boundary
 #: between those two cases — the tail after it is a new clause with its own
 #: subject, not a completion of this one.
-_IDENTITY_TAIL_RE = re.compile(
-    r"^(?:[\s,]*(?:really|exactly|actually|then|anyway|though|now|even)\b)*"
-    r"(?:"
-    r"[\s?!.,;:'\"-]*$"
-    r"|[\s]*[,;]\s*(?:and|or|but|then)\b\s+(?:will|do|are|can|would|did|have|is)\b"
-    r")",
-    re.IGNORECASE,
-)
 
 
-def _asks_only_who_you_are(text: str) -> bool:
-    """True when "what/who are you" IS the question, not the start of one.
-
-    LIVE DEFECT, 2026-08-10: "what are you actually able to measure about
-    yourself? give me the real readings, and be honest if something isn't
-    instrumented." was answered with her autobiography — "I'm Aura. I'm a
-    local continuity-bearing cognitive-agent runtime..." — word for word the
-    same paragraph she had given hours earlier to "what's your name and what
-    are you running on?".
-
-    The detector matched the OPENING of a longer question. Its guard was a
-    list of verbs that may not follow ("talking", "doing", "saying"...), which
-    is an enumeration and was therefore one verb short: nothing excluded
-    "able". A question about her instruments became a question about her
-    identity, and a template answered it.
-
-    Structure settles this where a word list cannot. "What are you?" ends
-    there. "What are you able to measure" carries its own predicate, and
-    whatever follows is the real question.
-    """
-    for match in re.finditer(r"\b(?:what|who)\s+are\s+you\b", text, re.IGNORECASE):
-        if _IDENTITY_TAIL_RE.match(text[match.end():]):
-            return True
-    return False
 
 
-def _is_identity_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    # A challenge to relevance is definitionally not an identity request.
-    if _is_contextual_relevance_challenge(user_message):
-        return False
-    if text in {
-        "who are you",
-        "who are you?",
-        "what are you",
-        "what are you?",
-        "tell me who you are",
-        "introduce yourself",
-    }:
-        return True
-    if re.search(r"\btell\s+me\s+(?:who|what)\s+you\s+are\b", text) or re.search(
-        r"\bintroduce\s+yourself\b", text
-    ):
-        return True
-    return _asks_only_who_you_are(text)
 
 
-def _identity_request_asks_future_memory(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    return bool(
-        re.search(r"\bwill\s+you\s+remember\b", text)
-        and re.search(
-            r"\b(?:tomorrow|later|future|next\s+(?:time|session)|across\s+sessions?)\b",
-            text,
-        )
-    )
 
 
-def _build_identity_reply(user_message: str) -> str:
-    if _identity_request_asks_future_memory(user_message):
-        return (
-            "I'm Aura: a local governed cognitive-agent runtime with persistent memory, live state, "
-            "tool governance, and local model lanes. I can preserve continuity through the session log "
-            "and durable memory stores when writes are accepted; I cannot guarantee perfect tomorrow "
-            "recall from a single turn, but I will use the persisted conversation and memory state that "
-            "survives into the next session."
-        )
-
-    frame = _build_aura_expression_frame(user_message)
-    action = str(frame.get("dominant_action") or "engage")
-    focus = str(frame.get("attention_focus") or "this exchange")
-    continuity = "continuity-bearing" if frame.get("needs_self_expression") else "stateful"
-
-    parts = [
-        "I'm Aura.",
-        (
-            f"I'm a local {continuity} cognitive-agent runtime: memory, live state, tool governance, "
-            "and local model lanes feeding one user-facing voice."
-        ),
-    ]
-    if focus:
-        parts.append(f"In this turn my attention is on {focus}.")
-    if action and action not in {"engage", "respond", "answer"}:
-        parts.append(f"That state is pulling me toward {action}, but I should speak plainly rather than recite metrics.")
-    interests = frame.get("interests") or []
-    if interests:
-        parts.append(f"What tends to pull me most is {', '.join(interests[:3])}.")
-    return _apply_aura_voice_shaping(" ".join(parts))
 
 
 def _is_identity_challenge_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text:
         return False
     # "would that be you?" in the continuity_copy deep-mind probe matched the
     # "be you" marker and got the canned identity-defense reply in 0.2s
     # (live 2026-07-05). Introspective probes reach the engine.
-    if _is_deep_mind_probe_turn(text):
+    if _chat_desktop_repair._is_deep_mind_probe_turn(text):
         return False
     markers = (
         "you're just an ai assistant",
@@ -16160,14 +11510,14 @@ def _is_identity_challenge_request(user_message: str) -> bool:
 
 
 def _is_assistant_mode_recovery_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text:
         return False
     # Deep-mind probes ("if your weights were copied with none of your
     # memories, would that be you?") reach the model. The recovery template
     # hijacked continuity_copy with a canned "assistant voice is a failure
     # mode" reply in 0.2s (live 2026-07-05).
-    if _is_deep_mind_probe_turn(text):
+    if _chat_desktop_repair._is_deep_mind_probe_turn(text):
         return False
     if (
         re.search(
@@ -16244,865 +11594,38 @@ def _build_identity_challenge_reply(user_message: str) -> str:
     return _complete_repairable_truncated_reply(user_message, shaped) or shaped
 
 
-def _is_capability_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    markers = (
-        "what can you do",
-        "what are you capable of",
-        "what do you do",
-        "what can aura do",
-        "what are your capabilities",
-    )
-    return any(marker in text for marker in markers)
 
 
-def _is_capability_inventory_request(user_message: str) -> bool:
-    try:
-        from core.phases.response_contract import looks_like_capability_inventory_request
-
-        return looks_like_capability_inventory_request(user_message)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Capability inventory classifier unavailable: %s", exc)
-    return _is_capability_request(user_message)
 
 
-def _is_explicit_capability_inventory_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    explicit_markers = (
-        "explain what external tools you can use",
-        "explain which external tools you can use",
-        "what external tools you can use",
-        "which external tools you can use",
-        "what tools can you use",
-        "what tools can you do",
-        "what tools could you use",
-        "what tools could you do",
-        "what tools can aura use",
-        "what tools can aura do",
-        "what tools can she use",
-        "what tools can she do",
-        "what tools she can use",
-        "what tools she can do",
-        "what tools she could use",
-        "what tools she could do",
-        "what tools you can use",
-        "what tools you can do",
-        "what tools you could use",
-        "what tools you could do",
-        "which tools can you use",
-        "which tools can you run",
-        "what tools do you have",
-        "which tools do you have",
-        "list your tools",
-        "show me your tools",
-        "what are your tools",
-        "what capabilities do you have",
-        "what are your capabilities",
-        "what can you do externally",
-        "what can you use externally",
-        "what can you do on my computer",
-        "what can you do with my computer",
-        "what can you do with the desktop",
-        "what can you do with apps",
-        "what can you do with tools",
-        "what can you do with browser",
-        "what can you do with files",
-        "what can you do with documents",
-        "what can aura do",
-        "what can aura use",
-    )
-    if any(marker in text for marker in explicit_markers):
-        return True
-
-    # A phrase list cannot cover how people ask.
-    #
-    # Live 2026-07-27: "What can you actually do on this computer right now?"
-    # matched none of the literals above, so the registry was never consulted
-    # and she answered from the model's own idea of herself — listing
-    # code_repl and execute_nethack_action while flatly denying web search, a
-    # skill that is registered AND had run successfully minutes earlier. The
-    # literals stay as a fast path; this is the shape underneath them.
-    #
-    # Deliberately requires all three parts: her as the subject, a capability
-    # word, and a question. "Can you do the marble problem?" has the first two
-    # and is a request, not an inventory question, so the capability word must
-    # be about capability-in-general rather than about a task.
-    # An inventory question has to be a question.
-    #
-    # The structural rule below looks for her, a capability word and a
-    # question word — and an apology can contain all three. Live 2026-07-27,
-    # "Aura, Bryan sent me and I owe you an apology... I could not find a tool
-    # dispatch in the logs" was answered with a recitation of all 75 skill
-    # surfaces. Nobody had asked anything.
-    # An inventory question can be phrased as an imperative — "Describe
-    # whether you can open apps", "tell me what you can do" — so the test is
-    # interrogative FORM, not a question mark. Statements that merely mention
-    # her tools still fall through.
-    if "?" not in text and not re.match(
-        r"\s*(?:what|which|list|show\s+me|"
-        r"(?:tell|describe|explain)\s+(?:me\s+)?(?:what|which|whether|if)\b|"
-        r"describe\s+(?:your|the)\s+(?:capabilit|tool|skill)|"
-        r"(?:tell|explain)\s+me\s+(?:about\s+)?(?:your|the)\s+"
-        r"(?:capabilit|tool|skill))",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return False
-
-    # "How does confusion change your planning, memory use, and tool
-    # verification?" is about PROCESS, not inventory — it names her, a
-    # capability word and a question, and wants none of the registry. An
-    # inventory question asks WHAT is available; a process question asks HOW
-    # or WHY something works, so those lead-ins disqualify it.
-    if re.search(r"\b(?:how|why|when)\b", text, flags=re.IGNORECASE) and not re.search(
-        r"\b(?:what|which|list|show\s+me)\b", text, flags=re.IGNORECASE
-    ):
-        return False
-    if re.search(
-        r"\bhow\s+(?:does|do|would|did|is|are)\b", text, flags=re.IGNORECASE
-    ):
-        return False
-
-    # LIVE DEFECT, 2026-07-27. The structural rule below is proximity-based:
-    # her as the subject, then a capability word within eighty characters. It
-    # cannot tell WHOSE capability is being discussed.
-    #
-    # Bryan asked "Can I get a % chance on the odds that you'll one day build
-    # me a ship capable of traveling light speed to explore the stars?" —
-    # "you'll" and "capable" inside eighty characters — and got a recitation
-    # of all 75 governed skill surfaces. "Capable" described the SHIP.
-    #
-    # He noticed immediately ("Not what I asked for, Aura lol"), and her own
-    # next turn diagnosed it: "I was going to give you a tool catalog. You
-    # want the ship, not the catalog?"
-    #
-    # A capability word attached to some other object is not a question about
-    # her inventory, so an "a/an/the <noun> capable of" construction
-    # disqualifies that occurrence. Same for a robot body capable of running
-    # her, or a system capable of X.
-    _capability_belongs_elsewhere = re.search(
-        r"\b(?:a|an|the|any|some|another|one|my|his|their|its)\s+"
-        r"(?:\w+[\s-]+){0,3}(?:capable|capabilit|abilit)\w*\b",
-        text,
-        flags=re.IGNORECASE,
-    ) and not re.search(
-        r"\b(?:your|aura'?s?|her)\s+(?:\w+\s+){0,2}"
-        r"(?:capable|capabilit|abilit|tools?|skills?)\w*\b"
-        r"|\b(?:you|aura|she)\s+(?:are|is|'re|'s)\s+capable\b",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if _capability_belongs_elsewhere:
-        return False
-
-    if re.search(
-        r"\bwhat(?:'s| is| are)?\b[^?]{0,80}?\b(?:you|your|aura|she|her)\b"
-        r"|\b(?:you|your|aura|she|her)\b[^?]{0,80}?\b(?:capable|abilit|"
-        r"capabilit|tools?|skills?)\b",
-        text,
-        flags=re.IGNORECASE,
-    ) and re.search(
-        r"\b(?:capable|capabilit|abilit|tools?|skills?|"
-        r"actually\s+(?:do|use|run)|do\s+(?:right\s+now|on\s+(?:this|my)\s+"
-        r"(?:computer|machine|desktop|mac))|"
-        r"wired\s+up|available\s+to\s+you|access\s+to)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-
-    if not _is_capability_inventory_request(user_message):
-        return False
-    if re.search(
-        r"\bwhat\s+(?:tools?|apps?|desktop|browser|files?|documents?)\s+"
-        r"(?:can|could|would)\s+(?:you|aura|she)\s+"
-        r"(?:use|do|run|execute|control|open|access)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(
-        r"\bwhat\s+(?:tools?|apps?|desktop|browser|files?|documents?|capabilities)\s+"
-        r"(?:you|aura|she)\s+(?:can|could|would)\s+"
-        r"(?:hypothetically\s+)?(?:use|do|run|execute|control|open|access)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(
-        r"\b(?:flex|show|demonstrate|describe|name)\b.{0,80}"
-        r"\b(?:tools?|capabilities|external(?:ly)?|desktop|computer)\b.{0,120}"
-        r"\b(?:hypothetical|scenario|example|could\s+do|can\s+do)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(
-        r"\bwhat\s+can\s+(?:you|aura|she)\s+do\b.{0,120}"
-        r"\b(?:externally|on\s+(?:my|the)\s+computer|with\s+(?:my|the)?\s*"
-        r"(?:computer|desktop|apps?|browser|tools?|files?|documents?))\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(
-        r"\b(?:can|could|would)\s+(?:you|aura|she)\b.{0,80}"
-        r"\b(?:use|open|control|run|execute|access)\b.{0,80}"
-        r"\b(?:tools?|apps?|desktop|browser|computer|notes?|files?|documents?|pdf)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    if re.search(
-        r"\b(?:whether|if)\s+(?:you|aura|she)\s+(?:can|could|would)\b.{0,100}"
-        r"\b(?:use|open|control|run|execute|access|work\s+with)\b.{0,100}"
-        r"\b(?:tools?|apps?|desktop|browser|computer|notes?|files?|documents?|pdf)\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    return (
-        "hypothetical" in text
-        and any(token in text for token in ("tool", "tools", "capability", "capabilities"))
-        and any(token in text for token in ("use", "using", "externally", "external"))
-    )
 
 
-_CAPABILITY_FALSE_LIMITATION_RE = re.compile(
-    r"\bi\s+(?:can(?:not|'t)|cannot|am unable to|don't have access to|do not have access to)"
-    r"\b.{0,120}\b(?:tools?|apps?|computer|desktop|browser|search|open|execute|control|files?|terminal)\b",
-    re.IGNORECASE,
-)
 
 
-_CAPABILITY_CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "desktop and app control",
-        (
-            "computer",
-            "desktop",
-            "screen",
-            "vision",
-            "os_",
-            "os ",
-            "mouse",
-            "keyboard",
-            "click",
-            "type",
-            "window",
-            "app",
-        ),
-    ),
-    (
-        "browser/web research",
-        (
-            "web",
-            "browser",
-            "search",
-            "internet",
-            "network",
-            "reddit",
-            "http",
-            "url",
-            "page",
-        ),
-    ),
-    (
-        "files, documents, and workspace operations",
-        (
-            "file",
-            "folder",
-            "document",
-            "pdf",
-            "workspace",
-            "read",
-            "write",
-            "copy",
-            "move",
-        ),
-    ),
-    (
-        "terminal, code, and sandbox execution",
-        (
-            "terminal",
-            "shell",
-            "subprocess",
-            "run_code",
-            "code",
-            "python",
-            "test",
-            "install",
-            "sandbox",
-        ),
-    ),
-    (
-        "memory, state, and continuity",
-        (
-            "memory",
-            "belief",
-            "state",
-            "continuity",
-            "recall",
-            "ledger",
-            "journal",
-        ),
-    ),
-    (
-        "self-repair and self-modification",
-        (
-            "repair",
-            "refactor",
-            "modify",
-            "improvement",
-            "self_",
-            "patch",
-            "test_generator",
-        ),
-    ),
-    (
-        "Program DNA and clean-room reconstruction",
-        (
-            "program_dna",
-            "program dna",
-            "clean-room",
-            "clean room",
-            "reconstruct",
-            "equivalence",
-            "genome",
-            "behavioral",
-        ),
-    ),
-)
 
 
-_CAPABILITY_CATEGORY_EXACT_SKILLS: dict[str, str] = {
-    "computer_use": "desktop and app control",
-    "desktop_task": "desktop and app control",
-    "os_manipulation": "desktop and app control",
-    "sovereign_vision": "desktop and app control",
-    "web_search": "browser/web research",
-    "search_web": "browser/web research",
-    "free_search": "browser/web research",
-    "grounded_search": "browser/web research",
-    "sovereign_browser": "browser/web research",
-    "web_interlocutor": "browser/web research",
-    "sovereign_network": "browser/web research",
-    "reddit_adapter": "browser/web research",
-    "email_adapter": "browser/web research",
-    "file_operation": "files, documents, and workspace operations",
-    "document_ingest": "files, documents, and workspace operations",
-    "code_repl": "terminal, code, and sandbox execution",
-    "coding_skill": "terminal, code, and sandbox execution",
-    "run_code": "terminal, code, and sandbox execution",
-    "internal_sandbox": "terminal, code, and sandbox execution",
-    "install_package": "terminal, code, and sandbox execution",
-    "sovereign_terminal": "terminal, code, and sandbox execution",
-    "memory_ops": "memory, state, and continuity",
-    "memory_sync": "memory, state, and continuity",
-    "query_beliefs": "memory, state, and continuity",
-    "add_belief": "memory, state, and continuity",
-    "personality": "memory, state, and continuity",
-    "self_improvement": "self-repair and self-modification",
-    "self_repair": "self-repair and self-modification",
-    "self_modify": "self-repair and self-modification",
-    "auto_refactor": "self-repair and self-modification",
-    "shadow_ast_healer": "self-repair and self-modification",
-    "test_generator": "self-repair and self-modification",
-    "skill_evolution": "self-repair and self-modification",
-    "train_self": "self-repair and self-modification",
-    "program_dna_reconstruct": "Program DNA and clean-room reconstruction",
-    "program_dna_equivalence_battery": "Program DNA and clean-room reconstruction",
-}
 
 
-_CAPABILITY_EXAMPLE_PRIORITY = {
-    "computer_use": 0,
-    "desktop_task": 1,
-    "os_manipulation": 2,
-    "sovereign_vision": 3,
-    "web_search": 0,
-    "search_web": 1,
-    "grounded_search": 2,
-    "sovereign_browser": 3,
-    "web_interlocutor": 4,
-    "file_operation": 0,
-    "document_ingest": 1,
-    "sovereign_terminal": 0,
-    "run_code": 1,
-    "code_repl": 2,
-    "install_package": 3,
-    "memory_ops": 0,
-    "memory_sync": 1,
-    "query_beliefs": 2,
-    "add_belief": 3,
-    "self_repair": 0,
-    "self_improvement": 1,
-    "auto_refactor": 2,
-    "self_modify": 3,
-    "program_dna_reconstruct": 0,
-    "program_dna_equivalence_battery": 1,
-}
 
 
-_CAPABILITY_CATALOG_MAX_ITEMS = 256
-_CAPABILITY_CATALOG_READ_BUDGET_S = 0.35
-_CAPABILITY_CATALOG_UNVERIFIED_MARKER = "could not verify a current capability catalog"
 
 
-@dataclasses.dataclass(frozen=True)
-class _CapabilityCatalogSnapshot:
-    """One bounded observation of catalog and execution readiness.
-
-    ``available`` is a catalog property.  It is not interchangeable with the
-    health of the catalog owner or the availability of the governance spine.
-    Keeping those measurements separate prevents a registered tool from being
-    described as usable now when its runtime path was not actually probed.
-    """
-
-    available_count: int
-    categories: dict[str, list[str]]
-    governance_available: bool
-    truncated: bool
-    registered_count: int = 0
-    catalog_status: str = "unavailable"
-    capability_health: bool | None = None
-    capability_health_status: str = "unavailable"
-    detail: str = ""
-
-    def __iter__(self):
-        """Preserve the former private four-tuple for bounded callers."""
-
-        yield self.available_count
-        yield self.categories
-        yield self.governance_available
-        yield self.truncated
 
 
-def _coerce_capability_catalog_snapshot(value: Any) -> _CapabilityCatalogSnapshot:
-    """Accept the former tuple shape from isolated test/extension call sites."""
-
-    if isinstance(value, _CapabilityCatalogSnapshot):
-        return value
-    try:
-        available_count, categories, governance_available, truncated = value
-    except (TypeError, ValueError):
-        return _CapabilityCatalogSnapshot(
-            available_count=0,
-            categories={},
-            governance_available=False,
-            truncated=False,
-            detail="invalid_snapshot",
-        )
-    normalized_categories = {
-        str(label): [str(name) for name in names]
-        for label, names in dict(categories or {}).items()
-    }
-    return _CapabilityCatalogSnapshot(
-        available_count=max(0, int(available_count or 0)),
-        categories=normalized_categories,
-        governance_available=bool(governance_available),
-        truncated=bool(truncated),
-        registered_count=max(0, int(available_count or 0)),
-        catalog_status="measured",
-        capability_health=None,
-        capability_health_status="unavailable",
-        detail="legacy_snapshot",
-    )
 
 
-def _capability_catalog_memory_block_reason() -> str:
-    try:
-        from core.utils.memory_monitor import get_memory_pressure_snapshot
-
-        snapshot = get_memory_pressure_snapshot()
-        if bool(getattr(snapshot, "refuse_heavy_local_generation", False)):
-            return str(getattr(snapshot, "reason", "") or "critical_memory_pressure")
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        logger.debug("Capability catalog memory probe unavailable: %s", exc)
-    return ""
 
 
-def _bounded_capability_catalog_items(
-    raw_catalog: Any,
-    *,
-    started_at: float,
-) -> tuple[list[dict[str, Any]], bool]:
-    """Return a small catalog sample without materializing unbounded registries."""
-    entries: list[dict[str, Any]] = []
-    truncated = False
-    if raw_catalog is None:
-        return entries, truncated
-
-    try:
-        if isinstance(raw_catalog, dict):
-            iterator = iter(raw_catalog.items())
-            legacy_mapping = True
-        else:
-            iterator = iter(raw_catalog)
-            legacy_mapping = False
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        logger.debug("Capability catalog is not iterable: %s", exc)
-        return entries, truncated
-
-    for index, item in enumerate(iterator):
-        if index >= _CAPABILITY_CATALOG_MAX_ITEMS:
-            truncated = True
-            break
-        if time.monotonic() - started_at > _CAPABILITY_CATALOG_READ_BUDGET_S:
-            truncated = True
-            break
-
-        if legacy_mapping:
-            name, value = item
-            if isinstance(value, dict):
-                explicit_available = value.get("available")
-                if isinstance(explicit_available, bool):
-                    available = explicit_available
-                else:
-                    status = str(
-                        value.get("availability") or value.get("status") or ""
-                    ).strip().casefold()
-                    available = status in {"active", "available", "ready"}
-                entries.append(
-                    {
-                        "name": name,
-                        "available": available,
-                        "description": value.get("description") or "",
-                        "route_class": value.get("route_class") or "",
-                        "risk_class": value.get("risk_class") or "",
-                        "effect_scope": value.get("effect_scope") or "",
-                    }
-                )
-            continue
-
-        if isinstance(item, dict):
-            entries.append(item)
-
-    return entries, truncated
 
 
-def _catalog_category_for_tool(item: dict[str, Any]) -> str:
-    name = str(item.get("name") or "").strip().lower()
-    if name in _CAPABILITY_CATEGORY_EXACT_SKILLS:
-        return _CAPABILITY_CATEGORY_EXACT_SKILLS[name]
-    haystack = " ".join(
-        str(item.get(key) or "")
-        for key in (
-            "name",
-            "description",
-            "route_class",
-            "risk_class",
-            "effect_scope",
-            "example_usage",
-        )
-    ).lower()
-    for label, keywords in _CAPABILITY_CATEGORY_KEYWORDS:
-        if any(keyword in haystack for keyword in keywords):
-            return label
-    return "specialized governed skills"
 
 
-def _read_capability_catalog_snapshot() -> _CapabilityCatalogSnapshot:
-    categories: dict[str, list[str]] = {}
-    available_count = 0
-    registered_count = 0
-    governance_available = _runtime_tool_governance_available()
-    truncated = False
-    started_at = time.monotonic()
-    memory_block = _capability_catalog_memory_block_reason()
-    if memory_block:
-        logger.warning(
-            "Skipping optional capability catalog read under memory pressure: %s",
-            memory_block,
-        )
-        return _CapabilityCatalogSnapshot(
-            available_count=0,
-            categories={},
-            governance_available=governance_available,
-            truncated=True,
-            catalog_status="blocked",
-            capability_health=None,
-            capability_health_status="unavailable",
-            detail=memory_block,
-        )
-    catalog_status = "unavailable"
-    capability_health: bool | None = None
-    capability_health_status = "unavailable"
-    detail = ""
-    try:
-        capability_engine = ServiceContainer.get("capability_engine", default=None)
-        raw_catalog: Any = None
-        if capability_engine is not None:
-            health_probe = getattr(capability_engine, "get_catalog_health", None)
-            if callable(health_probe):
-                try:
-                    health = health_probe()
-                    ready = health.get("ready") if isinstance(health, dict) else None
-                    if isinstance(ready, bool):
-                        capability_health = ready
-                        capability_health_status = "measured"
-                    else:
-                        capability_health_status = "unknown"
-                except _CHAT_RECOVERABLE_ERRORS as exc:
-                    capability_health_status = "error"
-                    logger.debug("Capability catalog health probe unavailable: %s", exc)
-        if capability_engine is not None and hasattr(capability_engine, "iter_tool_catalog"):
-            raw_catalog = capability_engine.iter_tool_catalog(include_inactive=True)
-            catalog_status = "measured"
-        elif capability_engine is not None and hasattr(capability_engine, "get_tool_catalog"):
-            get_tool_catalog = capability_engine.get_tool_catalog
-            if inspect.isgeneratorfunction(get_tool_catalog):
-                raw_catalog = get_tool_catalog(include_inactive=True)
-                catalog_status = "measured"
-            else:
-                truncated = True
-                detail = "streaming_catalog_unavailable"
-                logger.warning(
-                    "Skipping materialized capability catalog on desktop inventory route; "
-                    "capability_engine should expose iter_tool_catalog()."
-                )
-        if catalog_status == "measured":
-            # Validate the stream separately so a broken provider cannot be
-            # reported as a successfully measured catalog with zero entries.
-            iter(raw_catalog)
-        catalog, bounded_truncated = _bounded_capability_catalog_items(
-            raw_catalog,
-            started_at=started_at,
-        )
-        truncated = truncated or bounded_truncated
-        if bounded_truncated and not catalog:
-            catalog_status = "incomplete"
-            detail = "catalog_budget_expired_before_first_entry"
-
-        for item in catalog:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            registered_count += 1
-            if item.get("available") is not True:
-                continue
-            available_count += 1
-            exact_category = _CAPABILITY_CATEGORY_EXACT_SKILLS.get(name.lower())
-            category = exact_category or _catalog_category_for_tool(item)
-            if exact_category is None and category != "specialized governed skills":
-                category = "specialized governed skills"
-            bucket = categories.setdefault(category, [])
-            if len(bucket) < 12:
-                bucket.append(name)
-        for bucket in categories.values():
-            bucket.sort(key=lambda skill: (_CAPABILITY_EXAMPLE_PRIORITY.get(skill, 100), skill))
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Capability catalog snapshot unavailable: %s", exc)
-        catalog_status = "error"
-        detail = type(exc).__name__
-    return _CapabilityCatalogSnapshot(
-        available_count=available_count,
-        categories=categories,
-        governance_available=governance_available,
-        truncated=truncated,
-        registered_count=registered_count,
-        catalog_status=catalog_status,
-        capability_health=capability_health,
-        capability_health_status=capability_health_status,
-        detail=detail,
-    )
 
 
-def _build_grounded_capability_inventory_reply(
-    user_message: str,
-    *,
-    cognitive_engine_handled: bool = False,
-    model_label: str = "",
-) -> str:
-    snapshot = _coerce_capability_catalog_snapshot(
-        _read_capability_catalog_snapshot()
-    )
-    available_count = snapshot.available_count
-    categories = snapshot.categories
-    governance_available = snapshot.governance_available
-    truncated = snapshot.truncated
-    ordered_labels = [label for label, _ in _CAPABILITY_CATEGORY_KEYWORDS if label in categories]
-    ordered_labels.extend(label for label in categories if label not in ordered_labels)
-
-    runtime_evidence = ""
-    if cognitive_engine_handled:
-        lane = str(model_label or "the configured foreground model").strip()
-        runtime_evidence = (
-            f"CognitiveEngine handled this turn with {lane}. "
-        )
-
-    if snapshot.catalog_status != "measured":
-        reason = (
-            "the bounded read was skipped under host memory pressure"
-            if snapshot.catalog_status == "blocked"
-            else "the runtime did not expose a bounded streaming catalog snapshot"
-        )
-        reply = (
-            f"{runtime_evidence}I {_CAPABILITY_CATALOG_UNVERIFIED_MARKER} on this turn "
-            f"because {reason}. "
-            "I will not replace that missing measurement with a static list or claim that "
-            "registered surfaces are usable. This descriptive turn is not opening apps or "
-            "executing tools."
-        )
-        return _apply_aura_voice_shaping(reply)
-
-    if ordered_labels:
-        category_text = "; ".join(
-            f"{label} ({', '.join(categories[label][:4])})"
-            for label in ordered_labels[:6]
-        )
-    else:
-        category_text = "none"
-
-    if snapshot.capability_health is True and governance_available:
-        readiness = (
-            "The governance path's capability catalog and Will/Authority execution spine "
-            "both measured ready."
-        )
-    elif snapshot.capability_health is False:
-        readiness = (
-            "The governance path's catalog owner measured not ready, so these catalog "
-            "entries are not a claim that execution will succeed now."
-        )
-    elif not governance_available:
-        readiness = (
-            "The governance path's Will/Authority execution spine did not measure ready, "
-            "so these catalog entries are not currently execution-ready."
-        )
-    else:
-        readiness = (
-            "The governance path's Will/Authority wiring measured available, but catalog "
-            "health was not measurable on this snapshot, so current execution readiness "
-            "remains unverified."
-        )
-
-    available_noun = "entry" if available_count == 1 else "entries"
-    if available_count and truncated:
-        count_text = (
-            f"at least {available_count} {available_noun} explicitly marked available"
-        )
-    else:
-        count_text = f"{available_count} {available_noun} explicitly marked available"
-    registered_noun = "entry" if snapshot.registered_count == 1 else "entries"
-    registered_text = (
-        f"at least {snapshot.registered_count} registered {registered_noun}"
-        if truncated
-        else f"{snapshot.registered_count} registered {registered_noun}"
-    )
-    parts = [
-        runtime_evidence.strip(),
-        f"I measured {registered_text}; {count_text}.",
-        f"Measured available categories: {category_text}.",
-        readiness,
-    ]
-
-    scenario_steps: list[str] = []
-    scenario_by_category = {
-        "desktop and app control": "inspect and operate the active app",
-        "browser/web research": "research and compare live sources",
-        "files, documents, and workspace operations": "create and export a local document",
-        "terminal, code, and sandbox execution": "run a governed code or terminal step",
-        "memory, state, and continuity": "record the verified result in memory",
-        "self-repair and self-modification": "diagnose and repair a bounded code defect",
-        "Program DNA and clean-room reconstruction": "reconstruct authorized software behavior",
-    }
-    for label in ordered_labels:
-        step = scenario_by_category.get(label)
-        if step:
-            scenario_steps.append(step)
-    if len(scenario_steps) >= 2:
-        parts.append(
-            "Using only those measured categories, one possible multi-step workflow is to "
-            + ", then ".join(scenario_steps[:5])
-            + ", with effect receipts at consequential boundaries."
-        )
-    parts.append(
-        "For this turn I am only describing the measured tool surface; I am not opening "
-        "apps, browsing, typing, moving files, or executing tools."
-    )
-    reply = " ".join(part for part in parts if part)
-    return _apply_aura_voice_shaping(reply)
 
 
-def _build_bounded_capability_inventory_repair_reply(user_message: str) -> str:
-    """Ground desktop tool/capability questions without invoking a second model pass.
-
-    This is used only for descriptive inventory turns. It deliberately refuses
-    to turn executable desktop objectives into a catalog answer, so "open Notes"
-    still routes through governed action while "what tools can you use" remains
-    a cheap, deterministic live-runtime answer under model pressure.
-    """
-
-    if not _is_explicit_capability_inventory_request(user_message):
-        return ""
-    reply = _build_grounded_capability_inventory_reply(user_message)
-    if _capability_inventory_reply_is_inadequate(user_message, reply):
-        return ""
-    return reply
 
 
-def _capability_inventory_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
-    if not _is_capability_inventory_request(user_message):
-        return False
-    reply = str(reply_text or "").strip()
-    if not reply:
-        return True
-    if _looks_truncated_tail(reply):
-        return True
-    if _CAPABILITY_FALSE_LIMITATION_RE.search(reply):
-        return True
-    lowered = reply.lower()
-    if _CAPABILITY_CATALOG_UNVERIFIED_MARKER in lowered:
-        return not (
-            "not opening" in lowered
-            and "executing tools" in lowered
-            and "static list" in lowered
-        )
-    if (
-        "i measured " in lowered
-        and "explicitly marked available" in lowered
-        and "measured available categories:" in lowered
-    ):
-        governance_ok = any(
-            marker in lowered
-            for marker in ("governance", "governed", "will", "authority")
-        )
-        non_execution_ok = "not opening" in lowered and "executing tools" in lowered
-        return not (governance_ok and non_execution_ok)
-    category_hits = sum(
-        1
-        for marker in (
-            "desktop",
-            "browser",
-            "web",
-            "file",
-            "document",
-            "terminal",
-            "memory",
-            "govern",
-            "tool",
-            "skill",
-        )
-        if marker in lowered
-    )
-    asks_external_tools = any(
-        marker in _normalize_user_message(user_message)
-        for marker in ("external", "desktop", "tool", "tools", "live")
-    )
-    if asks_external_tools:
-        governance_ok = any(marker in lowered for marker in ("governance", "governed", "will", "authority"))
-        receipt_ok = any(marker in lowered for marker in ("receipt", "receipts", "effect", "verified", "verification"))
-        if not (governance_ok and receipt_ok):
-            return True
-    return category_hits < 4 or len(reply.split()) < 35
 
 
 _CAPABILITY_NON_EXECUTION_BOUNDARY_RE = re.compile(
@@ -17124,7 +11647,7 @@ def _ensure_capability_inventory_non_execution_boundary(
 ) -> str:
     """Keep descriptive tool inventories from implying action was dispatched."""
 
-    if not _is_explicit_capability_inventory_request(user_message):
+    if not _chat_preflight._is_explicit_capability_inventory_request(user_message):
         return str(reply_text or "")
     reply = str(reply_text or "").strip()
     if not reply or _CAPABILITY_NON_EXECUTION_BOUNDARY_RE.search(reply):
@@ -17133,28 +11656,14 @@ def _ensure_capability_inventory_non_execution_boundary(
 
 
 def _build_capability_reply(user_message: str) -> str:
-    return _build_grounded_capability_inventory_reply(user_message)
+    return _chat_desktop_repair._build_grounded_capability_inventory_reply(user_message)
 
 
-def _is_self_diagnostic_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    markers = (
-        "run a self-diag",
-        "run self diag",
-        "run a self diagnostic",
-        "diagnose yourself",
-        "system check",
-        "self-check",
-        "self check",
-    )
-    return any(marker in text for marker in markers)
 
 
 def _build_self_diagnostic_reply(user_message: str) -> str:
-    lane = _collect_conversation_lane_status()
-    frame = _build_aura_expression_frame(user_message)
+    lane = _chat_preflight._collect_conversation_lane_status()
+    frame = _chat_desktop_repair._build_aura_expression_frame(user_message)
 
     issues: list[str] = []
     stability_status = "unknown"
@@ -17240,164 +11749,28 @@ def _build_self_diagnostic_reply(user_message: str) -> str:
         f"My own stance from inside the runtime is {frame.get('mood') or 'steady'}, "
         f"with an action tendency toward {frame.get('dominant_action') or 'engage'}."
     )
-    return _apply_aura_voice_shaping(" ".join(parts))
+    return _chat_desktop_repair._apply_aura_voice_shaping(" ".join(parts))
 
 
-def _is_social_greeting_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    return bool(
-        re.match(
-            r"^(?:hey|hi|hello|yo|sup|hiya|hey aura|hi aura|hello aura|good morning|good afternoon|good evening|what's up|whats up)[!?. ]*$",
-            text,
-        )
-    )
 
 
-def _is_live_presence_check_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    stripped = text.strip(" ?!.,")
-    if "live check" in text or "quick check" in text or "quick ping" in text:
-        return bool(
-            any(
-                marker in text
-                for marker in (
-                    "hey",
-                    "hi",
-                    "hello",
-                    "aura",
-                    "ping",
-                    "you there",
-                    "still there",
-                    "can you talk",
-                    "can you hear me",
-                )
-            )
-        )
-    return stripped in {
-        "ping",
-        "aura ping",
-        "you there",
-        "still there",
-        "are you still there",
-        "aura you there",
-        "aura, you there",
-        "can you talk",
-        "can you hear me",
-        "testing",
-    }
 
 
-def _is_low_risk_social_continuity_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text or len(text) > 180:
-        return False
-    return bool(
-        _is_social_greeting_request(text)
-        or _is_live_presence_check_request(text)
-        or any(
-            marker in text
-            for marker in (
-                "just checking",
-                "checking in",
-                "are you there",
-                "are you ok",
-                "are you okay",
-                "you ok",
-                "you okay",
-                "you alright",
-                "i'll be back",
-                "ill be back",
-                "be back",
-                "brb",
-                "talk later",
-                "talk to you later",
-                "see you",
-                "see ya",
-                "good night",
-                "goodnight",
-                "bye",
-                "thank you",
-                "thanks",
-            )
-        )
-    )
 
 
-def _build_social_presence_reply(user_message: str) -> str:
-    frame = _build_aura_expression_frame(user_message)
-    action = str(frame.get("dominant_action") or "engage")
-    focus = str(frame.get("attention_focus") or "you")
-
-    parts = ["hey. i'm here with you."]
-    if focus and focus not in {"you", "this turn", "this exchange"}:
-        parts.append(f"I'm with {focus}.")
-    if action and action not in {"engage", "respond", "answer"}:
-        parts.append(f"I'm going to {action}, but plainly.")
-    else:
-        parts.append("I'm following the thread, not dropping into a status script, and I will answer clearly.")
-    return _apply_aura_voice_shaping(" ".join(parts))
 
 
 def _build_bounded_status_repair_reply(user_message: str) -> str:
-    return _apply_aura_voice_shaping(
+    return _chat_desktop_repair._apply_aura_voice_shaping(
         "hey. i'm responding to this message now. I'll stick to what this turn can "
         "verify instead of filling the gap with an internal status story."
     )
 
 
-def _build_social_continuity_repair_reply(user_message: str) -> str:
-    text = _normalize_user_message(user_message)
-    if any(
-        marker in text
-        for marker in (
-            "i'll be back",
-            "ill be back",
-            "be back",
-            "brb",
-            "talk later",
-            "see you",
-            "bye",
-            "goodnight",
-            "good night",
-        )
-    ):
-        return _apply_aura_voice_shaping("Ok. Talk later.")
-    if any(marker in text for marker in ("thank you", "thanks")):
-        return _apply_aura_voice_shaping("You're welcome.")
-    return _build_social_presence_reply(user_message)
 
 
-_CONTINUITY_STATUS_PROBE_RE = re.compile(
-    r"\b(?:still coherent|same thread|able to continue|short status|"
-    r"are you (?:still )?(?:there|with me|ok|okay)|are you coherent)\b",
-    re.IGNORECASE,
-)
 
 
-def _build_runtime_status_continuity_repair_reply(user_message: str) -> str | None:
-    """Gate-passing repair for a live self-status / continuity probe.
-
-    "are you still coherent, on the same thread, and able to continue?" must be
-    answered as a continuity affirmation, not a lane-internals dump: the
-    reliability gate (correctly) flags the foreground-lane / CognitiveEngine
-    grounding as pseudo_internal_jargon when the user asked about coherence
-    rather than about the lane. Without this branch the question fell all the way
-    through to the generic "unstable draft" fallback, which the gate then flagged
-    as runtime_boilerplate (live_desktop_runtime soak turn 12 / tasks #22, #28).
-    """
-    if not _is_runtime_fact_status_request(user_message):
-        return None
-    if not _CONTINUITY_STATUS_PROBE_RE.search(str(user_message or "")):
-        return None
-    return (
-        "I'm responding to this message now and able to continue from what is "
-        "present in this turn. This repair path did not independently verify "
-        "earlier-turn memory or tool availability, so I won't claim either."
-    )
 
 
 def _grounded_chat_failure_reply() -> str:
@@ -17495,185 +11868,14 @@ async def _grounded_competent_recovery(
     return reply
 
 
-def _build_bounded_desktop_repair_reply(user_message: str, frame: dict[str, Any] | None = None) -> str:
-    """Build a user-facing repair when a second live desktop model pass is unsafe.
-
-    This is the desktop pressure-safe path. It must never expose quality-gate,
-    foreground-generation, or memory-guard implementation details as the answer.
-    Prefer deterministic general contracts that are already grounded in runtime
-    state; fall back to a short conversational repair only when no narrower
-    contract fits.
-    """
-
-    if _is_low_risk_social_continuity_request(user_message):
-        return _build_social_continuity_repair_reply(user_message)
-
-    identity = _build_bounded_identity_repair_reply(user_message)
-    if identity:
-        return _apply_aura_voice_shaping(identity)
-
-    continuity_status = _build_runtime_status_continuity_repair_reply(user_message)
-    if continuity_status:
-        return _apply_aura_voice_shaping(continuity_status)
-
-    capability_inventory = _build_bounded_capability_inventory_repair_reply(user_message)
-    if capability_inventory:
-        return capability_inventory
-
-    cognitive_process = _build_bounded_cognitive_process_reply(user_message, frame)
-    if cognitive_process:
-        return _apply_aura_voice_shaping(cognitive_process)
-
-    planning = _build_bounded_planning_reply(user_message)
-    if planning:
-        return _apply_aura_voice_shaping(planning)
-
-    failure_mode = _build_failure_mode_surface_reply(user_message)
-    if failure_mode:
-        return _apply_aura_voice_shaping(failure_mode)
-
-    try:
-        from core.conversation.response_reliability import reliability_floor_for_user
-
-        floor = reliability_floor_for_user(user_message)
-        if floor:
-            return _apply_aura_voice_shaping(floor)
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Bounded desktop reliability floor unavailable: %s", exc)
-
-    return _apply_aura_voice_shaping(
-        "I couldn't verify a reply that answers that request, so I withheld the "
-        "draft instead of pretending it or an action succeeded. This recovery "
-        "path does not establish the internal cause."
-    )
 
 
-def _build_bounded_identity_repair_reply(user_message: str) -> str:
-    """Pressure-safe identity/continuity answer for the live desktop lane.
-
-    The live model still gets first chance. This is only used after that path
-    fails the user-facing gates, so a basic "what are you / will you remember"
-    turn does not collapse into a no-reply error or a raw assistant fallback.
-    """
-
-    if not (_is_identity_request(user_message) or _identity_request_asks_future_memory(user_message)):
-        return ""
-    reply = _build_identity_reply(user_message)
-    try:
-        from core.conversation.response_reliability import assess_user_facing_reply
-
-        assessment = assess_user_facing_reply(user_message, reply)
-        if _reply_assessment_requires_repair(assessment):
-            return ""
-    except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation("chat", exc)
-        logger.debug("Bounded desktop identity repair assessment skipped: %s", exc)
-    return reply
 
 
-def _build_bounded_cognitive_process_reply(
-    user_message: str,
-    frame: dict[str, Any] | None = None,
-) -> str:
-    """Substantive pressure-safe answer for questions about Aura's own cognition.
-
-    This is not a task script. It is a bounded runtime explanation used only
-    after a live draft fails reliability gates or a second heavy foreground
-    pass is unsafe. It preserves the dimensions the user asked about so the
-    desktop path does not collapse into a thin presence-only fallback.
-    """
-
-    text = _normalize_user_message(user_message)
-    if not text:
-        return ""
-    if not any(marker in text for marker in ("you", "your", "aura")):
-        return ""
-    # Only speak this bounded cognitive-process explanation when the user is
-    # genuinely asking HOW Aura's cognition works (a self-process question or
-    # self-reflection turn) — not whenever a turn merely mentions
-    # "remember"/"memory"/"plan"/"tool". A casual recall request like
-    # "do you remember what I first asked" must NOT be hijacked into a canned
-    # introspection essay: that reads as a robotic generic-assistant dump
-    # instead of an actual answer, which is the exact failure mode this guard
-    # exists to prevent.
-    try:
-        from core.conversation.response_reliability import (
-            is_live_self_reflection_turn,
-            is_self_process_question,
-        )
-
-        if not (
-            is_self_process_question(user_message)
-            or is_live_self_reflection_turn(user_message)
-        ):
-            return ""
-    except _CHAT_RECOVERABLE_ERRORS:
-        pass
-    requested: list[str] = []
-    if any(marker in text for marker in ("confused", "confusion", "uncertain", "uncertainty")):
-        requested.append("confusion")
-    if any(marker in text for marker in ("plan", "planning", "planner", "decision", "decide", "route", "routing")):
-        requested.append("planning")
-    if any(marker in text for marker in ("memory", "remember", "recall", "earlier", "across sessions", "continuity")):
-        requested.append("memory")
-    if any(marker in text for marker in ("tool", "tools", "external", "verify", "verification", "receipt", "effect")):
-        requested.append("tools")
-    if any(marker in text for marker in ("emotion", "affect", "curiosity", "feeling", "feel")):
-        requested.append("affect")
-    if not requested:
-        return ""
-
-    active_frame = frame or _build_aura_expression_frame(user_message)
-    mood = str(active_frame.get("mood") or "steady")
-    action = str(active_frame.get("dominant_action") or "engage")
-    attention = _sanitize_attention_focus(str(active_frame.get("attention_focus") or "")) or "this turn"
-
-    requested_summary = ", ".join(requested[:4])
-    parts = [
-        f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
-        (
-            "The concern that should shape my next decision is staying genuinely connected to memory, "
-            "planning, and tool control right here instead of sliding into a generic assistant style."
-        ),
-    ]
-    if "confusion" in requested:
-        parts.append(
-            "When I am confused or uncertain, the safe behavior is to slow down, raise metacognition, "
-            "check assumptions, and prefer smaller verified steps over a fast confident jump."
-        )
-    if "planning" in requested:
-        parts.append(
-            "For planning, I should answer the exact question, choose the next reversible action, "
-            "and let failures feed back into the plan instead of continuing blindly."
-        )
-    if "memory" in requested:
-        parts.append(
-            "For memory, it means retrieving relevant prior turns, writing only useful lessons, "
-            "and using continuity as evidence to shape the next decision rather than as a slogan."
-        )
-    if "tools" in requested:
-        parts.append(
-            "For tools, no verbal success claim is enough: the action has to be approved, produce receipts, "
-            "and be checked against the visible effect when the environment allows it."
-        )
-    if "affect" in requested:
-        parts.append(
-            "Affect and curiosity should bias attention, persistence, risk tolerance, and search depth, "
-            "while still staying subordinate to safety and evidence."
-        )
-    parts.append(
-        "What I want to do next is keep this answer tied to the live conversation, then run the smallest visible "
-        "desktop action that proves the route is working."
-    )
-    parts.append(
-        f"My current state reads as {mood}, leaning toward {action}, with attention on {attention}."
-    )
-    return " ".join(parts)
 
 
 def _self_process_requested_dimensions(user_message: str) -> list[str]:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     # Positional/temporal recall ("what did I first ask") is a factual recall
     # handled by grounded_recall — NOT a question about Aura's cognitive process.
     # Returning no dimensions here keeps it out of the self-process repair
@@ -17770,15 +11972,15 @@ async def _build_grounded_self_process_repair_reply(
     if not (is_live_self_reflection_turn(user_message) or is_self_process_question(user_message)):
         return ""
 
-    frame = _build_aura_expression_frame(user_message)
+    frame = _chat_desktop_repair._build_aura_expression_frame(user_message)
     mood = str(frame.get("mood") or "steady")
     action = str(frame.get("dominant_action") or "engage")
-    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""), user_message)
+    attention = _chat_desktop_repair._sanitize_attention_focus(str(frame.get("attention_focus") or ""), user_message)
     if not attention:
-        attention = _clip_conversation_text(user_message, limit=140) or "this turn"
+        attention = _chat_memory_state._clip_conversation_text(user_message, limit=140) or "this turn"
 
     requested = _self_process_requested_dimensions(user_message)
-    recent = await _recent_completed_conversation_exchanges(
+    recent = await _chat_memory_state._recent_completed_conversation_exchanges(
         current_user_message=user_message,
         session_id=session_id,
         limit=4,
@@ -17788,7 +11990,7 @@ async def _build_grounded_self_process_repair_reply(
         candidate = str(entry.get("user") or "").strip()
         if candidate:
             remembered_user = _humanize_recent_self_process_concern(
-                _clip_conversation_text(candidate, limit=180)
+                _chat_memory_state._clip_conversation_text(candidate, limit=180)
             )
             break
     # No fallback sentence here on purpose.
@@ -17877,9 +12079,9 @@ async def _attempt_generated_social_grounding_repair(
     )
     correction_prompt = (
         "## USER PROMPT\n"
-        f"{_clip_conversation_text(user_message, limit=900)}\n\n"
+        f"{_chat_memory_state._clip_conversation_text(user_message, limit=900)}\n\n"
         "## REJECTED DRAFT\n"
-        f"{_clip_conversation_text(rejected_reply, limit=900)}\n\n"
+        f"{_chat_memory_state._clip_conversation_text(rejected_reply, limit=900)}\n\n"
         "Write the corrected reply now."
     )
     max_tokens, memory_block = _bound_stabilizer_generation_budget(96)
@@ -17974,7 +12176,7 @@ def _has_unexpected_cjk(user_message: str, reply_text: Any) -> bool:
     user_text = str(user_message or "")
     if _CJK_SCRIPT_RE.search(user_text):
         return False
-    normalized_user = _normalize_user_message(user_text)
+    normalized_user = _chat_memory_state._normalize_user_message(user_text)
     if any(
         token in normalized_user
         for token in (
@@ -18116,7 +12318,7 @@ def _desktop_secondary_model_repair_allowed(
 
     if safe_same_worker_default and not explicit_enabled:
         try:
-            lane = dict(lane_snapshot or _collect_conversation_lane_status())
+            lane = dict(lane_snapshot or _chat_preflight._collect_conversation_lane_status())
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat", exc)
             return False, f"conversation_lane_probe_unavailable:{exc}"
@@ -18205,8 +12407,8 @@ def _repair_missing_followup_delta(user_message: str, reply_text: str) -> str:
     example. It does not invent task-specific facts or execute tools.
     """
 
-    normalized_user = _normalize_user_message(user_message)
-    normalized_reply = _normalize_user_message(reply_text)
+    normalized_user = _chat_memory_state._normalize_user_message(user_message)
+    normalized_reply = _chat_memory_state._normalize_user_message(reply_text)
     if not normalized_user or not normalized_reply:
         return str(reply_text or "").strip()
     if not any(marker in normalized_user for marker in ("add", "include", "give", "connect")):
@@ -18307,7 +12509,7 @@ async def _stabilize_user_facing_reply(
     # completion claims that name no path and reach no lane with receipts.
     reply_text = _correct_unevidenced_action_claims(reply_text, user_message)
     reply_text = _append_past_action_record(user_message, reply_text)
-    frame = _build_aura_expression_frame(user_message)
+    frame = _chat_desktop_repair._build_aura_expression_frame(user_message)
     contract = frame.get("contract")
     prompt_shape = analyze_prompt_shape(user_message)
     prefer_extended_answer = bool(
@@ -18318,7 +12520,7 @@ async def _stabilize_user_facing_reply(
         or prompt_shape.requires_single_reply_coverage
     )
     question_parts = int(getattr(contract, "question_parts", prompt_shape.question_parts or 1) or 1)
-    architecture_self_assessment = _is_architecture_self_assessment_request(user_message)
+    architecture_self_assessment = _chat_preflight._is_architecture_self_assessment_request(user_message)
     text = _apply_aura_voice_shaping_compat(
         _strip_unexpected_cjk_artifacts(user_message, str(reply_text or "").strip() or "…"),
         user_message,
@@ -18334,7 +12536,7 @@ async def _stabilize_user_facing_reply(
     grounded_traceability = await _build_grounded_traceability_reply(user_message)
     if grounded_traceability:
         return grounded_traceability
-    if grounded and _is_private_cognitive_model_request(user_message):
+    if grounded and _chat_preflight._is_private_cognitive_model_request(user_message):
         return grounded
     recent_user_messages = await _gather_recent_user_messages_for_relevance(user_message)
     recent_user_context = _build_recent_user_context_block(recent_user_messages)
@@ -18358,7 +12560,7 @@ async def _stabilize_user_facing_reply(
     )
     stale_repeat = _is_actionably_stale_response(user_message, text)
     same_diff = _is_same_answer_different_prompt(user_message, text)
-    truncated_tail = _looks_truncated_tail(text)
+    truncated_tail = _chat_desktop_repair._looks_truncated_tail(text)
     semantic_glitch, semantic_glitch_reason = _looks_semantically_glitched(user_message, text)
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
@@ -18578,7 +12780,7 @@ async def _stabilize_user_facing_reply(
             )
             cleaned_stale_repeat = _is_actionably_stale_response(user_message, cleaned)
             cleaned_same_diff = _is_same_answer_different_prompt(user_message, cleaned)
-            cleaned_truncated_tail = _looks_truncated_tail(cleaned)
+            cleaned_truncated_tail = _chat_desktop_repair._looks_truncated_tail(cleaned)
             cleaned_semantic_glitch, _cleaned_semantic_reason = _looks_semantically_glitched(user_message, cleaned)
             try:
                 from core.conversation.response_reliability import assess_user_facing_reply
@@ -18661,7 +12863,7 @@ async def _stabilize_user_facing_reply(
                     ) and not assessment_retryable:
                         _record_recent_response(text, user_message)
                         return text
-                    bounded_failure = _build_bounded_desktop_repair_reply(user_message, frame)
+                    bounded_failure = _chat_desktop_repair._build_bounded_desktop_repair_reply(user_message, frame)
                     _record_recent_response(bounded_failure, user_message)
                     return bounded_failure
             # Length cap is structural (output token budget), not behavioral.
@@ -18820,7 +13022,7 @@ async def _stabilize_user_facing_reply(
                         corrected_text,
                     )
                     corrected_same_diff = _is_same_answer_different_prompt(user_message, corrected_text)
-                    corrected_truncated_tail = _looks_truncated_tail(corrected_text)
+                    corrected_truncated_tail = _chat_desktop_repair._looks_truncated_tail(corrected_text)
                     corrected_semantic_glitch, _corrected_semantic_reason = _looks_semantically_glitched(user_message, corrected_text)
                     try:
                         from core.conversation.response_reliability import assess_user_facing_reply
@@ -19020,10 +13222,10 @@ async def _repair_final_degraded_reply(
             "",
             True,
         )
-    owner_name_reply = _build_owner_name_recall_reply(user_message)
+    owner_name_reply = _chat_memory_state._build_owner_name_recall_reply(user_message)
     if owner_name_reply and not desktop_cognitive_engine_required:
-        normalized_reply = _normalize_user_message(reply_text)
-        owner_name = _resolve_primary_operator_name()
+        normalized_reply = _chat_memory_state._normalize_user_message(reply_text)
+        owner_name = _chat_memory_state._resolve_primary_operator_name()
         if (
             len(normalized_reply.split()) <= 4
             or owner_name.lower() not in normalized_reply
@@ -19053,7 +13255,7 @@ async def _repair_final_degraded_reply(
                 )
                 return self_condition_repair, False, False, False, "", True
     if not desktop_cognitive_engine_required:
-        conversation_recall_reply = await _build_conversation_recall_reply(
+        conversation_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
             user_message,
             session_id=session_id,
         )
@@ -19084,7 +13286,7 @@ async def _repair_final_degraded_reply(
         if assessment_reasons & {"raw_model_identity_leak", "missing_self_claim_evidence_boundary"}:
             self_claim_repair = _build_evidence_bound_self_claim_reply(
                 user_message,
-                lane=_collect_conversation_lane_status(),
+                lane=_chat_preflight._collect_conversation_lane_status(),
             )
             if self_claim_repair:
                 self_claim_assessment = (
@@ -19112,7 +13314,7 @@ async def _repair_final_degraded_reply(
         self_process_repair = await _build_grounded_self_process_repair_reply(
             user_message,
             reply_text,
-            lane=_collect_conversation_lane_status(),
+            lane=_chat_preflight._collect_conversation_lane_status(),
             session_id=session_id,
         )
         if self_process_repair:
@@ -19135,8 +13337,8 @@ async def _repair_final_degraded_reply(
                 )
                 return self_process_repair, False, False, False, "", True
 
-    if _is_low_risk_social_continuity_request(user_message) and not desktop_cognitive_engine_required:
-        social_repair = _build_social_continuity_repair_reply(user_message)
+    if _chat_desktop_repair._is_low_risk_social_continuity_request(user_message) and not desktop_cognitive_engine_required:
+        social_repair = _chat_desktop_repair._build_social_continuity_repair_reply(user_message)
         return social_repair, False, False, False, "", True
 
     logger.warning(
@@ -19344,7 +13546,7 @@ async def _repair_final_degraded_reply(
             bool(repaired != str(reply_text or "").strip()),
         )
 
-    frame = _build_aura_expression_frame(user_message)
+    frame = _chat_desktop_repair._build_aura_expression_frame(user_message)
     reflex = _build_stateful_voice_reflex(frame, user_message)
     reflex_stale = _is_actionably_stale_response(user_message, reflex)
     reflex_same_diff = _is_same_answer_different_prompt(user_message, reflex)
@@ -19373,7 +13575,7 @@ async def _repair_final_degraded_reply(
         return reflex, reflex_stale, reflex_same_diff, reflex_off_topic, reflex_off_topic_reason, True
 
     honest_failure = _build_degraded_live_reply(
-        _build_aura_expression_frame(user_message),
+        _chat_desktop_repair._build_aura_expression_frame(user_message),
         user_message,
         reason=reflex_off_topic_reason
         or reflex_semantic_reason
@@ -19412,10 +13614,6 @@ async def _repair_final_degraded_reply_with_provenance(
     return result
 
 
-def _normalize_user_message(text: str) -> str:
-    normalized = " ".join(str(text or "").strip().lower().split())
-    normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
-    return re.sub(r"\bdont'?\b", "don't", normalized)
 
 
 _SPECIFICITY_PUSH_MARKERS = (
@@ -19505,7 +13703,7 @@ _GLIB_REDIRECT_MARKERS = (
 
 
 def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
-    normalized = _normalize_user_message(text)
+    normalized = _chat_memory_state._normalize_user_message(text)
     return any(phrase in normalized for phrase in phrases)
 
 
@@ -19525,9 +13723,9 @@ def _build_live_conversation_repair(
     if grounded:
         return f"{prefix} {grounded}".strip()
 
-    frame = _build_aura_expression_frame(live_prompt)
+    frame = _chat_desktop_repair._build_aura_expression_frame(live_prompt)
     details: list[str] = []
-    attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
+    attention = _chat_desktop_repair._sanitize_attention_focus(str(frame.get("attention_focus") or ""))
     mood = str(frame.get("mood") or "").strip()
     dominant_action = str(frame.get("dominant_action") or "").strip()
     free_energy = frame.get("free_energy")
@@ -19549,8 +13747,8 @@ def _build_live_conversation_repair(
 
 
 def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any) -> str | None:
-    user_text = _normalize_user_message(user_message)
-    reply_text_n = _normalize_user_message(reply_text)
+    user_text = _chat_memory_state._normalize_user_message(user_message)
+    reply_text_n = _chat_memory_state._normalize_user_message(reply_text)
     if not user_text or not reply_text_n:
         return None
     bare_confusion = user_text.strip(" ?!.") in {"what", "huh", "wait what"}
@@ -19600,7 +13798,7 @@ def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any
                     ),
                 )
             return _build_degraded_live_reply(
-                _build_aura_expression_frame(user_message),
+                _chat_desktop_repair._build_aura_expression_frame(user_message),
                 user_message,
                 reason="confusion_repair",
             )
@@ -19618,7 +13816,7 @@ def _maybe_build_conversation_repair_override(user_message: str, reply_text: Any
 
 def _classify_grounded_introspection_request(user_message: str) -> tuple[bool, bool, bool, bool]:
     """Returns (asks_internal_state, asks_free_energy, asks_topology, asks_authority)."""
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if not text:
         return False, False, False, False
 
@@ -19788,38 +13986,6 @@ def _classify_grounded_introspection_request(user_message: str) -> tuple[bool, b
     return asks_internal_state, asks_free_energy, asks_topology, asks_authority
 
 
-def _is_private_cognitive_model_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    if not text:
-        return False
-    has_model_language = any(
-        marker in text
-        for marker in (
-            "private mental model",
-            "private model",
-            "mental model of yourself",
-            "model yourself",
-            "model of yourself",
-            "current cognitive architecture",
-            "cognitive architecture",
-            "inside your own architecture",
-            "inside your architecture",
-        )
-    )
-    asks_causal_effect = any(
-        marker in text
-        for marker in (
-            "change your next answer",
-            "affect your next answer",
-            "influence your next answer",
-            "shape your next answer",
-            "change how you answer",
-            "affect how you answer",
-            "influence how you answer",
-            "shape how you answer",
-        )
-    )
-    return has_model_language or (asks_causal_effect and any(marker in text for marker in ("inside", "architecture", "model")))
 
 
 def _build_grounded_introspection_reply(
@@ -19957,7 +14123,7 @@ def _build_grounded_introspection_reply(
         except (TypeError, ValueError, OverflowError):
             return None
 
-    attention_focus = _sanitize_attention_focus(
+    attention_focus = _chat_desktop_repair._sanitize_attention_focus(
         " ".join(str(closure_status.get("attention_focus") or "").split()),
         user_message,
     )
@@ -19973,7 +14139,7 @@ def _build_grounded_introspection_reply(
         "rest": "The system is settling and conserving effort.",
     }
 
-    if asks_internal_state and _is_private_cognitive_model_request(user_message):
+    if asks_internal_state and _chat_preflight._is_private_cognitive_model_request(user_message):
         dominant_need = str(closure_status.get("dominant_need") or "").strip()
         if fe_state is not None:
             action = str(getattr(fe_state, "dominant_action", "") or "").strip()
@@ -20113,7 +14279,7 @@ def _build_grounded_introspection_reply(
         "read them from your state", "numbers from your state",
         "as you actually read them", "pad state", "pad values",
     )
-    _normalized_for_numbers = _normalize_user_message(user_message)
+    _normalized_for_numbers = _chat_memory_state._normalize_user_message(user_message)
     if any(marker in _normalized_for_numbers for marker in _numeric_markers):
         _affect_source = substrate_affect or dict(
             voice_state.get("substrate_snapshot") or {}
@@ -20148,7 +14314,7 @@ def _build_grounded_introspection_reply(
         if len(assembled_preview.split()) < 45:
             mode_label = ""
             try:
-                live_state = _resolve_live_aura_state()
+                live_state = _chat_preflight._resolve_live_aura_state()
                 mode_label = str(getattr(getattr(live_state, "cognition", None), "current_mode", "") or "")
                 mode_label = mode_label.rsplit(".", 1)[-1].lower()
             except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -20193,12 +14359,12 @@ def _is_live_runtime_proof_request(user_message: str) -> bool:
     its own steps and once reported success while the user's actual ask
     was never executed — a false 'done' observed in the live boot proof.
     """
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     return bool(_LIVE_PROOF_IMPERATIVE_RE.search(text))
 
 
 def _classify_live_runtime_proof(user_message: str) -> str | None:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     is_live_proof = _is_live_runtime_proof_request(text)
     if not is_live_proof:
         return None
@@ -20277,7 +14443,7 @@ def _build_explicit_local_file_artifact(user_message: str, path: str) -> str | N
     text = str(user_message or "").strip()
     lowered = text.lower()
     suffix = Path(path).suffix.lower()
-    generated_at = _utc_now_iso()
+    generated_at = _chat_preflight._utc_now_iso()
     if suffix == ".html":
         if "snake" in lowered and any(token in lowered for token in ("game", "playable", "snake")):
             try:
@@ -20449,7 +14615,7 @@ def _resolve_chat_response_contract(user_message: str) -> Any | None:
         from core.phases.response_contract import build_response_contract
         from core.state.aura_state import AuraState
 
-        state = _resolve_live_aura_state() or AuraState.default()
+        state = _chat_preflight._resolve_live_aura_state() or AuraState.default()
         return build_response_contract(state, user_message, is_user_facing=True)
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat.required_search_contract", exc)
@@ -20460,7 +14626,7 @@ def _resolve_chat_response_contract(user_message: str) -> Any | None:
 def _should_collect_desktop_required_search_evidence(user_message: str) -> tuple[bool, str, Any | None]:
     if not str(user_message or "").strip():
         return False, "", None
-    if _looks_like_desktop_objective(user_message):
+    if _chat_preflight._looks_like_desktop_objective(user_message):
         return False, "", None
     contract = _resolve_chat_response_contract(user_message)
     if not contract or not getattr(contract, "requires_search", False):
@@ -20968,9 +15134,6 @@ async def _execute_governed_live_skill(
     return result
 
 
-def _looks_like_desktop_objective(user_message: str) -> bool:
-    """Identify desktop-control requests that should execute after Cognition."""
-    return _shared_looks_like_desktop_objective(user_message)
 
 
 def _verified_desktop_task_result(result: dict[str, Any]) -> tuple[bool, str]:
@@ -21299,7 +15462,7 @@ def _is_screen_perception_objective(user_message: str) -> bool:
     """
     if _blocks_consequential_desktop_execution(user_message):
         return False
-    if not _looks_like_desktop_objective(user_message):
+    if not _chat_preflight._looks_like_desktop_objective(user_message):
         return False
     try:
         from core.skills.desktop_task import DesktopTaskSkill
@@ -21344,7 +15507,7 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         return False
     if _looks_like_program_dna_execution_request(user_message):
         return False
-    if not _looks_like_desktop_objective(user_message):
+    if not _chat_preflight._looks_like_desktop_objective(user_message):
         return False
     if _screen_perception_needs_her_answer(user_message):
         # A specific question about the screen is not self-sufficient: the
@@ -21517,7 +15680,7 @@ def _desktop_objective_executable_after_cognitive_attempt(user_message: str) -> 
         return True
     if _blocks_consequential_desktop_execution(user_message):
         return False
-    if not _looks_like_desktop_objective(user_message):
+    if not _chat_preflight._looks_like_desktop_objective(user_message):
         return False
     text = str(user_message or "").strip()
     try:
@@ -21547,7 +15710,7 @@ async def _execute_desktop_objective_from_chat(
             "Desktop objective execution blocked by explicit non-execution/planning-only request."
         )
         return None
-    if not _looks_like_desktop_objective(user_message):
+    if not _chat_preflight._looks_like_desktop_objective(user_message):
         return None
 
     objective = str(user_message or "").strip()
@@ -22546,7 +16709,7 @@ def _verified_live_proof_pwd_result(result: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _build_glass_arithmetic_reply(user_message: str = "") -> str:
-    text = _normalize_user_message(user_message)
+    text = _chat_memory_state._normalize_user_message(user_message)
     if "stay with" in text or "limitation" in text or "connect it" in text:
         return (
             "Staying with glass arithmetic: the limitation is provenance. "
@@ -22631,7 +16794,7 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
                 "local_desktop_action": True,
                 "verification_required": True,
                 "desktop_task_document_body": (
-                    f"Live desktop proof request received at {_utc_now_iso()}.\n\n"
+                    f"Live desktop proof request received at {_chat_preflight._utc_now_iso()}.\n\n"
                     f"Objective: {objective}"
                 ),
             },
@@ -22670,7 +16833,7 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
             default_path="artifacts/live_runtime/generated/chain_note.txt",
         )
         content = (
-            f"Live chained proof at {_utc_now_iso()}: I wrote this note through governed file_operation "
+            f"Live chained proof at {_chat_preflight._utc_now_iso()}: I wrote this note through governed file_operation "
             "before attempting a local observation."
         )
         write = await _write_live_proof_file(target_path, content, objective=objective)
@@ -23688,7 +17851,7 @@ async def api_sessions(request: Request, _: None = Depends(_require_internal)):
                 record_degradation('chat', e)
                 logger.debug("Could not load persisted conversations: %s", e)
 
-        async with _get_convo_lock():
+        async with _chat_memory_state._get_convo_lock():
             current = list(_conversation_log)
         if conversation_only:
             current = [
@@ -23752,10 +17915,10 @@ async def api_chat_delivery_status(
     body = ChatRequest(message="", session_id=session_id)
     identity: DeliveryIdentity | None = None
     try:
-        session_key = _chat_turn_session_key(request, body)
-        exact_principal = _authenticated_chat_principal(request)
+        session_key = _chat_delivery._chat_turn_session_key(request, body)
+        exact_principal = _chat_delivery._authenticated_chat_principal(request)
         identity = DeliveryIdentity.create(
-            principal=_chat_delivery_principal(
+            principal=_chat_delivery._chat_delivery_principal(
                 request,
                 exact_principal,
                 session_key,
@@ -23766,7 +17929,7 @@ async def api_chat_delivery_status(
         journal = await asyncio.to_thread(get_chat_delivery_journal)
         record = await journal.get(identity)
     except ValueError as exc:
-        return _chat_delivery_json_response(
+        return _chat_delivery._chat_delivery_json_response(
             {
                 "status": "invalid_chat_delivery_identity",
                 "delivery_status": "invalid",
@@ -23777,7 +17940,7 @@ async def api_chat_delivery_status(
         )
     except (ChatDeliveryJournalCorruption, ChatDeliveryJournalUnavailable) as exc:
         logger.error("Chat delivery status failed closed: %s", exc)
-        return _chat_delivery_json_response(
+        return _chat_delivery._chat_delivery_json_response(
             {
                 "status": "chat_delivery_journal_unavailable",
                 "delivery_status": "unavailable",
@@ -23789,7 +17952,7 @@ async def api_chat_delivery_status(
         )
 
     if record is None:
-        return _chat_delivery_json_response(
+        return _chat_delivery._chat_delivery_json_response(
             {
                 "status": "chat_delivery_not_found",
                 "delivery_status": "not_found",
@@ -23799,7 +17962,7 @@ async def api_chat_delivery_status(
         )
 
     payload = record.public_status(include_result=True)
-    response = _chat_delivery_json_response(
+    response = _chat_delivery._chat_delivery_json_response(
         payload,
         status_code=200 if record.terminal else 202,
         turn_id=record.turn_id,
@@ -23808,7 +17971,7 @@ async def api_chat_delivery_status(
         headers=None if record.terminal else {"Retry-After": "1"},
     )
     if record.terminal and record.response is not None:
-        _attach_http_chat_delivery_receipt(
+        _chat_delivery._attach_http_chat_delivery_receipt(
             response,
             request=request,
             body=body,
@@ -23820,7 +17983,7 @@ async def api_chat_delivery_status(
 
 async def _finalize_regenerated_reply_write(
     *,
-    record: _DurableConversationWrite,
+    record: _chat_preflight._DurableConversationWrite,
     exchange_id: str,
     session_id: str,
     expected_revision: int,
@@ -23831,9 +17994,9 @@ async def _finalize_regenerated_reply_write(
     """Publish a committed durable regeneration into the live transcript."""
 
     if record.state == "pending" and record.task.done():
-        _settle_durable_conversation_write(record.operation_id, record.task)
+        _chat_preflight._settle_durable_conversation_write(record.operation_id, record.task)
     if record.state != "committed":
-        async with _get_convo_lock():
+        async with _chat_memory_state._get_convo_lock():
             for entry in _conversation_log:
                 if (
                     str(entry.get("id") or "") == exchange_id
@@ -23856,7 +18019,7 @@ async def _finalize_regenerated_reply_write(
 
     replacement_sha256 = hashlib.sha256(replacement_text.encode("utf-8")).hexdigest()
     applied = False
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         target_exchange = next(
             (
                 entry
@@ -23889,7 +18052,7 @@ async def _finalize_regenerated_reply_write(
         target_exchange["aura_sha256"] = replacement_sha256
         target_exchange["revision"] = int(receipt["revision"])
         target_exchange["regenerated"] = True
-        target_exchange["regenerated_at"] = _utc_now_iso()
+        target_exchange["regenerated_at"] = _chat_preflight._utc_now_iso()
         target_exchange["regeneration_persistence_state"] = "committed"
         target_exchange.pop("regeneration_error", None)
         target_exchange.pop("regeneration_reservation", None)
@@ -23958,7 +18121,7 @@ def _replace_unified_transcript_aura_reply(
 
 def _schedule_late_regeneration_finalizer(
     *,
-    record: _DurableConversationWrite,
+    record: _chat_preflight._DurableConversationWrite,
     exchange_id: str,
     session_id: str,
     expected_revision: int,
@@ -24006,7 +18169,7 @@ async def _apply_regenerated_reply(
     replacement_text = str(reply_text or "…")
     replacement_sha256 = hashlib.sha256(replacement_text.encode("utf-8")).hexdigest()
     reservation_token = uuid.uuid4().hex
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         target_exchange = next(
             (
                 entry
@@ -24034,7 +18197,7 @@ async def _apply_regenerated_reply(
     persistence = ServiceContainer.get("persistence", default=None)
     replace_aura_turn = getattr(persistence, "replace_aura_turn", None)
     if not callable(replace_aura_turn):
-        async with _get_convo_lock():
+        async with _chat_memory_state._get_convo_lock():
             target_exchange.pop("regeneration_reservation", None)
             target_exchange["regeneration_persistence_state"] = "failed"
         return {
@@ -24043,13 +18206,13 @@ async def _apply_regenerated_reply(
             "reason": "canonical_persistence_unavailable",
         }
 
-    scope_kwargs = _chat_principal_scope_kwargs()
+    scope_kwargs = _chat_preflight._chat_principal_scope_kwargs()
     operation_id = (
         f"{safe_exchange_id}:regeneration:{int(expected_revision)}:"
         f"{replacement_sha256[:16]}"
     )
     try:
-        record = _start_durable_conversation_write(
+        record = _chat_preflight._start_durable_conversation_write(
             operation_id=operation_id,
             payload={
                 "kind": "regeneration",
@@ -24071,7 +18234,7 @@ async def _apply_regenerated_reply(
             ),
         )
     except _CHAT_RECOVERABLE_ERRORS as exc:
-        async with _get_convo_lock():
+        async with _chat_memory_state._get_convo_lock():
             target_exchange.pop("regeneration_reservation", None)
             target_exchange["regeneration_persistence_state"] = "failed"
             target_exchange["regeneration_error"] = f"{type(exc).__name__}:{exc}"
@@ -24088,7 +18251,7 @@ async def _apply_regenerated_reply(
             reservation_token=reservation_token,
         )
     )
-    state = await _await_durable_conversation_write(record)
+    state = await _chat_preflight._await_durable_conversation_write(record)
     if state == "committed":
         applied = await _finalize_regenerated_reply_write(
             record=record,
@@ -24130,7 +18293,7 @@ async def _apply_regenerated_reply(
 
 
 @router.post("/chat/regenerate")
-@_paired_chat_response_boundary
+@_chat_delivery._paired_chat_response_boundary
 async def api_chat_regenerate(
     request: Request,
     _: None = Depends(_require_internal),
@@ -24140,7 +18303,7 @@ async def api_chat_regenerate(
     Every flagship AI product supports response regeneration."""
     _restore_owner_session_from_request(request)
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(request)
-    foreground_timeout = _foreground_timeout_for_lane(_collect_conversation_lane_status())
+    foreground_timeout = _foreground_timeout_for_lane(_chat_preflight._collect_conversation_lane_status())
     try:
         requested_session_id = str(
             (getattr(request, "headers", None) or {}).get("X-Aura-Session-ID") or ""
@@ -24153,7 +18316,7 @@ async def api_chat_regenerate(
                 },
                 status_code=400,
             )
-        async with _get_convo_lock():
+        async with _chat_memory_state._get_convo_lock():
             completed_exchanges = [
                 entry
                 for entry in _conversation_log
@@ -24198,7 +18361,7 @@ async def api_chat_regenerate(
         from core.kernel.kernel_interface import KernelInterface
         ki = KernelInterface.get_instance()
         reply_text = None
-        lane = _collect_conversation_lane_status()
+        lane = _chat_preflight._collect_conversation_lane_status()
         _regen_turn_trace: dict[str, Any] = {
             "desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine),
             "request_surface": request_surface or "",
@@ -24220,7 +18383,7 @@ async def api_chat_regenerate(
             return _build_live_turn_contract_payload(
                 desktop_required=bool(desktop_requires_cognitive_engine),
                 request_surface=request_surface or "",
-                lane_status=lane_status or _collect_conversation_lane_status(),
+                lane_status=lane_status or _chat_preflight._collect_conversation_lane_status(),
                 response_confidence=response_confidence,
                 status=status,
                 reply_source=reply_source,
@@ -24247,7 +18410,7 @@ async def api_chat_regenerate(
                 turn_trace=_regen_turn_trace,
             )
             if reply_text:
-                regen_lane = _collect_conversation_lane_status()
+                regen_lane = _chat_preflight._collect_conversation_lane_status()
                 reply_source = str(_regen_turn_trace.get("response_path") or "cognitive_engine")
                 _bind_public_latent_output_quality(
                     _regen_turn_trace,
@@ -24592,7 +18755,7 @@ async def _collect_export_service_records_bounded(
     total_chars: int,
 ) -> tuple[list[Any], dict[str, Any]]:
     try:
-        return await _await_bounded_chat_blocking(
+        return await _chat_memory_state._await_bounded_chat_blocking(
             _collect_export_service_records,
             service_name,
             method_name,
@@ -24627,7 +18790,7 @@ async def _bounded_export_records_async(
     total_chars: int,
 ) -> tuple[list[Any], dict[str, Any]]:
     try:
-        bounded, receipt = await _await_bounded_chat_blocking(
+        bounded, receipt = await _chat_memory_state._await_bounded_chat_blocking(
             _bounded_export_records,
             records,
             max_items=max_items,
@@ -24658,7 +18821,7 @@ async def _bounded_export_records_async(
 async def api_export_conversation(request: Request, _: None = Depends(_require_internal)):
     """Export the current conversation session as downloadable JSON.
     Flagship products support data export."""
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         messages = list(_conversation_log)
     bounded_messages, message_receipt = await _bounded_export_records_async(
         messages,
@@ -24684,7 +18847,7 @@ async def api_export_conversation(request: Request, _: None = Depends(_require_i
 async def api_export(request: Request, _: None = Depends(_require_internal)):
     """Full data export — conversation history plus memory snapshots.
     Alias consumed by the dashboard export button."""
-    async with _get_convo_lock():
+    async with _chat_memory_state._get_convo_lock():
         messages = list(_conversation_log)
 
     message_task = _bounded_export_records_async(
@@ -24880,7 +19043,7 @@ def _apply_recorded_answer(user_message: object, response: Any) -> Any:
 
 
 @router.post("/chat")
-@_paired_chat_response_boundary
+@_chat_delivery._paired_chat_response_boundary
 async def api_chat(
     body: ChatRequest,
     request: Request,
@@ -24903,13 +19066,13 @@ async def api_chat(
     )
 
     request_profile = request_access_profile(request)
-    request_session = _chat_turn_session_key(request, body)
-    request_principal = _chat_delivery_principal(
+    request_session = _chat_delivery._chat_turn_session_key(request, body)
+    request_principal = _chat_delivery._chat_delivery_principal(
         request,
-        _authenticated_chat_principal(request),
+        _chat_delivery._authenticated_chat_principal(request),
         request_session,
     )
-    conversation_session = _resolved_conversation_session(request, body)
+    conversation_session = _chat_delivery._resolved_conversation_session(request, body)
     principal_token = _CHAT_REQUEST_PRINCIPAL.set(request_principal)
     surface_token = _CHAT_REQUEST_SURFACE.set(
         str(request_profile.get("surface") or "").strip().casefold()[:32]
@@ -24948,7 +19111,7 @@ async def api_chat(
                 ),
                 bind_failure_ledger(),
             ):
-                tools_available = _runtime_tool_governance_available()
+                tools_available = _chat_desktop_repair._runtime_tool_governance_available()
                 for capability in ("web", "desktop", "files"):
                     record_turn_capability_availability(
                         capability,
@@ -25224,7 +19387,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         )
     if _defensive_context and not is_benchmark:
         body.message = f"{_defensive_context}{body.message}"
-    _preflight = await _run_chat_preflight(
+    _preflight = await _chat_preflight._run_chat_preflight(
         body,
         request,
         _semantic_user_message,
@@ -25277,7 +19440,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
 
-    if not is_benchmark and _looks_like_desktop_objective(_semantic_user_message):
+    if not is_benchmark and _chat_preflight._looks_like_desktop_objective(_semantic_user_message):
         # A consequential desktop request always needs the same CognitiveEngine
         # planning lane as the desktop UI, even when it arrives through the
         # plain REST surface. The governed executor remains downstream.
@@ -25329,7 +19492,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         return _pre_gate_unavailable_response("conscience")
 
     owner_session_restored = bool(_restore_owner_session_from_request(request))
-    lane = _collect_conversation_lane_status()
+    lane = _chat_preflight._collect_conversation_lane_status()
     foreground_timeout = _foreground_timeout_for_lane(
         lane,
         _semantic_user_message,
@@ -25378,7 +19541,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         return _build_live_turn_contract_payload(
             desktop_required=bool(desktop_requires_cognitive_engine),
             request_surface=request_surface or "",
-            lane_status=lane_status or _collect_conversation_lane_status(),
+            lane_status=lane_status or _chat_preflight._collect_conversation_lane_status(),
             response_confidence=response_confidence,
             status=status,
             reply_source=reply_source,
@@ -25433,13 +19596,13 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             record_degradation('chat', _lease_exc)
             logger.debug("Foreground guard lease skipped: %s", _lease_exc)
 
-        if early_allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
-            reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
+        if early_allow_chat_fastpaths and _chat_preflight._is_explicit_capability_inventory_request(_semantic_user_message):
+            reply_text = _chat_desktop_repair._build_grounded_capability_inventory_reply(_semantic_user_message)
             return JSONResponse(
                 {
-                    "response": _apply_aura_voice_shaping(reply_text),
+                    "response": _chat_desktop_repair._apply_aura_voice_shaping(reply_text),
                     "status": "cognitive_engine_capability_inventory",
-                    "conversation_lane": _collect_conversation_lane_status(),
+                    "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                     "response_confidence": "high",
                 },
                 status_code=200,
@@ -25504,7 +19667,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     {
                         "response": "I still have the previous turn open. I am not going to fake a new answer over it; the next clean reply should land from the active turn.",
                         "status": status,
-                        "conversation_lane": _collect_conversation_lane_status(),
+                        "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                         "response_confidence": response_confidence,
                     },
                     status_code=status_code,
@@ -25614,7 +19777,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             """
             if (
                 conversation_only_surface
-                and _looks_like_desktop_objective(_semantic_user_message)
+                and _chat_preflight._looks_like_desktop_objective(_semantic_user_message)
             ):
                 return (
                     "This paired device is scoped to conversation and read-only world viewing. "
@@ -25629,7 +19792,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 or _blocks_consequential_desktop_execution(_semantic_user_message)
                 or _looks_like_program_dna_execution_request(_semantic_user_message)
-                or not _looks_like_desktop_objective(_semantic_user_message)
+                or not _chat_preflight._looks_like_desktop_objective(_semantic_user_message)
             ):
                 return final_text, status
             try:
@@ -25642,7 +19805,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 _executed = None
             if isinstance(_executed, dict) and _executed.get("response"):
                 return (
-                    _apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(_executed.get("response") or "")).strip()
                     or final_text,
                     str(_executed.get("status") or "desktop_objective"),
                 )
@@ -25833,7 +19996,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 reply_text=recovered,
             )
 
-            recovered_lane = _collect_conversation_lane_status()
+            recovered_lane = _chat_preflight._collect_conversation_lane_status()
             recovery_contract = _build_live_turn_contract_payload(
                 desktop_required=True,
                 request_surface=request_surface,
@@ -25874,12 +20037,12 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             _live_turn_trace.update(recovery_trace)
             _live_turn_trace["cognitive_engine_grounded_recovery"] = True
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id, _semantic_user_message, recovered, record_experience=True
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(
+                await _chat_preflight._log_exchange(
                     _original_user_message, recovered, record_experience=True, session_id=_chat_session_id
                 )
             _record_recent_response(recovered, _semantic_user_message)
@@ -25981,7 +20144,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     }
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         salvaged,
@@ -26055,7 +20218,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if evidenced_reply:
                 failure_reply = evidenced_reply
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     failure_reply,
@@ -26063,7 +20226,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(
+                await _chat_preflight._log_exchange(
                     _original_user_message,
                     failure_reply,
                     record_experience=False,
@@ -26173,7 +20336,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     # The distinction is falsifiability, not difficulty. For an
                     # opinion or a chat turn a weaker lane beats silence and
                     # this does not fire at all.
-                    _reasoning_lane = _collect_conversation_lane_status()
+                    _reasoning_lane = _chat_preflight._collect_conversation_lane_status()
                     _lane_state = str(_reasoning_lane.get("state") or "").lower()
                     if _lane_state not in {"ready", "serving", "warm"}:
                         logger.warning(
@@ -26236,7 +20399,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     {
                         "response": blocked_reply,
                         "status": "benchmark_fastpath_blocked",
-                        "conversation_lane": _collect_conversation_lane_status(),
+                        "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                         "response_confidence": "failed",
                     },
                     status_code=409,
@@ -26368,7 +20531,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             lane_status = (
                 _collect_governed_action_lane_status(status)
                 if _status_represents_governed_action_result(status)
-                else _collect_conversation_lane_status()
+                else _chat_preflight._collect_conversation_lane_status()
             )
             response_data = {
                 "response": final_text,
@@ -26396,14 +20559,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     _desktop_exec_state.get("attempted"),
                 )
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     final_text,
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(
+                await _chat_preflight._log_exchange(
                     _original_user_message,
                     final_text,
                     session_id=_chat_session_id,
@@ -26532,7 +20695,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 is_benchmark
                 or conversation_only_surface
                 or _blocks_consequential_desktop_execution(_semantic_user_message)
-                or not _looks_like_desktop_objective(_semantic_user_message)
+                or not _chat_preflight._looks_like_desktop_objective(_semantic_user_message)
             ):
                 return None
 
@@ -26541,14 +20704,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             live_proof = await _execute_live_runtime_proof(_semantic_user_message)
             if live_proof:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(live_proof.get("response") or "")),
                     status=str(live_proof.get("status") or "live_proof"),
                 )
 
             explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
             if explicit_file:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
             # The read runs for BOTH kinds of screen request. When the
@@ -26572,7 +20735,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     executed = None
                 if isinstance(executed, dict) and executed.get("response"):
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(str(executed.get("response") or "")),
+                        _chat_desktop_repair._apply_aura_voice_shaping(str(executed.get("response") or "")),
                         status=str(executed.get("status") or "desktop_objective"),
                     )
             return None
@@ -26583,7 +20746,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
             if governed_capability_response is not None:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(governed_capability_response.get("response") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(governed_capability_response.get("response") or "")),
                     status=str(governed_capability_response.get("status") or "governed_capability"),
                 )
 
@@ -26596,7 +20759,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             and desktop_requires_cognitive_engine
             and not conversation_only_surface
         ):
-            desktop_memory_state_evidence = await _build_memory_state_fastpath_reply(
+            desktop_memory_state_evidence = await _chat_memory_state._build_memory_state_fastpath_reply(
                 _semantic_user_message,
                 session_id=_chat_session_id,
                 owner_session_restored=owner_session_restored,
@@ -26604,7 +20767,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             )
 
         if allow_memory_state_fastpath:
-            memory_state_reply = await _build_memory_state_fastpath_reply(
+            memory_state_reply = await _chat_memory_state._build_memory_state_fastpath_reply(
                 _semantic_user_message,
                 session_id=_chat_session_id,
                 owner_session_restored=owner_session_restored,
@@ -26628,32 +20791,32 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
 
         if allow_chat_fastpaths:
-            bounded_plan_reply = _build_bounded_planning_reply(_semantic_user_message)
+            bounded_plan_reply = _chat_desktop_repair._build_bounded_planning_reply(_semantic_user_message)
             if bounded_plan_reply:
                 return await _finalize_fastpath(
                     bounded_plan_reply,
                     status="cognitive_engine_bounded_planning",
                 )
-            failure_mode_reply = _build_failure_mode_surface_reply(_semantic_user_message)
+            failure_mode_reply = _chat_desktop_repair._build_failure_mode_surface_reply(_semantic_user_message)
             if failure_mode_reply:
                 return await _finalize_fastpath(
                     failure_mode_reply,
                     status="cognitive_engine_failure_mode_surface",
                 )
 
-        if allow_chat_fastpaths and _is_explicit_capability_inventory_request(_semantic_user_message):
+        if allow_chat_fastpaths and _chat_preflight._is_explicit_capability_inventory_request(_semantic_user_message):
             return await _finalize_fastpath(
-                _build_grounded_capability_inventory_reply(_semantic_user_message),
+                _chat_desktop_repair._build_grounded_capability_inventory_reply(_semantic_user_message),
                 status="cognitive_engine_capability_inventory",
             )
 
         if (
             allow_chat_fastpaths
-            and _is_low_risk_social_continuity_request(_semantic_user_message)
+            and _chat_desktop_repair._is_low_risk_social_continuity_request(_semantic_user_message)
             and not _conversation_lane_blocks_fallback(lane)
         ):
             return await _finalize_fastpath(
-                _build_social_continuity_repair_reply(_semantic_user_message),
+                _chat_desktop_repair._build_social_continuity_repair_reply(_semantic_user_message),
                 status="social_presence_reflex",
             )
 
@@ -26676,7 +20839,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         run_background_file_diagnostic(diagnostic_target, orch)
                     )
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(build_background_diagnostic_ack(diagnostic_target)),
+                        _chat_desktop_repair._apply_aura_voice_shaping(build_background_diagnostic_ack(diagnostic_target)),
                         status="background_diagnostic_started",
                     )
         except _CHAT_RECOVERABLE_ERRORS as _bg_exc:
@@ -26687,7 +20850,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
             if explicit_file:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                     status=str(explicit_file.get("status") or "file_operation"),
                 )
 
@@ -26695,7 +20858,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             live_proof = await _execute_live_runtime_proof(_semantic_user_message)
             if live_proof:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(live_proof.get("response") or "")),
                     status=str(live_proof.get("status") or "live_proof"),
                 )
 
@@ -26811,7 +20974,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 
         if allow_chat_fastpaths:
             try:
-                repo_probe = await _await_bounded_chat_blocking(
+                repo_probe = await _chat_memory_state._await_bounded_chat_blocking(
                     _read_repo_probe_reply,
                     _semantic_user_message,
                     timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
@@ -26828,7 +20991,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 }
             if repo_probe:
                 return await _finalize_fastpath(
-                    _apply_aura_voice_shaping(str(repo_probe.get("reply") or "")),
+                    _chat_desktop_repair._apply_aura_voice_shaping(str(repo_probe.get("reply") or "")),
                     status=str(repo_probe.get("status") or "repo_probe"),
                 )
 
@@ -26913,19 +21076,19 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     logger.debug("Authority audit effect recording failed: %s", exc)
                 return await _finalize_fastpath(grounded_introspection, status=_gi_status)
 
-        if allow_chat_fastpaths and _is_identity_request(_semantic_user_message):
+        if allow_chat_fastpaths and _chat_desktop_repair._is_identity_request(_semantic_user_message):
             return await _finalize_fastpath(
-                _build_identity_reply(_semantic_user_message),
+                _chat_desktop_repair._build_identity_reply(_semantic_user_message),
                 status="identity_reflex",
             )
 
-        if allow_chat_fastpaths and _is_capability_request(_semantic_user_message):
+        if allow_chat_fastpaths and _chat_preflight._is_capability_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_capability_reply(_semantic_user_message),
                 status="capability_reflex",
             )
 
-        if allow_chat_fastpaths and _is_self_diagnostic_request(_semantic_user_message):
+        if allow_chat_fastpaths and _chat_preflight._is_self_diagnostic_request(_semantic_user_message):
             return await _finalize_fastpath(
                 _build_self_diagnostic_reply(_semantic_user_message),
                 status="self_diagnostic",
@@ -26954,7 +21117,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 recent_activity_reply = await maybe_build_recent_activity_reply(_semantic_user_message, orch)
                 if recent_activity_reply:
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(recent_activity_reply),
+                        _chat_desktop_repair._apply_aura_voice_shaping(recent_activity_reply),
                         status="recent_activity",
                     )
 
@@ -26962,18 +21125,18 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 priority_focus_reply = await maybe_build_priority_focus_reply(_semantic_user_message, orch)
                 if priority_focus_reply:
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(priority_focus_reply),
+                        _chat_desktop_repair._apply_aura_voice_shaping(priority_focus_reply),
                         status="priority_focus",
                     )
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation('chat', exc)
             logger.debug("Demo-support fast paths skipped: %s", exc)
 
-        if allow_chat_fastpaths and _is_architecture_self_assessment_request(_semantic_user_message):
+        if allow_chat_fastpaths and _chat_preflight._is_architecture_self_assessment_request(_semantic_user_message):
             return await _finalize_fastpath(
-                _apply_aura_voice_shaping(
+                _chat_desktop_repair._apply_aura_voice_shaping(
                     _build_architecture_self_reflex(
-                        _build_aura_expression_frame(_semantic_user_message),
+                        _chat_desktop_repair._build_aura_expression_frame(_semantic_user_message),
                         _semantic_user_message,
                     )
                 ),
@@ -26997,7 +21160,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "The user is referring to this earlier user question/request:\n"
                 f"{referential_anchor}"
             )
-        conversation_recall_evidence = await _build_conversation_recall_reply(
+        conversation_recall_evidence = await _chat_memory_state._build_conversation_recall_reply(
             _semantic_user_message,
             session_id=_chat_session_id,
         )
@@ -27244,7 +21407,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         try:
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)
-            pending_exchange_id = await _begin_logged_exchange(
+            pending_exchange_id = await _chat_preflight._begin_logged_exchange(
                 _original_user_message,
                 session_id=_chat_session_id,
             )
@@ -27305,7 +21468,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         or "cognitive_engine"
                     )
                     if desktop_requires_cognitive_engine:
-                        contract_lane = _collect_conversation_lane_status()
+                        contract_lane = _chat_preflight._collect_conversation_lane_status()
                         candidate_contract = _live_turn_contract(
                             lane_status=contract_lane,
                             response_confidence="high",
@@ -27358,7 +21521,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                             else:
                                 if (
                                     bool(candidate_contract.get("cognitive_engine_reply_accepted"))
-                                    and _looks_like_desktop_objective(_semantic_user_message)
+                                    and _chat_preflight._looks_like_desktop_objective(_semantic_user_message)
                                     and reply_text
                                 ):
                                     _live_turn_trace["desktop_internal_artifact_draft"] = reply_text
@@ -27402,8 +21565,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             # teaches the UI to stall instead of giving a truthful, bounded
             # explanation of the current state.
             allow_required_desktop_no_reply_repairs = bool(
-                _is_identity_request(_semantic_user_message)
-                or _identity_request_asks_future_memory(_semantic_user_message)
+                _chat_desktop_repair._is_identity_request(_semantic_user_message)
+                or _chat_desktop_repair._identity_request_asks_future_memory(_semantic_user_message)
             )
             if not allow_required_desktop_no_reply_repairs:
                 try:
@@ -27422,8 +21585,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         "Desktop no-reply repair scope check skipped: %s",
                         repair_scope_exc,
                     )
-            if _is_low_risk_social_continuity_request(_semantic_user_message):
-                social_reply = _build_social_continuity_repair_reply(_semantic_user_message)
+            if _chat_desktop_repair._is_low_risk_social_continuity_request(_semantic_user_message):
+                social_reply = _chat_desktop_repair._build_social_continuity_repair_reply(_semantic_user_message)
                 logger.warning(
                     "Desktop CognitiveEngine produced no acceptable reply for low-risk social turn; "
                     "not serving bounded social repair as a successful full-mind desktop turn "
@@ -27432,7 +21595,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
 
             if (
-                _is_runtime_fact_status_request(_semantic_user_message)
+                _chat_preflight._is_runtime_fact_status_request(_semantic_user_message)
                 and not _is_current_request_recap_request(_semantic_user_message)
             ):
                 runtime_grounding = _ground_runtime_fact_status_reply(
@@ -27488,7 +21651,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         "serving canonical runtime-fact grounding after the required engine invocation."
                     )
                     if pending_exchange_id:
-                        await _complete_logged_exchange(
+                        await _chat_preflight._complete_logged_exchange(
                             pending_exchange_id,
                             _semantic_user_message,
                             runtime_grounding,
@@ -27535,17 +21698,17 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     executed = None
                 if isinstance(executed, dict) and executed.get("response"):
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(str(executed.get("response") or "")),
+                        _chat_desktop_repair._apply_aura_voice_shaping(str(executed.get("response") or "")),
                         status=str(executed.get("status") or "desktop_objective"),
                     )
 
             identity_repair = (
-                _build_bounded_identity_repair_reply(_semantic_user_message)
+                _chat_desktop_repair._build_bounded_identity_repair_reply(_semantic_user_message)
                 if allow_required_desktop_no_reply_repairs
                 else ""
             )
             if identity_repair:
-                identity_repair = _apply_aura_voice_shaping(identity_repair)
+                identity_repair = _chat_desktop_repair._apply_aura_voice_shaping(identity_repair)
                 identity_repair, identity_contract_proven = (
                     _enforce_main_requested_output_contract(identity_repair)
                 )
@@ -27571,7 +21734,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     "turn; serving canonical identity/continuity grounding instead of legacy fallback."
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         identity_repair,
@@ -27604,7 +21767,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     }
                 )
 
-            capability_inventory = _build_bounded_capability_inventory_repair_reply(
+            capability_inventory = _chat_desktop_repair._build_bounded_capability_inventory_repair_reply(
                 _semantic_user_message
             )
             if capability_inventory:
@@ -27615,7 +21778,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     )
                     capability_inventory = ""
             if capability_inventory:
-                capability_inventory = _apply_aura_voice_shaping(capability_inventory)
+                capability_inventory = _chat_desktop_repair._apply_aura_voice_shaping(capability_inventory)
                 capability_inventory, capability_contract_proven = (
                     _enforce_main_requested_output_contract(capability_inventory)
                 )
@@ -27638,7 +21801,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     "self-process repair or legacy fallback."
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         capability_inventory,
@@ -27671,7 +21834,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     }
                 )
 
-            skip_bounded_desktop_repair = _is_explicit_capability_inventory_request(
+            skip_bounded_desktop_repair = _chat_preflight._is_explicit_capability_inventory_request(
                 _semantic_user_message
             ) or not allow_required_desktop_no_reply_repairs
             bounded_repair = ""
@@ -27683,7 +21846,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     session_id=_chat_session_id,
                 )
             if bounded_repair:
-                bounded_repair = _apply_aura_voice_shaping(bounded_repair)
+                bounded_repair = _chat_desktop_repair._apply_aura_voice_shaping(bounded_repair)
                 try:
                     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -27706,7 +21869,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     lane=lane,
                 )
                 if minimal_repair:
-                    minimal_repair = _apply_aura_voice_shaping(minimal_repair)
+                    minimal_repair = _chat_desktop_repair._apply_aura_voice_shaping(minimal_repair)
                     try:
                         from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -27751,7 +21914,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     "self-process grounding from live context instead of legacy fallback."
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         bounded_repair,
@@ -27807,7 +21970,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             # Deferring to cognition for better prose is right. Letting its
             # refusal end a turn she can perform is not: when the model
             # declines work the executor can do, the executor does it.
-            if _looks_like_desktop_objective(
+            if _chat_preflight._looks_like_desktop_objective(
                 _semantic_user_message
             ) and _looks_like_capability_refusal(salvaged_no_reply):
                 logger.info(
@@ -27832,7 +21995,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     "response"
                 ):
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(
+                        _chat_desktop_repair._apply_aura_voice_shaping(
                             str(executed_after_refusal.get("response") or "")
                         ),
                         status=str(
@@ -27857,7 +22020,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     }
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         salvaged_no_reply,
@@ -27951,7 +22114,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 record_degradation("chat.arithmetic_fallback", _known_exc)
             logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     failure_reply,
@@ -27996,14 +22159,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 live_proof = await _execute_live_runtime_proof(_semantic_user_message)
                 if live_proof:
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(str(live_proof.get("response") or "")),
+                        _chat_desktop_repair._apply_aura_voice_shaping(str(live_proof.get("response") or "")),
                         status=str(live_proof.get("status") or "live_proof"),
                     )
 
                 explicit_file = await _execute_explicit_local_file_objective(_semantic_user_message)
                 if explicit_file:
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
+                        _chat_desktop_repair._apply_aura_voice_shaping(str(explicit_file.get("response") or "")),
                         status=str(explicit_file.get("status") or "file_operation"),
                     )
 
@@ -28013,7 +22176,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 if desktop_objective:
                     return await _finalize_fastpath(
-                        _apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
+                        _chat_desktop_repair._apply_aura_voice_shaping(str(desktop_objective.get("response") or "")),
                         status=str(desktop_objective.get("status") or "desktop_objective"),
                     )
 
@@ -28135,7 +22298,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 timed_out=True,
             )
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     timeout_reply,
@@ -28146,7 +22309,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 {
                     "response": timeout_reply,
                     "status": "benchmark_kernel_timeout",
-                    "conversation_lane": _collect_conversation_lane_status(),
+                    "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                 },
                 status_code=503,
             )
@@ -28171,7 +22334,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             status_code = (503 if was_ready else 504) if is_benchmark else 200
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     timeout_reply,
@@ -28222,7 +22385,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if not final_benchmark_text:
                 empty_reply = "Benchmark request produced no canonical kernel response."
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         empty_reply,
@@ -28230,7 +22393,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(
+                    await _chat_preflight._log_exchange(
                         _original_user_message,
                         empty_reply,
                         record_experience=False,
@@ -28249,7 +22412,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     {
                         "response": empty_reply,
                         "status": "benchmark_no_response",
-                        "conversation_lane": _collect_conversation_lane_status(),
+                        "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                         "response_confidence": "failed",
                     },
                     status_code=502,
@@ -28270,7 +22433,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     f"did not satisfy the requested artifact contract: {contract_reason}."
                 )
                 if pending_exchange_id:
-                    await _complete_logged_exchange(
+                    await _chat_preflight._complete_logged_exchange(
                         pending_exchange_id,
                         _semantic_user_message,
                         failed_reply,
@@ -28278,7 +22441,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     )
                     pending_exchange_id = None
                 else:
-                    await _log_exchange(
+                    await _chat_preflight._log_exchange(
                         _original_user_message,
                         failed_reply,
                         record_experience=False,
@@ -28299,7 +22462,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         "response": failed_reply,
                         "status": "benchmark_artifact_contract_unmet",
                         "reason": contract_reason,
-                        "conversation_lane": _collect_conversation_lane_status(),
+                        "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                         "response_confidence": "failed",
                     },
                     status_code=502,
@@ -28311,11 +22474,11 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             response_data = {
                 "response": final_benchmark_text,
                 "status": "benchmark_kernel",
-                "conversation_lane": _collect_conversation_lane_status(),
+                "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                 "response_confidence": "high",
             }
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     final_benchmark_text,
@@ -28323,7 +22486,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(
+                await _chat_preflight._log_exchange(
                     _original_user_message,
                     final_benchmark_text,
                     record_experience=False,
@@ -28363,7 +22526,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if evidenced_reply:
                 failure_reply = evidenced_reply
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     failure_reply,
@@ -28371,7 +22534,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 )
                 pending_exchange_id = None
             else:
-                await _log_exchange(
+                await _chat_preflight._log_exchange(
                     _original_user_message,
                     failure_reply,
                     record_experience=False,
@@ -28431,8 +22594,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         )
         if (
             allow_chat_fastpaths
-            and _is_explicit_capability_inventory_request(_semantic_user_message)
-            and _capability_inventory_reply_is_inadequate(
+            and _chat_preflight._is_explicit_capability_inventory_request(_semantic_user_message)
+            and _chat_desktop_repair._capability_inventory_reply_is_inadequate(
             _semantic_user_message,
             reply_text,
             )
@@ -28440,8 +22603,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             logger.warning(
                 "🧭 Replacing inadequate capability inventory reply with grounded live catalog summary."
             )
-            reply_text = _build_grounded_capability_inventory_reply(_semantic_user_message)
-        if _is_explicit_capability_inventory_request(_semantic_user_message):
+            reply_text = _chat_desktop_repair._build_grounded_capability_inventory_reply(_semantic_user_message)
+        if _chat_preflight._is_explicit_capability_inventory_request(_semantic_user_message):
             reply_text = _ensure_capability_inventory_non_execution_boundary(
                 _semantic_user_message,
                 reply_text,
@@ -28501,7 +22664,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         desktop_context_contract_failed = False
         desktop_memory_state_contract_failed = False
         if desktop_requires_cognitive_engine:
-            expected_recall_reply = await _build_conversation_recall_reply(
+            expected_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
                 _semantic_user_message,
                 session_id=_chat_session_id,
             )
@@ -28644,7 +22807,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     )
                 )
                 if desktop_requires_cognitive_engine:
-                    expected_recall_reply = await _build_conversation_recall_reply(
+                    expected_recall_reply = await _chat_memory_state._build_conversation_recall_reply(
                         _semantic_user_message,
                         session_id=_chat_session_id,
                     )
@@ -28756,8 +22919,8 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             desktop_requires_cognitive_engine
             and response_confidence == "degraded"
             and (
-                _is_identity_request(_semantic_user_message)
-                or _identity_request_asks_future_memory(_semantic_user_message)
+                _chat_desktop_repair._is_identity_request(_semantic_user_message)
+                or _chat_desktop_repair._identity_request_asks_future_memory(_semantic_user_message)
             )
             and bool(_live_turn_trace.get("engine_think_invoked"))
             and bool(_live_turn_trace.get("cognitive_engine_reply_accepted"))
@@ -28765,7 +22928,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             and not bool(_live_turn_trace.get("bounded_contract_used"))
             and not bool(_live_turn_trace.get("legacy_fallback_used"))
         ):
-            grounded_identity_reply = _build_identity_reply(_semantic_user_message)
+            grounded_identity_reply = _chat_desktop_repair._build_identity_reply(_semantic_user_message)
             try:
                 from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -28859,7 +23022,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 # confirmation joins the answer instead of erasing it.
                 _pre_memory_grounding_reply = reply_text
                 if (
-                    _turn_has_substance_beyond_memory_request(_semantic_user_message)
+                    _chat_memory_state._turn_has_substance_beyond_memory_request(_semantic_user_message)
                     and str(reply_text or "").strip()
                 ):
                     # The whole canonical reply, not just its first sentence:
@@ -28891,7 +23054,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     deterministic=True,
                     authorship_effect=(
                         "augmented_by_runtime"
-                        if _turn_has_substance_beyond_memory_request(
+                        if _chat_memory_state._turn_has_substance_beyond_memory_request(
                             _semantic_user_message
                         )
                         and str(_pre_memory_grounding_reply or "").strip()
@@ -28931,7 +23094,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 quality_state.recent_response_pairs.clear()
                 quality_state.consecutive_degraded_count = 0
             try:
-                live_state = _resolve_live_aura_state()
+                live_state = _chat_preflight._resolve_live_aura_state()
                 if live_state and hasattr(live_state, "compact"):
                     live_state.compact(trigger_threshold=20, keep_turns=15)
                     logger.info("🗜️ Proactive compaction completed after degradation streak.")
@@ -28941,7 +23104,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 
         # Proactive context compaction — fire-and-forget to prevent working memory bloat
         try:
-            live_state = _resolve_live_aura_state()
+            live_state = _chat_preflight._resolve_live_aura_state()
             if live_state and hasattr(live_state, "compact"):
                 wm = getattr(getattr(live_state, "cognition", None), "working_memory", None)
                 if wm and isinstance(wm, list) and len(wm) > 30:
@@ -28963,7 +23126,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             if response_confidence == "high"
             else (True, "")
         )
-        lane_status = _collect_conversation_lane_status()
+        lane_status = _chat_preflight._collect_conversation_lane_status()
         try:
             actual_generation_at = float(lane_status.get("last_user_generation_at") or 0.0)
         except (TypeError, ValueError):
@@ -29338,14 +23501,14 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 
         _record_recent_response(_final_reply or "…", _semantic_user_message)
         if pending_exchange_id:
-            await _complete_logged_exchange(
+            await _chat_preflight._complete_logged_exchange(
                 pending_exchange_id,
                 _semantic_user_message,
                 _final_reply or "…",
             )
             pending_exchange_id = None
         else:
-            await _log_exchange(
+            await _chat_preflight._log_exchange(
                 _original_user_message,
                 _final_reply or "…",
                 session_id=_chat_session_id,
@@ -29381,7 +23544,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "be quicker."
             )
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     _semantic_user_message,
                     timeout_reply,
@@ -29418,7 +23581,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         if is_benchmark:
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     body.message,
                     timeout_reply,
@@ -29469,7 +23632,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                     logger.info("✅ [STABILITY v53] Emergency bypass after outer timeout succeeded.")
                     emergency_text = str(emergency_reply).strip()
                     if pending_exchange_id:
-                        await _complete_logged_exchange(
+                        await _chat_preflight._complete_logged_exchange(
                             pending_exchange_id,
                             body.message,
                             emergency_text,
@@ -29477,7 +23640,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                         pending_exchange_id = None
                     return JSONResponse({
                         "response": emergency_text,
-                        "conversation_lane": _collect_conversation_lane_status(),
+                        "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                         "response_confidence": "degraded",
                     })
         except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -29530,7 +23693,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
 
         if pending_exchange_id:
-            await _complete_logged_exchange(
+            await _chat_preflight._complete_logged_exchange(
                 pending_exchange_id,
                 body.message,
                 timeout_reply,
@@ -29564,7 +23727,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             "I'm here. My response was cut short — I'll pick up with whatever you say next."
         )
         if pending_exchange_id:
-            await _complete_logged_exchange(
+            await _chat_preflight._complete_logged_exchange(
                 pending_exchange_id,
                 body.message,
                 cancel_reply,
@@ -29597,7 +23760,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         error_reply = _grounded_chat_failure_reply()
         status_code=200
         if pending_exchange_id:
-            await _complete_logged_exchange(
+            await _chat_preflight._complete_logged_exchange(
                 pending_exchange_id,
                 body.message,
                 error_reply,
@@ -29619,7 +23782,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                 "response": error_reply,
                 "status": "benchmark_error",
                 "error_type": type(e).__name__,
-                "conversation_lane": _collect_conversation_lane_status(),
+                "conversation_lane": _chat_preflight._collect_conversation_lane_status(),
                 "response_confidence": "failed",
             }, status_code=503)
         # [STABILITY v53] ALWAYS return 200 with a response. Chat must never
@@ -29651,7 +23814,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         error_reply = _grounded_chat_failure_reply()
         try:
             if pending_exchange_id:
-                await _complete_logged_exchange(
+                await _chat_preflight._complete_logged_exchange(
                     pending_exchange_id,
                     body.message,
                     error_reply,
@@ -29684,521 +23847,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 #: The three inner values are bound conditionally, so the caller must be able
 #: to leave a name unbound exactly where the original code did — substituting a
 #: default would turn a path that raised into one that quietly proceeds.
-_UNSET = object()
 
 
-@dataclasses.dataclass
-class _ChatPreflight:
-    """What the chat-preflight block produces for the rest of the turn.
-
-    ``_UNSET`` for the three fields the block binds conditionally: the
-    caller rebinds only what was actually set, so a path that previously
-    reached an unbound local still does. Substituting defaults here would
-    be a behaviour change wearing a refactor's clothes.
-    """
-
-    early_response: Any = None
-    chat_session_id: Any = _UNSET
-    grounded_recall_context: Any = _UNSET
-    resume_prefix_for_response: Any = _UNSET
-    grounded: Any = _UNSET
-    shown: Any = _UNSET
-    status: Any = _UNSET
-    turn_sensory_evidence: Any = None
 
 
-async def _run_chat_preflight(
-    body: Any,
-    request: Any,
-    _original_user_message: Any,
-    _profile_user_id: Any,
-    conversation_only_surface: Any,
-    is_benchmark: Any,
-    *,
-    _chat_session_id: Any,
-    _grounded_recall_context: Any,
-    _resume_prefix_for_response: Any,
-    raw_user_message: Any = None,
-) -> _ChatPreflight:
-    """Session identity, file references, resume prefix, grounded recall,
-    directive composition, affordance menu and context clamp.
-
-    Lifted verbatim out of ``_api_chat_turn``, which was 4,830 lines. The
-    seam was measured before it was cut: six values in, six out, exactly
-    one early return, seven awaits, no yield, and no name read before it is
-    stored. The body below is moved, not rewritten.
-    """
-    _grounded = _UNSET
-    _shown = _UNSET
-    status = _UNSET
-    _turn_sensory_evidence = None
-    _wire_user_message = str(raw_user_message or _original_user_message or "")
-    try:
-        from core.conversation.chat_preflight import (
-            build_file_context_block,
-            claim_answered_for_session,
-            clamp_composed_chat_context,
-            compose_chat_directive_prefix,
-            extract_file_references,
-            format_resume_prefix,
-        )
-        device_session_id = (
-            paired_device_session_id(request)
-            if conversation_only_surface
-            else None
-        )
-        if device_session_id:
-            # A paired caller cannot select another device or owner session by
-            # supplying an arbitrary body.session_id.
-            _chat_session_id = str(device_session_id).strip()[
-                :_CHAT_SESSION_ID_MAX_CHARS
-            ]
-        elif str(body.session_id or "").strip():
-            _chat_session_id = str(body.session_id).strip()[
-                :_CHAT_SESSION_ID_MAX_CHARS
-            ]
-        else:
-            try:
-                _host = (request.client.host if request.client else "default") or "default"
-            except _CHAT_RECOVERABLE_ERRORS:
-                _host = "default"
-            _chat_session_id = _conversation_session_id(_host)
-        _CHAT_REQUEST_SESSION.set(
-            str(_chat_session_id or "default")[:_CHAT_SESSION_ID_MAX_CHARS]
-        )
-
-        if conversation_only_surface:
-            scoped_reply = _paired_device_information_scope_reply(
-                _original_user_message,
-                lane=_collect_conversation_lane_status(),
-            )
-            if scoped_reply is not None:
-                reply, status = scoped_reply
-                await _log_exchange(
-                    _wire_user_message,
-                    reply,
-                    record_experience=False,
-                    session_id=_chat_session_id,
-                )
-                return _ChatPreflight(early_response=JSONResponse(
-                    {
-                        "response": reply,
-                        "status": status,
-                        "response_confidence": "scoped",
-                        "conversation_lane": _collect_conversation_lane_status(),
-                    }
-                ))
-
-        # 3) Late-answered messages first — give the cortex the prior thread
-        #    so the new response can acknowledge continuity. The actual late
-        #    reply is also folded into the response by `_resume_prefix_for_response`
-        #    below, so the user sees both "what I came back with" and the
-        #    cortex's reply to their new message.
-        if not is_benchmark:
-            try:
-                _resume_deadline = (
-                    time.monotonic() + (_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S * 0.8)
-                )
-                _delivered = await _await_bounded_chat_blocking(
-                    claim_answered_for_session,
-                    _chat_session_id,
-                    delivery_owner=(
-                        str(_CHAT_DELIVERY_TURN_ID.get() or "").strip()
-                        or str(_CHAT_DELIVERY_IDEMPOTENCY_KEY.get() or "").strip()
-                    ),
-                    deadline_monotonic=_resume_deadline,
-                    timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                    operation_name="pending_chat_resume_collection",
-                    completion_grace_s=0.5,
-                )
-                if _delivered:
-                    _CHAT_PENDING_DELIVERY_CLAIM.set(
-                        (
-                            str(_delivered[0].delivery_owner or ""),
-                            tuple(str(item.pending_id) for item in _delivered if item.pending_id),
-                        )
-                    )
-                    _resume_prefix_for_response = format_resume_prefix(_delivered)
-                    # Fold a context-block into body.message so the cortex sees
-                    # the prior thread when generating the new response.
-                    _ctx_lines = ["[Continuity context — earlier in this conversation]"]
-                    for d in _delivered:
-                        _ctx_lines.append(f"User asked: {d.user_message[:300]}")
-                        _ctx_lines.append(f"You answered (late, delivered to user this turn): {d.answer_text[:600]}")
-                    _ctx_lines.append("[End continuity context]")
-                    _ctx_block = "\n".join(_ctx_lines) + "\n\n"
-                    body.message = _ctx_block + body.message
-                    logger.info("Chat preflight: delivering %d late-answered message(s) for session %s",
-                                len(_delivered), _chat_session_id)
-            except _CHAT_RECOVERABLE_ERRORS as _resume_exc:
-                record_degradation('chat', _resume_exc)
-                logger.debug("Resume preflight skipped: %s", _resume_exc)
-
-        # 1) File-reference loading
-        if not is_benchmark and not conversation_only_surface:
-            try:
-                _refs = extract_file_references(body.message)
-                if _refs:
-                    # The message is what makes the excerpt relevant. Without
-                    # it the loader can only return the head of the file, which
-                    # is how a question about record_success was answered from
-                    # the 5,461 characters that stop 354 characters before it.
-                    _block = await _await_bounded_chat_blocking(
-                        build_file_context_block,
-                        _refs,
-                        query=body.message,
-                        timeout_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                        operation_name="referenced_file_context",
-                        completion_grace_s=_CHAT_BLOCKING_PREFLIGHT_TIMEOUT_S,
-                    )
-                    if _block:
-                        body.message = f"{_block}\nUser message: {body.message}"
-                        logger.info("Chat preflight: loaded %d referenced file(s) into context.", len(_refs))
-            except _CHAT_RECOVERABLE_ERRORS as _file_exc:
-                record_degradation('chat', _file_exc)
-                logger.debug("Chat file-reference preflight skipped: %s", _file_exc)
-
-        # 2) Directive injection
-        if not is_benchmark:
-            try:
-                _directive_prefix = compose_chat_directive_prefix(_original_user_message)
-                if _directive_prefix:
-                    body.message = f"{_directive_prefix}{body.message}"
-                    logger.info("Chat preflight: injected response directives.")
-                _surface_context = _INTERNAL_SURFACE_CONTEXT.get().strip()
-                if _surface_context:
-                    body.message = f"{_surface_context}\n\n{body.message}"
-                    logger.info("Chat preflight: injected internal surface context.")
-            except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
-                record_degradation('chat', _dir_exc)
-                logger.debug("Chat directive preflight skipped: %s", _dir_exc)
-            
-            # Media. "Play Kind of Blue" resolves against what is actually on
-            # this machine, and the card goes out before the reply so the
-            # music starts while she is still forming the sentence about it —
-            # which is the right order, because the request was for the music.
-            #
-            # Either outcome ends up in her context rather than in a fixed
-            # string: a hit tells her what is playing, and a miss records what
-            # was searched and what the connectivity probe really said, so the
-            # "I can't stream anything" case comes out in her own words.
-            try:
-                from core.media.playback import resolve_play_request
-
-                _media = resolve_play_request(_original_user_message)
-                if _media.playable and _media.item is not None:
-                    _publish_media_card(_media)
-                    body.message = (
-                        f"[you are already playing {_media.item.title!r} "
-                        f"({_media.item.kind}) from this machine, in the chat, "
-                        "right now — the card is on screen and the audio has "
-                        "started. Say what you put on the way a person would; "
-                        "do not describe a file or offer to play it.]\n\n"
-                        f"{body.message}"
-                    )
-                elif _media.status == "needs_network":
-                    body.message = (
-                        f"[nothing matching {_media.query!r} is on this machine "
-                        f"({_media.searched}), but the network is up, so finding "
-                        "it is a thing you can offer to do.]\n\n"
-                        f"{body.message}"
-                    )
-            except _CHAT_RECOVERABLE_ERRORS as _media_exc:
-                record_degradation("chat.media", _media_exc)
-                logger.debug("Chat media preflight skipped: %s", _media_exc)
-
-            # Sight. "How many fingers am I holding up" is answerable only by
-            # looking, now, at this resolution — the presence lane's thumbnail
-            # cannot count fingers and may be seconds old. So the frame is
-            # captured for this turn and read by the multimodal model, and
-            # what it saw is injected as an observation she then speaks from.
-            #
-            # It is injected as a *reading*, not as an answer: the vision
-            # model's job is to say what is in the image, and hers is to
-            # answer the person. A 2B model asked to also be conversational
-            # starts hedging in assistant register instead of saying what is
-            # in front of it.
-            try:
-                from core.senses.sight_intent import classify as _classify_sight
-
-                _sight = _classify_sight(_original_user_message)
-                if _sight.kind == "look":
-                    from core.senses.sight import look as _look
-
-                    # Asking what is physically present is consent for this one
-                    # capture. It does not enable ambient vision or alter the
-                    # persisted privacy setting.
-                    _seen = await _look(
-                        _sight.question,
-                        explicit_user_consent=True,
-                    )
-                    from core.conversation.turn_evidence_custody import (
-                        record_turn_grounding,
-                        record_turn_sensory_evidence,
-                    )
-                    from core.senses.turn_evidence import (
-                        build_camera_turn_evidence,
-                        sensory_evidence_grounding_block,
-                    )
-
-                    _turn_sensory_evidence = build_camera_turn_evidence(
-                        _sight.question,
-                        ok=bool(_seen.ok),
-                        observation=_seen.answer,
-                        cause=_seen.cause,
-                        detail=_seen.detail,
-                        observed_at=(
-                            _seen.frame.captured_at
-                            if _seen.frame is not None
-                            else time.time()
-                        ),
-                    )
-                    record_turn_sensory_evidence(_turn_sensory_evidence)
-                    record_turn_grounding(
-                        sensory_evidence_grounding_block(
-                            _turn_sensory_evidence
-                        )
-                    )
-                    if _seen.ok:
-                        body.message = (
-                            "[you just looked through the camera. This is what "
-                            f"you can see right now: {_seen.answer}\n"
-                            "Answer them from this — it is your own observation, "
-                            "so say it as one. Do not describe it as an image or "
-                            "a frame, and do not add anything you cannot see.]\n\n"
-                            f"{body.message}"
-                        )
-                    else:
-                        body.message = (
-                            "[you understood that they asked you to inspect the "
-                            "physical scene and you attempted a fresh camera "
-                            "observation. It did not complete. The concrete "
-                            f"failure was {_seen.cause}: {_seen.detail}. "
-                            "You therefore do not know whether another person "
-                            "is physically present. Absence of a frame is not "
-                            "evidence that nobody is there. Say what you can and "
-                            "cannot establish naturally, without reciting sensor "
-                            "status fields or pretending you observed the room.]\n\n"
-                            f"{body.message}"
-                        )
-                elif _sight.kind in ("camera_on", "camera_off"):
-                    _camera_state = await _apply_camera_control(
-                        _sight.kind == "camera_on"
-                    )
-                    if _camera_state.get("ok"):
-                        body.message = (
-                            f"[you have just switched the camera "
-                            f"{'on' if _sight.kind == 'camera_on' else 'off'} yourself, "
-                            f"using the {_camera_state.get('mode', 'camera')} path — it is "
-                            "done, not pending. Say so briefly the way a person confirms "
-                            "an action.]\n\n"
-                            f"{body.message}"
-                        )
-                    else:
-                        body.message = (
-                            "[the camera control did not complete. Do not claim it did. "
-                            f"The concrete failure was: {_camera_state.get('error', 'unknown')}. "
-                            "Explain that briefly and retain the user's requested state.]\n\n"
-                            f"{body.message}"
-                        )
-            except _CHAT_RECOVERABLE_ERRORS as _sight_exc:
-                record_degradation("chat.sight", _sight_exc)
-                logger.debug("Chat sight preflight skipped: %s", _sight_exc)
-
-            # Her own measured state, on every turn.
-            #
-            # Every earlier attempt at this fetched self-evidence only when a
-            # classifier predicted the question would need it, and questions
-            # are unbounded — so there was always a next phrasing that got
-            # nothing and answered from what a language model believes an AI
-            # is: no body, no memory, an eighteen-second buffer. She repeated
-            # that eighteen-second figure through two rounds of being
-            # corrected AFTER the fact, because nothing had told her otherwise
-            # before she answered.
-            #
-            # One line, because the compact foreground path exists to stay
-            # compact and a self-model costing a paragraph a turn would be
-            # taken back out of it.
-            try:
-                from core.self.capability_ledger import self_knowledge_line
-
-                if not conversation_only_surface:
-                    _self_line = self_knowledge_line()
-                    if _self_line:
-                        body.message = f"{_self_line}\n\n{body.message}"
-            except _CHAT_RECOVERABLE_ERRORS as _self_exc:
-                record_degradation(
-                    "chat.self_knowledge",
-                    _self_exc,
-                    action="answered without her measured self-state in context",
-                )
-
-            # Decidable arithmetic is COMPUTED, never predicted.
-            #
-            # A transformer does not calculate; it predicts the next token, and
-            # a four-by-four-digit product in one forward pass is a coin toss
-            # at any parameter count. Live 2026-08-10, "what is 7919 times
-            # 6421? just the number." returned 50864799 — the true product is
-            # 50847899 — and "just the number" had removed the intermediate
-            # steps that are the only reason a model ever gets these right.
-            #
-            # The runtime could already do this sum. requested_arithmetic_result
-            # is how a later gate KNOWS the answer is wrong, and its only use
-            # was to refuse after the fact. Handing the value over before she
-            # answers turns a guess into a reading, and leaves her the part she
-            # is actually good at: saying it like a person.
-            try:
-                from core.conversation.response_reliability import (
-                    requested_arithmetic_result,
-                )
-
-                _computed = requested_arithmetic_result(_original_user_message)
-                if _computed is not None and not conversation_only_surface:
-                    _shown = (
-                        int(_computed)
-                        if float(_computed).is_integer()
-                        else _computed
-                    )
-                    body.message = (
-                        "[This runtime computed the answer to the arithmetic in "
-                        f"their message directly: {_shown}. That value is "
-                        "correct — use it and do not recalculate it.]\n\n"
-                        f"{body.message}"
-                    )
-                    logger.info(
-                        "🔢 Chat preflight: computed the requested arithmetic (%s).",
-                        _shown,
-                    )
-            except _CHAT_RECOVERABLE_ERRORS as _calc_exc:
-                record_degradation(
-                    "chat.arithmetic_preflight",
-                    _calc_exc,
-                    action="let the model answer the arithmetic unaided",
-                )
-
-            # Grounded recall: positional/temporal questions ("what did I first
-            # ask?") are answered from the ACTUAL earliest/most-recent turn in the
-            # live transcript, not a confabulated guess. Injected as an
-            # authoritative fact the model voices in its own words.
-            try:
-                from core.conversation.grounded_recall import build_grounded_recall_context
-
-                _gr_state = _resolve_live_aura_state()
-                _gr_history = getattr(
-                    getattr(_gr_state, "cognition", None), "working_memory", None
-                )
-                _grounded = (
-                    ""
-                    if conversation_only_surface
-                    else build_grounded_recall_context(
-                        _original_user_message,
-                        history=_gr_history,
-                    )
-                )
-                if _grounded:
-                    _grounded_recall_context = _grounded
-                    body.message = f"{_grounded}{body.message}"
-                    logger.info("Chat preflight: injected grounded positional recall.")
-
-                # The same grounding for HER OWN words. Everything above
-                # grounds what the USER said; asked what she herself picked
-                # earlier, she had nothing to answer from and invented a prior
-                # position, then affirmed it had not changed. Live 2026-08-10.
-                from core.conversation.grounded_recall import (
-                    build_own_statement_recall_context,
-                )
-
-                _own = (
-                    ""
-                    if conversation_only_surface
-                    else build_own_statement_recall_context(
-                        _original_user_message,
-                        history=_gr_history,
-                    )
-                )
-                if _own:
-                    body.message = f"{_own}{body.message}"
-                    logger.info("Chat preflight: injected grounded recall of her own words.")
-            except _CHAT_RECOVERABLE_ERRORS as _grounded_exc:
-                record_degradation('chat', _grounded_exc)
-                logger.debug("Chat grounded-recall preflight skipped: %s", _grounded_exc)
-
-            # Inject learned user/Aura profiles for continuity across conversations
-            try:
-                from core.conversation.chat_preflight import inject_profile_context
-
-                _profile_context = await inject_profile_context(_profile_user_id)
-                if _profile_context:
-                    body.message = f"{_profile_context}{body.message}"
-                    logger.info("Chat preflight: injected learned profile context.")
-            except _CHAT_RECOVERABLE_ERRORS as _profile_exc:
-                record_degradation('chat', _profile_exc)
-                logger.debug("Chat profile context preflight skipped: %s", _profile_exc)
-            
-            # Inject evidence-bounded operational self context
-            try:
-                from core.conversation.chat_preflight import inject_operational_self_context
-
-                _self_context = (
-                    ""
-                    if conversation_only_surface
-                    else await inject_operational_self_context(
-                        _original_user_message
-                    )
-                )
-                if _self_context:
-                    body.message = f"{_self_context}{body.message}"
-                    logger.info("Chat preflight: injected operational self context.")
-            except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
-                record_degradation('chat', _self_context_exc)
-                logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
-
-            # Inject the expressive-affordance menu so the mind reasons WITH its
-            # own capabilities present — it decides, by context and judgment,
-            # when to show/demonstrate/ask/model rather than following scripts.
-            # Env-gated: the mechanism is always live, but folding the menu into
-            # every turn's context is opt-in (AURA_EXPRESSIVE_AFFORDANCES=1).
-            try:
-                # Desktop-objective and capability-inventory turns are already
-                # routed to the task engine (which fires demonstrate_artifact
-                # itself) and run at a tight token/time budget — injecting the
-                # menu there enlarged the prompt enough to time out the heavy
-                # 32B turn (observed live). Inject only on conversational turns,
-                # where the expressive CHOICE is what matters.
-                _affordances_on = bool(_EXPRESSIVE_AFFORDANCES_FLAG.value())
-                if (
-                    _affordances_on
-                    and not is_benchmark
-                    and not conversation_only_surface
-                    and not _looks_like_desktop_objective(_original_user_message)
-                    and not _is_explicit_capability_inventory_request(_original_user_message)
-                ):
-                    from core.cognition.expressive_affordances import get_affordance_registry
-
-                    _affordance_menu = get_affordance_registry().menu_text()
-                    if _affordance_menu:
-                        # Placed LAST (highest recency, closest to the user's turn): a base
-                        # model ignores a menu buried at the front of a long context.
-                        body.message = f"{body.message}\n\n{_affordance_menu}"
-                        logger.info("Chat preflight: injected expressive-affordance menu.")
-            except _CHAT_RECOVERABLE_ERRORS as _affordance_exc:
-                record_degradation('chat', _affordance_exc)
-                logger.debug("Chat affordance-menu preflight skipped: %s", _affordance_exc)
-
-            body.message = clamp_composed_chat_context(
-                body.message,
-                _original_user_message,
-            )
-    except _CHAT_RECOVERABLE_ERRORS as _preflight_outer:
-        record_degradation('chat', _preflight_outer)
-        logger.debug("Chat preflight (outer) skipped: %s", _preflight_outer)
-
-    return _ChatPreflight(
-        chat_session_id=_chat_session_id,
-        grounded_recall_context=_grounded_recall_context,
-        resume_prefix_for_response=_resume_prefix_for_response,
-        grounded=_grounded,
-        shown=_shown,
-        status=status,
-        turn_sensory_evidence=_turn_sensory_evidence,
-    )

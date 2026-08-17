@@ -30,6 +30,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.cognitive_engine import CognitiveEngine
+from tests.chat_lane_support import chat_lane_source
 
 
 # ─────────────────────────────── the response belongs to this turn
@@ -804,11 +805,9 @@ def test_a_forged_entry_mixed_into_real_history_is_dropped_alone():
 
 
 def test_both_producers_stamp_their_exchanges():
-    import inspect
-
-    import interface.routes.chat as chat_mod
-
-    source = inspect.getsource(chat_mod)
+    # Read the whole chat lane, not one file of it: which module a producer
+    # lives in is not what this test is about.
+    source = chat_lane_source()
 
     assert source.count("stamp_runtime_payload(") >= 3
 
@@ -1225,14 +1224,28 @@ def test_a_quick_reply_is_not_rewarded_as_if_verified():
     """0.8 landed immediately after a nonempty generation — before user
     feedback, task outcome or any quality receipt — so a fluent failure
     reinforced the components that shaped it."""
+    import ast
     import inspect
 
     import core.brain.cognitive_engine as engine_mod
 
     source = inspect.getsource(engine_mod)
-
     assert "reward=0.8," not in source
-    assert "_quick_reward = 0.4 if trimmed_cutoff else 0.6" in source
+
+    # Read the value, not the spelling. The flag this branches on has been
+    # renamed once already (trimmed_cutoff -> reply_generation_incomplete),
+    # and a test that pins the identifier fails on a rename while staying
+    # silent about a return to a flat 0.8.
+    quick = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Assign)
+        and any(getattr(t, "id", "") == "_quick_reward" for t in node.targets)
+    ]
+    assert len(quick) == 1, "the quick reward should be decided in one place"
+    branch = quick[0].value
+    assert isinstance(branch, ast.IfExp), "the quick reward must depend on completeness"
+    assert {branch.body.value, branch.orelse.value} == {0.4, 0.6}
 
 
 def test_a_prompt_shape_floor_is_not_near_certain():

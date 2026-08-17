@@ -15,6 +15,9 @@ from core.runtime.governance_policy import (
 )
 from core.skills.train_self import TrainSelfSkill as CoreTrainSelfSkill
 from skills.train_self import TrainSelfSkill as LegacyTrainSelfSkill
+import interface.routes.chat_memory_state as _chat_memory_state
+import interface.routes.chat_preflight as _chat_preflight
+from tests.chat_lane_support import patch_chat_lane
 
 
 @pytest.mark.parametrize("skill_name", ["omni_log_error", "omni_log_critical"])
@@ -748,9 +751,7 @@ async def test_voice_state_endpoint_rehydrates_profile_after_first_exchange(monk
             else default
         ),
     )
-    monkeypatch.setattr(
-        chat_routes,
-        "_conversation_log",
+    patch_chat_lane(monkeypatch, "_conversation_log",
         [{"user": "hey aura", "aura": "hey. i'm here."}],
         raising=False,
     )
@@ -1917,7 +1918,7 @@ def test_self_diagnostic_reflex_reports_runtime_status(monkeypatch):
 
     monkeypatch.setattr(chat_route.ServiceContainer, "get", staticmethod(fake_get))
     monkeypatch.setattr(
-        chat_route,
+        _chat_preflight,
         "_collect_conversation_lane_status",
         lambda: {"conversation_ready": True, "state": "ready"},
     )
@@ -1945,7 +1946,7 @@ def test_self_diagnostic_reflex_does_not_report_missing_stability_as_healthy(mon
 
     monkeypatch.setattr(chat_route.ServiceContainer, "get", staticmethod(fake_get))
     monkeypatch.setattr(
-        chat_route,
+        _chat_preflight,
         "_collect_conversation_lane_status",
         lambda: {"conversation_ready": True, "state": "ready"},
     )
@@ -2647,7 +2648,7 @@ def _install_test_session_pin_cipher(monkeypatch, chat_route):
     from core.memory.session_pin_cipher import SessionPinCipher
 
     cipher = SessionPinCipher(b"k" * 32)
-    monkeypatch.setattr(chat_route, "_session_memory_pin_cipher", lambda: cipher)
+    monkeypatch.setattr(_chat_memory_state, "_session_memory_pin_cipher", lambda: cipher)
     return cipher
 
 
@@ -2656,7 +2657,7 @@ def test_session_memory_pin_round_trip(monkeypatch, tmp_path):
 
     _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
-        chat_route,
+        _chat_memory_state,
         "_session_memory_pin_ledger_path",
         lambda: tmp_path / "session_memory_pins.jsonl",
     )
@@ -2681,7 +2682,7 @@ def test_session_memory_pin_isolation_by_session_id(monkeypatch, tmp_path):
 
     _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
-        chat_route,
+        _chat_memory_state,
         "_session_memory_pin_ledger_path",
         lambda: tmp_path / "session_memory_pins.jsonl",
     )
@@ -2723,7 +2724,7 @@ def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path
 
     _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
-        chat_route,
+        _chat_memory_state,
         "_session_memory_pin_ledger_path",
         lambda: tmp_path / "session_memory_pins.jsonl",
     )
@@ -2780,7 +2781,7 @@ def test_session_memory_pin_writes_durable_memory(monkeypatch, tmp_path):
 
     cipher = _install_test_session_pin_cipher(monkeypatch, chat_route)
     monkeypatch.setattr(
-        chat_route,
+        _chat_memory_state,
         "_session_memory_pin_ledger_path",
         lambda: tmp_path / "session_memory_pins.jsonl",
     )
@@ -2829,7 +2830,7 @@ def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeyp
         principal_surface="session",
     )
     monkeypatch.setattr(
-        chat_route,
+        _chat_memory_state,
         "_session_memory_pin_ledger_path",
         lambda: tmp_path / "session_memory_pins.jsonl",
     )

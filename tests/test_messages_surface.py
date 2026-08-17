@@ -4,6 +4,7 @@ import asyncio
 
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
+from tests.chat_lane_support import patch_chat_lane
 
 
 def _request(*, host: str = "127.0.0.1", surface: str = "messages") -> Request:
@@ -44,19 +45,13 @@ def test_governed_messages_turn_reuses_complete_chat_handler(monkeypatch) -> Non
         from interface.routes import chat
 
         observed: dict[str, object] = {}
-        monkeypatch.setattr(
-            chat,
-            "validate_runtime_security_request",
+        patch_chat_lane(monkeypatch, "validate_runtime_security_request",
             lambda request: observed.update(security_path=request.url.path),
         )
-        monkeypatch.setattr(
-            chat,
-            "_require_internal",
+        patch_chat_lane(monkeypatch, "_require_internal",
             lambda request: observed.update(internal_path=request.url.path),
         )
-        monkeypatch.setattr(
-            chat,
-            "_check_rate_limit",
+        patch_chat_lane(monkeypatch, "_check_rate_limit",
             lambda request: observed.update(rate_path=request.url.path),
         )
 

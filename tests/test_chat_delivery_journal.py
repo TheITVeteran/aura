@@ -21,6 +21,8 @@ from core.runtime.chat_delivery_journal import (
     DeliveryState,
     canonical_request_hash,
 )
+import interface.routes.chat_delivery as _chat_delivery
+from tests.chat_lane_support import patch_chat_lane
 
 
 def _identity(
@@ -507,24 +509,22 @@ async def test_capacity_evicts_oldest_terminal_receipt_before_rejecting_new_work
 def _patch_route_identity(monkeypatch: pytest.MonkeyPatch, journal: ChatDeliveryJournal) -> None:
     from interface.routes import chat as chat_mod
 
-    monkeypatch.setattr(chat_mod, "get_chat_delivery_journal", lambda: journal)
-    monkeypatch.setattr(
-        chat_mod,
-        "request_access_profile",
+    patch_chat_lane(monkeypatch, "get_chat_delivery_journal", lambda: journal)
+    patch_chat_lane(monkeypatch, "request_access_profile",
         lambda _request: {"surface": "owner", "conversation_only": False},
     )
     monkeypatch.setattr(
-        chat_mod,
+        _chat_delivery,
         "_authenticated_chat_principal",
         lambda _request: "owner:bryan",
     )
     monkeypatch.setattr(
-        chat_mod,
+        _chat_delivery,
         "_observe_authenticated_chat_turn",
         lambda _request, _body: "owner:bryan",
     )
     monkeypatch.setattr(
-        chat_mod,
+        _chat_delivery,
         "_attach_http_chat_delivery_receipt",
         lambda *_args, **_kwargs: None,
     )
@@ -541,7 +541,7 @@ async def test_pending_answer_ack_follows_rendered_terminal_receipt(
     _patch_route_identity(monkeypatch, journal)
     events: list[str] = []
     monkeypatch.setattr(
-        chat_mod,
+        _chat_delivery,
         "_attach_http_chat_delivery_receipt",
         lambda *_args, **_kwargs: events.append("receipt-attached"),
     )
@@ -587,7 +587,7 @@ async def test_pending_answer_claim_released_when_response_receipt_cannot_attach
         events.append("receipt-failed")
         raise RuntimeError("receipt attachment failed")
 
-    monkeypatch.setattr(chat_mod, "_attach_http_chat_delivery_receipt", fail_receipt)
+    monkeypatch.setattr(_chat_delivery, "_attach_http_chat_delivery_receipt", fail_receipt)
     monkeypatch.setattr(
         chat_preflight,
         "acknowledge_delivery",
@@ -931,7 +931,7 @@ async def test_route_settles_surface_after_terminal_receipt_substitution(
     async def fail_terminal_receipt(*_args, **_kwargs):
         raise ChatDeliveryJournalUnavailable("terminal receipt unavailable")
 
-    monkeypatch.setattr(chat_mod, "_finalize_chat_delivery", fail_terminal_receipt)
+    monkeypatch.setattr(_chat_delivery, "_finalize_chat_delivery", fail_terminal_receipt)
 
     @chat_mod._paired_chat_response_boundary
     async def handler(*, body, request):
@@ -952,9 +952,7 @@ async def test_route_settles_surface_after_terminal_receipt_substitution(
 def test_request_contract_binds_method_and_path(monkeypatch: pytest.MonkeyPatch) -> None:
     from interface.routes import chat as chat_mod
 
-    monkeypatch.setattr(
-        chat_mod,
-        "request_access_profile",
+    patch_chat_lane(monkeypatch, "request_access_profile",
         lambda _request: {"surface": "owner", "conversation_only": False},
     )
     body = chat_mod.ChatRequest(message="hello", session_id="session-1")

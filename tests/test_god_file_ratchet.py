@@ -153,3 +153,96 @@ def test_threshold_matches_the_architecture_baseline() -> None:
     )
 
     assert int(baseline["god_file_threshold"]) == DEFAULT_THRESHOLD
+
+
+class TestTheRefreshCommandCannotLoosenTheRatchet:
+    """`--write-baseline` recorded whatever it measured.
+
+    Running it after a legitimate shrink somewhere else re-recorded every
+    file that had grown in the meantime — 29 line baselines and 8
+    class-method baselines in one run. A refresh command that can loosen the
+    gate is a reset button wearing a ratchet's name.
+    """
+
+    def _baseline(self, tmp_path, entries, budget):
+        import json
+
+        path = tmp_path / "baseline.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "aura.module_size_baseline.v1",
+                    "oversize_budget_lines": budget,
+                    "modules": entries,
+                }
+            )
+        )
+        return path
+
+    def test_a_grown_entry_is_clamped_not_recorded(self, tmp_path):
+        import json
+
+        from tools.lint_module_size import Measurement, write_baseline
+
+        path = self._baseline(
+            tmp_path, {"a.py": {"lines": 3000, "max_class_methods": 40}}, 1000
+        )
+        write_baseline(
+            path,
+            {
+                "a.py": Measurement(
+                    path="a.py", lines=3500, max_class_methods=44, largest_class="A"
+                )
+            },
+        )
+        recorded = json.loads(path.read_text())["modules"]["a.py"]
+        assert recorded["lines"] == 3000, "a grown file rewrote its own baseline"
+        assert recorded["max_class_methods"] == 40
+
+    def test_a_real_shrink_is_banked(self, tmp_path):
+        import json
+
+        from tools.lint_module_size import Measurement, write_baseline
+
+        path = self._baseline(
+            tmp_path, {"a.py": {"lines": 3000, "max_class_methods": 40}}, 1000
+        )
+        write_baseline(
+            path,
+            {
+                "a.py": Measurement(
+                    path="a.py", lines=2400, max_class_methods=31, largest_class="A"
+                )
+            },
+        )
+        recorded = json.loads(path.read_text())
+        assert recorded["modules"]["a.py"]["lines"] == 2400
+        assert recorded["modules"]["a.py"]["max_class_methods"] == 31
+        assert recorded["oversize_budget_lines"] == 400
+
+    def test_a_larger_total_is_clamped_to_the_recorded_budget(self, tmp_path):
+        """A refresh records the tightest number seen, and never blocks.
+
+        Refusing to write would mean a real shrink can never be banked while
+        any file anywhere has grown — and the growth is the gate's job to
+        report, not the refresh's job to hide.
+        """
+        import json
+
+        from tools.lint_module_size import Measurement, write_baseline
+
+        path = self._baseline(
+            tmp_path, {"a.py": {"lines": 2400, "max_class_methods": 10}}, 400
+        )
+        write_baseline(
+            path,
+            {
+                "a.py": Measurement(
+                    path="a.py", lines=2400, max_class_methods=10, largest_class="A"
+                ),
+                "b.py": Measurement(
+                    path="b.py", lines=2900, max_class_methods=10, largest_class="B"
+                ),
+            },
+        )
+        assert json.loads(path.read_text())["oversize_budget_lines"] == 400

@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from interface.routes.chat_quality import assess_post_response_confidence
+from tests.chat_lane_support import chat_lane_source
 
 
 class TestOnlyHighIsDowngraded:
@@ -118,9 +119,7 @@ def test_inconsistency_is_checked_before_the_lane():
 
 
 def test_the_call_site_uses_it():
-    import inspect
 
-    from interface.routes import chat as chat_routes
 
-    source = inspect.getsource(chat_routes.api_chat)
+    source = chat_lane_source()
     assert "assess_post_response_confidence(" in source

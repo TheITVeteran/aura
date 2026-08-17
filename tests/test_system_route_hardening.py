@@ -5,6 +5,8 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import interface.routes.chat_preflight as _chat_preflight
+from tests.chat_lane_support import patch_chat_lane
 
 
 @pytest.fixture(autouse=True)
@@ -243,8 +245,8 @@ def test_websocket_runtime_heartbeat_requires_conversation_lane(monkeypatch):
             ],
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
+    patch_chat_lane(
+        monkeypatch,
         "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": False,
@@ -293,8 +295,8 @@ def test_websocket_runtime_heartbeat_treats_active_generation_as_working_not_hea
             ],
         },
     )
-    monkeypatch.setattr(
-        chat_routes,
+    patch_chat_lane(
+        monkeypatch,
         "_collect_conversation_lane_status",
         lambda: {
             "conversation_ready": False,

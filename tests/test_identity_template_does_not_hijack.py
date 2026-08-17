@@ -15,8 +15,9 @@ from __future__ import annotations
 import re
 
 import pytest
+from tests.chat_lane_support import chat_lane_source
 
-SOURCE = open("interface/routes/chat.py", encoding="utf-8").read()
+SOURCE = chat_lane_source()
 
 
 def _asks_only_who_you_are():

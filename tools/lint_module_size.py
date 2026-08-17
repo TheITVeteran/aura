@@ -124,7 +124,15 @@ def load_baseline(path: Path) -> dict[str, dict[str, int]]:
 
 
 def write_baseline(path: Path, measurements: dict[str, Measurement]) -> int:
-    """Record only what exceeds a threshold. A baseline of everything is noise."""
+    """Record only what exceeds a threshold. A baseline of everything is noise.
+
+    A refresh may lower an entry and may never raise one. The first version of
+    this function recorded whatever it measured, so running it after a
+    legitimate shrink somewhere else quietly re-recorded every file that had
+    grown — 29 line baselines and 8 class-method baselines in one run. A
+    refresh command that can loosen the gate is not a ratchet, it is a reset
+    button with a ratchet's name on it.
+    """
     modules = {
         m.path: {"lines": m.lines, "max_class_methods": m.max_class_methods}
         for m in measurements.values()
@@ -132,13 +140,36 @@ def write_baseline(path: Path, measurements: dict[str, Measurement]) -> int:
     }
     total = oversize_total(measurements)
 
-    previous = load_budget(path)
-    if previous is not None and total > previous:
-        raise ValueError(
-            f"refusing to record a larger oversize budget: {total} > {previous}. "
-            "A file may grow only if another shrinks by more; this is the one "
-            "number the ratchet holds."
+    existing = load_baseline(path)
+    raised = []
+    for name, entry in modules.items():
+        previous_entry = existing.get(name)
+        if previous_entry is None:
+            continue
+        for field in ("lines", "max_class_methods"):
+            was = int(previous_entry.get(field, 0))
+            if entry[field] > was:
+                raised.append(f"{name}: {field} {was} -> {entry[field]}")
+            entry[field] = min(entry[field], was)
+    if raised:
+        # Clamped, not refused: a real shrink somewhere else still deserves to
+        # be banked. What must never happen is the growth being written down
+        # as the new normal — the gate below still fails on every one of these.
+        print(
+            f"clamped {len(raised)} entry/entries that had grown; the baseline "
+            "only shrinks and the gate still fails on them:"
         )
+        for line in sorted(raised)[:20]:
+            print(f"   {line}")
+
+    # A refresh records the tightest thing ever seen and nothing looser. It
+    # never blocks either: refusing to write means a real shrink somewhere
+    # else can never be banked while any file anywhere has grown, and a gate
+    # that cannot be satisfied is a gate that gets deleted. Growth is the
+    # main() check's job to report, not this one's job to hide.
+    previous = load_budget(path)
+    if previous is not None:
+        total = min(total, previous)
 
     path.write_text(
         json.dumps(
