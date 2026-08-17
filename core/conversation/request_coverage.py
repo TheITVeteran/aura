@@ -183,6 +183,11 @@ _COVERAGE_EQUIVALENCE = {
     "seems": "epistemic_inferred",
     "seemed": "epistemic_inferred",
     "uncertain": "epistemic_inferred",
+    "failed": "failure",
+    "fails": "failure",
+    "failing": "failure",
+    "weighted": "weight",
+    "weights": "weight",
 }
 
 _EPISTEMIC_SIDES = frozenset({"epistemic_known", "epistemic_inferred"})
@@ -355,8 +360,16 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
         return []
 
     answered = coverage_tokens(body)
+    numbered_markers = re.findall(r"(?:^|\n|\s)\d+\s*[.)]", str(body or ""))
+    if len(numbered_markers) >= 2:
+        answered.add("numbered")
+    try:
+        numbered_parts = max(0, int(getattr(contract, "numbered_parts", 0) or 0))
+    except (TypeError, ValueError):
+        numbered_parts = 0
+    numbered_start = max(0, len(segments) - numbered_parts)
     missed: list[str] = []
-    for segment in segments:
+    for index, segment in enumerate(segments):
         if is_reply_shape_constraint_segment(segment):
             continue
         relation_covered = _relation_sides_are_covered(segment, body, answered)
@@ -368,7 +381,18 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
         wanted = coverage_tokens(segment)
         if len(wanted) < _MIN_COVERAGE_TOKENS:
             continue
-        if not (wanted & answered):
+        overlap = wanted & answered
+        # Numbered multipart requests carry independent explicit obligations.
+        # One shared context word cannot prove one of those obligations was
+        # answered: "weights" in a graph example must not satisfy a later ask
+        # about negative-weight failure. Ordinary short conversation keeps the
+        # one-anchor rule so concise natural answers remain valid.
+        required_anchors = (
+            min(2, len(wanted))
+            if numbered_parts >= 3 and index >= numbered_start
+            else 1
+        )
+        if len(overlap) < required_anchors:
             missed.append(str(segment))
     return missed
 

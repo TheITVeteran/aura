@@ -65,6 +65,7 @@ class _Contract:
     def __init__(self, shape):
         self.requires_single_reply_coverage = shape.requires_single_reply_coverage
         self.question_segments = shape.question_segments
+        self.numbered_parts = shape.numbered_parts
 
 
 def test_reply_shape_segment_is_not_a_second_semantic_ask():
@@ -122,6 +123,25 @@ def test_a_reply_that_covers_both_passes():
     )
 
     assert not _unanswered_question_parts(complete, _Contract(shape))
+
+
+def test_one_shared_context_word_does_not_satisfy_a_numbered_obligation():
+    user = (
+        "Explain Dijkstra. Include: (1) its core invariant, (2) numbered pseudocode, "
+        "(3) a worked graph example, (4) heap and array complexity, and "
+        "(5) a negative-weight failure case and the correct alternative."
+    )
+    reply = (
+        "1. The core invariant finalizes the minimum unsettled distance. "
+        "2. Numbered pseudocode repeatedly relaxes edges. "
+        "3. The worked graph example uses weighted edges. "
+        "4. Heap and array complexity differ."
+    )
+    shape = analyze_prompt_shape(user)
+
+    missed = _unanswered_question_parts(reply, _Contract(shape))
+
+    assert any("negative-weight" in segment for segment in missed)
 
 
 def test_one_shared_content_word_counts_as_engaged():
