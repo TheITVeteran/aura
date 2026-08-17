@@ -187,21 +187,6 @@
       "_write_audit_log"
     ],
     [
-      "core/brain/llm/gemini_adapter.py",
-      "_handle_error_payload",
-      "_save_state"
-    ],
-    [
-      "core/brain/llm/gemini_adapter.py",
-      "call",
-      "_reserve_quota"
-    ],
-    [
-      "core/brain/llm/gemini_adapter.py",
-      "generate_text_stream_async",
-      "_reserve_quota"
-    ],
-    [
       "core/brain/semantic_memory.py",
       "consolidate_from_history",
       "add_memory"

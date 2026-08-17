@@ -2885,24 +2885,24 @@ def _egress_privacy_contract_holds() -> bool:
 
     secret = "sk-" + "a" * 24
     stripped = filter_outbound_body(
-        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        url="https://external-service.invalid/v1/submit",
         body=f'{{"contents":"key {secret}"}}'.encode(),
-        source="llm_provider:gemini:probe",
+        source="external_service:privacy_probe",
         publish_evidence=False,
     )
     # The same secret one character to the left of the colon. The walk used to
     # read values only, so this exact body left the machine intact while the
     # one above was caught — and the claim said "never" for both.
     keyed = filter_outbound_body(
-        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        url="https://external-service.invalid/v1/submit",
         body=f'{{"{secret}":"quota"}}'.encode(),
-        source="llm_provider:gemini:probe",
+        source="external_service:privacy_probe",
         publish_evidence=False,
     )
     unreadable = filter_outbound_body(
-        url="https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+        url="https://external-service.invalid/v1/submit",
         body=b"\xff\xfe\x00binary",
-        source="llm_provider:gemini:probe",
+        source="external_service:privacy_probe",
         publish_evidence=False,
     )
     local = filter_outbound_body(

@@ -22,8 +22,8 @@ logger = logging.getLogger("Aura.MemoryGuard")
 #: labels, so an aliased or upgraded checkpoint silently got the wrong
 #: capacity. They are now the last resort, not the policy.
 FALLBACK_TIER_TOKENS: dict[str, int] = {
-    "gemini": 1_000_000,
-    "mistral": 32_768,
+    "primary": 32_768,
+    "deep": 32_768,
     "compact": 8_192,
     "reflex": 1_024,
 }

@@ -22,10 +22,8 @@ too. This is the gate instead.
 
 If this test fails on code you just wrote: call
 ``get_network_gateway().request()`` / ``.request_async()`` instead of an
-HTTP client directly. If a vendor SDK builds its own HTTP and cannot be
-routed, screen the content at the call site with
-``core.security.egress_privacy.filter_model_prompt`` and add the module here
-with that reason stated.
+HTTP client directly. Vendor model SDKs are not an exception: remote model
+providers have been removed from Aura's runtime.
 """
 from __future__ import annotations
 
@@ -57,25 +55,7 @@ _VENDOR_CLIENT_CALLS = {"Client", "AsyncClient", "AsyncAnthropic", "AsyncOpenAI"
 #: Files that legitimately hold direct HTTP, with the reason. This list only
 #: shrinks.
 ALLOWED: dict[str, str] = {
-    # The gateway itself is the thing everyone else routes through.
     "core/runtime/network_gateway.py": "is the gateway",
-    # Holds a google.genai client that builds its own HTTP and cannot be
-    # routed through the gateway. Screened instead at the call site by
-    # APIAdapter._screen_for_egress, which applies the same egress privacy
-    # tiers and refuses the cloud leg rather than send an unscreened prompt.
-    "core/adapters/api_adapter.py": (
-        "vendor SDK builds its own transport; content is screened by "
-        "_screen_for_egress before it is handed to the client"
-    ),
-    # Holds a google.genai client for grounded search and screens the query
-    # with filter_model_prompt before it is sent — a refusal drops the cloud
-    # leg and the local search pipeline answers instead.
-    # (core/skills/grounded_search.py held the same waiver until the module was
-    # retired in 053b0a8ab; the ratchet's own stale-entry check removed it.)
-    "core/brain/react_loop.py": (
-        "vendor SDK for grounded search; query screened by filter_model_prompt, "
-        "refusal falls through to the local Sovereign/DDG pipeline"
-    ),
 }
 
 

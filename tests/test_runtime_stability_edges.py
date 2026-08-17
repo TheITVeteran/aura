@@ -2021,23 +2021,6 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["origin"], "phenomenological_reflection")
         self.assertTrue(kwargs["is_background"])
 
-    async def test_gemini_auth_failure_disables_adapter_without_runtime_degradation(self):
-        import httpx
-
-        from core.brain.llm.gemini_adapter import GeminiAdapter, GeminiProviderUnavailable
-
-        adapter = GeminiAdapter(api_key="test", model="gemini-2.0-flash")
-        response = httpx.Response(
-            403,
-            content=b'{"error":{"status":"PERMISSION_DENIED","message":"API key was reported as leaked"}}',
-        )
-
-        with self.assertRaises(GeminiProviderUnavailable):
-            await adapter._handle_error(response)
-
-        self.assertFalse(adapter.is_available())
-        self.assertIn("provider_auth_failed", adapter.availability_reason())
-
     def test_email_and_reddit_adapters_remain_routable_for_autonomy(self):
         from core.capability_engine import CapabilityEngine
 

@@ -29,7 +29,6 @@ httpx2>=2.4.0
 websocket-client>=1.9.0
 paho-mqtt>=2.1.0
 asyncua>=2.0.1
-google-genai>=1.0.0
 idna>=3.15
 urllib3>=2.7.0
 opencv-python-headless

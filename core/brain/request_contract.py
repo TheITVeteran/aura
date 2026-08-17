@@ -3,9 +3,9 @@
 CP126 raised three criticals against ``core/brain/inference_gate.py`` that
 are one defect seen from three angles:
 
-* "Unauthenticated context flags control proof, foreground, cloud, and model
+* "Unauthenticated context flags control proof, foreground, and model
   -tier policy. Plain context values select benchmark and proof status,
-  protected foreground, deep handoff, cloud fallback, cognitive-engine
+  protected foreground, deep handoff, cognitive-engine
   requirements, and requested tier."
 * "Caller context is copied into provider policy and proof kwargs without
   validation. No per-key type schema, authority source, unknown-field
@@ -17,13 +17,13 @@ The most immediately dangerous half is not the missing authority model —
 it is the missing *types*, because Python's truthiness makes the failure
 silent and inverted::
 
-    context["allow_cloud_fallback"] = "false"   # a string, from a config
-    if context.get("allow_cloud_fallback"):     # → True
-        ...                                     # cloud enabled
+    context["deep_handoff"] = "false"   # a string, from a config
+    if context.get("deep_handoff"):     # → True
+        ...                             # expensive lane enabled
 
 Every policy flag in this context is read with a bare truthiness test, so
 ``"false"``, ``"no"``, ``"off"`` and ``"0"`` all turn the flag ON. A caller
-disabling cloud fallback, or clearing a proof requirement, gets exactly the
+disabling a deep handoff, or clearing a proof requirement, gets exactly the
 opposite of what it asked for, and nothing anywhere reports it.
 
 So this declares what each key is, coerces what can be coerced honestly,
@@ -39,7 +39,7 @@ true only if it says so — ``1/true/yes/on`` — false only if it says so —
 This deliberately stops at types and domains. Binding a request to an
 authenticated principal is a larger change to how callers reach the gate;
 the field table below carries a ``policy`` marker on each key that steers
-proof, tier, cloud or foreground behaviour, so the set that will need an
+proof, tier or foreground behaviour, so the set that will need an
 authority check is enumerated rather than rediscovered.
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ class Kind:
 @dataclass(frozen=True)
 class Field_:
     kind: str
-    #: True when this key steers proof, tier, cloud, foreground or tool
+    #: True when this key steers proof, tier, foreground or tool
     #: policy — i.e. the set that a future authority check must cover.
     policy: bool = False
     minimum: float | None = None
@@ -150,7 +150,9 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "prefer_tier": Field_(Kind.TIER, policy=True),
     "proof_model_tier": Field_(Kind.TIER, policy=True),
     "deep_handoff": Field_(Kind.BOOL, policy=True),
-    "allow_cloud_fallback": Field_(Kind.BOOL, policy=True),
+    # Source compatibility for older callers. Validation forces this false;
+    # no remote model-provider registration or dispatch path exists.
+    "allow_cloud_fallback": Field_(Kind.BOOL),
     "allow_mesh_cognition": Field_(Kind.BOOL, policy=True),
     "allow_tools": Field_(Kind.BOOL, policy=True),
     "is_background": Field_(Kind.BOOL, policy=True),
@@ -196,7 +198,7 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "state": Field_(Kind.OPAQUE),
 }
 
-#: The keys that select proof, tier, cloud, foreground or tool behaviour.
+#: The keys that select proof, tier, foreground or tool behaviour.
 #: Enumerated rather than rediscovered, so the authority work that follows
 #: has a fixed target.
 POLICY_FIELDS: frozenset[str] = frozenset(
@@ -207,8 +209,8 @@ POLICY_FIELDS: frozenset[str] = frozenset(
 def strict_bool(value: Any) -> bool | None:
     """A boolean, or None when the value does not state one.
 
-    ``bool("false")`` is True, which is how a caller disabling cloud
-    fallback enabled it. Nothing here falls back to truthiness.
+    ``bool("false")`` is True, which is how a caller disabling a policy
+    option could enable it. Nothing here falls back to truthiness.
     """
     if isinstance(value, bool):
         return value
@@ -262,6 +264,8 @@ def validate_request_context(
             if on_rejection is not None:
                 on_rejection(key, value, problem)
             continue
+        if key == "allow_cloud_fallback":
+            coerced = False
         result.context[key] = coerced
     if result.rejected or result.unknown:
         logger.warning(

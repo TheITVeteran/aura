@@ -1,7 +1,7 @@
 """
 test_llm_failover_stress.py
 ============================
-Stress test for the 5-tier LLM failover system.
+Stress test for the local LLM failover system.
 
 Uses local async client probes while exercising the full routing logic including:
   - Circuit breaker state transitions (CLOSED -> OPEN -> HALF_OPEN -> CLOSED)
@@ -15,19 +15,9 @@ No live LLM or network calls required.
 """
 from __future__ import annotations
 
-
-import sys
 import time
-from pathlib import Path
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Ensure project root is on sys.path
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.brain.llm_health_router import (
     CircuitState,
@@ -55,10 +45,10 @@ class LLMClientProbe:
         return self.response
 
 
-def _make_router_with_5_tiers() -> tuple:
-    """Build a HealthAwareLLMRouter with 5 probe endpoints spanning the full
+def _make_router_with_local_tiers() -> tuple:
+    """Build a HealthAwareLLMRouter with four local probe endpoints spanning the full
     failover chain: Cortex (primary), Solver (deep), Brainstem (fast),
-    Reflex (emergency fallback), Gemini-Fast (cloud).
+    and Reflex (emergency fallback).
 
     Returns (router, client probes by endpoint name).
     """
@@ -114,18 +104,6 @@ def _make_router_with_5_tiers() -> tuple:
         client=reflex,
     )
 
-    # Tier 5: Gemini-Fast (cloud API)
-    gemini = LLMClientProbe("Gemini cloud response")
-    clients["Gemini-Fast"] = gemini
-    router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-2.0-flash",
-        is_local=False,
-        tier="api_fast",
-        client=gemini,
-    )
-
     return router, clients
 
 
@@ -151,27 +129,25 @@ class TestPrimaryFailureTriggersFlallback:
 
     @pytest.mark.asyncio
     async def test_primary_failure_triggers_fallback(self):
-        router, clients = _make_router_with_5_tiers()
+        router, clients = _make_router_with_local_tiers()
 
         # Open the primary circuit
         _open_circuit(router, "Cortex")
         assert not router.endpoints["Cortex"].is_available()
 
-        # Request with cloud fallback allowed
+        # The retired compatibility flag cannot authorize remote execution.
         result = await router.generate_with_metadata(
             "Hello",
-            prefer_tier="primary",
+            prefer_tier="secondary",
             allow_cloud_fallback=True,
+            deep_handoff=True,
             origin="user",
             skip_runtime_payload=True,
         )
 
         # Should NOT have used Cortex (it's open)
-        # Should have fallen through to cloud (Gemini-Fast) since
-        # primary tier with cloud fallback skips Brainstem for user origin
-        assert result["endpoint"] != "Cortex", (
-            f"Should not route to open Cortex, got endpoint={result['endpoint']}"
-        )
+        assert result["endpoint"] == "Solver"
+        assert result["text"] == "Solver response"
         assert clients["Cortex"].calls == []
 
 
@@ -181,10 +157,10 @@ class TestCascadeFailureReachesEmergency:
 
     @pytest.mark.asyncio
     async def test_cascade_failure_reaches_emergency(self):
-        router, clients = _make_router_with_5_tiers()
+        router, clients = _make_router_with_local_tiers()
 
         # Open circuits on everything except Reflex
-        for name in ["Cortex", "Solver", "Brainstem", "Gemini-Fast"]:
+        for name in ["Cortex", "Solver", "Brainstem"]:
             _open_circuit(router, name)
 
         # Verify only Reflex is available
@@ -205,7 +181,7 @@ class TestCircuitBreakerHalfOpenRecovery:
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_half_open_recovery(self):
-        router, clients = _make_router_with_5_tiers()
+        router, clients = _make_router_with_local_tiers()
 
         ep = router.endpoints["Cortex"]
 
@@ -235,31 +211,29 @@ class TestCircuitBreakerHalfOpenRecovery:
 
 class TestForegroundSkipsBrainstem:
     """Foreground (user-facing) requests should skip the Brainstem tier
-    and route to cloud if primary is down."""
+    and use the explicitly authorized local-deep tier if primary is down."""
 
     @pytest.mark.asyncio
     async def test_foreground_skips_brainstem(self):
-        router, clients = _make_router_with_5_tiers()
+        router, clients = _make_router_with_local_tiers()
 
         # Kill the primary
         clients["Cortex"].error = RuntimeError("Cortex crashed")
 
         result = await router.generate_with_metadata(
             "Hello from user",
-            prefer_tier="primary",
+            prefer_tier="secondary",
             origin="user",
             allow_cloud_fallback=True,
+            deep_handoff=True,
             skip_runtime_payload=True,
         )
 
         # Brainstem should NOT have been called for a foreground request
         assert clients["Brainstem"].calls == []
 
-        # Should have fallen to Gemini-Fast (cloud)
-        assert result["endpoint"] == "Gemini-Fast", (
-            f"Expected Gemini-Fast fallback, got {result['endpoint']}"
-        )
-        assert result["text"] == "Gemini cloud response"
+        assert result["endpoint"] == "Solver"
+        assert result["text"] == "Solver response"
 
 
 class TestEmptyResponseCountsAsFailure:
@@ -294,7 +268,7 @@ class TestEmptyResponseCountsAsFailure:
         assert ep.empty_responses == 0
 
         # Record empty responses up to threshold
-        for i in range(3):
+        for _ in range(3):
             ep.record_empty()
 
         assert ep.empty_responses == 3
@@ -361,7 +335,7 @@ async def test_generate_with_metadata_does_not_boot_optional_heavy_services(monk
     ServiceContainer.register("liquid_substrate", _trap_factory("liquid_substrate"), required=False)
     ServiceContainer.register("soma", _trap_factory("soma"), required=False)
 
-    router, _clients = _make_router_with_5_tiers()
+    router, _clients = _make_router_with_local_tiers()
 
     result = await router.generate_with_metadata(
         "Hello",

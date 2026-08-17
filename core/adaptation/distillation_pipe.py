@@ -1,9 +1,9 @@
-"""core/adaptation/distillation_pipe.py — Teacher-Model Knowledge Distillation
+"""core/adaptation/distillation_pipe.py — Local Teacher Knowledge Distillation
 
-Uses Aura's configured deep-teacher path first, then falls back to a local
-secondary model when the preferred teacher lane is unavailable. When the local
-runtime produces a low-confidence response, this pipeline:
-1. Queries the configured teacher path for an improved answer
+Uses Aura's local deep lane first, then falls back to the resident local model
+when the preferred teacher lane is unavailable. When the runtime produces a
+low-confidence response, this pipeline:
+1. Queries the local teacher path for an improved answer
 2. Writes the audited (prompt, response) pair to ``lora_dataset.jsonl``
 3. Records teacher provenance so later evaluation can distinguish sources
 
@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core.config import config
 from core.health.degraded_events import record_degraded_event
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -67,46 +66,8 @@ def _record_distillation_degradation(
     )
 
 
-def _cloud_teacher_allowed() -> bool:
-    """May the owner's own conversations be sent to a cloud teacher?
-
-    Defaults to False. A config read that fails answers False too, so a
-    broken config cannot quietly start exporting transcripts — the local
-    secondary teacher below still trains the adapter, just without a third
-    party in the loop.
-    """
-    try:
-        from core.config import get_config
-
-        return bool(
-            getattr(get_config().security, "allow_cloud_teacher_distillation", False)
-        )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        _record_distillation_degradation(
-            exc,
-            action="kept distillation on the local teacher after config read failed",
-            severity="debug",
-        )
-        return False
-
-
 class DistillationPipe:
-    """Queries the CONFIGURED teacher path for ideal responses and appends the
-    audited pair to the LoRA dataset.
-
-    Not Gemini-specific: the teacher is whatever ``config.llm.teacher_model``
-    names, with a local secondary lane as fallback. The old docstring named one
-    cloud provider, which misrepresented both the trust boundary and where data
-    actually goes.
-
-    Where it goes now: on-device by default. The teacher prompt embeds the
-    owner's original prompt verbatim, so this pipe learns from real
-    conversations, and the deep-teacher call used to pass
-    ``allow_cloud_fallback=True`` unconditionally — making a third party the
-    FIRST choice for reading the owner's turns and the local lane the
-    fallback. That is inverted: ``security.allow_cloud_teacher_distillation``
-    gates the cloud leg and defaults to False.
-    """
+    """Queries local teacher lanes and appends audited pairs to the LoRA dataset."""
 
     def __init__(self, dataset_path: str | None = None):
         from core.brain.llm.model_registry import BASE_DIR
@@ -132,9 +93,7 @@ class DistillationPipe:
         self._queue_lock = asyncio.Lock()
         self._total_distilled = 0
         self._max_attempts = 3
-        self.teacher_target = str(
-            getattr(config.llm, "teacher_model", "deep_teacher") or "deep_teacher"
-        )
+        self.teacher_target = "local_deep"
         logger.info("🧪 DistillationPipe initialized (dataset: %s)", self.dataset_path)
 
     async def flag_for_distillation(
@@ -179,27 +138,18 @@ class DistillationPipe:
         return str(result).strip()
 
     async def _get_teacher_response(self, brain: Any, teacher_prompt: str) -> tuple[str, str, str]:
-        """Prefer the configured deep-teacher path, then fall back to a local secondary lane."""
+        """Prefer the local deep lane, then fall back to the resident local lane."""
         from core.brain.types import ThinkingMode
 
-        # The teacher prompt embeds the owner's ORIGINAL PROMPT verbatim —
-        # this pipe learns from real conversations. Extraction from the
-        # owner's own turns therefore defaults to on-device, and the cloud
-        # teacher is opt-in rather than the first choice.
-        #
-        # The egress privacy boundary strips credentials and personal
-        # identifiers from anything that does reach a provider, but that is a
-        # filter on the leak, not a decision about the substance: a redacted
-        # transcript of the owner's work is still the owner's work, sitting in
-        # somebody else's log line so that a LoRA could be trained on it.
-        allow_cloud_teacher = _cloud_teacher_allowed()
+        # The prompt embeds the owner's original turn. Both teacher attempts
+        # therefore remain inside Aura's managed local model boundary.
         try:
             thought = await brain.think(
                 objective=teacher_prompt,
                 context={
                     "history": [],
                     "teacher_target": self.teacher_target,
-                    "allow_cloud_fallback": allow_cloud_teacher,
+                    "allow_cloud_fallback": False,
                 },
                 mode=ThinkingMode.DEEP,
                 priority=0.3,
@@ -215,11 +165,11 @@ class DistillationPipe:
                 or self.teacher_target
             )
             if content:
-                return content, teacher, "configured_deep_teacher"
+                return content, teacher, "local_deep_teacher"
         except (OSError, ConnectionError, TimeoutError) as exc:
             _record_distillation_degradation(
                 exc,
-                action="Fell back from configured teacher to local secondary teacher",
+                action="Fell back from local deep teacher to resident local teacher",
                 extra={"teacher_target": self.teacher_target},
             )
             record_degraded_event(
@@ -238,18 +188,18 @@ class DistillationPipe:
             if router and hasattr(router, "think"):
                 response = await router.think(
                     prompt=teacher_prompt,
-                    prefer_tier="secondary",
+                    prefer_tier="primary",
                     origin="distillation_teacher",
                     is_background=True,
                     allow_cloud_fallback=False,
                 )
                 content = self._extract_teacher_content(response)
                 if content:
-                    return content, "local_secondary_teacher", "local_secondary_fallback"
+                    return content, "resident_local_teacher", "resident_local_fallback"
         except (ImportError, AttributeError, RuntimeError) as exc:
             _record_distillation_degradation(
                 exc,
-                action="Returned teacher_unavailable after local secondary teacher fallback failed",
+                action="Returned teacher_unavailable after resident local teacher fallback failed",
                 extra={"teacher_target": self.teacher_target},
             )
             record_degraded_event(

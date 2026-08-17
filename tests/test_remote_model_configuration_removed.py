@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from core.brain.llm_health_router import HealthAwareLLMRouter
 from core.config import LLMConfig, SecurityConfig
 from core.runtime.settings_schema import (
     DEFAULT_VALUES,
@@ -61,6 +62,58 @@ def test_first_run_wizard_has_no_remote_model_control():
     assert "cloud_fallback" not in source
     assert "cloud provider" not in source
     assert "available local model lanes" in source
+
+
+def test_retired_provider_implementation_and_offload_router_are_absent():
+    assert not (ROOT / "core/brain/llm/gemini_adapter.py").exists()
+    assert not (ROOT / "core/brain/llm/cloud_errors.py").exists()
+    assert not (ROOT / "core/brain/compute_router.py").exists()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ("pyproject.toml", "requirements.txt", "requirements/core.txt", "requirements_lock.txt"),
+)
+def test_dependency_manifests_do_not_install_the_retired_provider(relative_path):
+    content = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+    assert "google-genai" not in content
+    assert "google.genai" not in content
+
+
+def test_health_router_rejects_every_remote_model_endpoint():
+    router = HealthAwareLLMRouter()
+
+    with pytest.raises(ValueError, match="remote model providers are not supported"):
+        router.register(
+            name="external",
+            url="https://model-provider.invalid/v1",
+            model="external-model",
+            is_local=False,
+            tier="api_fast",
+        )
+
+    assert router.endpoints == {}
+
+
+def test_active_model_provider_modules_have_no_retired_sdk_or_secret_surface():
+    provider_paths = (
+        "core/adapters/api_adapter.py",
+        "core/brain/inference_gate.py",
+        "core/brain/llm/autonomous_brain_integration.py",
+        "core/brain/llm_health_router.py",
+        "core/adaptation/distillation_pipe.py",
+    )
+    forbidden = ("google.genai", "google_genai", "gemini_api_key", "geminiadapter")
+
+    for relative_path in provider_paths:
+        content = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+        assert all(token not in content for token in forbidden), relative_path
+
+
+def test_system_api_has_no_remote_model_usage_endpoint():
+    source = (ROOT / "interface/routes/system.py").read_text(encoding="utf-8")
+    assert '"/gemini-usage"' not in source
+    assert "get_gemini_usage" not in source
 
 
 @pytest.mark.parametrize(

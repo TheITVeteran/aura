@@ -386,7 +386,6 @@ def test_memory_monitor_uses_resource_observer_pressure_sample(resource_observer
 
 def test_health_router_prefers_existing_inference_gate(monkeypatch):
     sentinel_gate = object()
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(
         ServiceContainer,
         "get",
@@ -402,7 +401,6 @@ def test_health_router_prefers_existing_inference_gate(monkeypatch):
 @pytest.mark.asyncio
 async def test_lazy_local_client_initializes_off_event_loop(monkeypatch):
     sentinel_gate = object()
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(
         ServiceContainer,
         "get",

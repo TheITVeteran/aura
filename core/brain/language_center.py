@@ -24,11 +24,11 @@ It IS told:
   - Express this naturally.
 
 Model routing:
-  "local"    → MLX (fast, cheap, expression of simple thoughts)
-  "api_fast" → Claude Haiku / Gemini Flash (moderate complexity)
-  "api_deep" → Claude Sonnet / Gemini Pro (creative, philosophical, extended)
+  "local"    → resident MLX Cortex
+  "api_fast" → compatibility label for the local fast lane
+  "api_deep" → compatibility label for the local deep Solver lane
 
-Falls back gracefully: api_deep → api_fast → local → pattern fallback.
+Falls back through managed local lanes, then the deterministic pattern path.
 """
 
 from __future__ import annotations
@@ -415,7 +415,7 @@ class LanguageCenter:
         if not self._router:
             return ""
 
-        tier = thought.model_tier  # Router now handles 'api_deep', 'api_fast', 'local' via mapping
+        tier = thought.model_tier  # Legacy API tier labels map to local lanes.
         temperature = self._select_temperature(thought)
         max_tokens  = self._select_max_tokens(thought)
 

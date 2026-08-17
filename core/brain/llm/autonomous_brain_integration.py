@@ -1,8 +1,8 @@
 """Autonomous Cognitive Engine.
-Unifies the 3-tier brain architecture:
-Tier 1: Local Titan Agent (PRIMARY)
-Tier 2: Backup Local Brain
-Tier 3: OpenAI (Relegated to fallback/research)
+Unifies Aura's managed local brain architecture:
+Tier 1: Resident Cortex (PRIMARY)
+Tier 2: On-demand local Solver
+Tier 3: Local Brainstem and Reflex recovery
 
 Drives the Mind/Body connection.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -22,7 +21,6 @@ from core.container import get_container
 from core.runtime import service_access
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
-from core.utils.exceptions import capture_and_log
 
 from .function_calling_adapter import FunctionCallingAdapter
 from .llm_router import IntelligentLLMRouter, LLMEndpoint, LLMTier
@@ -61,10 +59,6 @@ MAX_TURNS = 25
 DEFAULT_AGENTIC_DEADLINE_S = 300.0
 MAX_AGENTIC_DEADLINE_S = 1800.0
 
-#: Endpoints that leave this machine. Name-prefix matching is deliberate: a new
-#: cloud adapter must be added here to be routable at all.
-CLOUD_ENDPOINT_PREFIXES = ("Gemini", "OpenAI", "Anthropic", "Claude", "GPT")
-
 #: Per-lane concurrency limits. CP126 25ec2c1d: a single semaphore of eight
 #: guarded only the direct agentic call, so background, deep, fast and fallback
 #: router calls ran outside any arbitration and could exceed the high-RAM
@@ -87,12 +81,11 @@ _DEGRADATION_KINDS: dict[str, tuple[FallbackClassification, bool]] = {
     "capability_loss": (FallbackClassification.SILENT_LOSS_OF_CAPABILITY, True),
     # Routing chose, or failed to choose, under uncertainty.
     "routing": (FallbackClassification.SILENT_LOSS_OF_CAPABILITY, True),
-    # The cloud opt-out, the proof lane, or tool authority WITHHELD something.
+    # A proof lane or tool authority WITHHELD something.
     # Deliberately not GOVERNANCE_BYPASS: record_degradation treats that
     # classification as fail-closed and RAISES CapabilityDenied regardless of
-    # enforce_failure_policy. A cloud endpoint refused because the user opted
-    # out is the control working correctly — turning it into an exception would
-    # take down a turn that the policy just handled. A bypass is when the
+    # enforce_failure_policy. A working control must not become an exception
+    # that takes down the turn. A bypass is when the
     # control did NOT hold; nothing in this module can do that.
     "policy": (FallbackClassification.SILENT_LOSS_OF_CAPABILITY, True),
     # A defect in this module's own contract.
@@ -182,12 +175,6 @@ def bounded_deadline(value: Any) -> float:
     if deadline != deadline or deadline <= 0 or deadline == float("inf"):
         return DEFAULT_AGENTIC_DEADLINE_S
     return min(MAX_AGENTIC_DEADLINE_S, deadline)
-
-
-def is_cloud_endpoint(name: Any) -> bool:
-    """Whether routing to ``name`` sends the prompt off this machine."""
-    text = str(name or "")
-    return any(text.startswith(prefix) for prefix in CLOUD_ENDPOINT_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -501,11 +488,10 @@ class AutonomousCognitiveEngine:
         v6.0 "The Unshackling" — M5 Pro 64GB Local-First Architecture
         - Cortex (32B): Primary local brain for daily use
         - Solver (72B): Hot-swap deep solver for complex tasks
-        - Gemini: Cloud teacher/oracle for distillation and fallback
         - Brainstem (7B): Background tasks, heartbeat, cheap calls
         - Reflex (1.5B): Emergency CPU-friendly last resort
 
-        Strategy: Local models are PRIMARY. Cloud is SECONDARY (teacher).
+        Strategy: every inference lane is local.
         Cortex and Solver hot-swap instead of staying resident together.
         Brainstem can co-exist with the active foreground lane when resources allow.
         """
@@ -613,106 +599,6 @@ class AutonomousCognitiveEngine:
                     extra={"endpoint": DEEP_ENDPOINT, "model": DEEP_MODEL},
                 )
                 logger.error("Failed to register %s pathway: %s", DEEP_ENDPOINT, e)
-
-        # ── CLOUD SECONDARY: Gemini (Teacher/Oracle for distillation) ──
-        gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        if not gemini_key:
-            try:
-                from pathlib import Path
-                env_path = Path(__file__).resolve().parents[3] / ".env"
-                if env_path.exists():
-                    for line in env_path.read_text().splitlines():
-                        if line.startswith("GEMINI_API_KEY="):
-                            gemini_key = line.split("=", 1)[1].strip()
-                            break
-            except BRAIN_RECOVERABLE_ERRORS as e:
-                _record_brain_degradation(
-                    e,
-                    action="continued local-first initialization without Gemini key from dotenv file",
-                    severity="debug",
-                )
-                capture_and_log(e, {'module': __name__})
-        
-        # CP126 4771bf45: possession of an API key was treated as permission to
-        # use it. Gemini endpoints were registered whenever a key existed, and
-        # the user's cloud setting was consulted only much later, as advisory
-        # metadata on a call whose candidate list already named those
-        # endpoints. The setting is authoritative, so it gates REGISTRATION —
-        # an endpoint that must not be used is an endpoint that must not exist
-        # in the router at all.
-        cloud_permitted = bool(get_runtime_setting("model.cloud_fallback_enabled", False))
-        if gemini_key and not cloud_permitted:
-            logger.info(
-                "☁️ Cloud teacher endpoints NOT registered: model.cloud_fallback_enabled is off"
-            )
-
-        if primary_proof_lane and gemini_key:
-            logger.info("🛡️ Proof-primary lane active — cloud teacher endpoints are not registered.")
-        elif (
-            allow_non_primary_tiers
-            and cloud_permitted
-            and gemini_key
-            and "Gemini-Fast" not in getattr(self.llm_router, "endpoints", {})
-        ):
-            try:
-                from .gemini_adapter import DailyRateLimiter, GeminiAdapter
-                
-                state_path = str(config.paths.data_dir / "gemini_rate_state.json")
-                shared_limiter = DailyRateLimiter(state_path=state_path)
-                
-                # Gemini Flash — Teacher/distillation fast path
-                flash_client = GeminiAdapter(
-                    api_key=gemini_key,
-                    model=GeminiAdapter.CHAT_MODEL,
-                    rate_limiter=shared_limiter,
-                    timeout=60.0,
-                )
-                self.llm_router.register_endpoint(LLMEndpoint(
-                    name="Gemini-Fast",
-                    tier=LLMTier.SECONDARY,
-                    model_name=GeminiAdapter.CHAT_MODEL,
-                    client=flash_client,
-                ))
-                logger.info("☁️ SECONDARY Tier registered: Gemini Flash (Teacher/Fallback)")
-
-                # Gemini Thinking — Teacher deep reasoning
-                thinking_client = GeminiAdapter(
-                    api_key=gemini_key,
-                    model=GeminiAdapter.THINKING_MODEL,
-                    rate_limiter=shared_limiter,
-                    timeout=180.0,
-                )
-                self.llm_router.register_endpoint(LLMEndpoint(
-                    name="Gemini-Thinking",
-                    tier=LLMTier.SECONDARY,
-                    model_name=GeminiAdapter.THINKING_MODEL,
-                    client=thinking_client,
-                ))
-                logger.info("☁️ SECONDARY Tier registered: Gemini Thinking (Teacher/Deep Fallback)")
-                
-                # Gemini Pro — Stable deep fallback
-                pro_client = GeminiAdapter(
-                    api_key=gemini_key,
-                    model=GeminiAdapter.DEEP_MODEL,
-                    rate_limiter=shared_limiter,
-                    timeout=120.0,
-                )
-                self.llm_router.register_endpoint(LLMEndpoint(
-                    name="Gemini-Pro",
-                    tier=LLMTier.SECONDARY,
-                    model_name=GeminiAdapter.DEEP_MODEL,
-                    client=pro_client,
-                ))
-                logger.info("☁️ SECONDARY Tier registered: Gemini Pro (Teacher/Oracle)")
-                
-            except BRAIN_RECOVERABLE_ERRORS as e:
-                _record_brain_degradation(
-                    e,
-                    action="continued local-first operation without Gemini teacher adapters",
-                )
-                logger.warning("Failed to initialize Gemini adapters: %s", e)
-        elif not gemini_key:
-            logger.info("No GEMINI_API_KEY found — running fully local (teacher disabled)")
 
         # ── LOCAL TERTIARY: Brainstem (7B) — Background/heartbeat ──
         if allow_non_primary_tiers and brainstem_model_path and BRAINSTEM_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):
@@ -855,15 +741,7 @@ class AutonomousCognitiveEngine:
         if not system_prompt:
             system_prompt = self._default_system_prompt()
 
-        # The user's model.cloud_fallback_enabled (default off) is
-        # authoritative: even a caller that requests cloud fallback cannot
-        # route off-box unless the user permits it, and safe mode withdraws it
-        # regardless. (docs/SETTINGS_WIRING_AUDIT.md)
-        allow_cloud = (
-            bool(kwargs.get("allow_cloud_fallback", False))
-            and bool(get_runtime_setting("model.cloud_fallback_enabled", False))
-            and not safe_mode
-        )
+        allow_cloud = False
         deep_handoff = bool(kwargs.get("deep_handoff") or kwargs.get("allow_deep_handoff"))
         if deep_handoff and measured_unhealthy:
             logger.info("🛟 Ill health measured: deep handoff withheld (%s)", stability_basis)
@@ -929,14 +807,7 @@ class AutonomousCognitiveEngine:
     # Endpoint selection
     # ------------------------------------------------------------------
     def _select_endpoints(self, request: ThinkRequest) -> dict[str, Any]:
-        """Choose candidate endpoints under the request's cloud authority.
-
-        CP126 ed70915c: the fast and deep candidate lists named Gemini
-        endpoints regardless of allow_cloud_fallback, and then passed those
-        names as prefer_endpoint while telling the router cloud fallback was
-        false — two contradictory authority signals in one call. Cloud
-        endpoints are filtered out of selection BEFORE a name is chosen.
-        """
+        """Choose candidates from the router's local-only endpoint registry."""
         from .model_registry import (
             BRAINSTEM_ENDPOINT,
             DEEP_ENDPOINT,
@@ -953,8 +824,6 @@ class AutonomousCognitiveEngine:
 
         def _pick(names: list[str]):
             for name in names:
-                if is_cloud_endpoint(name) and not request.allow_cloud:
-                    continue
                 endpoint = endpoints.get(name)
                 if endpoint is None or not _endpoint_is_usable(endpoint):
                     continue
@@ -962,17 +831,17 @@ class AutonomousCognitiveEngine:
                     return endpoint
             return None
 
-        selection["fast"] = _pick([PRIMARY_ENDPOINT, "Gemini-Fast", "Chat-Fast", BRAINSTEM_ENDPOINT])
+        selection["fast"] = _pick([PRIMARY_ENDPOINT, BRAINSTEM_ENDPOINT])
         # CP126 a170e6db: the background branch fell back to a CALLER-supplied
         # endpoint when no healthy background endpoint was found, while still
-        # labelling the request tertiary and cloud-disabled — a foreground or
-        # cloud endpoint could be driven under a background receipt. The
+        # labelling the request tertiary. A foreground endpoint could be
+        # driven under a background receipt. The
         # background lane is an allowlist now.
         selection["background"] = _pick([BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT])
-        selection["deep"] = _pick([DEEP_ENDPOINT, "Gemini-Thinking", "Gemini-Pro"])
+        selection["deep"] = _pick([DEEP_ENDPOINT, PRIMARY_ENDPOINT])
         # CP126 af6a3b7d: the agentic endpoint was the first entry in
         # DICTIONARY ORDER exposing think_and_act — no tier, no locality, no
-        # cloud setting, no model identity. Tool-bearing work could therefore
+        # model identity. Tool-bearing work could therefore
         # execute through an unintended endpoint. Agentic execution is
         # restricted to the declared local agentic tiers, in preference order.
         for name in _LOCAL_AGENTIC_ALLOWLIST(PRIMARY_ENDPOINT, DEEP_ENDPOINT, BRAINSTEM_ENDPOINT):
@@ -987,28 +856,16 @@ class AutonomousCognitiveEngine:
 
         if selection["fast"] is None:
             for name, endpoint in endpoints.items():
-                if is_cloud_endpoint(name) and not request.allow_cloud:
-                    continue
                 if endpoint.tier == LLMTier.PRIMARY and _endpoint_is_usable(endpoint):
                     selection["fast"] = endpoint
                     break
         return selection
 
     def _authorized_endpoint(self, request: ThinkRequest, name: Any) -> str | None:
-        """Reject an explicit endpoint the request has no authority for."""
+        """Normalize an explicit endpoint; registration owns locality."""
         if not name:
             return None
-        text = str(name)
-        if is_cloud_endpoint(text) and not request.allow_cloud:
-            _record_brain_degradation(
-                PermissionError(f"cloud endpoint '{text}' requested without cloud authority"),
-                action="ignored an explicit cloud endpoint; the user's cloud setting is off",
-                kind="policy",
-                severity="warning",
-                extra={"endpoint": text, "request": request.ref},
-            )
-            return None
-        return text
+        return str(name)
 
     # ------------------------------------------------------------------
     # The thinking cycle
@@ -1265,7 +1122,7 @@ class AutonomousCognitiveEngine:
             "confidence_basis": "unmeasured: this layer runs no verifier",
             "safe_mode": request.safe_mode,
             "stability_basis": request.stability_basis,
-            "cloud_permitted": request.allow_cloud,
+            "remote_model_provider_available": False,
             "request": request.ref,
         }
 

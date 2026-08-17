@@ -92,7 +92,6 @@ def router_clients():
         "cortex": EndpointClient("32B response"),
         "solver": EndpointClient("72B response"),
         "brainstem": EndpointClient("7B response"),
-        "api": EndpointClient("API response"),
     }
     router.register(
         name="Cortex",
@@ -118,14 +117,6 @@ def router_clients():
         tier="local_fast",
         client=clients["brainstem"],
     )
-    router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-2.0-flash",
-        is_local=False,
-        tier="api_fast",
-        client=clients["api"],
-    )
     return router, clients
 
 
@@ -133,11 +124,6 @@ def router_clients():
 async def test_primary_tier_excludes_solver_lane(router_clients):
     router, clients = router_clients
     clients["cortex"].failure = RuntimeError("32B failed")
-    # Authorized cloud recovery now expands on ANY local foreground failure, so
-    # fail the cloud lane too and isolate the property this test names: the
-    # local deep SOLVER lane is never admitted for a primary-tier request.
-    clients["api"].failure = RuntimeError("API failed")
-
     result = await router.generate_with_metadata("Hello", prefer_tier="primary")
 
     assert result["endpoint"] == "all_failed"
@@ -163,8 +149,6 @@ async def test_secondary_tier_requires_explicit_deep_handoff(router_clients):
 async def test_no_tier_preference_defaults_to_primary_without_solver(router_clients):
     router, clients = router_clients
     clients["cortex"].failure = RuntimeError("32B failed")
-    clients["api"].failure = RuntimeError("API failed")
-
     result = await router.generate_with_metadata("Hello")
 
     assert result["endpoint"] == "all_failed"
@@ -318,25 +302,23 @@ async def test_compatibility_reflex_endpoint_is_local_and_excluded_from_cloud_on
     )
 
     assert result["ok"] is False
-    assert result["endpoint"] == "all_failed"
+    assert result["endpoint"] == "remote_provider_removed"
+    assert result["error"] == "remote_model_provider_removed"
     assert reflex.calls == []
 
 
-@pytest.mark.asyncio
-async def test_foreground_primary_skips_brainstem_and_uses_cloud_fallback(router_clients):
-    router, clients = router_clients
-    clients["cortex"].failure = RuntimeError("32B failed")
+def test_remote_endpoint_registration_is_impossible():
+    router = HealthAwareLLMRouter()
 
-    result = await router.generate_with_metadata(
-        "Hello",
-        prefer_tier="primary",
-        origin="user",
-        allow_cloud_fallback=True,
-    )
-
-    assert result["endpoint"] == "Gemini-Fast"
-    assert result["text"] == "API response"
-    assert clients["brainstem"].calls == []
+    with pytest.raises(ValueError, match="remote_model_provider_removed"):
+        router.register(
+            name="Remote",
+            url="https://model.invalid",
+            model="remote-model",
+            is_local=False,
+            tier="api_fast",
+            client=EndpointClient("must never run"),
+        )
 
 
 @pytest.mark.asyncio

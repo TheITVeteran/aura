@@ -657,14 +657,6 @@
       "scope": "<module>.SubstrateLogitProjection.save"
     },
     {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/brain/llm/gemini_adapter.py",
-      "scope": "<module>.DailyRateLimiter._save_state"
-    },
-    {
       "callee": "self._custody.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -3593,14 +3585,6 @@
       "scope": "<module>.IdentityService.save"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/brain/llm/gemini_adapter.py",
-      "scope": "<module>.DailyRateLimiter.__init__"
-    },
-    {
       "callee": "<file_write_gateway>.append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -6343,14 +6327,6 @@
       "count": 1,
       "path": "core/autonomy/content_fetcher.py",
       "scope": "<module>.ContentFetcher._web_html"
-    },
-    {
-      "callee": "core.runtime.network_gateway.get_network_gateway().request",
-      "canonical_owner": false,
-      "category": "network_gateway",
-      "count": 1,
-      "path": "core/brain/llm/gemini_adapter.py",
-      "scope": "<module>.GeminiAdapter._post_json"
     },
     {
       "callee": "core.runtime.network_gateway.get_network_gateway().request",
@@ -15978,6 +15954,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "987f06ae0da2aa4e01db918078fa48868972ee266e9a13da1c3f29e5e38af009",
+  "inventory_sha256": "07dad1cc418820d54c3f5efc31583590fc766b4e6756421f91541a0b1c4f99a5",
   "schema_version": 1
 }

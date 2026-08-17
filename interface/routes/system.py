@@ -40,7 +40,6 @@ from core.runtime.health_contract import (
     required_probe_groups_pass,
 )
 from core.runtime.launch_provenance import (
-    RUNTIME_SHELL_ASSETS as _RUNTIME_REVISION_SHELL_ASSETS,
     capture_runtime_shell_assets as _capture_runtime_shell_assets,
     runtime_shell_assets_sha256 as _runtime_shell_assets_sha256,
 )
@@ -4274,28 +4273,6 @@ async def user_engagement_status(request: Request):
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         return JSONResponse({"error": str(e)}, status_code=200)
-
-
-@router.get("/gemini-usage")
-async def gemini_usage(request: Request):
-    """Return daily Gemini API usage stats."""
-    _require_internal(request)
-    try:
-        from core.brain.llm.gemini_adapter import DailyRateLimiter
-        orch = ServiceContainer.get("orchestrator", default=None)
-        if orch and hasattr(orch, 'cognitive_engine'):
-            brain = getattr(orch.cognitive_engine, 'brain', None) or getattr(orch.cognitive_engine, '_brain', None)
-            if brain and hasattr(brain, 'llm_router'):
-                for _name, adapter in brain.llm_router.adapters.items():
-                    if hasattr(adapter, 'rate_limiter'):
-                        return JSONResponse(adapter.rate_limiter.get_usage())
-        from core.config import config
-        state_path = str(config.paths.data_dir / "gemini_rate_state.json")
-        limiter = DailyRateLimiter(state_path=state_path)
-        return JSONResponse(limiter.get_usage())
-    except _SYSTEM_RECOVERABLE_ERRORS as e:
-        record_degradation('system', e)
-        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 async def _collect_api_health_payload(

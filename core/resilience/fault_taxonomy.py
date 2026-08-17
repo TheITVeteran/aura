@@ -398,13 +398,13 @@ class FaultRegistry:
                 runbook="docs/runbooks/shutdown-hang.md",
             ),
             FaultDefinition(
-                fault_id="F05", name="Cloud fallback privacy leak",
-                description="Misconfigured privacy classification",
+                fault_id="F05", name="External-service egress privacy leak",
+                description="Sensitive content crosses an external service boundary",
                 domain=FaultDomain.SECURITY, severity=FaultSeverity.CATASTROPHIC,
                 probability=FaultProbability.IMPROBABLE, detection=DetectionDifficulty.MODERATE,
                 recovery=RecoveryStrategy.QUARANTINE, mttr_seconds=60,
-                blast_radius="Sensitive data sent to cloud provider",
-                runbook="docs/runbooks/cloud-provider.md",
+                blast_radius="Sensitive data sent to an external service",
+                runbook="docs/runbooks/external-egress.md",
             ),
             FaultDefinition(
                 fault_id="F06", name="Prompt injection succeeds",

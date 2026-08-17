@@ -7,7 +7,6 @@ routing, cache identity, tool authorization, and stream atomicity.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 
 import pytest
@@ -49,7 +48,7 @@ class TestEndpointModel:
                 endpoint_url="https://models.example.test/generate",
             )
         with pytest.raises(ValueError, match="remote_model_provider_removed"):
-            LLMEndpoint(name="Gemini-Fast", tier=LLMTier.SECONDARY)
+            LLMEndpoint(name="Remote-Fast", tier=LLMTier.SECONDARY)
 
 
 class TestHealthMonitor:
@@ -158,9 +157,9 @@ class TestLocalEndpointInvariant:
     @staticmethod
     def _stale_remote_endpoint() -> LLMEndpoint:
         return LLMEndpoint.model_construct(
-            name="Gemini-Fast",
+            name="Remote-Fast",
             tier=LLMTier.SECONDARY,
-            endpoint_url="https://generativelanguage.googleapis.com/v1beta/models",
+            endpoint_url="https://models.example.test/v1/generate",
             egress="cloud",
         )
 
@@ -171,20 +170,20 @@ class TestLocalEndpointInvariant:
         with pytest.raises(ValueError, match="remote_model_provider_removed"):
             router.register_endpoint(remote)
 
-        assert "Gemini-Fast" not in router.endpoints
+        assert "Remote-Fast" not in router.endpoints
 
     def test_selection_omits_stale_remote_registry_entry(self):
         router = _bare_router()
         router.register_endpoint(LLMEndpoint(name="Local-L", tier=LLMTier.PRIMARY))
-        router.endpoints["Gemini-Fast"] = self._stale_remote_endpoint()
+        router.endpoints["Remote-Fast"] = self._stale_remote_endpoint()
 
         ordered = router._get_ordered_endpoints(
             prefer_tier=LLMTier.PRIMARY,
-            prefer_endpoint="Gemini-Fast",
+            prefer_endpoint="Remote-Fast",
         )
 
         assert ordered[0] == "Local-L"
-        assert "Gemini-Fast" not in ordered
+        assert "Remote-Fast" not in ordered
 
 
 class TestRequestBudget:

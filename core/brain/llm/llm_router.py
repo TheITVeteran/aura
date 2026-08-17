@@ -289,10 +289,7 @@ class LLMEndpoint(BaseModel):
 
 _REMOTE_IDENTITY_MARKERS = (
     "cloud",
-    "gemini",
-    "generativelanguage.googleapis.com",
-    "google.generativeai",
-    "google.genai",
+    "remote",
 )
 _LOCAL_NETWORK_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 

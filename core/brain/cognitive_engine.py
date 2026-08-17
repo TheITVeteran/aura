@@ -3555,14 +3555,14 @@ class CognitiveEngine:
                     "Do not include any conversational preamble."
                 )
                 recovery_tier = proof_model_tier() if is_test_run else "primary"
-                # Force cloud fallback for last-resort recovery
+                # Last-resort recovery remains on the selected local lane.
                 content = await router.think(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": objective}
                     ],
                     origin=f"recovery_{origin}",
-                    allow_cloud_fallback=not is_test_run,
+                    allow_cloud_fallback=False,
                     prefer_tier=recovery_tier,
                     protected_foreground_lane=recovery_tier == "primary",
                     proof_primary_lane_required=is_test_run and recovery_tier == "primary",
@@ -4969,10 +4969,10 @@ class CognitiveEngine:
             reasoning=[
                 "Desktop quick reply used the governed primary router through CognitiveEngine.",
                 (
-                    "The compact path disabled deep handoff, cloud fallback, and prompt-cache reuse; "
+                    "The compact path disabled deep handoff and prompt-cache reuse; "
                     "live mind context was embedded without duplicating the heavyweight runtime payload."
                     if live_runtime_required
-                    else "The compact path disabled deep handoff, cloud fallback, runtime payload, and prompt-cache reuse."
+                    else "The compact path disabled deep handoff, runtime payload, and prompt-cache reuse."
                 ),
             ],
             metadata={

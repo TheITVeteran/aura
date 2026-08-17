@@ -38,15 +38,15 @@ CognitiveKernel.evaluate()          ← pure Python, ~2ms
     │  produces: CognitiveBrief (domain, strategy, beliefs, framing)
     │
     ▼
-InnerMonologue.think()              ← ~5ms (local) or ~500ms (API deepening)
+InnerMonologue.think()              ← local cognitive briefing
     │  input: CognitiveBrief
-    │  optionally calls: APIAdapter (api_fast) with structured prompt
+    │  optionally calls: APIAdapter (local compatibility facade)
     │  produces: ThoughtPacket (stance, points, tone, constraints)
     │
     ▼
-LanguageCenter.express()            ← ~800ms (local) or ~1200ms (API)
+LanguageCenter.express()            ← managed local generation
     │  input: ThoughtPacket → to_system_prompt() → full LLM briefing
-    │  routes to: local MLX | Claude Haiku | Claude Sonnet
+    │  routes to: Cortex | local Solver | Brainstem/Reflex recovery
     │  LLM is told WHAT to say. Not asked to figure it out.
     │
     ▼

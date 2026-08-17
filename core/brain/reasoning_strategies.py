@@ -703,7 +703,7 @@ class ReasoningStrategies:
         critique_kwargs["internal_reasoning_stage"] = "critique"
         critique_kwargs["prefer_tier"] = "primary"
         critique_kwargs["deep_handoff"] = False
-        critique_kwargs["allow_cloud_fallback"] = True
+        critique_kwargs["allow_cloud_fallback"] = False
         critique_kwargs["reasoning_timeout_s"] = 90.0
         
         critique_result = await self._generate_text(critique_prompt, **critique_kwargs)

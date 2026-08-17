@@ -6,7 +6,7 @@ for one thing: it never looked at the body. The preflight
 ``data_length`` and ``source`` — a length, not the content. Governance
 decides whether *a* request may be made; nothing decided what was inside it.
 
-So a cloud fallback carrying a whole conversation went out unread. The
+So an outbound request carrying sensitive context could go out unread. The
 redactor in :mod:`core.security.structural_redaction` already knew how to
 find an API key or an email address in nested data, and every audit path in
 the system used it — but it ran on the *record* of a call, never on the call
@@ -71,9 +71,9 @@ from core.security.structural_redaction import (
 
 logger = logging.getLogger("Aura.EgressPrivacy")
 
-#: ``source`` prefixes that mark a request as carrying a turn's context to a
-#: third-party model. Both live callers use it:
-#: ``llm_provider:gemini:<model>`` and ``llm_provider:health_router:<ep>``.
+#: Compatibility prefix for old model-provider egress receipts. No remote
+#: model endpoint can be registered, but retaining the stronger privacy tier
+#: keeps archived or replayed receipts conservative.
 MODEL_PROVIDER_SOURCE_PREFIX = "llm_provider:"
 
 #: Hostname suffixes that name this machine or its local network.
@@ -421,79 +421,6 @@ def filter_outbound_body(
     )
 
 
-def filter_model_prompt(text: str | None, *, provider: str) -> EgressFilterResult:
-    """The same boundary, for a provider SDK that builds its own request.
-
-    ``NetworkGateway`` can only inspect what passes through it, and a vendor
-    client does not. ``core/adapters/api_adapter.py`` holds a
-    ``google.genai`` client and hands it the prompt directly, so the whole
-    turn reached Google over the SDK's own HTTP stack — past governance, past
-    the defensive preflight, past :func:`filter_outbound_body`. A boundary
-    with a second door is a boundary in name only.
-
-    This is that door. Callers pass the text they are about to hand a vendor
-    client; a refusal means send nothing and fall back to local inference.
-    """
-    tier = Tier.FULL if _personal_redaction_enabled() else Tier.CREDENTIALS
-    if not text:
-        return EgressFilterResult(
-            allowed=True,
-            body=None,
-            text=text,
-            tier=tier,
-            inspected=True,
-            reason="empty prompt",
-        )
-    try:
-        patterns = _patterns_for(tier)
-        redacted, changed = redact_text(str(text), patterns=patterns)
-    except (AttributeError, RecursionError, TypeError, ValueError) as exc:
-        record_degradation(
-            "egress_privacy",
-            exc,
-            severity="warning",
-            action=f"refused the {provider} prompt rather than send it uninspected",
-            enforce_failure_policy=False,
-        )
-        _count_refusal()
-        return EgressFilterResult(
-            allowed=False,
-            body=None,
-            text=None,
-            tier=tier,
-            inspected=False,
-            reason=f"prompt redaction failed: {exc}",
-        )
-
-    if not changed:
-        return EgressFilterResult(
-            allowed=True,
-            body=None,
-            text=str(text),
-            tier=tier,
-            inspected=True,
-            reason="nothing sensitive found",
-        )
-
-    kinds = _kinds_in(redacted, patterns)
-    _count_redaction()
-    logger.info(
-        "Egress privacy: stripped %s from a prompt bound for %s",
-        ",".join(sorted(kinds)) or "unclassified content",
-        provider,
-    )
-    return EgressFilterResult(
-        allowed=True,
-        body=None,
-        text=redacted,
-        tier=tier,
-        inspected=True,
-        redactions=1,
-        kinds=tuple(sorted(kinds)),
-        reason="sensitive values stripped before sending",
-    )
-
-
 #: The ``[TOKEN]`` a replacement leaves behind. Pulled out rather than
 #: assumed at the start of the string, because the userinfo replacement is
 #: ``\1[REDACTED_USERINFO]@`` — a prefix test would classify a caught
@@ -593,7 +520,6 @@ __all__ = [
     "Tier",
     "destination_is_local",
     "egress_privacy_counters",
-    "filter_model_prompt",
     "filter_outbound_body",
     "reset_egress_privacy_counters_for_test",
     "tier_for",

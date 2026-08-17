@@ -157,10 +157,14 @@ class ConversationalMomentumEngine:
             thread = self.active_threads[0]
             logger.info("⚡ [MOMENTUM] Proactive burst requested.")
             
-            # Route to fast LLM (Flash) for momentum bursts
+            # Route through the managed local fast lane for momentum bursts.
             llm_router = get_runtime_service("llm_router", default=None)
             if llm_router:
                 prompt = f"Continue the conversation naturally with a tangent or follow-up on: {thread.topic}"
-                response = await llm_router.generate(prompt, model="gemini-3-flash")
+                response = await llm_router.generate(
+                    prompt,
+                    prefer_tier="local_fast",
+                    allow_cloud_fallback=False,
+                )
                 if await self._emit_assistant_expression(response, urgency=2):
                     thread.momentum -= 0.1

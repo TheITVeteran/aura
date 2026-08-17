@@ -68,7 +68,6 @@
     "core/brain/llm/deferral_record.py": 1,
     "core/brain/llm/emergency_override.py": 1,
     "core/brain/llm/expert_adapter_applier.py": 1,
-    "core/brain/llm/gemini_adapter.py": 1,
     "core/brain/llm/latent_cortex/campaign_journal.py": 1,
     "core/brain/llm/latent_cortex/epistemic_state.py": 1,
     "core/brain/llm/latent_cortex/execution_controller.py": 2,

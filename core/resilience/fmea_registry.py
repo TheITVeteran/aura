@@ -193,11 +193,11 @@ class FMEARegistry:
                                  verified=True),
             ]),
             "F05": FMEAEntry(fault_id="F05", mitigations=[
-                MitigationAction("MIT-F05-1", "Privacy classification gate before cloud fallback",
-                                 automated=True, implementation_path="core/brain/llm/provider_contract.py",
+                MitigationAction("MIT-F05-1", "Privacy inspection at the governed network boundary",
+                                 automated=True, implementation_path="core/security/egress_privacy.py",
                                  verified=True),
-                MitigationAction("MIT-F05-2", "Cloud fallback audit log",
-                                 automated=True, implementation_path="core/audit/audit_logger.py",
+                MitigationAction("MIT-F05-2", "Governed egress receipt and audit trail",
+                                 automated=True, implementation_path="core/runtime/network_gateway.py",
                                  verified=True),
             ]),
             "F06": FMEAEntry(fault_id="F06", mitigations=[

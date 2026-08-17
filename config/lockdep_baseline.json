@@ -93,7 +93,6 @@
     "core/brain/llm/deferral_record.py::::threading.Lock",
     "core/brain/llm/emergency_override.py::::threading.Lock",
     "core/brain/llm/expert_adapter_applier.py::MLXExpertAdapterApplier.__init__::asyncio.Lock",
-    "core/brain/llm/gemini_adapter.py::DailyRateLimiter.__init__::threading.RLock",
     "core/brain/llm/latent_cortex/campaign_journal.py::::threading.Lock",
     "core/brain/llm/latent_cortex/epistemic_state.py::EpistemicStateMachine.__init__::threading.RLock",
     "core/brain/llm/latent_cortex/execution_controller.py::::threading.Lock",

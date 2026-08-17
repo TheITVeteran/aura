@@ -187,13 +187,10 @@ async def test_exhausted_items_land_in_a_dead_letter(tmp_path):
     assert pipe.stats["abandoned"] == 1
 
 
-def test_class_docstring_does_not_claim_a_single_cloud_provider():
-    """Claiming "Queries Gemini" misrepresented both the trust boundary and
-    where data actually goes — the teacher is whatever config names."""
+def test_class_docstring_declares_local_teacher_boundary():
     from core.adaptation.distillation_pipe import DistillationPipe
 
     doc = DistillationPipe.__doc__ or ""
-    assert "Queries Gemini" not in doc
-    assert "CONFIGURED" in doc
-    # It must say the egress boundary is configuration-dependent.
-    assert "config.llm.teacher_model" in doc
+    assert "local teacher lanes" in doc
+    assert "cloud" not in doc.lower()
+    assert "audited pairs" in doc

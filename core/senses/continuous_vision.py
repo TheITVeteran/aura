@@ -740,7 +740,7 @@ class ContinuousSensoryBuffer:
             await asyncio.sleep(budget.interval_s)
 
     def get_visual_context_parts(self) -> list:
-        """Retrieves the rolling visual buffer formatted for the Gemini API."""
+        """Return the rolling visual buffer in Aura's local multimodal format."""
         if not self.frame_buffer:
             return []
 
@@ -755,7 +755,7 @@ class ContinuousSensoryBuffer:
 
         Args:
             prompt: The specific question or directive for the visual context.
-            brain: The CognitiveEngine (or GeminiAdapter) instance capable of multimodal logic.
+            brain: The local CognitiveEngine instance capable of multimodal logic.
         """
         if not self.frame_buffer:
             return "I don't have any visual frames in my buffer yet."

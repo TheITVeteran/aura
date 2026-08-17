@@ -666,22 +666,7 @@ def _endpoint_provider_identity(endpoint: Any) -> str:
 
     if bool(getattr(endpoint, "is_local", False)):
         return "local"
-    fingerprint = " ".join(
-        str(getattr(endpoint, key, "") or "").lower()
-        for key in ("name", "model", "url")
-    )
-    for marker, provider in (
-        ("gemini", "gemini"),
-        ("anthropic", "anthropic"),
-        ("claude", "anthropic"),
-        ("openai", "openai"),
-        ("gpt", "openai"),
-        ("xai", "xai"),
-        ("grok", "xai"),
-    ):
-        if marker in fingerprint:
-            return provider
-    return str(getattr(endpoint, "name", "") or "configured-cloud-endpoint")
+    return "remote_provider_removed"
 
 
 # ── Circuit Breaker States ────────────────────────────────────────────────────
@@ -1119,15 +1104,6 @@ def _local_client_failure_reason(client: Any) -> str:
     return ""
 
 
-def _supports_foreground_cloud_recovery(error: str) -> bool:
-    normalized = str(error or "").strip().lower()
-    return _is_transient_local_runtime_failure(normalized) or normalized.startswith(
-        (
-            "lane_failed",
-        )
-    )
-
-
 # ── Main Router ───────────────────────────────────────────────────────────────
 
 
@@ -1359,6 +1335,11 @@ class HealthAwareLLMRouter:
         name = normalize_endpoint_name(name) or str(name or "").strip()
         if not name:
             raise ValueError("endpoint registration requires a non-empty name")
+        if not is_local:
+            raise ValueError(
+                "remote_model_provider_removed: remote model providers are not "
+                f"supported (endpoint={name}, url={url})"
+            )
         # Fail-safe parameter validation: a bad threshold must not create an
         # endpoint whose circuit can never open (or opens on every call).
         try:
@@ -1414,85 +1395,53 @@ class HealthAwareLLMRouter:
         if isinstance(declared_locality, bool):
             is_local = declared_locality
         else:
-            client = getattr(ep_obj, "client", None)
-            fingerprint = " ".join(
-                (
-                    name,
-                    str(getattr(ep_obj, "model_name", "") or ""),
-                    str(getattr(ep_obj, "endpoint_url", "") or ""),
-                    type(client).__module__,
-                    type(client).__name__,
-                )
-            ).lower()
-            cloud_markers = (
-                "gemini",
-                "google.genai",
-                "anthropic",
-                "claude",
-                "openai",
-                "chatgpt",
-                "gpt-",
-                "xai",
-                "grok",
-            )
-            if any(marker in fingerprint for marker in cloud_markers):
-                is_local = False
-            else:
-                # A non-loopback HTTP endpoint is remote regardless of naming:
-                # the marker allowlist alone silently classified any new,
-                # proxied, or generically named remote provider as local,
-                # changing cloud-only filtering and provenance receipts.
-                endpoint_url = str(getattr(ep_obj, "endpoint_url", "") or "")
-                remote_by_url = False
-                if endpoint_url.lower().startswith(("http://", "https://")):
-                    from urllib.parse import urlparse
+            # Compatibility endpoints may omit the flag. Local in-process and
+            # loopback endpoints are admitted; every other HTTP origin is
+            # structurally rejected without vendor-specific fingerprinting.
+            endpoint_url = str(getattr(ep_obj, "endpoint_url", "") or "")
+            is_local = True
+            if endpoint_url.lower().startswith(("http://", "https://")):
+                from urllib.parse import urlparse
 
-                    host = str(urlparse(endpoint_url).hostname or "").lower()
-                    remote_by_url = host not in {
-                        "localhost",
-                        "127.0.0.1",
-                        "::1",
-                        "0.0.0.0",
-                        "host.docker.internal",
-                    } and not host.startswith(("127.", "192.168.", "10."))
-                if remote_by_url:
-                    is_local = False
-                    logger.info(
-                        "Endpoint %s classified as REMOTE from its non-loopback URL %s.",
-                        name,
-                        endpoint_url[:120],
-                    )
-                else:
-                    # Unknown compatibility endpoints stay local until concrete
-                    # remote evidence appears. This keeps deterministic reflex
-                    # clients out of cloud-only recovery and cloud receipts.
-                    is_local = True
+                host = str(urlparse(endpoint_url).hostname or "").lower()
+                is_local = host in {
+                    "localhost",
+                    "127.0.0.1",
+                    "::1",
+                    "0.0.0.0",
+                    "host.docker.internal",
+                } or host.startswith(("127.", "192.168.", "10."))
         
-        # Normalize both enum-style tiers and legacy string aliases into the router's
-        # concrete routing labels: local, local_deep, local_fast, api_fast, api_deep.
+        if not is_local:
+            raise ValueError(
+                "remote_model_provider_removed: remote model providers are not "
+                f"supported (endpoint={name})"
+            )
+
+        # Normalize enum tiers and legacy API labels into host-local lanes.
         tier_name = tier_val
         if isinstance(tier_val, str):
             lowered = tier_val.lower()
             if lowered == "api_deep":
-                tier_name = "api_deep"
+                tier_name = "local_deep"
             elif lowered == "api_fast":
-                tier_name = "api_fast"
+                tier_name = "local_fast"
             elif lowered in ("local", "primary"):
                 tier_name = "local"
             elif lowered in ("local_deep", "secondary"):
-                tier_name = "local_deep" if is_local else "api_deep"
+                tier_name = "local_deep"
             elif lowered in ("local_fast", "tertiary"):
-                tier_name = "local_fast" if is_local else "api_fast"
+                tier_name = "local_fast"
             elif lowered == "emergency":
                 tier_name = "emergency"
         elif hasattr(tier_val, "value"):
             normalized = str(tier_val.value).lower()
             if normalized == "primary":
-                tier_name = "local" if is_local else "api_fast"
+                tier_name = "local"
             elif normalized == "secondary":
-                tier_name = "local_deep" if is_local else "api_deep"
+                tier_name = "local_deep"
             elif normalized == "tertiary":
-                tier_name = "local_fast" if is_local else "api_fast"
+                tier_name = "local_fast"
             elif normalized == "emergency":
                 tier_name = "emergency"
 
@@ -1500,9 +1449,9 @@ class HealthAwareLLMRouter:
         
         return self.register(
             name=name,
-            url="internal" if is_local else "cloud",
+            url="internal",
             model=model_name,
-            is_local=is_local,
+            is_local=True,
             tier=tier_name,
             client=getattr(ep_obj, "client", None)
         )
@@ -2156,7 +2105,6 @@ class HealthAwareLLMRouter:
         else:
             kwargs.pop("messages", None)
         prefer_tier = self._normalize_prefer_tier(kwargs.get("prefer_tier"))
-        allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False))
         agent_context = dict(context or {})
         if contract:
             agent_context.setdefault("response_contract", contract.to_dict())
@@ -2167,7 +2115,7 @@ class HealthAwareLLMRouter:
 
         preferred_names = self._fallback_endpoint_names(
             prefer_tier or "primary",
-            allow_cloud_fallback,
+            False,
             is_background=is_bg,
         )
         # probe_eligible: candidate ENUMERATION must not consume half-open
@@ -2349,8 +2297,8 @@ class HealthAwareLLMRouter:
                 desc = pathway.description.lower()
                 if "local-only" in desc or "private" in desc:
                     return {"tier_preference": "local"}
-                if "cloud-only" in desc or "heavy" in desc:
-                    return {"tier_preference": "cloud"}
+                if "heavy" in desc:
+                    return {"tier_preference": "local", "deep_handoff": True}
                 
                 return {"pathway_id": pathway.pathway_id}
             return None
@@ -2935,21 +2883,16 @@ class HealthAwareLLMRouter:
     def _fallback_endpoint_names(
         self,
         prefer_tier: str,
-        allow_cloud_fallback: bool,
+        _allow_cloud_fallback: bool,
         *,
         is_background: bool,
     ) -> list[str]:
         if prefer_tier == "tertiary":
-            names = [BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT]
-            if allow_cloud_fallback:
-                names.append("Gemini-Fast")
-            return names
+            return [BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT]
         if prefer_tier == "secondary":
             names = [DEEP_ENDPOINT, PRIMARY_ENDPOINT]
             if is_background:
                 names.extend([BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT])
-            if allow_cloud_fallback:
-                names.extend(["Gemini-Thinking", "Gemini-Pro", "Gemini-Fast"])
             return names
         if prefer_tier == "emergency":
             return [FALLBACK_ENDPOINT]
@@ -2957,8 +2900,6 @@ class HealthAwareLLMRouter:
         names = [PRIMARY_ENDPOINT]
         if is_background:
             names.extend([BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT])
-        if allow_cloud_fallback:
-            names.extend(["Gemini-Fast", "Gemini-Pro", "Gemini-Thinking"])
         return names
 
     @staticmethod
@@ -3352,15 +3293,22 @@ class HealthAwareLLMRouter:
             kwargs["foreground_request"] = True
         prefer_endpoint = normalize_endpoint_name(kwargs.get("prefer_endpoint"))
         deep_handoff = bool(kwargs.get("deep_handoff") or kwargs.get("allow_deep_handoff"))
-        cloud_fallback_explicit = "allow_cloud_fallback" in kwargs
-        allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False))
-        allow_auto_cloud_recovery = not isolated_generation_contract and not cloud_fallback_explicit
+        # Compatibility flags are accepted so older callers do not fail at
+        # the call boundary, but no remote model endpoint can be registered or
+        # selected. All routing below is host-local.
         cloud_only = bool(kwargs.get("cloud_only", False))
         if cloud_only:
-            allow_cloud_fallback = True
-            allow_auto_cloud_recovery = False
-            deep_handoff = False
-            available = [ep for ep in available if not ep.is_local]
+            return {
+                "ok": False,
+                "text": "",
+                "endpoint": "remote_provider_removed",
+                "tokens": 0,
+                "error": "remote_model_provider_removed",
+                "provider": "none",
+                "model": "",
+                "is_local": True,
+                "fallback_chain": [],
+            }
         strict_primary_proof_lane = False
         try:
             proof_run_enabled = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
@@ -3411,8 +3359,6 @@ class HealthAwareLLMRouter:
             prefer_tier = "primary"
             prefer_endpoint = PRIMARY_ENDPOINT
             deep_handoff = False
-            allow_cloud_fallback = False
-            allow_auto_cloud_recovery = False
         solver_guard = guard_solver_request(prefer_endpoint, deep_handoff=deep_handoff)
         if solver_guard["redirected"]:
             logger.info(
@@ -3496,30 +3442,16 @@ class HealthAwareLLMRouter:
         
         prefer_tier = self._normalize_prefer_tier(prefer_tier)
 
-        if prefer_tier in ("api_fast", "api_deep") and not isolated_generation_contract:
-            allow_cloud_fallback = True
-        if prefer_endpoint in {"Gemini-Fast", "Gemini-Pro", "Gemini-Thinking"} and not isolated_generation_contract:
-            allow_cloud_fallback = True
-        if (
-            not is_bg
-            and not allow_cloud_fallback
-            and allow_auto_cloud_recovery
-            and any(
-                ep.is_local and _supports_foreground_cloud_recovery(_local_client_failure_reason(ep.client))
-                for ep in available
-            )
-        ):
-            allow_cloud_fallback = True
-            logger.warning("Router: enabling cloud fallback because the local foreground lane is unavailable.")
+        if prefer_tier == "api_fast":
+            prefer_tier = "tertiary"
+        elif prefer_tier == "api_deep":
+            prefer_tier = "secondary"
 
         if is_bg:
             if prefer_tier in ("primary", "secondary"):
                 logger.info("🛡️ Tier Lock: Background task requested '%s'; using the governed tertiary tier.", prefer_tier)
             prefer_tier = "tertiary"
             deep_handoff = False
-            # Allow explicit cloud fallback requests to bypass demotion lock
-            if not kwargs.get("allow_cloud_fallback", False):
-                allow_cloud_fallback = False
         elif prefer_tier == "secondary" and not deep_handoff:
             logger.info("🛡️ Router: suppressing implicit secondary request without explicit deep handoff.")
             prefer_tier = "primary"
@@ -3530,7 +3462,6 @@ class HealthAwareLLMRouter:
 
         if prefer_tier == "api_deep":
             selectors.extend([
-                ("tier", "api_deep"),
                 ("tier", "local_deep"),
                 ("tier", "local"),
                 ("tier", "local_fast"),
@@ -3538,30 +3469,23 @@ class HealthAwareLLMRouter:
             ])
         elif prefer_tier == "api_fast":
             selectors.extend([
-                ("tier", "api_fast"),
                 ("tier", "local"),
                 ("tier", "local_fast"),
                 ("tier", "emergency"),
             ])
         elif prefer_tier == "secondary":
             selectors.append(("tier", "local_deep"))
-            if allow_cloud_fallback:
-                selectors.append(("tier", "api_deep"))
             selectors.append(("tier", "local"))
             if is_bg:
                 selectors.extend([
                     ("tier", "local_fast"),
                     ("tier", "emergency"),
                 ])
-            elif allow_cloud_fallback:
-                selectors.append(("tier", "api_fast"))
         elif prefer_tier == "tertiary":
             selectors.extend([
                 ("tier", "local_fast"),
                 ("tier", "emergency"),
             ])
-            if allow_cloud_fallback:
-                selectors.append(("tier", "api_fast"))
         elif prefer_tier == "emergency":
             selectors.append(("tier", "emergency"))
         else:
@@ -3572,11 +3496,6 @@ class HealthAwareLLMRouter:
                 selectors.extend([
                     ("tier", "local_fast"),
                     ("tier", "emergency"),
-                ])
-            if allow_cloud_fallback:
-                selectors.extend([
-                    ("tier", "api_fast"),
-                    ("tier", "api_deep"),
                 ])
 
         if selectors:
@@ -3592,10 +3511,9 @@ class HealthAwareLLMRouter:
             if ordered:
                 available = ordered
                 logger.debug(
-                    "🎯 Router plan tier=%s deep_handoff=%s cloud=%s -> %s",
+                    "🎯 Router plan tier=%s deep_handoff=%s -> %s",
                     prefer_tier,
                     deep_handoff,
-                    allow_cloud_fallback,
                     [e.name for e in available],
                 )
             else:
@@ -3612,14 +3530,8 @@ class HealthAwareLLMRouter:
         # promotes the preferred locality to the front but must not delete
         # otherwise-authorized fallback lanes (one unhealthy preferred lane
         # would otherwise turn a recoverable turn into total failure).
-        if tier_preference == "local":
+        if tier_preference in {"local", "cloud"}:
             available.sort(key=lambda ep: not ep.is_local)
-        elif tier_preference == "cloud" and allow_cloud_fallback:
-            available.sort(key=lambda ep: ep.is_local)
-        elif tier_preference == "cloud":
-            logger.debug(
-                "Router: ignoring cloud tier preference because cloud fallback was not explicitly allowed."
-            )
 
         # Standard local-first ordering only when no explicit routing plan
         # or mycelial ordering was applied.
@@ -3636,12 +3548,12 @@ class HealthAwareLLMRouter:
         if not available:
             fallback_names = self._fallback_endpoint_names(
                 prefer_tier or "primary",
-                allow_cloud_fallback,
+                False,
                 is_background=is_bg,
             )
             for name in fallback_names:
                 ep = self.endpoints.get(name)
-                if ep is not None and (not cloud_only or not ep.is_local):
+                if ep is not None:
                     available.append(ep)
 
             if available:
@@ -3667,11 +3579,8 @@ class HealthAwareLLMRouter:
                 }
 
         last_error = "unknown"
-        cloud_recovery_injected = False
         fallback_chain: list[dict[str, Any]] = []
         for ep in available:
-            if cloud_only and ep.is_local:
-                continue
             # Receipts are honest: an entry claims "attempted" only once the
             # endpoint is actually dispatched; every guard that skips the
             # endpoint records WHY it was skipped instead.
@@ -3849,18 +3758,6 @@ class HealthAwareLLMRouter:
                         self.last_background_error = last_error
                     else:
                         self.last_user_error = last_error
-                    if self._maybe_inject_cloud_recovery(
-                        available=available,
-                        is_bg=is_bg,
-                        ep=ep,
-                        allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
-                        isolated=isolated_generation_contract,
-                        already_injected=cloud_recovery_injected,
-                        prefer_tier=prefer_tier,
-                        reason=last_error,
-                        require_transient_reason=True,
-                    ):
-                        cloud_recovery_injected = True
                     if is_bg and _background_error_is_quiet(last_error):
                         logger.debug("Endpoint %s background validation skipped: %s", ep.name, last_error)
                     else:
@@ -3897,17 +3794,6 @@ class HealthAwareLLMRouter:
                     self.last_background_error = last_error
                 else:
                     self.last_user_error = last_error
-                if self._maybe_inject_cloud_recovery(
-                    available=available,
-                    is_bg=is_bg,
-                    ep=ep,
-                    allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
-                    isolated=isolated_generation_contract,
-                    already_injected=cloud_recovery_injected,
-                    prefer_tier=prefer_tier,
-                    reason=last_error,
-                ):
-                    cloud_recovery_injected = True
             except _ROUTER_CLIENT_ERRORS as exc:
                 _record_router_degradation(
                     exc,
@@ -3924,17 +3810,6 @@ class HealthAwareLLMRouter:
                     self.last_background_error = last_error
                 else:
                     self.last_user_error = last_error
-                if self._maybe_inject_cloud_recovery(
-                    available=available,
-                    is_bg=is_bg,
-                    ep=ep,
-                    allow_cloud=(allow_cloud_fallback or allow_auto_cloud_recovery),
-                    isolated=isolated_generation_contract,
-                    already_injected=cloud_recovery_injected,
-                    prefer_tier=prefer_tier,
-                    reason=f"endpoint_exception:{last_error[:120]}",
-                ):
-                    cloud_recovery_injected = True
 
         return {
             "ok": False,
@@ -3944,56 +3819,9 @@ class HealthAwareLLMRouter:
             "error": last_error,
             "provider": "none",
             "model": "",
-            "is_local": False,
+            "is_local": True,
             "fallback_chain": fallback_chain,
         }
-
-    def _maybe_inject_cloud_recovery(
-        self,
-        *,
-        available: list[EndpointHealth],
-        is_bg: bool,
-        ep: EndpointHealth,
-        allow_cloud: bool,
-        isolated: bool,
-        already_injected: bool,
-        prefer_tier: str | None,
-        reason: str,
-        require_transient_reason: bool = False,
-    ) -> bool:
-        """Append authorized recovery endpoints after a local foreground failure.
-
-        Structured failures, timeouts, and raised exceptions all reach this
-        path — previously only a narrowly recognized structured local error
-        expanded to cloud, so a first local TIMEOUT on a cloudless plan
-        simply exhausted the cascade even when cloud fallback was allowed.
-        """
-        if (
-            is_bg
-            or not ep.is_local
-            or not allow_cloud
-            or isolated
-            or already_injected
-        ):
-            return False
-        if require_transient_reason and not _supports_foreground_cloud_recovery(reason):
-            return False
-        appended = False
-        for name in self._fallback_endpoint_names(
-            prefer_tier or "primary",
-            True,
-            is_background=False,
-        ):
-            recovery_ep = self.endpoints.get(name)
-            if recovery_ep is not None and recovery_ep not in available:
-                available.append(recovery_ep)
-                appended = True
-        if appended:
-            logger.warning(
-                "Router: local foreground lane failed (%s). Expanding to cloud recovery endpoints.",
-                reason,
-            )
-        return True
 
     async def _probe_client_availability(self, client: Any) -> bool | None:
         """Check ``client.is_available`` without loop-blocking or truthy-coroutine bugs.
@@ -4545,9 +4373,8 @@ class HealthAwareLLMRouter:
     def _tier_display_label(self, ep: EndpointHealth | None) -> str | None:
         """Human-readable lane label derived from the ACTUAL registered model.
 
-        Hardcoded labels ("Cortex (32B)", "Cloud (Gemini)") misreported the
-        active model whenever the registry served a different checkpoint or a
-        non-Gemini cloud adapter was registered.
+        Hardcoded lane labels misreported the active model whenever the model
+        registry served a different local checkpoint.
         """
         if ep is None:
             return None
@@ -4560,7 +4387,7 @@ class HealthAwareLLMRouter:
             "emergency": "Reflex",
         }.get(tier)
         if role is None:
-            role = "Cloud" if "api" in tier else (tier.upper() or "UNKNOWN")
+            role = tier.upper() or "UNKNOWN"
         return f"{role} ({model})" if model else role
 
     def get_health_report(self) -> dict[str, Any]:
@@ -4728,7 +4555,7 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
     if primary_proof_lane:
         logger.info(
             "🛡️ Proof-primary lane active — HealthRouter exposing only %s; "
-            "Solver, Brainstem, Reflex, and cloud endpoints are not registered.",
+            "Solver, Brainstem, and Reflex endpoints are not registered.",
             PRIMARY_ENDPOINT,
         )
         return router
@@ -4796,76 +4623,6 @@ def build_router_from_config(config) -> HealthAwareLLMRouter:
         )
         logger.error("❌ Failed to register %s: %s", FALLBACK_ENDPOINT, e)
 
-    # Gemini Cloud Fallback (used when ALL local models fail)
-    # [FIX] Check config first — desktop/GUI mode may not inherit terminal env vars,
-    # but core.config loads the key from .env at boot time.
-    gemini_key = (
-        getattr(getattr(config, "llm", None), "gemini_api_key", None)
-        or os.environ.get("GEMINI_API_KEY")
-    )
-    if gemini_key:
-        try:
-            from core.brain.llm.gemini_adapter import DailyRateLimiter, GeminiAdapter
-            
-            # SHARED rate limiter — all Gemini endpoints coordinate backoff
-            try:
-                from core.config import config as _cfg
-                state_path = str(_cfg.paths.data_dir / "gemini_rate_state.json")
-            except (ImportError, AttributeError, RuntimeError) as e:
-                _record_router_degradation(
-                    e,
-                    action="continued Gemini registration without persisted shared rate-limit state",
-                )
-                state_path = None
-            shared_limiter = DailyRateLimiter(state_path=state_path)
-            
-            # Fast cloud — gemini-2.0-flash (matches GeminiAdapter.CHAT_MODEL)
-            gemini_flash = GeminiAdapter(api_key=gemini_key, model="gemini-2.0-flash", rate_limiter=shared_limiter)
-            router.register(
-                name="Gemini-Fast",
-                url="cloud",
-                model="gemini-2.0-flash",
-                is_local=False,
-                tier="api_fast",
-                client=gemini_flash,
-                failure_threshold=5,
-                recovery_timeout=30.0,
-            )
-            
-            # Pro cloud — gemini-2.5-flash (balanced speed/quality)
-            gemini_pro = GeminiAdapter(api_key=gemini_key, model="gemini-2.5-flash", rate_limiter=shared_limiter)
-            router.register(
-                name="Gemini-Pro",
-                url="cloud",
-                model="gemini-2.5-flash",
-                is_local=False,
-                tier="api_deep",
-                client=gemini_pro,
-                failure_threshold=5,
-                recovery_timeout=60.0,
-            )
-            
-            # Thinking cloud — gemini-2.5-pro (deep reasoning fallback)
-            gemini_thinking = GeminiAdapter(api_key=gemini_key, model="gemini-2.5-pro", rate_limiter=shared_limiter)
-            router.register(
-                name="Gemini-Thinking",
-                url="cloud",
-                model="gemini-2.5-pro",
-                is_local=False,
-                tier="api_deep",
-                client=gemini_thinking,
-                failure_threshold=3,
-                recovery_timeout=300.0,
-            )
-            logger.info("✅ Gemini cloud fallbacks registered (2.0-flash, 2.5-flash, 2.5-pro) — shared rate limiter.")
-        except (ImportError, AttributeError, RuntimeError) as e:
-            _record_router_degradation(
-                e,
-                action="continued router build with local-only fallback coverage after Gemini registration failed",
-                severity="degraded",
-            )
-            logger.error("❌ Failed to register Gemini fallbacks: %s", e)
-
     return router
 
 
@@ -4889,7 +4646,7 @@ def get_llm_router() -> HealthAwareLLMRouter:
 
     Singleflight: concurrent first callers previously each ran the full
     check-build-register sequence, constructing multiple routers (with
-    prewarm tasks and cloud adapters) and racing the container registration.
+    prewarm tasks) and racing the container registration.
     """
     from core.container import ServiceContainer
     existing = ServiceContainer.get("llm_router", default=None)

@@ -11,7 +11,7 @@ class AuraError(Exception):
         self.context = context or {}
 
 class LLMError(AuraError):
-    """Raised when an LLM provider fails (MLX, Gemini, OpenAI)."""
+    """Raised when Aura's managed local language-model runtime fails."""
     pass  # no-op: intentional
 
 class NetworkError(AuraError):
@@ -136,4 +136,3 @@ class SkillExecutionError(CapabilityError):
 class MemoryWriteError(AuraError):
     """Memory write operation failed."""
     pass  # no-op: intentional
-

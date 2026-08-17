@@ -29,7 +29,7 @@ safe mitigation, unsafe mitigation, rollback, and verification.
 | Resource exhaustion (RAM/GPU) | [resource-exhaustion.md](resource-exhaustion.md) |
 | Prompt injection | [prompt-injection.md](prompt-injection.md) |
 | Excessive agency | [excessive-agency.md](excessive-agency.md) |
-| Cloud provider failure | [cloud-provider.md](cloud-provider.md) |
+| External egress privacy incident | [external-egress.md](external-egress.md) |
 | Research core stalled | [research-core-stalled.md](research-core-stalled.md) |
 | Disaster recovery | [disaster-recovery.md](disaster-recovery.md) |
 | Stale memory retrieval | [stale-memory-retrieval.md](stale-memory-retrieval.md) |

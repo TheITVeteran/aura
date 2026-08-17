@@ -1,6 +1,6 @@
 # Model roster
 
-Status: Guide · Reviewed against the tree 2026-08-13
+Status: Guide · Reviewed against the tree 2026-08-16
 
 Every model Aura loads, which lane it serves, and the measurement that put it
 there. Lanes churn, so the reason for each choice is recorded here.
@@ -23,12 +23,18 @@ The tri-cameral architecture, tuned for an M5-class Apple Silicon Mac with
 | **Brainstem** (Tier 1) | `Qwen3.5-9B-4bit` | `chat_model` | `AURA_BRAINSTEM_MODEL` | Heartbeat, telemetry, background tasks. Lazy-loaded |
 | **Reflex** | `Qwen2.5-1.5B-Instruct-4bit` | — | `AURA_FALLBACK_MODEL` | CPU emergency fallback |
 | **Vision** | `Qwen2.5-32B-Instruct-8bit` | `vision_model` | — | Pinned to the Cortex build so vision and conversation share one identity |
-| **Teacher** | `gemini-2.5-pro` | `teacher_model` | — | Cloud distillation and emergency oracle. Off by default, PII-scrubbed, rate-limited |
 | **Last resort** | rule-based | — | — | Static responses that cannot fail |
 
 Sampling contract: `temperature` is bounded `[0.0, 2.0]`. The ceiling is not a
 taste call — above 2.0 the softmax is effectively uniform and "temperature"
 stops naming anything.
+
+All language-model inference is local. Legacy `api_fast` and `api_deep`
+labels remain accepted at compatibility boundaries, but resolve to the local
+fast and local deep lanes respectively. A remote-only request returns
+`remote_model_provider_removed`; it cannot register or select an off-host
+model endpoint. Local distillation uses the Solver and resident Cortex as
+teacher lanes.
 
 ### Why the Brainstem could move and the Reflex could not
 

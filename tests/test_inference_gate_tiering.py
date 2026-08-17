@@ -2496,7 +2496,7 @@ async def test_user_facing_primary_falls_back_to_brainstem_when_cortex_fails_wit
 
 
 @pytest.mark.asyncio
-async def test_cloud_disabled_blocks_hidden_last_resort_cloud_calls(monkeypatch):
+async def test_removed_remote_provider_is_never_consulted_as_last_resort(monkeypatch):
     gate = InferenceGate()
     gate._mlx_client = _NoTextReadyClient()
     gate._cortex_recovery_in_progress = True
@@ -2507,16 +2507,19 @@ async def test_cloud_disabled_blocks_hidden_last_resort_cloud_calls(monkeypatch)
     def _fake_get_mlx_client(model_path=None, **kwargs):
         return no_text
 
-    def _cloud_service_trap(*args, **kwargs):
+    def _removed_provider_service_trap(*args, **kwargs):
         service_name = str(args[-1] if args else "")
         if service_name in {"api_adapter", "llm_router"}:
-            raise AssertionError("cloud service lookup is forbidden when allow_cloud_fallback is false")
+            raise AssertionError("retired remote-provider services must not be consulted")
         return kwargs.get("default")
 
     with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
         with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
             with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                with replace("core.container.ServiceContainer.get", side_effect=_cloud_service_trap):
+                with replace(
+                    "core.container.ServiceContainer.get",
+                    side_effect=_removed_provider_service_trap,
+                ):
                     with replace.object(
                         InferenceGate,
                         "_user_facing_recovery_response",
@@ -2536,81 +2539,13 @@ async def test_cloud_disabled_blocks_hidden_last_resort_cloud_calls(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_api_adapter_cloud_fallback_preserves_output_contract_and_metadata(monkeypatch):
-    from core.adapters.api_adapter import APIAdapter
-
-    gate = InferenceGate()
-    gate._mlx_client = _NoTextReadyClient()
-    gate._cortex_recovery_in_progress = True
-    no_text = _NoTextClient()
-    adapter = APIAdapter()
-    adapter.has_gemini = True
-    adapter.has_local = True
-    adapter._gemini_generate = AsyncCallProbe(
-        return_value="Latency sample 8 is ready. This second sentence exceeds the contract."
-    )
-    adapter._local_generate = AsyncCallProbe(return_value="mislabeled local fallback")
-
-    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
-    monkeypatch.setattr(
-        InferenceGate,
-        "_scrub_cloud_payload",
-        lambda self, system, prompt: (system, prompt),
-    )
-
-    def _container_get(name, default=None):
-        if name == "api_adapter":
-            return adapter
-        if name == "llm_router":
-            raise AssertionError("HealthRouter should not run after APIAdapter succeeds")
-        return default
-
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
-
-    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
-        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                result = await gate.generate(
-                    "Latency sample 8: answer in one short sentence that includes the sample number.",
-                    context={
-                        "origin": "user",
-                        "prefer_tier": "primary",
-                        "allow_cloud_fallback": True,
-                        "allow_mesh_cognition": False,
-                    },
-                )
-
-    gemini_call = adapter._gemini_generate.calls[0]
-    options = gemini_call["kwargs"]["config"]
-    metadata = gate.get_last_generation_metadata()
-    assert options["max_tokens"] == 48
-    assert options["cloud_only"] is True
-    assert adapter._local_generate.calls == []
-    assert result == "Latency sample 8 is ready."
-    assert metadata["endpoint"] == "Gemini-APIAdapter:gemini-2.0-flash"
-    assert metadata["provider"] == "gemini"
-    assert metadata["model"] == "gemini-2.0-flash"
-    assert metadata["fallback_chain"][-1]["status"] == "success"
-    assert metadata["requested_max_tokens"] == 48
-    assert metadata["deterministic_repair_applied"] is True
-    assert metadata["post_generation_repair_applied"] is True
-    assert gate.get_last_surface_control_receipt()["text_mutations"][0]["stage"] == (
-        "inference_gate.post_generation_stabilization"
-    )
-
-
-@pytest.mark.asyncio
-async def test_api_adapter_cloud_only_failure_never_falls_back_to_local():
+async def test_api_adapter_remote_only_request_returns_retired_provider_contract():
     from core.adapters.api_adapter import APIAdapter
 
     adapter = APIAdapter()
-    adapter.has_gemini = True
-    adapter.has_local = True
-    adapter._gemini_generate = AsyncCallProbe(return_value="")
-    adapter._local_generate = AsyncCallProbe(return_value="local text")
 
     result = await adapter.generate_with_metadata(
-        "cloud recovery prompt",
+        "remote recovery prompt",
         {
             "model_tier": "api_fast",
             "cloud_only": True,
@@ -2620,201 +2555,48 @@ async def test_api_adapter_cloud_only_failure_never_falls_back_to_local():
 
     assert result["ok"] is False
     assert result["text"] == ""
-    assert result["endpoint"] == "APIAdapter-cloud-unavailable"
-    assert result["error"] == "cloud_only_backend_unavailable"
-    assert result["fallback_chain"][-1]["status"] == "no_text"
-    assert adapter._local_generate.calls == []
+    assert result["endpoint"] == "APIAdapter-remote-provider-removed"
+    assert result["error"] == "remote_model_provider_removed"
+    assert result["is_local"] is True
+    assert result["fallback_chain"] == []
 
 
 @pytest.mark.asyncio
-async def test_api_adapter_provider_exception_continues_to_local_with_error_provenance():
+async def test_api_adapter_legacy_api_tier_is_resolved_by_local_inference():
     from core.adapters.api_adapter import APIAdapter
 
     adapter = APIAdapter()
-    adapter.has_gemini = True
     adapter.has_local = True
-    adapter._gemini_generate = AsyncCallProbe(side_effect=OSError("provider transport"))
-    adapter._local_generate = AsyncCallProbe(return_value="local recovery")
+    adapter._local_generate = AsyncCallProbe(return_value="local response")
 
     result = await adapter.generate_with_metadata(
-        "recover this request",
+        "answer locally",
         {"model_tier": "api_fast", "max_tokens": 8},
     )
 
     assert result["ok"] is True
-    assert result["text"] == "local recovery"
+    assert result["text"] == "local response"
     assert result["is_local"] is True
-    assert result["fallback_chain"][0]["status"] == "error"
-    assert "provider transport" in result["fallback_chain"][0]["error"]
-    assert result["fallback_chain"][1]["status"] == "success"
+    assert result["provider"] == "local"
+    assert result["fallback_chain"][-1]["status"] == "success"
 
 
 @pytest.mark.asyncio
-async def test_health_router_cloud_fallback_preserves_output_contract(monkeypatch):
+async def test_health_router_rejects_remote_endpoint_registration():
     from core.brain.llm_health_router import HealthAwareLLMRouter
 
-    gate = InferenceGate()
-    gate._mlx_client = _NoTextReadyClient()
-    gate._cortex_recovery_in_progress = True
-    no_text = _NoTextClient()
     router = HealthAwareLLMRouter()
-    local_think = AsyncCallProbe(return_value="local endpoint must not run")
-    cloud_think = AsyncCallProbe(
-        return_value="Latency sample 9 is ready. This second sentence exceeds the contract."
-    )
-    router.register(
-        name="Cortex",
-        url="internal",
-        model="cortex-32b",
-        is_local=True,
-        tier="local",
-        client=SimpleNamespace(think=local_think),
-    )
-    router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-2.0-flash",
-        is_local=False,
-        tier="api_fast",
-        client=SimpleNamespace(think=cloud_think),
-    )
+    with pytest.raises(ValueError, match="remote model providers are not supported"):
+        router.register(
+            name="remote",
+            url="https://provider.invalid/v1",
+            model="remote-model",
+            is_local=False,
+            tier="api_fast",
+            client=SimpleNamespace(think=AsyncCallProbe(return_value="must not run")),
+        )
 
-    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
-    monkeypatch.setattr(
-        InferenceGate,
-        "_scrub_cloud_payload",
-        lambda self, system, prompt: (system, prompt),
-    )
-
-    def _container_get(name, default=None):
-        if name == "api_adapter":
-            return None
-        if name == "llm_router":
-            return router
-        return default
-
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
-
-    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
-        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
-            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
-                result = await gate.generate(
-                    "Latency sample 9: answer in one short sentence that includes the sample number.",
-                    context={
-                        "origin": "user",
-                        "prefer_tier": "primary",
-                        "allow_cloud_fallback": True,
-                        "allow_mesh_cognition": False,
-                    },
-                )
-
-    kwargs = cloud_think.calls[0]["kwargs"]
-    metadata = gate.get_last_generation_metadata()
-    assert kwargs["max_tokens"] == 48
-    assert kwargs["semantic_output_token_cap"] == 32
-    assert kwargs["hard_output_token_ceiling"] == 48
-    assert kwargs["foreground_request"] is True
-    assert kwargs["cloud_only"] is True
-    assert local_think.calls == []
-    assert result == "Latency sample 9 is ready."
-    assert metadata["endpoint"] == "Gemini-Fast"
-    assert metadata["provider"] == "gemini"
-    assert metadata["is_local"] is False
-    assert metadata["fallback_chain"][-1]["endpoint"] == "Gemini-Fast"
-    assert metadata["deterministic_repair_applied"] is True
-
-
-@pytest.mark.asyncio
-async def test_api_adapter_exception_continues_to_health_router(monkeypatch):
-    from core.brain.llm_health_router import HealthAwareLLMRouter
-
-    gate = InferenceGate()
-    gate._mlx_client = _NoTextReadyClient()
-    gate._cortex_recovery_in_progress = True
-    no_text = _NoTextClient()
-
-    class _ThrowingAdapter:
-        has_gemini = True
-
-        async def generate_with_metadata(self, *_args, **_kwargs):
-            raise OSError("adapter transport failed")
-
-    cloud_think = AsyncCallProbe(return_value="HealthRouter recovered the request.")
-    router = HealthAwareLLMRouter()
-    router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-2.0-flash",
-        is_local=False,
-        tier="api_fast",
-        client=SimpleNamespace(think=cloud_think),
-    )
-
-    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
-    monkeypatch.setattr(
-        InferenceGate,
-        "_scrub_cloud_payload",
-        lambda self, system, prompt: (system, prompt),
-    )
-
-    def _container_get(name, default=None):
-        if name == "api_adapter":
-            return _ThrowingAdapter()
-        if name == "llm_router":
-            return router
-        return default
-
-    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
-
-    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
-        with replace(
-            "core.brain.llm.model_registry.get_brainstem_path",
-            return_value="/models/brainstem",
-        ):
-            with replace(
-                "core.brain.llm.model_registry.get_fallback_path",
-                return_value="/models/fallback",
-            ):
-                result = await gate.generate(
-                    "Recover this request through the cloud.",
-                    context={
-                        "origin": "user",
-                        "prefer_tier": "primary",
-                        "allow_cloud_fallback": True,
-                        "allow_mesh_cognition": False,
-                    },
-                )
-
-    assert result == "HealthRouter recovered the request."
-    assert cloud_think.calls
-    assert gate.get_last_generation_metadata()["endpoint"] == "Gemini-Fast"
-
-
-def test_cloud_result_requires_verified_structured_provider_identity():
-    from core.brain.inference_gate import _verified_cloud_generation_metadata
-
-    assert not _verified_cloud_generation_metadata(
-        {
-            "ok": True,
-            "text": "local fallback text",
-            "endpoint": "APIAdapter-cloud-unverified",
-            "provider": "unknown",
-            "model": "",
-            "is_local": False,
-        }
-    )
-    assert _verified_cloud_generation_metadata(
-        {
-            "ok": True,
-            "text": "verified cloud text",
-            "endpoint": "Gemini-APIAdapter:gemini-2.0-flash",
-            "provider": "gemini",
-            "model": "gemini-2.0-flash",
-            "is_local": False,
-            "provider_verified": True,
-        },
-        endpoint_prefix="Gemini-APIAdapter:",
-    )
+    assert router.endpoints == {}
 
 
 def test_conversation_status_is_not_ready_after_timeout_mark():

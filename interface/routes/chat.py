@@ -42,7 +42,6 @@ from core.brain.live_mind_contract import (
     summarize_text_mutation_authorship,
     verify_text_mutation_chain,
 )
-from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
 from core.conversation.persistence import ConversationRevisionConflictError
@@ -1458,7 +1457,6 @@ _CHAT_RECOVERABLE_ERRORS = (
     asyncio.QueueFull,
     HTTPException,
     psutil.Error,
-    *cloud_call_error_types(),
 )
 
 _BENCHMARK_CHAT_FALLBACK_MARKERS = (
@@ -25012,7 +25010,7 @@ async def _background_retry_generate(message: str, *, timeout_s: float) -> str:
     Lifted out of `_api_chat_turn`, where it closed over nothing but the
     foreground timeout. Everything else it needs it resolves itself, which
     is why it was extractable: the retry deliberately runs on the BACKGROUND
-    lane with cloud fallback off, so it shares no state with the foreground
+    local background lane, so it shares no model operation with the foreground
     turn that queued it.
 
     Returns "" when nothing usable came back — the caller treats an empty
@@ -28094,7 +28092,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
                             timeout=max(2.0, _remaining_foreground_budget()),
                         )
                     else:
-                        # Cortex is dead — try protected foreground (cloud/brainstem)
+                        # Cortex missed its deadline; try the protected local foreground lane.
                         protected_reply = await _attempt_protected_foreground_reply("kernel_soft_deadline")
                         if protected_reply:
                             await _cancel_kernel_task_if_pending("kernel_soft_deadline_protected_reply")
@@ -29641,7 +29639,7 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         # A turn must NEVER surface as HTTP 500. Exceptions outside
         # _CHAT_RECOVERABLE_ERRORS still reached the global handler and killed
         # the turn with a 500 — observed live during the soak: the local 32B
-        # timed out, the cloud fallback returned google.genai ClientError 429
+        # timed out and a retired remote-provider path also failed
         # RESOURCE_EXHAUSTED (not a RuntimeError), and it escaped to a 500.
         # Fail closed with an honest grounded reply and a 200 instead.
         try:

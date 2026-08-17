@@ -39,11 +39,14 @@ def test_real_booleans_pass_through():
     assert strict_bool(False) is False
 
 
-def test_disabling_cloud_fallback_actually_disables_it():
-    """The live consequence: a caller asking for no cloud got cloud."""
+def test_retired_remote_fallback_flag_is_always_disabled():
     result = validate_request_context({"allow_cloud_fallback": "false"})
     assert result.context["allow_cloud_fallback"] is False
     assert not result.rejected
+
+    attempted_enable = validate_request_context({"allow_cloud_fallback": True})
+    assert attempted_enable.context["allow_cloud_fallback"] is False
+    assert "allow_cloud_fallback" not in POLICY_FIELDS
 
 
 def test_clearing_a_proof_requirement_actually_clears_it():

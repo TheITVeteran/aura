@@ -95,13 +95,6 @@ _FLAG_ALLOW_PRE_MODEL_STATE_ONLY_REPLY = _declare_flag(
     description="Migrated from a raw environment read; see owner for the lane.",
     owner="flag-migration",
 )
-_FLAG_AMPLIFIER_ESCALATE_CLOUD = _declare_flag(
-    "AURA_AMPLIFIER_ESCALATE_CLOUD",
-    kind=_FlagKind.STRING,
-    default="0",
-    description="Migrated from a raw environment read; see owner for the lane.",
-    owner="flag-migration",
-)
 _FLAG_AMPLIFIER_TIER_ESCALATION = _declare_flag(
     "AURA_AMPLIFIER_TIER_ESCALATION",
     kind=_FlagKind.STRING,
@@ -2138,14 +2131,14 @@ class UnitaryResponsePhase(Phase):
             task_type=task_type,
         )
 
-        def _make_gen(tier: str, allow_cloud: bool) -> Any:
+        def _make_gen(tier: str) -> Any:
             async def _gen(prompt: str, temperature: float) -> str:
                 try:
                     out = await llm.think(
                         prompt,
                         temperature=temperature,
                         prefer_tier=tier,
-                        allow_cloud_fallback=allow_cloud,
+                        allow_cloud_fallback=False,
                     )
                 except _RESPONSE_RECOVERABLE_ERRORS as exc:
                     _record_response_degradation(exc, "UnitaryResponse: amplifier generate failed: %s")
@@ -2156,16 +2149,15 @@ class UnitaryResponsePhase(Phase):
 
             return _gen
 
-        _gen = _make_gen("primary", False)
+        _gen = _make_gen("primary")
 
         # Tier escalation (verifier-of-last-resort): when a hard turn finishes
-        # verifier-dirty with budget left, retry once on the deep tier (72B / cloud).
+        # verifier-dirty with budget left, retry once on the local deep tier.
         # Off by default so the running foreground lane keeps its latency contract;
-        # opt in with AURA_AMPLIFIER_TIER_ESCALATION=1. Cloud is a separate opt-in.
+        # opt in with AURA_AMPLIFIER_TIER_ESCALATION=1.
         escalate_gen = None
         if str(_FLAG_AMPLIFIER_TIER_ESCALATION.value()).strip().lower() in {"1", "true", "on", "yes"}:
-            allow_cloud = str(_FLAG_AMPLIFIER_ESCALATE_CLOUD.value()).strip().lower() in {"1", "true", "on", "yes"}
-            escalate_gen = _make_gen("deep", allow_cloud)
+            escalate_gen = _make_gen("deep")
 
         # A resident-32B program-of-thought generation takes roughly 45-55s on
         # this host. The old universal 30s ceiling made admitted executable

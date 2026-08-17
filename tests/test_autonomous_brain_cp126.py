@@ -31,7 +31,6 @@ from core.brain.llm.autonomous_brain_integration import (
     bounded_deadline,
     bounded_priority,
     bounded_turns,
-    is_cloud_endpoint,
     normalize_objective,
     objective_ref,
 )
@@ -128,16 +127,6 @@ def healthy_guardian(monkeypatch):
     )
 
 
-@pytest.fixture()
-def cloud_on(monkeypatch):
-    def _setting(key, default=None):
-        if key == "model.cloud_fallback_enabled":
-            return True
-        return default
-
-    monkeypatch.setattr(module, "get_runtime_setting", _setting)
-
-
 def _run(coro):
     return asyncio.run(coro)
 
@@ -217,69 +206,30 @@ def test_deadlines_are_bounded(value, expected):
     assert bounded_deadline(value) == expected
 
 
-# --- 4771bf45 / ed70915c / 53dd1ff6: one cloud authority ----------------
+# --- local-only endpoint authority -------------------------------------
 
 
-@pytest.mark.parametrize(
-    "name,expected",
-    [
-        ("Gemini-Fast", True), ("Gemini-Pro", True), ("OpenAI-GPT", True),
-        (PRIMARY_ENDPOINT, False), (BRAINSTEM_ENDPOINT, False), ("", False), (None, False),
-    ],
-)
-def test_cloud_endpoints_are_identified(name, expected):
-    assert is_cloud_endpoint(name) == expected
-
-
-def test_a_caller_cannot_route_to_cloud_when_the_user_said_no(cloud_off):
-    router = _Router({
-        PRIMARY_ENDPOINT: _endpoint(PRIMARY_ENDPOINT),
-        "Gemini-Fast": _endpoint("Gemini-Fast"),
-    })
-
+def test_a_remote_compatibility_flag_cannot_enable_a_provider(cloud_off):
+    router = _Router({PRIMARY_ENDPOINT: _endpoint(PRIMARY_ENDPOINT)})
     result = _run(_engine(router).think("hi", allow_cloud_fallback=True))
 
-    assert result["cloud_permitted"] is False
+    assert result["remote_model_provider_available"] is False
     assert router.calls[0]["allow_cloud_fallback"] is False
-    assert router.calls[0]["prefer_endpoint"] != "Gemini-Fast"
+    assert router.calls[0]["prefer_endpoint"] == PRIMARY_ENDPOINT
 
 
-def test_a_cloud_endpoint_is_not_even_a_candidate_without_permission(cloud_off):
-    """CP126 ed70915c: the candidate lists named Gemini regardless, then passed
-    the name as prefer_endpoint alongside allow_cloud_fallback=False."""
-    router = _Router({"Gemini-Fast": _endpoint("Gemini-Fast")})
+def test_endpoint_selection_contains_only_declared_local_lanes(cloud_off):
+    router = _Router({
+        PRIMARY_ENDPOINT: _endpoint(PRIMARY_ENDPOINT),
+        BRAINSTEM_ENDPOINT: _endpoint(BRAINSTEM_ENDPOINT),
+    })
     engine = _engine(router)
     request = _run(engine._build_request("hi", None, "sys", 5, 1.0, {}))
 
-    assert engine._select_endpoints(request)["fast"] is None
+    assert engine._select_endpoints(request)["fast"].name == PRIMARY_ENDPOINT
 
 
-def test_a_cloud_endpoint_is_selectable_when_permitted(cloud_on, healthy_guardian):
-    """Setting on AND user asked AND health established — all three."""
-    router = _Router({"Gemini-Fast": _endpoint("Gemini-Fast")})
-    engine = _engine(router)
-    request = _run(
-        engine._build_request("hi", None, "sys", 5, 1.0, {"allow_cloud_fallback": True})
-    )
-
-    assert request.allow_cloud is True
-    assert engine._select_endpoints(request)["fast"] is not None
-
-
-def test_an_explicit_cloud_endpoint_is_refused_without_authority(cloud_off):
-    """Refusal must be a REFUSAL, not an exception: record_degradation raises
-    fail-closed on GOVERNANCE_BYPASS, so classifying a correctly-withheld
-    endpoint that way would take down the very turn the policy just handled."""
-    engine = _engine(_Router())
-    request = _run(engine._build_request("hi", None, "sys", 5, 1.0, {}))
-
-    assert engine._authorized_endpoint(request, "Gemini-Pro") is None
-    assert engine._authorized_endpoint(request, PRIMARY_ENDPOINT) == PRIMARY_ENDPOINT
-
-
-def test_recovery_uses_the_same_cloud_authority_as_the_primary_path(cloud_off):
-    """CP126 53dd1ff6: recovery passed the raw caller flag, so a failure could
-    re-enable off-box routing the user had disabled."""
+def test_recovery_keeps_remote_provider_compatibility_disabled(cloud_off):
     class _Failing(_Router):
         async def think(self, prompt, **kwargs):
             self.calls.append({"prompt": prompt, **kwargs})
@@ -294,10 +244,11 @@ def test_recovery_uses_the_same_cloud_authority_as_the_primary_path(cloud_off):
     assert [call["allow_cloud_fallback"] for call in router.calls] == [False, False]
 
 
-def test_cloud_registration_is_gated_on_the_setting():
+def test_tier_initialization_contains_no_remote_registration():
     source = inspect.getsource(module.AutonomousCognitiveEngine._init_tiers)
-    assert 'cloud_permitted = bool(get_runtime_setting("model.cloud_fallback_enabled"' in source
-    assert "and cloud_permitted" in source
+    assert "remote_model_provider_removed" not in source
+    assert "api_key" not in source
+    assert "is_local=False" not in source
 
 
 # --- 389d937a / f51792ca: recovery keeps the request envelope -----------
@@ -470,16 +421,6 @@ def test_an_unlisted_endpoint_is_never_chosen_for_tool_work(cloud_off):
     router = _Router({"Random-Thing": _endpoint("Random-Thing", agentic=True)})
     engine = _engine(router)
     request = _run(engine._build_request("hi", None, "s", 5, 1.0, {}))
-
-    assert engine._select_endpoints(request)["agentic"] is None
-
-
-def test_a_cloud_endpoint_is_never_chosen_for_tool_work(cloud_on):
-    router = _Router({"Gemini-Fast": _endpoint("Gemini-Fast", agentic=True)})
-    engine = _engine(router)
-    request = _run(
-        engine._build_request("hi", None, "s", 5, 1.0, {"allow_cloud_fallback": True})
-    )
 
     assert engine._select_endpoints(request)["agentic"] is None
 
@@ -724,9 +665,7 @@ def test_a_healthy_guardian_leaves_safe_mode(monkeypatch):
     assert engine._stability_state()[1] == "guardian_healthy"
 
 
-def test_safe_mode_withdraws_cloud_routing(cloud_on):
-    """Cloud is opt-in anyway, so withdrawing it on an unproven runtime costs
-    nothing — which is why THIS gate keys off the fail-closed flag."""
+def test_safe_mode_keeps_remote_provider_compatibility_disabled():
     engine = _engine(_Router())
     request = _run(
         engine._build_request("hi", None, "s", 5, 1.0, {"allow_cloud_fallback": True})

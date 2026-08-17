@@ -1,10 +1,10 @@
-"""InferenceGate: Unified MLX-managed runtime + cloud inference gateway.
+"""InferenceGate: unified MLX-managed local inference gateway.
 
 Provides a single interface for all LLM inference needs.
 Strategy:
   1. Try Aura's managed MLX runtime (32B Cortex primary lane)
-  2. If local runtime fails, fall back to HealthRouter (Gemini cloud endpoints)
-  3. If cloud fails, return a graceful error string (NEVER None)
+  2. If the primary lane fails, recover through registered local lanes
+  3. If every local lane fails, return a typed local exhaustion result
 
 This module is the FAST PATH for user-facing chat. It injects Aura's full
 identity/personality system prompt so responses sound like Aura, not a bare LLM.
@@ -285,54 +285,6 @@ def _worker_process_is_running(proc: Any) -> bool:
     except (OSError, ValueError):
         return False
     return False
-
-
-def _verified_cloud_generation_metadata(
-    value: Any,
-    *,
-    endpoint_prefix: str = "",
-    require_provider_receipt: bool = False,
-) -> bool:
-    """Accept only structured results from a non-local endpoint.
-
-    CP126 8ff3084b — HONEST BOUND. A result is treated as a real cloud
-    generation on the strength of its own ``ok`` / ``is_local`` /
-    ``provider_verified`` fields plus plausible strings. There is no
-    authenticated provider receipt, response signature, or request nonce to
-    check, because the adapters do not produce one — so this cannot be made
-    into a genuine verification here. What it CAN stop doing is treating
-    configuration-derived attribution as if it were proof: when the router
-    reports ``provider_attribution == "router_configuration"`` the weaker
-    basis is recorded, and callers that need real provenance can demand a
-    receipt with ``require_provider_receipt=True``.
-    """
-
-    if not isinstance(value, dict) or value.get("ok") is not True:
-        return False
-    attribution = str(value.get("provider_attribution") or "").strip()
-    if require_provider_receipt and attribution != "provider_receipt":
-        return False
-    endpoint = str(value.get("endpoint") or "").strip()
-    provider = str(value.get("provider") or "").strip().lower()
-    model = str(value.get("model") or "").strip()
-    if value.get("is_local") is not False or value.get("provider_verified") is not True:
-        return False
-    if not endpoint or not model or provider in {"", "cloud", "local", "none", "unknown"}:
-        return False
-    if "unverified" in endpoint.lower() or endpoint.lower() in {"none", "all_failed"}:
-        return False
-    if endpoint_prefix and not endpoint.startswith(endpoint_prefix):
-        return False
-    if attribution and attribution != "provider_receipt":
-        _record_inference_degradation(
-            RuntimeError(f"cloud_provenance_attributed_not_verified:{attribution}"),
-            action=(
-                "accepted a cloud generation attributed from router configuration "
-                "rather than an authenticated provider receipt"
-            ),
-            severity="debug",
-        )
-    return True
 
 
 def _grounded_state_signal_text(value: Any, *, limit: int) -> str:
@@ -691,10 +643,6 @@ _USER_FACING_ORIGINS = frozenset(
 )
 
 
-class _UserFacingCortexError(Exception):
-    """Sentinel: Cortex failed on a user-facing request — skip brainstem, escalate to cloud."""
-
-
 @asynccontextmanager
 async def _thread_lock_context(
     lock: Any,
@@ -980,7 +928,7 @@ def _hot_spare_is_ready(client: Any) -> bool:
 
 
 class InferenceGate:
-    """Isolated inference gateway for Aura's managed local runtime + cloud fallback."""
+    """Isolated inference gateway for Aura's managed local runtime."""
 
     # Class-level defaults for observation-path cooldowns so partially
     # constructed instances (test doubles via __new__, hot-reload edges) can
@@ -1000,12 +948,6 @@ class InferenceGate:
         self._cached_identity_prompt: str | None = None
         self._identity_prompt_time: float = 0.0
         self._identity_prompt_state_key: tuple[Any, ...] | None = None
-        self._cloud_backoff_until: float = 0.0
-        #: Per-provider cloud backoff deadlines. One global stamp let a
-        #: single provider's quota error suppress every other cloud path.
-        self._cloud_backoff_by_provider: dict[str, float] = {}
-        #: Receipt for the last cloud privacy scrub.
-        self._last_cloud_privacy_receipt: dict[str, Any] = {}
         self._cortex_recovery_in_progress: bool = False
         self._last_cortex_check: float = 0.0
         self._cortex_recovery_attempts: int = 0
@@ -7771,138 +7713,6 @@ class InferenceGate:
 
         return messages
 
-    #: How long a rate-limited provider is skipped. Not a guess about the
-    #: provider's policy: a Retry-After header, when the error carries one,
-    #: overrides it.
-    _CLOUD_BACKOFF_S = 60.0
-
-    @staticmethod
-    def _retry_after_seconds(error_text: str) -> float | None:
-        """Retry-After from the provider, when it said one."""
-        match = re.search(
-            r"retry[\s_-]?after[\s\"':=]*(\d+(?:\.\d+)?)", str(error_text or ""), re.IGNORECASE
-        )
-        if not match:
-            return None
-        value = _finite(match.group(1))
-        if value is None or value <= 0.0:
-            return None
-        return min(_MAX_HEALTH_WINDOW_S, value)
-
-    def _note_cloud_provider_failure(self, provider: str, error_text: str) -> bool:
-        """Back off ONE provider, not every cloud path.
-
-        A single shared deadline meant a quota error from one provider
-        suppressed cloud recovery through every other one — including the
-        HealthRouter path that might have had capacity. The deadline is per
-        provider now, and it honours a Retry-After when the provider sent one
-        instead of always assuming a minute.
-        """
-        text = str(error_text or "")
-        rate_limited = "429" in text or "quota" in text.lower() or "rate limit" in text.lower()
-        if not rate_limited:
-            return False
-        wait_s = self._retry_after_seconds(text) or self._CLOUD_BACKOFF_S
-        deadline = time.monotonic() + wait_s
-        store = getattr(self, "_cloud_backoff_by_provider", None)
-        if store is None:
-            store = {}
-            self._cloud_backoff_by_provider = store
-        key = str(provider or "cloud")
-        store[key] = max(float(store.get(key, 0.0) or 0.0), deadline)
-        logger.warning(
-            "☁️ Cloud provider %s rate-limited; backing it off %.0fs.", key, wait_s
-        )
-        return True
-
-    def _cloud_provider_in_backoff(self, provider: str) -> bool:
-        store = getattr(self, "_cloud_backoff_by_provider", None) or {}
-        return time.monotonic() < float(store.get(str(provider or "cloud"), 0.0) or 0.0)
-
-    def cloud_backoff_state(self) -> dict[str, float]:
-        """Seconds remaining per provider, for health and diagnosis."""
-        now = time.monotonic()
-        store = getattr(self, "_cloud_backoff_by_provider", None) or {}
-        return {
-            provider: round(max(0.0, float(deadline) - now), 1)
-            for provider, deadline in store.items()
-            if float(deadline) > now
-        }
-
-    def cloud_privacy_receipt(self) -> dict[str, Any]:
-        """What the last cloud scrub did, and what it verified."""
-        return copy.deepcopy(getattr(self, "_last_cloud_privacy_receipt", {}))
-
-    def _scrub_cloud_payload(
-        self,
-        system_prompt: str,
-        prompt: str,
-        *,
-        scrubber: Any | None = None,
-    ) -> tuple[str, str] | None:
-        try:
-            if scrubber is None:
-                from core.brain.pii_scrubber import scrub_for_cloud_with_receipt
-
-                scrubbed_system, system_receipt = scrub_for_cloud_with_receipt(system_prompt)
-                scrubbed_prompt, prompt_receipt = scrub_for_cloud_with_receipt(prompt)
-                # The privacy claim was two str() calls and a comment. None
-                # became the literal "None" and went out; a name the loader
-                # could not read went out unchanged; nothing recorded what had
-                # been done or checked that it worked.
-                residual = sorted(
-                    set(system_receipt["residual_findings"])
-                    | set(prompt_receipt["residual_findings"])
-                )
-                self._last_cloud_privacy_receipt = {
-                    "system": system_receipt,
-                    "prompt": prompt_receipt,
-                    "residual_findings": residual,
-                    "at": time.time(),
-                }
-                if residual or not (
-                    system_receipt["safe_to_send"] and prompt_receipt["safe_to_send"]
-                ):
-                    _record_inference_degradation(
-                        RuntimeError(
-                            "cloud payload still carries personal data after scrubbing: "
-                            + ", ".join(residual or ["unverified"])
-                        ),
-                        severity="critical",
-                        action="blocked cloud fallback because the scrubbed payload did not verify",
-                        extra={"residual_findings": residual},
-                    )
-                    return None
-                return scrubbed_system, scrubbed_prompt
-            scrubbed_system = scrubber(system_prompt)
-            scrubbed_prompt = scrubber(prompt)
-            if scrubbed_system is None or scrubbed_prompt is None:
-                # str(None) is "None" — a string that looks scrubbed and is a
-                # scrubber failure.
-                _record_inference_degradation(
-                    RuntimeError("cloud scrubber returned None"),
-                    severity="critical",
-                    action="blocked cloud fallback because the scrubber returned nothing",
-                )
-                return None
-            return str(scrubbed_system), str(scrubbed_prompt)
-        except ImportError as scrub_exc:
-            _record_inference_degradation(
-                scrub_exc,
-                severity="critical",
-                action="blocked cloud fallback because PII scrubber was unavailable",
-            )
-            logger.warning("PII scrubber unavailable; blocking cloud fallback.")
-            return None
-        except _INFERENCE_RECOVERABLE_ERRORS as scrub_exc:
-            _record_inference_degradation(
-                scrub_exc,
-                severity="critical",
-                action="blocked cloud fallback because PII scrubbing failed",
-            )
-            logger.warning("PII scrubbing failed (%s); blocking cloud fallback.", scrub_exc)
-            return None
-
     def _build_compact_messages(
         self, prompt: str, system_prompt: str, history: list[dict]
     ) -> list[dict[str, str]]:
@@ -9278,7 +9088,6 @@ class InferenceGate:
                 # must carry an explicit origin such as api/user/voice.
                 is_background = True
         deep_handoff = bool(context.get("deep_handoff", False))
-        allow_cloud_fallback = bool(context.get("allow_cloud_fallback", False))
         desktop_cognitive_engine_contract = bool(
             context.get("cognitive_engine_required", False)
             or context.get("desktop_cognitive_engine_required", False)
@@ -9349,19 +9158,16 @@ class InferenceGate:
             requested_tier = "primary"
             deep_handoff = False
             is_background = False
-            allow_cloud_fallback = False
             protected_foreground_lane = True
         if desktop_cognitive_engine_contract:
             context["desktop_cognitive_engine_required"] = True
             requested_tier = "primary"
             deep_handoff = False
             is_background = False
-            allow_cloud_fallback = False
             protected_foreground_lane = True
         if is_background:
             requested_tier = "tertiary"
             deep_handoff = False
-            allow_cloud_fallback = False
             background_deferral = self._background_local_deferral_reason(origin=origin)
             if background_deferral:
                 if background_deferral == "memory_pressure":
@@ -10986,7 +10792,7 @@ class InferenceGate:
         # No policy floor may expand a caller-admitted ceiling, and none may
         # expand a viability ceiling either. Keep both as the final
         # token-budget transformations before prompt construction and every
-        # local/cloud provider call below.
+        # local provider call below.
         if stakes_token_ceiling is not None and max_tokens > stakes_token_ceiling:
             logger.info(
                 "🪫 Resource-stakes ceiling re-applied after later modifiers: %d→%d.",
@@ -12091,12 +11897,6 @@ class InferenceGate:
                                 origin=origin,
                                 detail={"lane": local_label},
                             )
-                        # For user-facing requests, skip brainstem — go straight to cloud
-                        if allow_cloud_fallback:
-                            logger.warning(
-                                "🧠 Escalating to cloud before brainstem for user-facing request."
-                            )
-                            raise _UserFacingCortexError()
                         logger.warning(
                             "🧠 %s is still recovering. Falling back to %s for this %s foreground turn.",
                             local_label,
@@ -12168,16 +11968,11 @@ class InferenceGate:
                     if restore_primary and not primary_restored_inline:
                         self._schedule_primary_restore_after_deep_handoff()
 
-            except _UserFacingCortexError:
-                logger.warning(
-                    "🧠 User-facing Cortex failure — bypassing brainstem, escalating to cloud."
-                )
             except TimeoutError as timeout_exc:
                 logger.warning("🛑 Local inference TIMED OUT (Budget: %.0fs).", timeout_val)
                 if (
                     not is_background
                     and self._origin_is_user_facing(origin)
-                    and not allow_cloud_fallback
                 ):
                     raise TimeoutError(
                         f"{local_label} timed out after {timeout_val:.0f}s"
@@ -12201,7 +11996,7 @@ class InferenceGate:
                         "inference_gate",
                         e,
                         severity="degraded",
-                        action="fell through to reflex or cloud fallback after local inference failure",
+                        action="fell through to a lower local lane after local inference failure",
                     )
                     logger.warning("🛑 Local inference FAILURE: %s", e)
 
@@ -12289,409 +12084,99 @@ class InferenceGate:
                 )
                 logger.debug("Reflex fallback failed: %s", reflex_err)
 
-        # 2. Optional cloud fallback.
-        if not allow_cloud_fallback:
-            logger.error("Local inference paths exhausted. Cloud fallback disabled by request policy.")
-            if proof_evaluation_contract or desktop_cognitive_engine_contract:
-                logger.error("Primary foreground contract exhausted Cortex without valid text.")
-                return self._refuse_generation(
-                    self.REFUSAL_EXHAUSTED,
-                    "cortex_exhausted_with_cloud_disabled",
-                    context=context,
-                    origin=origin,
-                )
-            # User-facing requests still trigger local Cortex recovery, but
-            # ``allow_cloud_fallback=False`` is a hard boundary. Do not route to
-            # Gemini/HealthRouter from this branch; callers set this flag for
-            # privacy, proof isolation, or offline operation.
-            if _is_user_facing:
-                # [BUG FIX] Force-kill stuck worker and drain queues IMMEDIATELY.
-                # Without this, the old worker's IPC feeder threads stay blocked on
-                # nwait(), starving the event loop and causing tick stalls that kill
-                # the WebSocket connection. The recovery task below will respawn cleanly.
-                if self._mlx_client and hasattr(self._mlx_client, "_process"):
-                    try:
-                        # Own the foreground lane while mutating private
-                        # process/queue/init state — a concurrent warmup or
-                        # generation could otherwise change state after the
-                        # legitimacy check and be killed by this request.
-                        async with _thread_lock_context(
-                            self._foreground_ready_lock,
-                            timeout_s=5.0,
-                            label="cascade_cleanup",
-                        ):
-                            await asyncio.to_thread(
-                                self._cascade_cleanup_stuck_worker_locked
-                            )
-                    except TimeoutError:
-                        logger.info(
-                            "⏳ [CASCADE CLEANUP] Foreground lane is owned elsewhere; "
-                            "skipping stuck-worker cleanup this turn."
-                        )
-                    except _INFERENCE_RECOVERABLE_ERRORS as cleanup_exc:
-                        record_degradation(
-                            "inference_gate",
-                            cleanup_exc,
-                            severity="warning",
-                            action="continued recovery scheduling after cascade cleanup error",
-                        )
-                        logger.debug("Cascade cleanup error (non-fatal): %s", cleanup_exc)
-                # Force cortex recovery in background
-                if not self._cortex_recovery_in_progress:
-                    recovery_coro = self._respawn_cortex_if_needed()
-                    task = get_task_tracker().create_task(recovery_coro)
-                    if not isinstance(task, asyncio.Task):
-                        recovery_coro.close()
-                # Give cortex time to recover before next request hits a dead endpoint
-                self._extend_startup_quiet_window(15.0)
-                # Reset the UnitaryResponsePhase circuit breaker so next attempt works
-                try:
-                    from core.resilience.error_boundary import CircuitRegistry
-                    from core.utils.resilience import CircuitState
-
-                    breaker = CircuitRegistry.get_instance().get_breaker(
-                        "phase:UnitaryResponsePhase"
-                    )
-                    if breaker.state != CircuitState.CLOSED and breaker.request_probe(
-                        reason="inference_gate_cortex_recovery",
-                        requested_timeout=15.0,
-                    ):
-                        logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
-                except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                    logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
-                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
-                return self._finalize_nonlocal_user_facing_text(
-                    recovery_text,
-                    visible_user_prompt,
-                    is_user_facing=True,
-                    label="offline-recovery",
-                    max_tokens=max_tokens,
-                    output_contract=output_contract_payload,
-                )
-            return self._refuse_generation(
-                self.REFUSAL_EXHAUSTED,
-                "offline_and_cloud_unreachable",
-                context=context,
-                origin=origin,
-            )
-
-        if time.monotonic() < self._cloud_backoff_until:
-            logger.warning("Cloud fallback cooling down. Skipping remote retry.")
-            if _is_user_facing:
-                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
-                return self._finalize_nonlocal_user_facing_text(
-                    recovery_text,
-                    visible_user_prompt,
-                    is_user_facing=True,
-                    label="cloud-backoff-recovery",
-                    max_tokens=max_tokens,
-                    output_contract=output_contract_payload,
-                )
-            return self._refuse_generation(
-                self.REFUSAL_EXHAUSTED,
-                "cloud_backoff_active",
-                context=context,
-                origin=origin,
-            )
-
-        # Resolve the recoverable error surface BEFORE the try so the handler
-        # can catch it directly — provider SDK error types vary by
-        # installation, but that is a reason to build the tuple dynamically,
-        # not to catch Exception (the causal-gating ratchet forbids raw broad
-        # catches in this file, and it is right). The resolution itself must
-        # not be able to abort generation: a broken provider-SDK discovery
-        # falls back to the base recoverable tuple instead of escaping the
-        # governed exhausted-inference path.
-        try:
-            from core.brain.llm.cloud_errors import cloud_call_error_types
-
-            recoverable_cloud_errors = (
-                *_INFERENCE_RECOVERABLE_ERRORS,
-                *cloud_call_error_types(),
-            )
-        except _INFERENCE_RECOVERABLE_ERRORS as _cloud_types_exc:
-            _record_inference_degradation(
-                _cloud_types_exc,
-                action="used base recoverable error tuple after cloud error-type discovery failed",
-            )
-            recoverable_cloud_errors = _INFERENCE_RECOVERABLE_ERRORS
-        try:
-            from core.container import ServiceContainer
-
-            # PII SCRUBBING: Strip personal identifiers before sending to cloud.
-            # biography_private.json data (real names, trust scores, relationship
-            # labels) must never leave the local machine. The scrubber replaces
-            # PII with neutral replacements while preserving conversational context.
-            scrubbed_payload = self._scrub_cloud_payload(system_prompt, prompt)
-            if scrubbed_payload is None:
-                if not _is_user_facing:
-                    return self._refuse_generation(
-                        self.REFUSAL_PRIVACY,
-                        "cloud_payload_could_not_be_scrubbed",
-                        context=context,
-                        origin=origin,
-                    )
-                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
-                return self._finalize_nonlocal_user_facing_text(
-                    recovery_text,
-                    visible_user_prompt,
-                    is_user_facing=True,
-                    label="cloud-privacy-recovery",
-                    max_tokens=max_tokens,
-                    output_contract=output_contract_payload,
-                )
-            cloud_system_prompt, cloud_prompt = scrubbed_payload
-
-            # Try APIAdapter first (cleaner Gemini integration)
-            adapter = ServiceContainer.get("api_adapter", default=None)
-            if (
-                adapter
-                and getattr(adapter, "has_gemini", False)
-                and not self._cloud_provider_in_backoff("api_adapter")
-            ):
-                logger.info("☁️ Falling back to Gemini via APIAdapter...")
-                # The system prompt travels as a system instruction, not as
-                # "User: …\nAura:" text glued to the front of the user's
-                # message. Flattened, a user could write those same labels and
-                # compete with the instructions, and no provider metadata could
-                # show whether role separation had survived.
-                adapter_options = {
-                    "model_tier": "api_fast",
-                    "max_tokens": min(800, max(1, int(max_tokens))),
-                    "temperature": 0.7,
-                    "cloud_only": True,
-                    "purpose": "user_cloud_recovery",
-                    "system_instruction": cloud_system_prompt,
-                }
-                adapter_prompt = cloud_prompt
-                metadata_generate = getattr(adapter, "generate_with_metadata", None)
-                # Cloud recovery ran on its own 30s clock, after every local
-                # attempt had already spent the caller's budget — and then
-                # HealthRouter below ran on another 30. Both are inside the one
-                # request budget now; if it is gone, the cloud path is skipped
-                # rather than started.
-                cloud_window_s = self._window_within(request_deadline, 30.0)
-                try:
-                    if not cloud_window_s:
-                        raise TimeoutError(
-                            "request budget spent before cloud recovery could start"
-                        )
-                    if callable(metadata_generate):
-                        adapter_result = await asyncio.wait_for(
-                            metadata_generate(adapter_prompt, adapter_options),
-                            timeout=cloud_window_s,
-                        )
-                    else:
-                        logger.error(
-                            "APIAdapter lacks structured provider metadata; refusing cloud fallback."
-                        )
-                        adapter_result = {
-                            "ok": False,
-                            "text": "",
-                            "endpoint": "APIAdapter-cloud-unverified",
-                            "provider": "unknown",
-                            "model": "",
-                            "is_local": None,
-                            "provider_verified": False,
-                            "fallback_chain": [],
-                            "error": "structured_cloud_provenance_unavailable",
-                        }
-                except recoverable_cloud_errors as adapter_err:
-                    record_degradation(
-                        "inference_gate",
-                        adapter_err,
-                        severity="warning",
-                        action=(
-                            "continued to HealthRouter after APIAdapter cloud provider failed"
-                        ),
-                    )
-                    adapter_error_text = str(adapter_err)
-                    self._note_cloud_provider_failure("api_adapter", adapter_error_text)
-                    logger.warning(
-                        "APIAdapter cloud fallback failed; continuing to HealthRouter: %s",
-                        adapter_err,
-                    )
-                    adapter_result = {
-                        "ok": False,
-                        "text": "",
-                        "endpoint": "APIAdapter-cloud-error",
-                        "provider": "unknown",
-                        "model": "",
-                        "is_local": None,
-                        "provider_verified": False,
-                        "fallback_chain": [
-                            {
-                                "endpoint": "APIAdapter",
-                                "status": "error",
-                                "error_type": type(adapter_err).__name__,
-                            }
-                        ],
-                        "error": type(adapter_err).__name__,
-                    }
-                result = (
-                    str(adapter_result.get("text") or "")
-                    if isinstance(adapter_result, dict)
-                    else ""
-                )
-                adapter_is_cloud = _verified_cloud_generation_metadata(
-                    adapter_result,
-                    endpoint_prefix="Gemini-APIAdapter:",
-                )
-                if result.strip() and adapter_is_cloud:
-                    endpoint = str(
-                        adapter_result.get("endpoint") or "APIAdapter-cloud-unverified"
-                    )
-                    finalized_result = self._finalize_nonlocal_user_facing_text(
-                        result.strip(),
-                        visible_user_prompt,
-                        is_user_facing=_is_user_facing,
-                        label=endpoint,
-                        max_tokens=max_tokens,
-                        output_contract=output_contract_payload,
-                        generation_metadata=adapter_result,
-                    )
-                    try:
-                        from core.consciousness.closed_loop import notify_closed_loop_output
-
-                        notify_closed_loop_output(finalized_result)
-                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                        record_degradation(
-                            "inference_gate",
-                            exc,
-                            severity="warning",
-                            action="returned cloud result without closed-loop output notification",
-                        )
-                        logger.debug("Cloud output notification skipped: %s", exc)
-                    return finalized_result
-                if result.strip() and not adapter_is_cloud:
-                    logger.error(
-                        "APIAdapter cloud-only fallback returned a local provider; rejecting mislabeled result."
-                    )
-
-            # Try HealthRouter as secondary cloud path (also PII-scrubbed)
-            router = ServiceContainer.get("llm_router", default=None)
-            metadata_generate = getattr(router, "generate_with_metadata", None)
-            if (
-                router
-                and callable(metadata_generate)
-                and not self._cloud_provider_in_backoff("health_router")
-            ):
-                logger.info("☁️ Falling back to HealthRouter...")
-                router_window_s = self._window_within(request_deadline, 30.0)
-                try:
-                    if not router_window_s:
-                        raise TimeoutError(
-                            "request budget spent before HealthRouter recovery could start"
-                        )
-                    router_result = await asyncio.wait_for(
-                        metadata_generate(
-                            cloud_prompt,
-                            system_prompt=cloud_system_prompt,
-                            prefer_tier="api_fast",
-                            max_tokens=max_tokens,
-                            origin="inference_gate_cloud_fallback",
-                            purpose="user_cloud_recovery",
-                            foreground_request=True,
-                            protected_foreground_lane=True,
-                            is_background=False,
-                            allow_cloud_fallback=True,
-                            cloud_only=True,
-                            skip_runtime_payload=True,
-                            requested_output_contract=(
-                                dict(output_contract_payload)
-                                if isinstance(output_contract_payload, dict)
-                                else None
-                            ),
-                            semantic_output_token_cap=output_contract.semantic_token_cap,
-                            hard_output_token_ceiling=output_contract.hard_token_ceiling,
-                        ),
-                        timeout=router_window_s,
-                    )
-                except recoverable_cloud_errors as router_err:
-                    record_degradation(
-                        "inference_gate",
-                        router_err,
-                        severity="warning",
-                        action=(
-                            "continued to exhausted-inference recovery after HealthRouter failed"
-                        ),
-                    )
-                    router_error_text = str(router_err)
-                    self._note_cloud_provider_failure("health_router", router_error_text)
-                    logger.warning("HealthRouter cloud fallback failed: %s", router_err)
-                    router_result = {
-                        "ok": False,
-                        "text": "",
-                        "endpoint": "HealthRouter-cloud-error",
-                        "provider_verified": False,
-                        "error": type(router_err).__name__,
-                    }
-                result = (
-                    str(router_result.get("text") or "")
-                    if isinstance(router_result, dict)
-                    else ""
-                )
-                router_is_cloud = _verified_cloud_generation_metadata(router_result)
-                if result.strip() and router_is_cloud:
-                    endpoint = str(router_result.get("endpoint") or "HealthRouter-cloud")
-                    finalized_result = self._finalize_nonlocal_user_facing_text(
-                        result.strip(),
-                        visible_user_prompt,
-                        is_user_facing=_is_user_facing,
-                        label=endpoint,
-                        max_tokens=max_tokens,
-                        output_contract=output_contract_payload,
-                        generation_metadata=router_result,
-                    )
-                    try:
-                        from core.consciousness.closed_loop import notify_closed_loop_output
-
-                        notify_closed_loop_output(finalized_result)
-                    except _INFERENCE_RECOVERABLE_ERRORS as exc:
-                        record_degradation(
-                            "inference_gate",
-                            exc,
-                            severity="warning",
-                            action="returned router cloud result without closed-loop output notification",
-                        )
-                        logger.debug("Router output notification skipped: %s", exc)
-                    return finalized_result
-                if result.strip() and not router_is_cloud:
-                    logger.error(
-                        "HealthRouter cloud-only fallback returned a local provider; rejecting result."
-                    )
-        except recoverable_cloud_errors as cloud_err:
-            record_degradation(
-                "inference_gate",
-                cloud_err,
-                severity="degraded",
-                action="entered cloud backoff when applicable and returned exhausted-inference fallback",
-            )
-            cloud_err_text = str(cloud_err)
-            # The outer handler cannot attribute the failure to one provider,
-            # so this is the only place a shared deadline is still right.
-            if self._note_cloud_provider_failure("cloud", cloud_err_text):
-                self._cloud_backoff_until = time.monotonic() + self._CLOUD_BACKOFF_S
-            logger.error("☁️ Cloud fallback failed: %s", cloud_err)
-
-        # All inference paths exhausted. Return None so callers can handle
-        # gracefully without the error text leaking to TTS or the user.
-        logger.error("All inference paths exhausted (Local + Cloud)")
-        if _is_user_facing:
-            recovery_text = self._user_facing_recovery_response(visible_user_prompt)
-            return self._finalize_nonlocal_user_facing_text(
-                recovery_text,
-                visible_user_prompt,
-                is_user_facing=True,
-                label="exhausted-inference-recovery",
-                max_tokens=max_tokens,
-                output_contract=output_contract_payload,
-            )
-        return self._refuse_generation(
-            self.REFUSAL_EXHAUSTED,
-            "all_inference_lanes_exhausted",
+        return await self._finish_local_inference_exhaustion(
+            proof_evaluation_contract=proof_evaluation_contract,
+            desktop_cognitive_engine_contract=desktop_cognitive_engine_contract,
+            is_user_facing=_is_user_facing,
+            visible_user_prompt=visible_user_prompt,
             context=context,
             origin=origin,
+            max_tokens=max_tokens,
+            output_contract_payload=output_contract_payload,
+        )
+
+    async def _finish_local_inference_exhaustion(
+        self,
+        *,
+        proof_evaluation_contract: bool,
+        desktop_cognitive_engine_contract: bool,
+        is_user_facing: bool,
+        visible_user_prompt: str,
+        context: dict[str, Any] | None,
+        origin: str,
+        max_tokens: int,
+        output_contract_payload: dict[str, Any] | None,
+    ) -> str | dict[str, Any]:
+        """Recover the resident cortex or return a typed local-only refusal."""
+
+        logger.error("Local inference paths exhausted; scheduling resident-cortex recovery.")
+        if proof_evaluation_contract or desktop_cognitive_engine_contract:
+            return self._refuse_generation(
+                self.REFUSAL_EXHAUSTED,
+                "resident_cortex_exhausted",
+                context=context,
+                origin=origin,
+            )
+
+        if not is_user_facing:
+            return self._refuse_generation(
+                self.REFUSAL_EXHAUSTED,
+                "local_inference_lanes_exhausted",
+                context=context,
+                origin=origin,
+            )
+
+        if self._mlx_client and hasattr(self._mlx_client, "_process"):
+            try:
+                async with _thread_lock_context(
+                    self._foreground_ready_lock,
+                    timeout_s=5.0,
+                    label="cascade_cleanup",
+                ):
+                    await asyncio.to_thread(self._cascade_cleanup_stuck_worker_locked)
+            except TimeoutError:
+                logger.info(
+                    "[CASCADE CLEANUP] Foreground lane is owned elsewhere; "
+                    "skipping worker cleanup this turn."
+                )
+            except _INFERENCE_RECOVERABLE_ERRORS as cleanup_exc:
+                record_degradation(
+                    "inference_gate",
+                    cleanup_exc,
+                    severity="warning",
+                    action="continued local cortex recovery scheduling after cleanup error",
+                )
+
+        if not self._cortex_recovery_in_progress:
+            recovery_coro = self._respawn_cortex_if_needed()
+            task = get_task_tracker().create_task(recovery_coro)
+            if not isinstance(task, asyncio.Task):
+                recovery_coro.close()
+        self._extend_startup_quiet_window(15.0)
+
+        try:
+            from core.resilience.error_boundary import CircuitRegistry
+            from core.utils.resilience import CircuitState
+
+            breaker = CircuitRegistry.get_instance().get_breaker(
+                "phase:UnitaryResponsePhase"
+            )
+            if breaker.state != CircuitState.CLOSED and breaker.request_probe(
+                reason="inference_gate_cortex_recovery",
+                requested_timeout=15.0,
+            ):
+                logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
+
+        recovery_text = self._user_facing_recovery_response(visible_user_prompt)
+        return self._finalize_nonlocal_user_facing_text(
+            recovery_text,
+            visible_user_prompt,
+            is_user_facing=True,
+            label="resident-cortex-recovery",
+            max_tokens=max_tokens,
+            output_contract=output_contract_payload,
         )
 
     def _cascade_cleanup_stuck_worker_locked(self) -> None:
@@ -13185,7 +12670,7 @@ class InferenceGate:
             context["brief"] = system_prompt
 
         # CP126 (critical x3): "Unauthenticated context flags control proof,
-        # foreground, cloud, and model-tier policy"; "Caller context is
+        # foreground and model-tier policy"; "Caller context is
         # copied into provider policy and proof kwargs without validation.
         # No per-key type schema, authority source, unknown-field
         # rejection"; "The public think interface forwards policy-sensitive
@@ -13193,8 +12678,8 @@ class InferenceGate:
         #
         # The list this replaces was an allowlist of NAMES with no types, and
         # every flag downstream is read with a bare truthiness test. So
-        # allow_cloud_fallback="false" — a perfectly ordinary thing to get
-        # from a config file or a JSON body — enabled cloud fallback, and
+        # policy_flag="false" — a perfectly ordinary thing to get from a
+        # config file or a JSON body — could enable a policy, and
         # proof_primary_lane_required="no" required it. A caller got the
         # opposite of what it asked for and nothing reported it.
         #

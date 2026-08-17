@@ -15,13 +15,13 @@ from core.skills.base_skill import BaseSkill
 logger = logging.getLogger("Skills.InterAgent")
 
 class InterAgentCommSkill(BaseSkill):
-    """Skill for communication with external agents (e.g., Gemini, ChatGPT).
+    """Skill for communication with registered local peer agents.
     v3.4 Patch: Uses mock 'conversation_loop' if needed.
     """
     
     name = "inter_agent_comm"
     retry_safe = False  # external send/act — never double-fire on retry
-    description = "Send a message to an external agent (Gemini, etc) to request assistance."
+    description = "Send a message to a registered local peer agent to request assistance."
 
     def __init__(self):
         # Ensure we have a place to store these outbound messages
