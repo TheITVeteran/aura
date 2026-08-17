@@ -398,9 +398,10 @@ async def test_desktop_quick_path_consumes_imagination_workspace():
     assert thought is not None
     assert thought.metadata["imagination_workspace"]["frame_id"] == frame["frame_id"]
     assert thought.metadata["imagination_workspace_feedback"]["outcome"] == "desktop_quick_reply"
-    assert "Imagination workspace" in captured["messages"][0]["content"]
-    assert "Mental canvas" in captured["messages"][0]["content"]
-    assert "Novel thought candidates" in captured["messages"][0]["content"]
+    grounding = "\n".join(message["content"] for message in captured["messages"])
+    assert "Imagination workspace" in grounding
+    assert "Mental canvas" in grounding
+    assert "Novel thought candidates" in grounding
     assert captured["kwargs"]["protected_foreground_lane"] is True
     assert captured["kwargs"]["allow_cloud_fallback"] is False
     assert captured["kwargs"]["imagination_sampling_bias"] == frame["sampling_bias"]

@@ -241,11 +241,13 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
         set_ready(True)
     logger.info(
         "Foreground chat dependencies prewarmed after Cortex readiness in %.2fs "
-        "(embedding_dimensions=%s, leases=%s, skills=%s, condition_evidence=%s).",
+        "(embedding_dimensions=%s, leases=%s, skills=%s, expression_ms=%s, "
+        "condition_evidence=%s).",
         time.perf_counter() - started,
         snapshot.get("vector_dimensions"),
         snapshot.get("lease_count"),
         foreground_services.get("skill_count"),
+        (foreground_services.get("expression_path") or {}).get("elapsed_ms"),
         str(getattr(projection, "evidence_id", ""))[:16],
     )
 

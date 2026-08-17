@@ -37,12 +37,22 @@ def test_foreground_chat_dependency_materializer_resolves_complete_read_path(
     monkeypatch.setattr(finitude_module, "get_temporal_finitude_model", object)
     monkeypatch.setattr(social_module, "get_social_imagination", object)
     monkeypatch.setattr(intention_module, "get_intention_loop", object)
+    monkeypatch.setattr(
+        chat_dependencies,
+        "_materialize_expression_path",
+        lambda: {
+            "elapsed_ms": 12.5,
+            "contract_type": "ResponseContract",
+            "requires_live_grounding": True,
+        },
+    )
 
     receipt = chat_dependencies.materialize_foreground_chat_dependencies()
 
     assert receipt["skill_count"] == 2
     assert receipt["cognitive_engine"] == "_CognitiveEngine"
     assert receipt["capability_engine"] == "_CapabilityEngine"
+    assert receipt["expression_path"]["contract_type"] == "ResponseContract"
 
 
 def test_foreground_chat_dependency_materializer_refuses_empty_catalog(

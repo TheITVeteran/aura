@@ -4248,35 +4248,36 @@ class CognitiveEngine:
                 "Do not mention hidden fallback paths, internal recovery, prompt contracts, or implementation details "
                 "unless the user specifically asks for them."
             )
+        turn_dynamic_contracts: list[str] = []
         if completion_retry_contract:
             # Append to the stable ordinary-chat prefix. The prefix can still
             # reuse resident KV, while the suffix gives the replacement its
             # only special instruction. Never include the rejected fragment:
             # a partial answer is a powerful continuation anchor and tended to
             # reproduce the same cutoff.
-            system_prompt = (
-                f"{system_prompt} Regenerate the answer from the beginning. "
+            turn_dynamic_contracts.append(
+                "Regenerate the answer from the beginning. "
                 "Cover every requested part, finish every sentence, and end "
                 "with the requested conclusion. Prefer a concise complete "
                 "answer over an unfinished exhaustive one."
             )
         neurodynamic_directive = _compact_spiking_active_inference_directive(advice)
         if neurodynamic_directive:
-            system_prompt = f"{system_prompt}\n{neurodynamic_directive}"
+            turn_dynamic_contracts.append(neurodynamic_directive)
         if isinstance(imagination_frame, dict):
             imagination_directive = _compact_imagination_directive(imagination_frame)
             if imagination_directive:
-                system_prompt = f"{system_prompt}\n{imagination_directive}"
+                turn_dynamic_contracts.append(imagination_directive)
         if isinstance(bicameral_frame, dict):
             bicameral_directive = _compact_bicameral_directive(bicameral_frame)
             if bicameral_directive:
-                system_prompt = f"{system_prompt}\n{bicameral_directive}"
+                turn_dynamic_contracts.append(bicameral_directive)
         if isinstance(cognitive_situation_frame, dict):
             situation_directive = _compact_cognitive_situation_directive(
                 cognitive_situation_frame
             )
             if situation_directive:
-                system_prompt = f"{system_prompt}\n{situation_directive}"
+                turn_dynamic_contracts.append(situation_directive)
         # The desktop conversation lane builds its own system prompt, so the
         # grounding wired into inference_gate never reached the turns people
         # actually take: after that fix landed and the runtime restarted, "what
@@ -4366,10 +4367,9 @@ class CognitiveEngine:
                 )
 
         if style_contract and not capability_inventory_contract:
-            system_prompt = f"{system_prompt}\n{style_contract}"
+            turn_dynamic_contracts.append(style_contract)
         if continuation_contract:
-            system_prompt = (
-                f"{system_prompt}\n"
+            turn_dynamic_contracts.append(
                 "[USER-SURFACE CONTINUATION CONTRACT]\n"
                 "The assistant text immediately before the final continuation request is "
                 "your own valid partial answer to the current user turn. Continue from its "
@@ -4389,7 +4389,10 @@ class CognitiveEngine:
         mind_context_contract = self._contract_safe(
             context.get("mind_context_contract"), self._MIND_CONTRACT_LIMIT
         )
-        contract_grounding_blocks: list[str] = []
+        # Per-turn control state belongs next to the turn it governs. Keeping it
+        # out of the stable system head lets the resident model reuse the full
+        # identity/persona prefix and prior conversation KV across turns.
+        contract_grounding_blocks: list[str] = list(turn_dynamic_contracts)
         task_grounding_blocks: list[str] = []
         ambient_grounding_blocks: list[str] = []
         # The block below tells the model its own state is "causal grounding for

@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from core.container import ServiceContainer
+
+
+def _materialize_expression_path() -> dict[str, Any]:
+    """Exercise the synchronous live-expression path used by the first turn."""
+
+    from interface.routes.chat_desktop_repair import _build_aura_expression_frame
+
+    started = time.perf_counter()
+    frame = _build_aura_expression_frame("How are you doing right now?")
+    contract = frame.get("contract") if isinstance(frame, dict) else None
+    if contract is None:
+        raise RuntimeError("foreground chat expression contract is unavailable")
+    return {
+        "elapsed_ms": round((time.perf_counter() - started) * 1000.0, 2),
+        "contract_type": type(contract).__name__,
+        "requires_live_grounding": bool(
+            frame.get("requires_explicit_live_grounding", False)
+        ),
+    }
 
 
 def materialize_foreground_chat_dependencies() -> dict[str, Any]:
@@ -37,6 +57,7 @@ def materialize_foreground_chat_dependencies() -> dict[str, Any]:
     temporal_finitude = get_temporal_finitude_model()
     social_imagination = get_social_imagination()
     intention_loop = get_intention_loop()
+    expression_path = _materialize_expression_path()
 
     return {
         "cognitive_engine": type(cognitive_engine).__name__,
@@ -46,4 +67,5 @@ def materialize_foreground_chat_dependencies() -> dict[str, Any]:
         "temporal_finitude": type(temporal_finitude).__name__,
         "social_imagination": type(social_imagination).__name__,
         "intention_loop": type(intention_loop).__name__,
+        "expression_path": expression_path,
     }
