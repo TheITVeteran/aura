@@ -8,10 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from core.agi.curiosity_explorer import CuriosityExplorer
-from core.brain.react_loop import ActionType, ReActLoop
+from core.brain.react_loop import ReActLoop
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.container import ServiceContainer
 from core.memory.episodic_memory import EpisodicMemory
-from core.capabilities.phantom_browser import PhantomBrowser
 from core.phases.response_generation_unitary import UnitaryResponsePhase
 from core.search.research_pipeline import (
     ResearchSearchPipeline,
@@ -19,6 +19,7 @@ from core.search.research_pipeline import (
     SearchHit,
     SearchPage,
 )
+from core.skills.grounded_search import GroundedSearchSkill, _LocalOnlyRouter
 from core.skills.sovereign_browser import SovereignBrowserSkill
 
 
@@ -37,6 +38,91 @@ class _ScriptedBrain:
                 content='Thought: done.\nAction: FINAL_ANSWER\nActionInput: {"text": "done"}'
             )
         return _ThoughtEnvelope(content=self.script.pop(0))
+
+
+@pytest.mark.asyncio
+async def test_grounded_search_delegates_to_local_runtime_search(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _local_search(query, **kwargs):
+        captured["query"] = query
+        captured["kwargs"] = dict(kwargs)
+        captured["context"] = dict(kwargs["context"])
+        return {
+            "ok": True,
+            "answer": "Octopuses can solve spatial problems.",
+            "citations": [
+                {"title": "Research paper", "url": "https://example.test/paper"}
+            ],
+        }
+
+    skill = GroundedSearchSkill()
+    monkeypatch.setattr(skill.pipeline, "search", _local_search)
+
+    result = await skill.execute(
+        {
+            "params": {
+                "query": "octopus spatial cognition",
+                "num_results": 3,
+            }
+        },
+        {"origin": "react_loop", "foreground_request": True},
+    )
+
+    assert result["ok"] is True
+    assert captured["query"] == "octopus spatial cognition"
+    kwargs = captured["kwargs"]
+    assert kwargs["num_results"] == 3
+    assert kwargs["deep"] is True
+    assert kwargs["force_refresh"] is True
+    context = captured["context"]
+    assert context["origin"] == "react_loop"
+    assert context["foreground_request"] is True
+    assert context["allow_cloud_fallback"] is False
+    assert context["allow_auto_cloud_recovery"] is False
+    assert context["remote_model_allowed"] is False
+    assert result["citations"][0]["url"] == "https://example.test/paper"
+    assert result["grounding"] == {
+        "retrieval": "governed_web_search",
+        "synthesis_boundary": "aura_local_runtime",
+        "remote_model_used": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_grounded_search_local_router_forces_remote_fallback_off():
+    class _Router:
+        def __init__(self):
+            self.kwargs = {}
+
+        async def think(self, prompt, **kwargs):
+            self.kwargs = dict(kwargs)
+            return "local synthesis"
+
+    router = _Router()
+    result = await _LocalOnlyRouter(router).think(
+        "evidence",
+        allow_cloud_fallback=True,
+        allow_auto_cloud_recovery=True,
+        cloud_only=True,
+    )
+
+    assert result == "local synthesis"
+    assert router.kwargs["allow_cloud_fallback"] is False
+    assert router.kwargs["allow_auto_cloud_recovery"] is False
+    assert "cloud_only" not in router.kwargs
+
+
+def test_grounded_search_and_react_loop_have_no_remote_model_client():
+    root = Path(__file__).resolve().parents[1]
+    source = "\n".join(
+        (root / path).read_text(encoding="utf-8")
+        for path in ("core/skills/grounded_search.py", "core/brain/react_loop.py")
+    ).lower()
+
+    assert "google.genai" not in source
+    assert "gemini_api_key" not in source
+    assert "gemini-" not in source
 
 
 def test_story_summary_queries_do_not_short_circuit_from_search_snippets():

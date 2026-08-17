@@ -10,7 +10,6 @@ from typing import Any
 
 import httpx
 
-from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.governance_policy import allow_simple_query_bypass
@@ -352,86 +351,9 @@ class ActionExecutor:
                 _record_react_degradation(e, action="fell back to direct web search integration after orchestrated search failed")
                 logger.debug("ReAct: orchestrated web_search failed, falling back: %s", e)
 
-        import os
-        # [FIX] Check config first — desktop/GUI mode may not inherit terminal env vars.
-        try:
-            from core.config import config as _react_cfg
-            api_key = getattr(getattr(_react_cfg, "llm", None), "gemini_api_key", None)
-        except (ImportError, AttributeError):
-            api_key = None
-        if not api_key:
-            api_key = os.environ.get("GEMINI_API_KEY")
-
-        # This SDK carries its own transport, so the query never reaches
-        # NetworkGateway. Screen it here or do not use the cloud leg at all —
-        # dropping the key falls through to the Sovereign/DDG pipelines below,
-        # which answer the same question without leaving the machine.
-        grounded_query = query
-        if api_key:
-            from core.security.egress_privacy import filter_model_prompt
-
-            screened = filter_model_prompt(query, provider="gemini_grounded_search")
-            if screened.allowed:
-                grounded_query = screened.text or ""
-            else:
-                logger.warning(
-                    "ReAct: grounded search refused by egress privacy (%s); "
-                    "using the local search pipeline instead",
-                    screened.reason,
-                )
-                api_key = None
-
-        if api_key:
-            try:
-                logger.info("ReAct: Executing grounded search for: %s", grounded_query)
-
-                def _do_search():
-                    from google import genai
-                    from google.genai import types
-                    client = genai.Client(api_key=api_key)
-                    return client.models.generate_content(
-                        model='gemini-2.5-pro',
-                        contents=grounded_query,
-                        config=types.GenerateContentConfig(
-                            tools=[{"google_search": {}}],
-                            temperature=0.0
-                        )
-                    )
-
-                response = await asyncio.to_thread(_do_search)
-                
-                answer = response.text
-                sources = []
-                
-                metadata = getattr(response.candidates[0], "grounding_metadata", None)
-                if metadata and metadata.grounding_chunks:
-                    for chunk in metadata.grounding_chunks:
-                        if hasattr(chunk, "web"):
-                            sources.append({
-                                "title": chunk.web.title,
-                                "url": chunk.web.uri
-                            })
-                
-                if sources:
-                    answer += "\n\n### Grounding Sources:\n"
-                    for i, src in enumerate(sources, 1):
-                        answer += f"[{i}] [{src['title']}]({src['url']})\n"
-
-                return Observation(
-                    content=answer[:2500],
-                    success=True,
-                    source="web_grounded"
-                )
-                
-            except (ImportError, AttributeError, RuntimeError, *cloud_call_error_types()) as e:
-                # 429/quota/unreachable cloud → fall through to the local
-                # Sovereign/DDG pipeline below, never crash the ReAct turn.
-                _record_react_degradation(e, action="fell back to sovereign browser web search after gemini search failed")
-                logger.warning("Grounded search unavailable (%s: %s), falling back to Sovereign/DDG", type(e).__name__, str(e)[:200])
-        else:
-             logger.debug("GEMINI_API_KEY not set. Using DuckDuckGo fallback for web search.")
-
-        # Fallback Pipeline 1: Sovereign Browser
+        # Local fallback 1: Sovereign Browser. Production calls normally return
+        # through the governed web_search route above; this lane preserves
+        # standalone ReAct operation without introducing a second model path.
         try:
             from core.container import ServiceContainer
             browser = ServiceContainer.get("sovereign_browser", default=None)

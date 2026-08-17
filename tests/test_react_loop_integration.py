@@ -13,7 +13,7 @@ Coverage:
     - Completed traces are persisted as episodes for retention
     - Error → recovery flows record `lessons` so Aura learns from failures
     - PYTHON_SANDBOX sandboxing still works after fixes
-    - WEB_SEARCH falls back correctly when GEMINI_API_KEY is absent (DDGS)
+    - WEB_SEARCH falls back correctly through Aura's local retrieval lanes
 """
 from __future__ import annotations
 
@@ -312,14 +312,14 @@ async def test_python_sandbox_allows_safe_code():
 
 
 # ---------------------------------------------------------------------------
-# 6. WEB_SEARCH DDGS fallback produces a real observation when GEMINI is absent.
+# 6. WEB_SEARCH local fallback produces a real observation without an orchestrator.
 #    This test actually hits the internet — mark as `online` so CI can skip.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.online
 @pytest.mark.asyncio
 async def test_web_search_ddgs_fallback_live():
-    """Verify the real DuckDuckGo fallback returns non-empty content.
+    """Verify a real local retrieval fallback returns non-empty content.
 
     This is an online test. Test selection should exclude the online marker in
     sealed/offline environments; executing the test while AURA_OFFLINE is set
@@ -327,18 +327,12 @@ async def test_web_search_ddgs_fallback_live():
     """
     if os.environ.get("AURA_OFFLINE"):
         pytest.fail("AURA_OFFLINE is set while running an online web-search test")
-    # Temporarily unset GEMINI_API_KEY so we exercise the fallback explicitly.
-    saved = os.environ.pop("GEMINI_API_KEY", None)
-    try:
-        executor = ActionExecutor()
-        action = Action(
-            action_type=ActionType.WEB_SEARCH,
-            params={"query": "Python official documentation website"},
-        )
-        obs = await executor.execute(action)
-    finally:
-        if saved is not None:
-            os.environ["GEMINI_API_KEY"] = saved
+    executor = ActionExecutor()
+    action = Action(
+        action_type=ActionType.WEB_SEARCH,
+        params={"query": "Python official documentation website"},
+    )
+    obs = await executor.execute(action)
     assert obs.source in ("web_deep_crawl", "web_ddgs_snippets", "web_browser"), (
         f"Expected a fallback source, got: source={obs.source} content={obs.content!r}"
     )

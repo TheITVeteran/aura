@@ -121,7 +121,7 @@ def fresh_container(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_self_heal_within_single_run(fresh_container: EpisodicMemory, monkeypatch):
+async def test_self_heal_within_single_run(fresh_container: EpisodicMemory):
     """Aura tries code → gets an error → searches → retries → succeeds, in one
     ReAct trace. The episode must capture both the error and the recovery.
 
@@ -130,9 +130,6 @@ async def test_self_heal_within_single_run(fresh_container: EpisodicMemory, monk
     integration point) to keep the web_search path offline-deterministic.
     """
     from core.brain.cognitive_engine import ThinkingMode
-
-    # Remove Gemini key for this test so sovereign_browser is used before DDGS.
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     browser = DeterministicBrowser(
         content=(
@@ -216,13 +213,12 @@ async def test_self_heal_within_single_run(fresh_container: EpisodicMemory, monk
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_retention_across_runs(fresh_container: EpisodicMemory, monkeypatch):
+async def test_retention_across_runs(fresh_container: EpisodicMemory):
     """Run 1 learns via search. Run 2 (fresh brain) recalls the lesson from
     episodic memory WITHOUT needing to search again. This is the core of
     "retain and use what she learned" — covered end-to-end."""
     from core.brain.cognitive_engine import ThinkingMode
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     browser = DeterministicBrowser(
         content=(
             "SEARCH RESULT: Python's math module exposes `math.factorial(n)` "
@@ -252,6 +248,10 @@ async def test_retention_across_runs(fresh_container: EpisodicMemory, monkeypatc
     )
     trace1 = await loop1.run("Please compute 6 factorial.")
     assert "720" in trace1.final_answer
+    assert await _recall_when_written(
+        fresh_container,
+        "python math factorial function",
+    ), "Run 1's retained lesson must be searchable before run 2 begins"
 
     # ---- Run 2: fresh brain, different query, but first consults memory ----
     # Swap in a NEW browser that would fail loudly if called — we want to
