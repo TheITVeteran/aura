@@ -466,6 +466,33 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_proactive_presence_cannot_publish_during_process_foreground_lease(monkeypatch):
+    import core.runtime.foreground_guard as foreground_guard
+
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason", lambda *_a, **_k: ""
+    )
+    orchestrator = SimpleNamespace(
+        emit_spontaneous_message=AsyncCallRecorder(
+            {"ok": True, "action": "released", "target": "primary"}
+        ),
+        _last_thought_time=0.0,
+    )
+    presence = ProactivePresence(orchestrator=orchestrator)
+    foreground_guard._reset_for_tests()
+    lease = foreground_guard.begin_foreground_turn(owner="test", source="desktop-ui")
+    try:
+        await presence._emit("I found something relevant to this conversation.")
+    finally:
+        lease.close()
+        foreground_guard._reset_for_tests()
+
+    orchestrator.emit_spontaneous_message.assert_not_called()
+    assert presence._outputs_this_hour == 0
+
+
+@pytest.mark.asyncio
 async def test_proactive_presence_rejects_backend_failure_text_from_visible_chat(monkeypatch):
     _simulate_idle_background_runtime(monkeypatch)
     orchestrator = SimpleNamespace(

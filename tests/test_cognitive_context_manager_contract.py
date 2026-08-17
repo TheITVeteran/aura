@@ -79,6 +79,25 @@ class _TheoryOfMind:
         return {"pragmatic": "question", "confidence": 0.8}
 
 
+class _ReferenceProvider:
+    async def reference_evidence(self, message, *, limit):
+        assert "Dijkstra" in message
+        assert limit == 4
+        return [
+            type(
+                "Span",
+                (),
+                {
+                    "source": "reference",
+                    "render": lambda self: (
+                        "wikipedia:Dijkstra's algorithm: shortest paths require "
+                        "non-negative edge weights"
+                    ),
+                },
+            )()
+        ]
+
+
 def _install_services(monkeypatch, *, identity=None, memory=None, homeostasis=None):
     services = {
         "homeostatic_coupling": homeostasis or _Homeostasis(),
@@ -135,6 +154,24 @@ async def test_snapshot_is_concurrent_evidenced_and_schema_stable(monkeypatch):
     )
     assert memory.kwargs["principal_id"] == "bryan"
     assert packet["sources"]["memory"]["data"]["items"][0]["content"] == "Bryan likes orcas"
+
+
+@pytest.mark.asyncio
+async def test_factual_context_carries_bounded_offline_reference_evidence(monkeypatch):
+    _install_services(monkeypatch, memory=_Memory())
+    monkeypatch.setattr(
+        "core.brain.cognitive_context_manager.get_evidence_provider",
+        lambda: _ReferenceProvider(),
+    )
+    manager = CognitiveContextManager(source_timeout_s=0.4, total_timeout_s=0.8)
+
+    with relational_principal_scope("bryan"):
+        packet = await manager.build_unified_context("Explain Dijkstra's algorithm.")
+
+    reference = packet["sources"]["reference"]
+    assert reference["status"] == "ok"
+    assert reference["data"]["count"] == 1
+    assert "non-negative" in reference["data"]["items"][0]["content"]
 
 
 @pytest.mark.asyncio

@@ -269,16 +269,13 @@ class CitationEngine:
         if len(query) < 12:
             return [], False
         try:
-            from core.knowledge.local_corpus import get_local_corpus_store
+            from core.brain.evidence_provider import get_evidence_provider
 
-            store = get_local_corpus_store()
-            hits = await asyncio.wait_for(
-                asyncio.to_thread(store.search, query, 4), timeout=3.0
+            spans = await asyncio.wait_for(
+                get_evidence_provider().reference_evidence(query, limit=4),
+                timeout=1.0,
             )
-            return [
-                f"{hit.title}: {hit.snippet}"[:_MAX_EVIDENCE_CHARS]
-                for hit in (hits or []) if hit.snippet
-            ], False
+            return [span.render()[:_MAX_EVIDENCE_CHARS] for span in spans], False
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError, TimeoutError) as exc:
             record_degradation(
                 "citation_engine", exc, severity="warning",

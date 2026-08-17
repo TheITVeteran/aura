@@ -17,6 +17,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from core.brain.evidence_provider import get_evidence_provider
 from core.runtime import service_access
 from core.runtime.errors import record_degradation
 from core.runtime.memory_consent import get_memory_consent_policy
@@ -356,6 +357,26 @@ class CognitiveContextManager:
             raise TypeError("theory-of-mind intent result must be a mapping")
         return dict(intent)
 
+    async def _read_reference(self, provider: Any, message: str) -> dict[str, Any]:
+        read = getattr(provider, "reference_evidence", None)
+        if not callable(read):
+            raise AttributeError("evidence provider has no offline reference surface")
+        spans = await _invoke(read, message, limit=4)
+        items = []
+        for span in list(spans or [])[:4]:
+            render = getattr(span, "render", None)
+            text = render() if callable(render) else str(span or "")
+            bounded, changed = _bounded_text(text, 1_400)
+            if bounded:
+                items.append(
+                    {
+                        "content": bounded,
+                        "source": _bounded_text(getattr(span, "source", "reference"), 80)[0],
+                        "redacted_or_truncated": changed,
+                    }
+                )
+        return {"items": items, "count": len(items), "read_only": True}
+
     async def build_unified_context(
         self,
         message: str,
@@ -374,7 +395,7 @@ class CognitiveContextManager:
         )
         message_cache_scope = hashlib.sha256(str(message or "").encode()).hexdigest()
 
-        collectors = (
+        collectors = [
             self._collect(
                 "homeostasis",
                 lambda: service_access.optional_service("homeostatic_coupling", default=None),
@@ -418,7 +439,32 @@ class CognitiveContextManager:
                 lambda service: self._read_memory(service, str(message or ""), principal),
                 cache_key=f"memory:{principal_cache_scope}",
             ),
-        )
+        ]
+        required_sources = [
+            "homeostasis",
+            "vitality",
+            "identity",
+            "personality",
+            "consciousness",
+            "beliefs",
+            "memory",
+        ]
+        try:
+            from core.brain.reasoning_amplifier_v2 import classify_task_type
+
+            factual_reference_turn = classify_task_type(str(message or "")) == "factual"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            factual_reference_turn = False
+        if factual_reference_turn:
+            collectors.append(
+                self._collect(
+                    "reference",
+                    get_evidence_provider,
+                    lambda provider: self._read_reference(provider, str(message or "")),
+                    cache_key=f"reference:{message_cache_scope}",
+                )
+            )
+            required_sources.append("reference")
         try:
             async with asyncio.timeout(self.total_timeout_s):
                 source_pairs = await asyncio.gather(*collectors)
@@ -431,15 +477,7 @@ class CognitiveContextManager:
             )
             source_pairs = []
         sources = dict(source_pairs)
-        for required in (
-            "homeostasis",
-            "vitality",
-            "identity",
-            "personality",
-            "consciousness",
-            "beliefs",
-            "memory",
-        ):
+        for required in required_sources:
             sources.setdefault(
                 required,
                 _source_record(

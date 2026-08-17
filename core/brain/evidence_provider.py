@@ -36,6 +36,17 @@ _STOP = frozenset(
     "does done make made work works using used your you aura have here only just like also both "
     "explain describe implement function module method class".split()
 )
+_REFERENCE_LEAD_RE = re.compile(
+    r"^\s*(?:(?:can|could|would)\s+you\s+|please\s+)?"
+    r"(?:explain|define|describe|summarize|outline|teach\s+me\s+about|what\s+is)\s+",
+    re.IGNORECASE,
+)
+_REFERENCE_FORMAT_TAIL_RE = re.compile(
+    r"\b(?:in\s+(?:one|a)\s+complete\s+response|in\s+detail|step\s+by\s+step|"
+    r"for\s+me|include\s*:?).*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_REFERENCE_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*(?:-[A-Za-z0-9'’-]+)*")
 _SKIP_DIRS = {".venv", "__pycache__", "node_modules", ".git", "archive", "dev_archive", ".mypy_cache",
               ".ruff_cache", ".pytest_cache", "dist", "build",
               # Worktrees are COPIES of this repository. Measured 2026-08-06:
@@ -90,6 +101,49 @@ def _salient_terms(objective: str, *, limit: int = 6) -> list[str]:
     return terms[:limit]
 
 
+def reference_query_candidates(objective: str) -> list[str]:
+    """Return bounded subject queries, excluding answer-format instructions.
+
+    FTS over a long multipart request falls back to a huge any-term query. The
+    subject usually appears in the opening clause; requested formatting and
+    worked-example constraints do not identify the reference article. This
+    extraction changes retrieval only. It does not tell the decoder how to
+    answer.
+    """
+
+    raw = " ".join(str(objective or "").split()).strip()
+    if not raw:
+        return []
+    opening = re.split(r"(?<=[.!?])\s+", raw, maxsplit=1)[0]
+    opening = _REFERENCE_LEAD_RE.sub("", opening).strip(" .?!,:;")
+    opening = _REFERENCE_FORMAT_TAIL_RE.sub("", opening).strip(" .?!,:;")
+    opening = re.sub(r"^(?:the|a|an)\s+", "", opening, flags=re.IGNORECASE)
+    terms = _REFERENCE_TERM_RE.findall(opening)[:10]
+    subject = " ".join(terms).strip()
+
+    candidates: list[str] = []
+    if subject:
+        candidates.append(subject)
+        # Possessive algorithm/theorem names often index under the shorter
+        # title even when the request contains modifiers such as "shortest-path".
+        named = re.search(
+            r"\b([A-Z][A-Za-z0-9'’-]*)\b.*?\b"
+            r"(algorithm|theorem|protocol|method|model|effect|law|equation|system)\b",
+            subject,
+        )
+        if named:
+            candidates.append(f"{named.group(1)} {named.group(2)}")
+    if not candidates:
+        fallback_terms = [
+            term
+            for term in _REFERENCE_TERM_RE.findall(raw)
+            if term.lower() not in _STOP
+        ][:8]
+        if fallback_terms:
+            candidates.append(" ".join(fallback_terms))
+    return list(dict.fromkeys(candidates))[:2]
+
+
 class EvidenceProvider:
     def __init__(self, root: Path | None = None, *, memory_facade: Any | None = None) -> None:
         self._root = Path(root or PROJECT_ROOT)
@@ -107,6 +161,8 @@ class EvidenceProvider:
         tt = (task_type or "generic").lower()
         if tt in {"repo", "repo_audit", "architecture", "code_audit", "self_claim", "code"}:
             spans.extend(await self._repo_evidence(objective, limit=limit))
+        if tt == "factual":
+            spans.extend(await self.reference_evidence(objective, limit=limit))
         if tt in {"factual", "self_claim", "generic", "architecture"} or not spans:
             spans.extend(await self._memory_evidence(objective, limit=max(2, limit - len(spans))))
         # De-dupe by rendered text, keep order.
@@ -118,6 +174,74 @@ class EvidenceProvider:
                 seen.add(key)
                 out.append(s)
         return out[:limit]
+
+    async def reference_evidence(
+        self,
+        objective: str,
+        *,
+        limit: int = 4,
+    ) -> list[EvidenceSpan]:
+        """Read topic evidence from the offline corpus within chat latency bounds."""
+
+        queries = reference_query_candidates(objective)
+        if not queries:
+            return []
+        try:
+            from core.knowledge.local_corpus import (
+                CONVERSATION_SEARCH_DEADLINE_S,
+                get_local_corpus_store,
+            )
+
+            corpus = get_local_corpus_store()
+            hits = []
+            for query in queries:
+                found = await asyncio.to_thread(
+                    corpus.search,
+                    query,
+                    max(6, limit * 2),
+                    deadline_s=CONVERSATION_SEARCH_DEADLINE_S,
+                )
+                hits.extend(found or [])
+                if len(hits) >= limit:
+                    break
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "evidence_reference",
+                exc,
+                severity="warning",
+                action="continued factual reasoning without offline reference evidence",
+            )
+            return []
+
+        query_terms = {
+            term.lower().replace("’", "'").removesuffix("'s")
+            for term in _REFERENCE_TERM_RE.findall(queries[0])
+            if len(term) > 2
+        }
+
+        def rank(hit: Any) -> tuple[float, float, int]:
+            title_terms = {
+                term.lower().replace("’", "'").removesuffix("'s")
+                for term in _REFERENCE_TERM_RE.findall(str(getattr(hit, "title", "")))
+            }
+            overlap = len(query_terms & title_terms) / max(1, len(query_terms))
+            return (-overlap, float(getattr(hit, "rank", 0.0) or 0.0), len(title_terms))
+
+        unique: dict[tuple[str, str], Any] = {}
+        for hit in hits:
+            key = (str(getattr(hit, "source", "")), str(getattr(hit, "title", "")))
+            if key[1] and key not in unique:
+                unique[key] = hit
+        ordered = sorted(unique.values(), key=rank)
+        return [
+            EvidenceSpan(
+                "reference",
+                f"{hit.source}:{hit.title}",
+                str(hit.snippet or "")[:1_200],
+            )
+            for hit in ordered[:limit]
+            if str(hit.snippet or "").strip()
+        ]
 
     async def render_pack(self, objective: str, *, task_type: str, limit: int = 6) -> list[str]:
         return [s.render() for s in await self.gather(objective, task_type=task_type, limit=limit)]

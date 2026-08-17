@@ -468,6 +468,7 @@ class ResponseContract:
     memory_evidence_available: bool = False
     continuity_evidence_available: bool = False
     question_parts: int = 1
+    numbered_parts: int = 0
     prefer_extended_answer: bool = False
     requires_single_reply_coverage: bool = False
     #: The text of each question asked, so coverage can be CHECKED rather
@@ -1353,6 +1354,7 @@ def build_response_contract(
         memory_evidence_available=memory_evidence,
         continuity_evidence_available=continuity_evidence,
         question_parts=prompt_shape.question_parts,
+        numbered_parts=prompt_shape.numbered_parts,
         prefer_extended_answer=bool(prompt_shape.prefers_extended_answer),
         requires_single_reply_coverage=bool(prompt_shape.requires_single_reply_coverage),
         question_segments=tuple(getattr(prompt_shape, "question_segments", ()) or ()),

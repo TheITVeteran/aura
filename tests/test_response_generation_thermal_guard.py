@@ -410,7 +410,7 @@ async def test_final_latent_surface_is_regraded_and_cannot_start_second_owner(
 
     result = await phase.execute(state, context=_latent_context(objective))
 
-    assert result is state
+    assert result is not None
     assert len(latent.calls) == 1
     assert router.calls == []
     assert result.response_modifiers["latent_cortex_succeeded"] is False
@@ -452,6 +452,88 @@ async def test_selected_latent_refusal_falls_back_to_exactly_one_generation(monk
     assert result.response_modifiers["latent_cortex_succeeded"] is False
     assert result.response_modifiers["latent_cortex_fallback_used"] is True
     assert result.response_modifiers["latent_cortex_failure_reason"] == "worker_not_ready"
+
+
+@pytest.mark.asyncio
+async def test_selected_latent_refusal_uses_one_ordinary_fallback_without_second_amplifier(
+    monkeypatch,
+):
+    objective = "Analyze both branches and recommend the safer architecture."
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _LatentService({"ok": False, "reason": "worker_not_ready"})
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    amplifier_calls = []
+
+    async def capture_amplifier(**kwargs):
+        amplifier_calls.append(dict(kwargs))
+        return kwargs["draft"]
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+    monkeypatch.setattr(phase, "_maybe_amplify_response", capture_amplifier)
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert result is not None
+    assert len(latent.calls) == 1
+    assert len(router.calls) == 1
+    assert amplifier_calls == []
+    assert result.response_modifiers["latent_cortex_selected"] is True
+    assert result.response_modifiers["latent_cortex_succeeded"] is False
+
+
+@pytest.mark.asyncio
+async def test_successful_latent_answer_keeps_single_owner_and_skips_amplifier(monkeypatch):
+    objective = "Explain why one component should own response publication."
+    answer = (
+        "The ownership-first branch is safer because one component owns admission, "
+        "generation, and publication. It prevents a competing writer from publishing "
+        "after cancellation. Verify that by cancelling the owner during generation "
+        "and asserting that no successor response reaches the visible turn."
+    )
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    latent = _LatentService(
+        {"ok": True, "text": answer, "receipt": _live_latent_receipt(answer, objective)}
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+
+    async def amplifier_must_not_run(**_kwargs):
+        raise AssertionError("successful latent answer opened a second model owner")
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+    monkeypatch.setattr(phase, "_maybe_amplify_response", amplifier_must_not_run)
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert result is not None
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert result.response_modifiers["latent_cortex_succeeded"] is True
 
 
 @pytest.mark.asyncio

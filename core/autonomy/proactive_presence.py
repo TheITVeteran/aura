@@ -472,6 +472,24 @@ class ProactivePresence:
 
     def _foreground_lane_reserved(self, now: float | None = None) -> bool:
         """True when foreground conversation should not be interrupted."""
+        # The API acquires this process-wide lease before it waits for the
+        # inference lane. Orchestrator-local flags begin later and can lag the
+        # request, which let a queued spontaneous message publish beside a
+        # person's active turn. The canonical lease is the publication fact.
+        try:
+            from core.runtime.foreground_guard import foreground_activity_reason
+
+            if foreground_activity_reason():
+                return True
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "proactive_presence.foreground_guard",
+                exc,
+                severity="warning",
+                action="withheld spontaneous speech because foreground ownership was unreadable",
+            )
+            return True
+
         if not self.orchestrator:
             return False
 
@@ -1009,6 +1027,12 @@ class ProactivePresence:
             return
 
         if visible_presence:
+            # Recheck at publication, after generation and quality screening.
+            # Admission can be idle while the message is composed and a user
+            # turn can acquire the foreground lease before this await.
+            if self._foreground_lane_reserved():
+                logger.debug("[ProactivePresence] Visible emission held by foreground ownership")
+                return
             try:
                 from core.runtime.background_policy import background_activity_reason
 

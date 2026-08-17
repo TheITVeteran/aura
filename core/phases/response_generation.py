@@ -1319,6 +1319,11 @@ class ResponseGenerationPhase(BasePhase):
 
         response_mutation_receipt: dict[str, Any] = {"text_mutations": []}
         generation_metadata: dict[str, Any] = {}
+        # Recovery branches can bypass the ordinary/latent generation join
+        # below (for example, a verified tool result after model timeout).
+        # Initialize publication ownership before any awaited work so final
+        # validation never inherits an undefined or stale owner.
+        latent_response_owned = False
         try:
             # ── SUBSTRATE VOICE: Compile speech profile BEFORE prompt assembly ──
             # The substrate reads all internal systems and decides HOW Aura will speak.
@@ -2283,6 +2288,22 @@ class ResponseGenerationPhase(BasePhase):
 
                 pre_amplifier_text = response_text
                 amplifier_promotion_authority = "none"
+                # Selection reserves the latent lane; it does not prove that
+                # lane authored the response.  When RLC declines before
+                # execution, the ordinary resident fallback still needs the
+                # same verifier, composer, and dialogue-recovery stages as an
+                # ordinary turn.  A successful latent answer or its already
+                # materialized incumbent keeps single-owner protection.
+                latent_response_owned = bool(
+                    latent_trace.get("latent_cortex_succeeded") is True
+                    or latent_trace.get("latent_cortex_incumbent_fallback_served")
+                    is True
+                )
+                # A selected latent episode already spent the hard-turn compute
+                # budget even when admission later declined. Do not reopen the
+                # multi-candidate amplifier here: the ordinary fallback is the
+                # one remaining generator and the verifier/composer/retry stages
+                # below may still inspect or repair what it produced.
                 if latent_trace.get("latent_cortex_selected") is not True:
                     response_text = await self._maybe_amplify_response(
                         objective=objective,
@@ -2415,7 +2436,7 @@ class ResponseGenerationPhase(BasePhase):
                 composer = (
                     None
                     if (
-                        latent_trace.get("latent_cortex_selected") is True
+                        latent_response_owned
                         or amplifier_promotion_authority != "none"
                     )
                     else self.container.get("composer_node", default=None)
@@ -2909,7 +2930,7 @@ class ResponseGenerationPhase(BasePhase):
                     if (
                         not is_background
                         and not is_test_run
-                        and latent_trace.get("latent_cortex_selected") is not True
+                        and not latent_response_owned
                         and amplifier_promotion_authority == "none"
                     )
                     else None
@@ -2982,7 +3003,13 @@ class ResponseGenerationPhase(BasePhase):
             # 6b. SUBSTRATE VOICE: Shape the response — enforce the profile
             # The substrate compiled constraints. Now enforce them on the output.
             _shaped_messages = None
-            if _sve and _speech_profile and cleaned_response and not is_test_run:
+            if (
+                _sve
+                and _speech_profile
+                and cleaned_response
+                and not is_test_run
+                and not latent_response_owned
+            ):
                 try:
                     pre_voice_shape = cleaned_response
                     shaped = _sve.shape_response(cleaned_response)
@@ -3026,7 +3053,12 @@ class ResponseGenerationPhase(BasePhase):
                     )
                     logger.debug("ResponseShaper failed (using raw): %s", _shape_exc)
 
-            if not is_background and cleaned_response and not is_test_run:
+            if (
+                not is_background
+                and cleaned_response
+                and not is_test_run
+                and not latent_response_owned
+            ):
                 repaired_response, repaired_shape, repair_reasons = (
                     self._repair_substantive_instruction_shape_miss(
                         user_surface_validation_prompt, cleaned_response

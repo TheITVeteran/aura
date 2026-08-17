@@ -70,6 +70,21 @@ def test_inline_parenthesized_obligations_are_first_class_request_parts() -> Non
     assert answer_surface_token_floor(prompt) == 768
 
 
+def test_response_contract_carries_numbered_obligations_into_live_validation() -> None:
+    from core.phases.response_contract import build_response_contract
+    from core.state.aura_state import AuraState
+
+    prompt = (
+        "Explain Dijkstra. Include: (1) its invariant, (2) pseudocode, "
+        "(3) a worked example, (4) complexity, and (5) its failure case."
+    )
+
+    contract = build_response_contract(AuraState(), prompt, is_user_facing=True)
+
+    assert contract.numbered_parts == 5
+    assert contract.to_dict()["numbered_parts"] == 5
+
+
 def test_answer_surface_floor_keeps_simple_questions_compact() -> None:
     assert answer_surface_token_floor("What time zone does the scheduler use?") == 256
 
