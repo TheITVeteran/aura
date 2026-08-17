@@ -15375,6 +15375,43 @@ def test_reply_continuation_merge_handles_exact_overlap_and_full_regeneration():
     assert chat_routes._merge_reply_continuation(partial, complete) == complete
 
 
+def test_shorter_regenerated_fragment_cannot_erase_continuation_progress():
+    from interface.routes import chat as chat_routes
+
+    partial = (
+        "I feel steady and attentive right now. My current affect and "
+        "coherence readings support that direct observation, while"
+    )
+    shorter_cutoff = (
+        "I feel steady and attentive right now. My current affect and"
+    )
+
+    assert chat_routes._merge_reply_continuation(partial, shorter_cutoff) == partial
+
+
+def test_grounded_self_condition_reply_forwards_session_identity(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    observed = {}
+
+    def _evidence(message, *, session_id=""):
+        observed.update(message=message, session_id=session_id)
+        return {"reply": "I am steady. The rest remains an inference."}
+
+    monkeypatch.setattr(chat_routes, "_build_self_condition_evidence", _evidence)
+
+    reply = chat_routes._build_grounded_self_condition_reply(
+        "How are you right now?",
+        session_id="session-current",
+    )
+
+    assert reply == "I am steady. The rest remains an inference."
+    assert observed == {
+        "message": "How are you right now?",
+        "session_id": "session-current",
+    }
+
+
 def test_force_disable_same_worker_desktop_repair_is_still_honored(monkeypatch):
     from interface.routes import chat as chat_routes
 

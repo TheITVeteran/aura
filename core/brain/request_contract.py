@@ -190,6 +190,7 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "memory_state_contract": Field_(Kind.BOOL, policy=True),
     "runtime_fact_status_contract": Field_(Kind.BOOL, policy=True),
     "grounded_runtime_status_contract": Field_(Kind.BOOL, policy=True),
+    "self_condition_contract": Field_(Kind.BOOL, policy=True),
     "clean_user_surface_contract": Field_(Kind.BOOL, policy=True),
     "canonical_memory_state_evidence": Field_(Kind.OPAQUE),
     "response_style_contract": Field_(Kind.OPAQUE),
@@ -197,6 +198,7 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "user_surface_completion_retry": Field_(Kind.BOOL),
     "user_surface_continuation_contract": Field_(Kind.BOOL),
     "user_surface_continuation_partial": Field_(Kind.STRING),
+    "semantic_completion_contract": Field_(Kind.BOOL),
     # ── live-mind readiness claims (authority-relevant) ─────────────────
     "live_mind_controls_bound": Field_(Kind.BOOL, policy=True),
     "live_mind_generation_controls": Field_(Kind.OPAQUE),

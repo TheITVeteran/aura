@@ -952,15 +952,16 @@ def _surface_quality_failure_reasons(
         )
         return ["surface_quality_gate_unavailable"]
 
+    candidate = _surface_quality_candidate(job, response_text)
     assessment = assess_user_facing_reply(
         prompt,
-        response_text,
+        candidate,
         recent_user_messages=recent_messages,
         grounding=grounding,
         sensory_evidence=job.get("user_surface_sensory_evidence"),
     )
     sanitizer_reasons = _telemetry_sanitization_failure_reasons(
-        str(response_text or ""),
+        candidate,
         is_proof=False,
     )
     if (
@@ -1006,6 +1007,59 @@ def _surface_quality_failure_reasons(
     return reasons
 
 
+def _surface_quality_candidate(job: dict[str, Any], response_text: Any) -> str:
+    """Return the complete authored candidate represented by this decode."""
+
+    tail = str(response_text or "")
+    if not bool(job.get("user_surface_continuation_contract", False)):
+        return tail
+    head = str(job.get("user_surface_continuation_partial") or "")
+    if not head:
+        return tail
+    if not tail:
+        return head
+    separator = ""
+    if not head[-1].isspace() and not tail[0].isspace():
+        separator = "" if tail[0] in ".,;:!?)]}" else " "
+    return f"{head}{separator}{tail}"
+
+
+def _semantic_surface_stop_ready(
+    job: dict[str, Any],
+    response_text: Any,
+    *,
+    generated_tokens: int,
+) -> bool:
+    """Stop a bounded decode once its visible contract is demonstrably complete."""
+
+    if not bool(job.get("semantic_completion_contract", False)):
+        return False
+    minimum_tokens = 8 if job.get("user_surface_continuation_contract") else 24
+    if int(generated_tokens) < minimum_tokens:
+        return False
+    candidate = _surface_quality_candidate(job, response_text).rstrip()
+    if not candidate.endswith((".", "!", "?", '"', "'", "”", "’", ")", "]")):
+        return False
+    try:
+        from core.conversation.request_coverage import (
+            requested_epistemic_partition_is_covered,
+        )
+
+        if not requested_epistemic_partition_is_covered(
+            _surface_validation_prompt(job),
+            candidate,
+        ):
+            return False
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="continued bounded generation because semantic completion proof was unavailable",
+            severity="warning",
+        )
+        return False
+    return not _surface_quality_failure_reasons(job, response_text)
+
+
 def _classify_generation_stop_reason(
     *,
     soft_cancelled: bool,
@@ -1014,6 +1068,7 @@ def _classify_generation_stop_reason(
     role_continuation_hit: bool,
     configured_stop_hit: bool,
     hard_token_limit_hit: bool,
+    semantic_contract_satisfied: bool = False,
     generated_tokens: int,
     max_tokens: int,
 ) -> str:
@@ -1031,6 +1086,8 @@ def _classify_generation_stop_reason(
         return "configured_stop"
     if hard_token_limit_hit:
         return "hard_token_limit"
+    if semantic_contract_satisfied:
+        return "semantic_contract_satisfied"
     if int(generated_tokens) >= max(1, int(max_tokens)):
         return "max_tokens"
     return "eos"
@@ -6026,17 +6083,26 @@ def _mlx_worker_loop(
                     try:
                         logger.info("🎯 [WORKER] Rendering native chat/tool template.")
                         from core.brain.llm.chat_format import (
+                            render_chat_continuation_template,
                             render_chat_template,
                             thinking_enabled_for_model,
                         )
 
-                        prompt = render_chat_template(
-                            tokenizer,
-                            messages,
-                            tools=tools,
-                            add_generation_prompt=True,
-                            enable_thinking=thinking_enabled_for_model(model_path),
-                        )
+                        if job.get("user_surface_continuation_contract", False):
+                            prompt = render_chat_continuation_template(
+                                tokenizer,
+                                messages,
+                                tools=tools,
+                                enable_thinking=thinking_enabled_for_model(model_path),
+                            )
+                        else:
+                            prompt = render_chat_template(
+                                tokenizer,
+                                messages,
+                                tools=tools,
+                                add_generation_prompt=True,
+                                enable_thinking=thinking_enabled_for_model(model_path),
+                            )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         if tools:
                             # A tool-calling contract cannot degrade to prose:
@@ -6369,6 +6435,7 @@ def _mlx_worker_loop(
                                     role_continuation_hit = False
                                     configured_stop_hit = False
                                     hard_token_limit_hit = False
+                                    semantic_contract_satisfied = False
                                     job_seq = _safe_int(job.get("seq"), 0)
                                     soft_cancelled = False
                                     clear_stale_soft_cancel(cancel_seq, job_seq)
@@ -6802,6 +6869,21 @@ def _mlx_worker_loop(
                                                 current_response = get_refusal_fallback(seed=token_count)
                                                 sentinel_aborted = True
                                                 break
+
+                                        if (
+                                            token_count % 8 == 0
+                                            and _semantic_surface_stop_ready(
+                                                job,
+                                                current_response,
+                                                generated_tokens=token_count,
+                                            )
+                                        ):
+                                            semantic_contract_satisfied = True
+                                            logger.info(
+                                                "✅ [WORKER] Semantic completion contract satisfied at token %d.",
+                                                token_count,
+                                            )
+                                            break
 
                                         if _should_emit_generation_progress(
                                             token_count,
@@ -7816,6 +7898,7 @@ def _mlx_worker_loop(
                         role_continuation_hit=role_continuation_hit,
                         configured_stop_hit=configured_stop_hit,
                         hard_token_limit_hit=hard_token_limit_hit,
+                        semantic_contract_satisfied=semantic_contract_satisfied,
                         generated_tokens=total_generated_tokens,
                         max_tokens=max(
                             1,

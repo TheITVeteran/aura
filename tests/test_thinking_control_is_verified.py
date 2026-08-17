@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 
 from core.brain.llm.chat_format import (
+    render_chat_continuation_template,
     render_chat_template,
     template_supports_thinking,
     thinking_enabled_for_model,
@@ -165,6 +166,49 @@ def test_supported_flag_reaches_the_real_render():
     )
     assert tok.calls[-1].get("enable_thinking") is False
     assert out == "RENDERED<no-think>"
+
+
+def test_continuation_template_keeps_the_final_assistant_prefix_open():
+    class _ContinuationTokenizer:
+        chat_template = "plain"
+
+        def apply_chat_template(self, messages, **kwargs):
+            assert kwargs["add_generation_prompt"] is False
+            assert kwargs["continue_final_message"] is True
+            return "rendered-prefix:" + messages[-1]["content"]
+
+    partial = "The function updates the active balances and removes"
+    rendered = render_chat_continuation_template(
+        _ContinuationTokenizer(),
+        [
+            {"role": "user", "content": "Explain this function."},
+            {"role": "assistant", "content": partial},
+        ],
+    )
+
+    assert rendered.endswith(partial)
+
+
+def test_continuation_template_trims_a_legacy_closing_suffix():
+    class _LegacyTokenizer:
+        chat_template = "plain"
+
+        def apply_chat_template(self, messages, **kwargs):
+            if "continue_final_message" in kwargs:
+                raise TypeError("unsupported")
+            return "rendered-prefix:" + messages[-1]["content"] + "<end>"
+
+    partial = "The function updates the active balances and removes"
+    rendered = render_chat_continuation_template(
+        _LegacyTokenizer(),
+        [
+            {"role": "user", "content": "Explain this function."},
+            {"role": "assistant", "content": partial},
+        ],
+    )
+
+    assert rendered.endswith(partial)
+    assert "<end>" not in rendered
 
 
 def test_probe_runs_once_per_template():

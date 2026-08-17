@@ -13496,6 +13496,7 @@ class MLXLocalClient:
             "grounded_runtime_status_contract": bool(
                 kwargs.get("grounded_runtime_status_contract", False)
             ),
+            "self_condition_contract": bool(kwargs.get("self_condition_contract", False)),
             "clean_user_surface_contract": bool(
                 kwargs.get("clean_user_surface_contract", False)
                 or kwargs.get("health_probe", False)
@@ -13503,6 +13504,15 @@ class MLXLocalClient:
             and not bool(kwargs.get("web_interlocutor_contract", False)),
             "user_surface_validation_prompt": str(
                 kwargs.get("user_surface_validation_prompt") or ""
+            ),
+            "user_surface_continuation_contract": bool(
+                kwargs.get("user_surface_continuation_contract", False)
+            ),
+            "user_surface_continuation_partial": str(
+                kwargs.get("user_surface_continuation_partial") or ""
+            )[:6000],
+            "semantic_completion_contract": bool(
+                kwargs.get("semantic_completion_contract", False)
             ),
             "user_surface_prompt_binding": (
                 dict(kwargs.get("user_surface_prompt_binding") or {})

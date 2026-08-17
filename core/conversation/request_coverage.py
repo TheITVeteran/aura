@@ -240,6 +240,19 @@ def _epistemic_partition_is_covered(body: Any) -> bool:
     return direct_witness and inferred_witness
 
 
+def requested_epistemic_partition_is_covered(request: Any, body: Any) -> bool:
+    """Return whether a requested known/inferred distinction has both sides."""
+
+    match = _RELATION_REQUEST_RE.search(str(request or ""))
+    if match is None:
+        return True
+    left = coverage_tokens(match.group("left"))
+    right = coverage_tokens(match.group("right"))
+    if (left | right) != _EPISTEMIC_SIDES or left == right:
+        return True
+    return _epistemic_partition_is_covered(body)
+
+
 def _relation_sides_are_covered(
     segment: Any,
     body: Any,

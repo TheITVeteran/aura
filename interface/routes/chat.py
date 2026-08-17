@@ -4527,10 +4527,15 @@ def _merge_reply_continuation(partial: object, continuation: object) -> str:
             break
         common_prefix += 1
     if common_prefix >= 24:
-        # The model regenerated from the beginning despite the continuation
-        # contract. Prefer that complete authored answer to concatenating two
-        # copies of its opening.
-        return tail
+        # A model that regenerated despite the continuation contract may have
+        # produced a complete replacement, or it may have hit an earlier
+        # deadline. Never let the latter erase already-authored progress.
+        tail_complete = tail.rstrip().endswith(
+            (".", "!", "?", '"', "'", "”", "’", ")", "]")
+        )
+        if tail_complete or len(tail) >= len(head):
+            return tail
+        return head
 
     max_overlap = min(len(head), len(tail), 1200)
     overlap = 0
@@ -10131,9 +10136,13 @@ def _build_self_condition_evidence(
     }
 
 
-def _build_grounded_self_condition_reply(user_message: str) -> str:
+def _build_grounded_self_condition_reply(
+    user_message: str,
+    *,
+    session_id: str | None = None,
+) -> str:
     try:
-        evidence = _build_self_condition_evidence(user_message)
+        evidence = _build_self_condition_evidence(user_message, session_id=session_id)
         raw = str(evidence.get("reply") or "").strip()
         if not raw:
             return ""
@@ -16248,9 +16257,16 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
             # built from those values, so it cannot describe a health she does
             # not have. When no channel reads, it returns "" and the honest
             # refusal above stands.
-            evidenced_reply = _chat_conversation_repair._self_health_answer_or_empty(
-                _semantic_user_message
-            )
+            evidenced_reply = ""
+            if _is_simple_affect_check_request(_semantic_user_message):
+                evidenced_reply = _build_grounded_self_condition_reply(
+                    _semantic_user_message,
+                    session_id=_chat_session_id,
+                )
+            if not evidenced_reply:
+                evidenced_reply = _chat_conversation_repair._self_health_answer_or_empty(
+                    _semantic_user_message
+                )
             if evidenced_reply:
                 failure_reply = evidenced_reply
             if pending_exchange_id:

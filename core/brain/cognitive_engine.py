@@ -4249,7 +4249,7 @@ class CognitiveEngine:
                 "unless the user specifically asks for them."
             )
         turn_dynamic_contracts: list[str] = []
-        if completion_retry_contract:
+        if completion_retry_contract and not continuation_contract:
             # Append to the stable ordinary-chat prefix. The prefix can still
             # reuse resident KV, while the suffix gives the replacement its
             # only special instruction. Never include the rejected fragment:
@@ -4703,11 +4703,6 @@ class CognitiveEngine:
                 messages.append(
                     {"role": "assistant", "content": continuation_partial}
                 )
-                validation_prompt = (
-                    "Continue the immediately preceding assistant answer from its exact cutoff. "
-                    "Return only the missing continuation and finish the answer naturally."
-                )
-                messages.append({"role": "user", "content": validation_prompt})
             router_kwargs = {
                 "messages": messages,
                 "origin": f"desktop_quick_{origin}",
@@ -4735,6 +4730,9 @@ class CognitiveEngine:
                 ),
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
+                "semantic_completion_contract": bool(
+                    self_condition_contract_covers_turn or continuation_contract
+                ),
                 "user_surface_validation_prompt": validation_prompt,
                 "user_surface_sensory_evidence": context.get(
                     "turn_sensory_evidence"
@@ -4830,6 +4828,7 @@ class CognitiveEngine:
                 router_kwargs["user_surface_completion_floor"] = continuation_tokens
                 router_kwargs["reply_needs_room"] = True
                 router_kwargs["user_surface_continuation_contract"] = True
+                router_kwargs["user_surface_continuation_partial"] = continuation_partial
             # The lesion for this channel is omission, not substitution: a
             # neutral temperature is still a temperature somebody chose, and
             # measuring against one would compare two mind-derived settings

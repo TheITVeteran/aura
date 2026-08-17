@@ -185,6 +185,62 @@ def render_chat_template(
     return str(apply(messages, **kwargs))
 
 
+def render_chat_continuation_template(
+    tokenizer: object,
+    messages: object,
+    *,
+    tools: object = None,
+    enable_thinking: Optional[bool] = None,
+) -> str:
+    """Render a transcript whose final assistant message is an open prefix.
+
+    A continuation is a decoding boundary, not another instruction turn. The
+    ordinary template closes the final assistant message and opens a new one;
+    that makes the model regenerate instead of continuing. Prefer the native
+    continue_final_message contract and verify the resulting prompt ends in
+    the supplied prefix. Older tokenizers get a conservative suffix trim only
+    when their rendered transcript contains that prefix verbatim.
+    """
+
+    if not isinstance(messages, (list, tuple)) or not messages:
+        raise ValueError("continuation messages must be a non-empty sequence")
+    final = messages[-1]
+    if not isinstance(final, dict) or _normalize_role(final.get("role")) != "assistant":
+        raise ValueError("continuation transcript must end with an assistant message")
+    partial = str(final.get("content") or "")
+    if not partial:
+        raise ValueError("continuation assistant prefix must be non-empty")
+
+    apply = getattr(tokenizer, "apply_chat_template")
+    kwargs = {
+        "tools": tools,
+        "add_generation_prompt": False,
+        "tokenize": False,
+        "continue_final_message": True,
+    }
+    if enable_thinking is not None and template_supports_thinking(tokenizer):
+        kwargs["enable_thinking"] = bool(enable_thinking)
+    try:
+        rendered = str(apply(messages, **kwargs))
+    except (TypeError, ValueError, KeyError, RuntimeError, AttributeError):
+        fallback_kwargs = {
+            "tools": tools,
+            "add_generation_prompt": False,
+            "tokenize": False,
+        }
+        if enable_thinking is not None and template_supports_thinking(tokenizer):
+            fallback_kwargs["enable_thinking"] = bool(enable_thinking)
+        rendered = str(apply(messages, **fallback_kwargs))
+        prefix_end = rendered.rfind(partial)
+        if prefix_end < 0:
+            raise ValueError("chat template did not preserve the continuation prefix")
+        rendered = rendered[: prefix_end + len(partial)]
+
+    if not rendered.endswith(partial):
+        raise ValueError("chat continuation template closed or transformed the assistant prefix")
+    return rendered
+
+
 def thinking_enabled_for_model(model_name: Optional[str]) -> Optional[bool]:
     """Reasoning-mode policy per lane. None means 'use the model's default'.
 

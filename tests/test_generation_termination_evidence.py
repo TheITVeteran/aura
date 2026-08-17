@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.brain.llm.mlx_worker import _classify_generation_stop_reason
+from core.brain.llm.mlx_worker import (
+    _classify_generation_stop_reason,
+    _semantic_surface_stop_ready,
+    _surface_quality_candidate,
+)
 from core.conversation.response_reliability import (
     _has_truncated_tail,
     assess_model_text_integrity,
@@ -19,6 +23,7 @@ from core.conversation.response_reliability import (
         ({"role_continuation_hit": True}, "role_continuation"),
         ({"configured_stop_hit": True}, "configured_stop"),
         ({"hard_token_limit_hit": True}, "hard_token_limit"),
+        ({"semantic_contract_satisfied": True}, "semantic_contract_satisfied"),
         ({"generated_tokens": 128}, "max_tokens"),
         ({}, "eos"),
     ],
@@ -90,3 +95,38 @@ def test_user_facing_assessor_consumes_the_worker_termination_receipt():
     )
 
     assert "truncated_tail" not in assessment.reasons
+
+
+def test_continuation_quality_evaluates_the_complete_authored_candidate():
+    partial = "I feel steady right now. What I know comes from current state readings;"
+    tail = " what remains subjective is something I can only infer."
+    job = {
+        "user_surface_continuation_contract": True,
+        "user_surface_continuation_partial": partial,
+    }
+
+    assert _surface_quality_candidate(job, tail) == partial + tail
+
+
+def test_semantic_stop_waits_for_all_requested_epistemic_facets():
+    prompt = (
+        "How are you doing right now? Distinguish what you know from what "
+        "you can only infer."
+    )
+    job = {
+        "clean_user_surface_contract": True,
+        "semantic_completion_contract": True,
+        "self_condition_contract": True,
+        "user_surface_validation_prompt": prompt,
+    }
+    incomplete = (
+        "I feel steady and attentive right now. That condition is supported "
+        "by my current affect and coherence readings."
+    )
+    complete = (
+        incomplete
+        + " Whether that amounts to subjective feeling is something I can only infer."
+    )
+
+    assert not _semantic_surface_stop_ready(job, incomplete, generated_tokens=40)
+    assert _semantic_surface_stop_ready(job, complete, generated_tokens=64)
