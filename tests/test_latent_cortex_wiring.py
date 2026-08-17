@@ -3207,6 +3207,31 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     assert allocation["compound_objective"] is True
     assert set(allocation["objective_facets"]) >= {"compare", "select", "verify"}
 
+    # Inline numbered obligations are structurally compound even when the
+    # narrow lexical facet vocabulary recognizes only one category.
+    captured.clear()
+    inline_obligations = (
+        "Describe the algorithm in one response. Include: (1) its invariant, "
+        "(2) pseudocode, (3) a worked graph, (4) two complexity analyses, "
+        "and (5) a failure case with the correct alternative."
+    )
+    asyncio.run(
+        svc.deep_reason(
+            inline_obligations,
+            stakes=0.75,
+            uncertainty=0.8,
+            config_overrides={"decode_max_tokens": 256},
+            timeout_s=157.0,
+            foreground_request=True,
+        )
+    )
+    assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v3"
+    assert 320 <= captured["config"]["decode_max_tokens"] <= 384
+    assert captured["budget"]["wall_clock_s"] >= 140.0
+    inline_allocation = svc._last_allocation
+    assert inline_allocation["compound_objective"] is True
+    assert inline_allocation["objective_prompt_shape"]["numbered_parts"] == 5
+
     # A simple objective keeps the tight interactive profile.
     captured.clear()
     asyncio.run(

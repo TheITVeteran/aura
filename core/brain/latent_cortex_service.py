@@ -4894,9 +4894,18 @@ class LatentCortexService:
             # at persona-lane temperature — the episode was mechanically
             # complete and the ANSWER SURFACE was the only failing stage.
             from core.brain.llm.latent_cortex.output_quality import request_facets
+            from core.runtime.structured_input import analyze_prompt_shape
 
-            objective_facets = request_facets(self._visible_objective(question, messages))
-            compound_objective = len(objective_facets) >= 2
+            visible_objective = self._visible_objective(question, messages)
+            objective_facets = request_facets(visible_objective)
+            objective_shape = analyze_prompt_shape(visible_objective).to_dict()
+            compound_objective = bool(
+                len(objective_facets) >= 2
+                or objective_shape["requires_single_reply_coverage"]
+                or objective_shape["numbered_parts"] >= 2
+                or objective_shape["imperative_parts"] >= 3
+                or objective_shape["question_parts"] >= 3
+            )
             if compound_objective:
                 config["decode_max_tokens"] = max(
                     256,
@@ -4953,6 +4962,7 @@ class LatentCortexService:
                     128, min(int(config["decode_max_tokens"]), affordable_tokens)
                 )
             self._last_allocation["objective_facets"] = list(objective_facets)
+            self._last_allocation["objective_prompt_shape"] = objective_shape
             self._last_allocation["compound_objective"] = compound_objective
         if require_full_stack:
             config["latent_opt"] = True

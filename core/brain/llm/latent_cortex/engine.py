@@ -405,6 +405,12 @@ class LatentCortexEngine:
         # because the single-flight guard admits one episode at a time.
         self._episode_cancel_check: Callable[[], bool] | None = None
         self._episode_wall_reserve_forwards = 0
+        # Immutable ordinary output captured before any recurrent mutation.
+        # A later recoverable latent failure must serve this exact floor
+        # without asking an exhausted budget to perform the same work twice.
+        self._episode_incumbent_tokens: tuple[int, ...] | None = None
+        self._episode_incumbent_termination = ""
+        self._episode_incumbent_logprobs: tuple[float, ...] = ()
         # The in-flight receipt, published so the outer result boundary
         # can tell an argument-shape refusal from a runtime failure.
         self._episode_receipt: EpisodeReceipt | None = None
@@ -3186,21 +3192,35 @@ class LatentCortexEngine:
                     receipt.flag(f"fallback_vanilla:{type(exc).__name__}")
                     try:
                         decode_token_logprobs.clear()
-                        cache = self._fresh_cache()
-                        _, tail_logits = self._prefill(tokens, cache, budget)
-                        out_tokens, decode_termination = self._decode(
-                            cache,
-                            budget,
-                            tail_logits,
-                            max_tokens=decode_max_tokens,
-                            cancel_check=cancel_check,
-                            progress=progress,
-                            token_logprobs_out=(
-                                decode_token_logprobs if capture_decode_logprobs else None
-                            ),
-                            sentence_grace_tokens=decode_sentence_grace_tokens,
-                            sample_seed=sample_seed,
-                        )
+                        if (
+                            self.config.decode_incumbent_policy == "vanilla_incumbent"
+                            and self._episode_incumbent_tokens is not None
+                        ):
+                            out_tokens = list(self._episode_incumbent_tokens)
+                            decode_termination = self._episode_incumbent_termination
+                            if capture_decode_logprobs:
+                                decode_token_logprobs.extend(
+                                    self._episode_incumbent_logprobs
+                                )
+                            receipt.flag("fallback_reused_materialized_incumbent")
+                        else:
+                            cache = self._fresh_cache()
+                            _, tail_logits = self._prefill(tokens, cache, budget)
+                            out_tokens, decode_termination = self._decode(
+                                cache,
+                                budget,
+                                tail_logits,
+                                max_tokens=decode_max_tokens,
+                                cancel_check=cancel_check,
+                                progress=progress,
+                                token_logprobs_out=(
+                                    decode_token_logprobs
+                                    if capture_decode_logprobs
+                                    else None
+                                ),
+                                sentence_grace_tokens=decode_sentence_grace_tokens,
+                                sample_seed=sample_seed,
+                            )
                         self._record_decode_discipline(
                             receipt,
                             requested_tokens=(
@@ -3443,6 +3463,9 @@ class LatentCortexEngine:
         with self._single_flight_episode():
             self._episode_receipt = None
             self._episode_invariant_armed = False
+            self._episode_incumbent_tokens = None
+            self._episode_incumbent_termination = ""
+            self._episode_incumbent_logprobs = ()
             try:
                 return self._reason_episode(*args, **kwargs)
             except _LATENT_PHASE_ERRORS as exc:
@@ -3468,6 +3491,9 @@ class LatentCortexEngine:
                 )
             finally:
                 self._episode_receipt = None
+                self._episode_incumbent_tokens = None
+                self._episode_incumbent_termination = ""
+                self._episode_incumbent_logprobs = ()
 
     def _record_decode_discipline(
         self,
@@ -3868,6 +3894,11 @@ class LatentCortexEngine:
                 )
                 incumbent_capture.restore_parent(cache)
                 incumbent_capture.reject_after_restore(cache)
+            # Publish only after the speculative cache is proven restored.
+            # Tuples prevent later decode bookkeeping from mutating the floor.
+            self._episode_incumbent_tokens = tuple(captured_incumbent_tokens)
+            self._episode_incumbent_termination = captured_incumbent_termination
+            self._episode_incumbent_logprobs = tuple(captured_incumbent_logprobs)
             receipt.flag("vanilla_incumbent_captured_before_adaptation")
         stage_started = self._stage_checkpoint(
             receipt=receipt,

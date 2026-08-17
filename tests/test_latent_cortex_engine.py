@@ -1077,6 +1077,56 @@ def test_invalid_schedule_falls_back_honestly(tiny_model):
     assert result.tokens, "vanilla fallback must decode"
 
 
+def test_latent_failure_reuses_materialized_incumbent_without_second_prefill(
+    tiny_model,
+    monkeypatch,
+):
+    bad = LayerSchedule(ops=(StageOp(0, 7, 2),))
+    baseline = LatentCortexEngine(tiny_model, config=_config())
+    baseline_budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    baseline_cache = baseline._fresh_cache()
+    _, baseline_logits = baseline._prefill(
+        PROMPT_TOKENS,
+        baseline_cache,
+        baseline_budget,
+    )
+    baseline_tokens, baseline_termination = baseline._decode(
+        baseline_cache,
+        baseline_budget,
+        baseline_logits,
+        max_tokens=8,
+        temperature=0.0,
+    )
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        config=_config(
+            schedule=bad.to_dict(),
+            decode_incumbent_policy="vanilla_incumbent",
+        ),
+    )
+    original_prefill = engine._prefill
+    prefill_calls = 0
+
+    def counted_prefill(*args, **kwargs):
+        nonlocal prefill_calls
+        prefill_calls += 1
+        return original_prefill(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_prefill", counted_prefill)
+    result = engine.reason(token_ids=PROMPT_TOKENS)
+
+    assert result.ok is True
+    assert result.tokens == baseline_tokens
+    assert result.receipt.decode_termination == baseline_termination
+    assert prefill_calls == 1
+    assert "fallback_vanilla:ValueError" in result.receipt.honest_flags
+    assert "fallback_reused_materialized_incumbent" in result.receipt.honest_flags
+    assert engine._episode_incumbent_tokens is None
+    assert engine._episode_incumbent_termination == ""
+    assert engine._episode_incumbent_logprobs == ()
+
+
 def test_no_contract_valid_branch_falls_back_before_verifier_selection(
     tiny_model,
     monkeypatch,
