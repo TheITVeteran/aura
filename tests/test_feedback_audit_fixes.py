@@ -18,6 +18,7 @@ from skills.train_self import TrainSelfSkill as LegacyTrainSelfSkill
 import interface.routes.chat_memory_state as _chat_memory_state
 import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
+import interface.routes.chat_conversation_repair as _chat_conversation_repair
 
 
 @pytest.mark.parametrize("skill_name", ["omni_log_error", "omni_log_critical"])
@@ -1310,7 +1311,7 @@ def test_grounded_internal_state_reply_uses_live_voice_snapshot(monkeypatch):
             return "I'm steady and tracking the moment."
 
     monkeypatch.setattr(
-        chat_route,
+        _chat_conversation_repair,
         "_resolve_live_voice_state",
         lambda user_message="", refresh=True: {
             "tone": "steady",

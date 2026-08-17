@@ -276,6 +276,15 @@ _ALLOWED_MESSAGE_KEYS = frozenset({"role", "content", "name", "tool_call_id"})
 _UNKNOWN_BODY_PRESSURE = 0.6
 
 
+def _unit_signal(value: Any, *, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number")
+    return min(1.0, max(0.0, number))
+
+
 class LatentCortexService:
     """Budget allocation + IPC routing for latent-reasoning episodes."""
 
@@ -415,14 +424,6 @@ class LatentCortexService:
         return dict(report)
 
     # ── Cognitive economy ───────────────────────────────────────────────
-    @staticmethod
-    def _unit_signal(value: Any, *, name: str) -> float:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{name} must be a finite number")
-        number = float(value)
-        if not math.isfinite(number):
-            raise ValueError(f"{name} must be a finite number")
-        return min(1.0, max(0.0, number))
 
     def _body_pressure(self) -> float:
         """Total real+anticipatory body pressure in [0, 1].
@@ -614,15 +615,15 @@ class LatentCortexService:
         alongside the budget records the inputs and coefficients so the
         arithmetic can be checked rather than trusted (CP126 8a7e39cc).
         """
-        stakes = self._unit_signal(stakes, name="stakes")
-        uncertainty = self._unit_signal(uncertainty, name="uncertainty")
+        stakes = _unit_signal(stakes, name="stakes")
+        uncertainty = _unit_signal(uncertainty, name="uncertainty")
         uncertainty, novelty = self._novelty_adjusted_uncertainty(uncertainty)
         effort, effort_episode = self._effort_choice(
             stakes=stakes, uncertainty=uncertainty, novelty=novelty,
             foreground=foreground_request, model_parameter_count=model_parameter_count,
         )
         try:
-            pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
+            pressure = _unit_signal(self._body_pressure(), name="body_pressure")
         except ValueError:
             # Same reasoning: an invalid reading is not evidence of headroom.
             pressure = _UNKNOWN_BODY_PRESSURE
@@ -4579,8 +4580,8 @@ class LatentCortexService:
         if not math.isfinite(timeout_s) or timeout_s <= 0.0:
             return self._record_failure("invalid_timeout")
         try:
-            stakes = self._unit_signal(stakes, name="stakes")
-            uncertainty = self._unit_signal(uncertainty, name="uncertainty")
+            stakes = _unit_signal(stakes, name="stakes")
+            uncertainty = _unit_signal(uncertainty, name="uncertainty")
         except ValueError:
             return self._record_failure("invalid_cognitive_economy")
         try:

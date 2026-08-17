@@ -267,6 +267,35 @@ class TaskResult:
 # ── The Engine ────────────────────────────────────────────────────────────────
 
 
+def _normalize_origin(origin: Any) -> str:
+    return str(origin or "").strip().lower().replace("-", "_")
+
+
+def _extract_url(goal: str) -> str:
+    match = re.search(r"https?://[^\s<>\"')\]]+", str(goal or ""))
+    return match.group(0) if match else ""
+
+
+def _argument_is_supplied(args: dict[str, Any], name: str) -> bool:
+    if name not in args or args[name] is None:
+        return False
+    return not isinstance(args[name], str) or bool(args[name].strip())
+
+
+def _matched_skills_from_context(context: dict[str, Any] | None) -> list[str]:
+    if not isinstance(context, dict):
+        return []
+    return normalize_matched_skills(context.get("matched_skills"))
+
+
+def _goal_overlap_score(a: str, b: str) -> float:
+    tokens_a = set(re.findall(r"[a-z0-9_./-]+", str(a or "").lower()))
+    tokens_b = set(re.findall(r"[a-z0-9_./-]+", str(b or "").lower()))
+    if not tokens_a or not tokens_b:
+        return 0.0
+    return len(tokens_a & tokens_b) / max(1, len(tokens_b))
+
+
 class AutonomousTaskEngine:
     """
     Reliable multi-step autonomous task execution.
@@ -380,17 +409,7 @@ class AutonomousTaskEngine:
                 "TaskEngine: coding execution recording skipped (%s): %s", callback_name, exc
             )
 
-    @staticmethod
-    def _goal_overlap_score(a: str, b: str) -> float:
-        tokens_a = set(re.findall(r"[a-z0-9_./-]+", str(a or "").lower()))
-        tokens_b = set(re.findall(r"[a-z0-9_./-]+", str(b or "").lower()))
-        if not tokens_a or not tokens_b:
-            return 0.0
-        return len(tokens_a & tokens_b) / max(1, len(tokens_b))
 
-    @staticmethod
-    def _normalize_origin(origin: Any) -> str:
-        return str(origin or "").strip().lower().replace("-", "_")
 
     @classmethod
     def _context_origin(cls, context: dict[str, Any] | None) -> str:
@@ -401,7 +420,7 @@ class AutonomousTaskEngine:
             context.get("intent_source"),
             context.get("request_origin"),
         ):
-            normalized = cls._normalize_origin(candidate)
+            normalized = _normalize_origin(candidate)
             if normalized:
                 return normalized
         return ""
@@ -439,11 +458,6 @@ class AutonomousTaskEngine:
             }
         ]
 
-    @staticmethod
-    def _argument_is_supplied(args: dict[str, Any], name: str) -> bool:
-        if name not in args or args[name] is None:
-            return False
-        return not isinstance(args[name], str) or bool(args[name].strip())
 
     def _repair_step_argument_contract(self, step: TaskStep, plan: TaskPlan) -> list[str]:
         """Bind a missing unary semantic payload or report unsafe omissions.
@@ -459,7 +473,7 @@ class AutonomousTaskEngine:
         missing = [
             parameter
             for parameter in required
-            if not self._argument_is_supplied(step.args, parameter.name)
+            if not _argument_is_supplied(step.args, parameter.name)
         ]
         if len(missing) == 1 and missing[0].name in self.SEMANTIC_OBJECTIVE_PARAMETERS:
             semantic_payload = str(step.description or plan.goal or "").strip()
@@ -603,7 +617,7 @@ class AutonomousTaskEngine:
             score = 0.0
             if task_id and str(plan.context.get("task_id", "") or "").strip() == task_id:
                 score += 1.0
-            score += self._goal_overlap_score(plan.goal, goal)
+            score += _goal_overlap_score(plan.goal, goal)
             if plan.status == "interrupted":
                 score += 0.2
             if score > best_score:
@@ -645,7 +659,7 @@ class AutonomousTaskEngine:
         payload_context: dict[str, Any] | None = None,
     ) -> Any:
         """Invoke a registered tool with capability enforcement and shadow mode support."""
-        origin = self._normalize_origin(origin)
+        origin = _normalize_origin(origin)
 
         # ── Capability Check (Token-based) ──
         # Note: token_id is generated per-plan based on decomposed steps.
@@ -685,7 +699,7 @@ class AutonomousTaskEngine:
             missing = [
                 parameter.name
                 for parameter in self._required_callable_parameters(tool_fn)
-                if not self._argument_is_supplied(call_args, parameter.name)
+                if not _argument_is_supplied(call_args, parameter.name)
             ]
             if missing:
                 raise RuntimeError(
@@ -1641,11 +1655,6 @@ Respond ONLY with a JSON array, no other text:
             re.search(r"(?:[\w.-]+/)+[\w.-]+\.(?:py|tsx?|jsx?|json|ya?ml|toml|sh)", lowered)
         )
 
-    @staticmethod
-    def _matched_skills_from_context(context: dict[str, Any] | None) -> list[str]:
-        if not isinstance(context, dict):
-            return []
-        return normalize_matched_skills(context.get("matched_skills"))
 
     def _requires_grounded_action(self, goal: str, context: dict[str, Any] | None) -> bool:
         # Structured learning bundles are grounded by parsing + memory
@@ -1654,7 +1663,7 @@ Respond ONLY with a JSON array, no other text:
         if self._looks_like_learning_resource_bundle(goal):
             return False
 
-        matched_skills = self._matched_skills_from_context(context)
+        matched_skills = _matched_skills_from_context(context)
         lowered = str(goal or "").lower()
         if looks_like_multi_step_skill_request(goal, matched_skills):
             return True
@@ -1686,7 +1695,7 @@ Respond ONLY with a JSON array, no other text:
         if not non_think_steps:
             return True
 
-        matched_skills = self._matched_skills_from_context(context)
+        matched_skills = _matched_skills_from_context(context)
         if self._looks_like_desktop_goal(goal) and looks_like_multi_step_skill_request(
             goal, matched_skills
         ):
@@ -1749,10 +1758,6 @@ Respond ONLY with a JSON array, no other text:
             return "Browser"
         return ""
 
-    @staticmethod
-    def _extract_url(goal: str) -> str:
-        match = re.search(r"https?://[^\s<>\"')\]]+", str(goal or ""))
-        return match.group(0) if match else ""
 
     @classmethod
     def _looks_like_learning_bundle_header(cls, line: str) -> bool:
@@ -1973,7 +1978,7 @@ Respond ONLY with a JSON array, no other text:
         plan_id: str,
         context: dict[str, Any] | None,
     ) -> TaskPlan | None:
-        matched_skills = self._matched_skills_from_context(context)
+        matched_skills = _matched_skills_from_context(context)
         if "computer_use" not in matched_skills:
             return None
         desktop_tool = "computer_use"
@@ -2257,11 +2262,11 @@ Respond ONLY with a JSON array, no other text:
         plan_id: str,
         context: dict[str, Any] | None,
     ) -> TaskPlan | None:
-        matched_skills = self._matched_skills_from_context(context)
+        matched_skills = _matched_skills_from_context(context)
 
         # 1. Sovereign Browser Browse mode (if a URL is requested)
         if "sovereign_browser" in matched_skills:
-            url = self._extract_url(goal)
+            url = _extract_url(goal)
             if url:
                 return TaskPlan(
                     plan_id=plan_id,
@@ -2305,7 +2310,7 @@ Respond ONLY with a JSON array, no other text:
 
         # 3. Computer Use (URLs and Apps)
         if "computer_use" in matched_skills:
-            url = self._extract_url(goal)
+            url = _extract_url(goal)
             if url:
                 return TaskPlan(
                     plan_id=plan_id,
@@ -2409,7 +2414,7 @@ Respond ONLY with a JSON array, no other text:
                     if prop_name_lower in ("query", "q", "search"):
                         args[prop_name] = self._extract_search_query(goal)
                     elif prop_name_lower in ("url", "uri", "target", "path", "filename"):
-                        args[prop_name] = self._extract_url(goal) or goal
+                        args[prop_name] = _extract_url(goal) or goal
                     elif prop_name_lower in ("command", "code"):
                         args[prop_name] = goal
                     elif prop_name_lower in ("content", "message", "text", "prompt", "body", "input", "suggestion"):
@@ -2424,7 +2429,7 @@ Respond ONLY with a JSON array, no other text:
                 if "search" in lowered_skill or "find" in lowered_skill or "lookup" in lowered_skill:
                     args = {"query": self._extract_search_query(goal)}
                 elif "browser" in lowered_skill or "url" in lowered_skill or "web" in lowered_skill:
-                    url = self._extract_url(goal)
+                    url = _extract_url(goal)
                     args = {"url": url} if url else {"query": goal}
                 elif "clock" in lowered_skill or "time" in lowered_skill:
                     args = {}
@@ -3422,7 +3427,7 @@ Respond ONLY with a JSON array, no other text:
 
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch:
-                    origin = self._normalize_origin(kwargs.get("origin"))
+                    origin = _normalize_origin(kwargs.get("origin"))
                     payload_context = kwargs.get("payload_context")
                     if origin:
                         return await orch.execute_tool(
@@ -3456,7 +3461,7 @@ Respond ONLY with a JSON array, no other text:
 
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch and hasattr(orch, "execute_tool"):
-                    origin = self._normalize_origin(kwargs.get("origin"))
+                    origin = _normalize_origin(kwargs.get("origin"))
                     payload_context = kwargs.get("payload_context")
                     if origin:
                         result = await orch.execute_tool(
@@ -3484,7 +3489,7 @@ Respond ONLY with a JSON array, no other text:
 
                 orch = ServiceContainer.get("orchestrator", default=None)
                 if orch and hasattr(orch, "execute_tool"):
-                    origin = self._normalize_origin(kwargs.get("origin")) or (
+                    origin = _normalize_origin(kwargs.get("origin")) or (
                         "autonomous_task_engine"
                     )
                     payload_context = kwargs.get("payload_context")

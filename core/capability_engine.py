@@ -1359,6 +1359,30 @@ def _maturity_enforcement_enabled() -> bool:
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_transient(self, err: str) -> bool:
+    """Checks if an error is likely transient (network, timeout, etc)."""
+    return any(x in str(err).lower() for x in ["timeout", "network", "retry", "limit"])
+
+
+@lru_cache(maxsize=2048)
+def _skill_name_pattern(form: str) -> re.Pattern[str]:
+    """Compiled once per name form — detect_intent runs on every turn."""
+    return re.compile(rf"(?<!\w){re.escape(form)}(?!\w)")
+
+
+def _declared_effect_scope(skill_name: str, target: Any | None = None) -> str:
+    declared = str(getattr(target, "effect_scope", "") or "").strip().lower()
+    policy = resolve_skill_policy(skill_name, declared)
+    return policy.effect_scope if policy is not None else "unknown"
+
+
+def _normalize_context_origin(origin: Any) -> str:
+    normalized = str(origin or "").strip().lower().replace("-", "_")
+    while normalized.startswith("routing_"):
+        normalized = normalized[len("routing_") :]
+    return normalized
+
+
 class CapabilityEngine(AuraBaseModule):
     """Unified engine for Aura's capabilities (skills).
 
@@ -2081,11 +2105,6 @@ class CapabilityEngine(AuraBaseModule):
             forms.add((spaced, distinctive))
         return tuple(sorted(forms))
 
-    @staticmethod
-    @lru_cache(maxsize=2048)
-    def _skill_name_pattern(form: str) -> re.Pattern[str]:
-        """Compiled once per name form — detect_intent runs on every turn."""
-        return re.compile(rf"(?<!\w){re.escape(form)}(?!\w)")
 
     def _explicitly_named_skills(self, text: str) -> list[str]:
         """Skills the turn names outright, rather than describing.
@@ -2110,7 +2129,7 @@ class CapabilityEngine(AuraBaseModule):
             if not meta.enabled:
                 continue
             for form, distinctive in self._skill_name_forms(name):
-                match = self._skill_name_pattern(form).search(haystack)
+                match = _skill_name_pattern(form).search(haystack)
                 if not match:
                     continue
                 if distinctive or _SKILL_INVOCATION_CUE_RE.search(haystack[: match.start()]):
@@ -3457,7 +3476,7 @@ class CapabilityEngine(AuraBaseModule):
                     raise TypeError("implementation has no execute() contract")
                 if not callable(getattr(skill_class, "safe_execute", None)):
                     raise TypeError("implementation has no governed safe_execute() contract")
-                observed_scope = self._declared_effect_scope(skill_name, skill_class)
+                observed_scope = _declared_effect_scope(skill_name, skill_class)
                 if metadata.effect_scope in {"", "unknown"}:
                     metadata.effect_scope = observed_scope
                     policy = resolve_skill_policy(skill_name, observed_scope)
@@ -3617,14 +3636,9 @@ class CapabilityEngine(AuraBaseModule):
             return "medium"
         return "low"
 
-    @staticmethod
-    def _declared_effect_scope(skill_name: str, target: Any | None = None) -> str:
-        declared = str(getattr(target, "effect_scope", "") or "").strip().lower()
-        policy = resolve_skill_policy(skill_name, declared)
-        return policy.effect_scope if policy is not None else "unknown"
 
     def _effect_scope_for(self, skill_name: str, meta: SkillMetadata) -> str:
-        declared = self._declared_effect_scope(
+        declared = _declared_effect_scope(
             skill_name, meta.instance or meta.skill_class
         )
         if declared and declared != "unknown":
@@ -4738,16 +4752,10 @@ class CapabilityEngine(AuraBaseModule):
                 dormant.append(f"- {name}: {meta.description[:100]} (Cost: {cost_str})")
         return "\n".join(dormant) if dormant else "None"
 
-    @staticmethod
-    def _normalize_context_origin(origin: Any) -> str:
-        normalized = str(origin or "").strip().lower().replace("-", "_")
-        while normalized.startswith("routing_"):
-            normalized = normalized[len("routing_") :]
-        return normalized
 
     @classmethod
     def _is_user_facing_origin(cls, origin: Any) -> bool:
-        normalized = cls._normalize_context_origin(origin)
+        normalized = _normalize_context_origin(origin)
         if not normalized:
             return False
         if normalized in _USER_FACING_CONTEXT_ORIGINS:
@@ -4924,7 +4932,7 @@ class CapabilityEngine(AuraBaseModule):
     def _resolve_execution_source(self, context: dict[str, Any] | None) -> str:
         ctx = context or {}
         for key in ("intent_source", "request_origin", "origin", "source"):
-            candidate = self._normalize_context_origin(ctx.get(key))
+            candidate = _normalize_context_origin(ctx.get(key))
             if candidate in {"test", "proof", "eval", "evaluation", "benchmark"}:
                 return "system"
             if self._is_user_facing_origin(candidate):
@@ -4945,7 +4953,7 @@ class CapabilityEngine(AuraBaseModule):
             else ""
         )
         if state_origin and self._is_user_facing_origin(state_origin):
-            return self._normalize_context_origin(state_origin)
+            return _normalize_context_origin(state_origin)
         return "capability_engine"
 
     def _augment_execution_context(self, context: dict[str, Any] | None) -> dict[str, Any]:
@@ -6705,7 +6713,7 @@ class CapabilityEngine(AuraBaseModule):
                             }
                         result["authority_closure"] = closure_receipt
                         if not bool(closure_receipt.get("closed")):
-                            closure_scope = self._declared_effect_scope(skill_name)
+                            closure_scope = _declared_effect_scope(skill_name)
                             _record_unreconciled_authority(
                                 tool_handle,
                                 reason=f"closure_receipt_not_closed:{skill_name}",
@@ -6758,7 +6766,7 @@ class CapabilityEngine(AuraBaseModule):
                     # receipt, it is positive evidence that closure did not
                     # complete — so this path does invalidate effectful
                     # results.
-                    closure_scope = self._declared_effect_scope(skill_name)
+                    closure_scope = _declared_effect_scope(skill_name)
                     result["authority_closure"] = {
                         "closed": False,
                         "mode": "constitutional_closure",
@@ -6918,7 +6926,7 @@ class CapabilityEngine(AuraBaseModule):
                     )
 
                 last_error = self._extract_error(output)
-                if not self._is_transient(last_error):
+                if not _is_transient(last_error):
                     break
             except (OSError, ConnectionError, TimeoutError) as e:
                 _record_capability_degradation(
@@ -6928,7 +6936,7 @@ class CapabilityEngine(AuraBaseModule):
                 last_error = str(e).strip()
                 if not last_error and isinstance(e, TimeoutError):
                     last_error = f"{skill_name} timed out after {timeout_s:.1f}s"
-                if not self._is_transient(last_error):
+                if not _is_transient(last_error):
                     break
 
         failure: dict[str, Any] = {"ok": False, "error": last_error, "retries": attempt}
@@ -7459,9 +7467,6 @@ class CapabilityEngine(AuraBaseModule):
             return "Failed"
         return "Error"
 
-    def _is_transient(self, err: str) -> bool:
-        """Checks if an error is likely transient (network, timeout, etc)."""
-        return any(x in str(err).lower() for x in ["timeout", "network", "retry", "limit"])
 
     async def _record_temporal(
         self, action: str, params: dict[str, Any], context: dict[str, Any], result: dict[str, Any]

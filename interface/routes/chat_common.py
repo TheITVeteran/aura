@@ -141,3 +141,157 @@ _LOCAL_CHOICE_REFERENCE_RE = re.compile(r"\b(?:what|which)\s+one\b", re.IGNORECA
 _ORGAN_INERT_STREAKS: dict[str, int] = {}
 
 MAX_CHAT_MESSAGE_BYTES = 64 * 1024  # 64KB
+
+import re
+
+_PROMPT_ARTIFACT_PATTERNS = re.compile(
+    r"(?im)"
+    r"(?:^\s*(?:obj|prev_obj|state|phenom|mood|goals|history|narr|pers|usr|ctx|voice)\s*:)"
+    r"|(?:\[ACTIVE GROUNDING EVIDENCE\])"
+    r"|(?:\[FETCHED PAGE CONTENT\])"
+    r"|(?:\[INTERNAL MEMORY RECALL\])"
+    r"|(?:\[(?:RECENT CONTEXT|RECENT COMPLETED CONVERSATION|END RECENT COMPLETED CONVERSATION|CURRENT USER MESSAGE|OPERATIONAL SELF CONTEXT)\])"
+)
+
+_TOPIC_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "because",
+        "been",
+        "being",
+        "but",
+        "can",
+        "could",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "huh",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "itself",
+        "just",
+        "kind",
+        "like",
+        "maybe",
+        "me",
+        "more",
+        "most",
+        "my",
+        "not",
+        # Temporal and discourse fillers carry no topic. "now" was the SINGLE
+        # overlapping token between "run a real calculation in your Python
+        # sandbox and show me the result" and a 53-token reply about felt state —
+        # and any single overlap exonerated the reply, so a completely off-topic
+        # answer was logged off_topic=False.
+        "now",
+        "of",
+        "on",
+        "or",
+        "our",
+        "part",
+        "really",
+        "say",
+        "says",
+        "said",
+        "side",
+        "so",
+        "sort",
+        "stand",
+        "standing",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "thing",
+        "this",
+        "those",
+        "through",
+        "to",
+        "under",
+        "up",
+        "very",
+        "was",
+        "we",
+        "were",
+        "wait",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+    # Stance and degree adverbs. These modify how a clause is asserted; they
+    # are never what a question is ABOUT.
+    #
+    # LIVE DEFECT, 2026-08-10. Asked "(1) how many heartbeats are active,
+    # (2) your uptime in seconds, (3) the exact action name that keeps getting
+    # refused… I will check all three", the degraded composer answered:
+    #
+    #     I understood you to be asking about heartbeats and actually.
+    #
+    # "actually" came from "not accept it. don't agree with me. answer only
+    # from what you can actually read". _select_anchor_topic_tokens ranks
+    # non-priority candidates by -len(token) — longest word first — so an
+    # eight-letter adverb outranked every real noun in the question.
+    #
+    # The category was already recognised here: "really" was in this set. It
+    # was simply never filled in.
+    | {
+        "actually",
+        "already",
+        "always",
+        "basically",
+        "certainly",
+        "clearly",
+        "definitely",
+        "especially",
+        "essentially",
+        "exactly",
+        "generally",
+        "honestly",
+        "instead",
+        "literally",
+        "maybe",
+        "merely",
+        "mostly",
+        "obviously",
+        "particularly",
+        "perhaps",
+        "possibly",
+        "probably",
+        "quite",
+        "rather",
+        "seriously",
+        "simply",
+        "specifically",
+        "truly",
+        "usually",
+        "very",
+    }
+)

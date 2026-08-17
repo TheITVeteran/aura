@@ -328,6 +328,11 @@ def _role_attribution_for(
         return {"schema": "aura.role_independence.v1", "error": f"{type(exc).__name__}: {exc}"[:200]}
 
 
+def _make_receipt_id(ts: float, source: str, content: str) -> str:
+    raw = f"{ts:.6f}:{source}:{content[:50]}"
+    return "will_" + hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
 class UnifiedWill:
     """The single locus of decision authority.
 
@@ -401,7 +406,7 @@ class UnifiedWill:
         self._state.total_decisions += 1
         content = f"constitutional_amendment:{patch!r}:{rationale}"
         content_hash = hashlib.sha256(content[:500].encode()).hexdigest()[:16]
-        receipt_id = self._make_receipt_id(t0, proposer, content)
+        receipt_id = _make_receipt_id(t0, proposer, content)
 
         def finalize(outcome: WillOutcome, reason: str, constraints: list[str]) -> WillDecision:
             decision = WillDecision(
@@ -501,7 +506,7 @@ class UnifiedWill:
         context = context or {}
 
         # Receipt ID for provenance
-        receipt_id = self._make_receipt_id(t0, source, content)
+        receipt_id = _make_receipt_id(t0, source, content)
         content_hash = hashlib.sha256(content[:200].encode()).hexdigest()[:16]
 
         # A stopped runtime Will must fail closed before consulting any other
@@ -2368,10 +2373,6 @@ class UnifiedWill:
             record_degradation("will", exc)
             logger.debug("Will decision event publish failed: %s", exc)
 
-    @staticmethod
-    def _make_receipt_id(ts: float, source: str, content: str) -> str:
-        raw = f"{ts:.6f}:{source}:{content[:50]}"
-        return "will_" + hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def _sign_decision(self, decision: WillDecision) -> tuple[str, str, str, bool]:
         payload = self._signature_payload(decision)

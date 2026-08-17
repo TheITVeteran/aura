@@ -137,6 +137,10 @@ class AuthorityDecision:
     signed_capability: dict[str, Any] | None = None
 
 
+def _normalized_memory_source(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
+
+
 class AuthorityGateway:
     """Narrow-waist runtime gate over substrate, executive, and tokens.
 
@@ -414,13 +418,10 @@ class AuthorityGateway:
             )
         return None, locals().get("decision")
 
-    @staticmethod
-    def _normalized_memory_source(value: Any) -> str:
-        return str(value or "").strip().lower().replace("-", "_")
 
     @classmethod
     def _memory_source_is_user_facing(cls, value: Any) -> bool:
-        normalized = cls._normalized_memory_source(value)
+        normalized = _normalized_memory_source(value)
         if not normalized:
             return False
         tokens = {token for token in normalized.split("_") if token}
@@ -436,7 +437,7 @@ class AuthorityGateway:
         memory_type: str,
         metadata: dict[str, Any] | None,
     ) -> bool:
-        memory_type_l = cls._normalized_memory_source(memory_type)
+        memory_type_l = _normalized_memory_source(memory_type)
         payload = {str(k).lower(): v for k, v in dict(metadata or {}).items()}
         return bool(
             memory_type_l == "belief_update"
@@ -492,8 +493,8 @@ class AuthorityGateway:
         content: str,
     ) -> dict[str, Any]:
         payload = dict(metadata or {})
-        memory_type_l = cls._normalized_memory_source(memory_type)
-        source_l = cls._normalized_memory_source(source)
+        memory_type_l = _normalized_memory_source(memory_type)
+        source_l = _normalized_memory_source(source)
         user_facing = bool(
             cls._memory_source_is_user_facing(source_l)
             or cls._memory_payload_origin_is_user_facing(payload)
@@ -664,20 +665,20 @@ class AuthorityGateway:
         source: str,
         metadata: dict[str, Any] | None,
     ) -> IntentSource:
-        source_l = cls._normalized_memory_source(source)
+        source_l = _normalized_memory_source(source)
         direct_source = _coerce_intent_source(source_l or "system")
         if direct_source == IntentSource.USER:
             return direct_source
         payload = dict(metadata or {})
-        memory_type_l = cls._normalized_memory_source(memory_type)
+        memory_type_l = _normalized_memory_source(memory_type)
         payload_sources = (
             source_l,
-            cls._normalized_memory_source(payload.get("source")),
-            cls._normalized_memory_source(payload.get("provenance_source")),
-            cls._normalized_memory_source(payload.get("intent_source")),
-            cls._normalized_memory_source(payload.get("origin")),
-            cls._normalized_memory_source(payload.get("request_origin")),
-            cls._normalized_memory_source(payload.get("tool_name")),
+            _normalized_memory_source(payload.get("source")),
+            _normalized_memory_source(payload.get("provenance_source")),
+            _normalized_memory_source(payload.get("intent_source")),
+            _normalized_memory_source(payload.get("origin")),
+            _normalized_memory_source(payload.get("request_origin")),
+            _normalized_memory_source(payload.get("tool_name")),
         )
         evidence_derived = bool(
             payload.get("empirical_observation")

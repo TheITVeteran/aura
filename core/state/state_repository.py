@@ -213,6 +213,10 @@ class StateVersionConflictError(Exception):
         )
 
 
+def _is_user_facing_origin(origin: Any) -> bool:
+    return is_user_facing_origin(origin)
+
+
 class StateRepository:
     """
     Persists and retrieves AuraState.
@@ -1351,15 +1355,12 @@ class StateRepository:
         self._last_commit_deferred_at = time.time()
         self._last_commit_deferred_reason = str(reason or "unspecified")[:512]
 
-    @staticmethod
-    def _is_user_facing_origin(origin: Any) -> bool:
-        return is_user_facing_origin(origin)
 
     def _should_use_bounded_db_snapshot(self, state: AuraState, cause: str) -> bool:
         origin = getattr(state, "transition_origin", "") or getattr(
             getattr(state, "cognition", None), "current_origin", ""
         )
-        if not self._is_user_facing_origin(origin):
+        if not _is_user_facing_origin(origin):
             return True
         cause_lower = str(cause or "").strip().lower()
         return any(

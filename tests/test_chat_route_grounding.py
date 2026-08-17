@@ -1,6 +1,7 @@
 import pytest
 
 import interface.routes.chat as chat_mod
+import interface.routes.chat_conversation_repair as _chat_conversation_repair
 
 
 def test_grounded_introspection_classifier_ignores_hypothetical_free_energy_prompt():
@@ -96,7 +97,7 @@ def test_numeric_state_request_reply_contains_parseable_numbers(monkeypatch, ser
 
     service_container.register_instance("liquid_substrate", _Substrate(), required=False)
     monkeypatch.setattr(
-        chat_routes, "_resolve_live_voice_state", lambda *_a, **_k: {}
+        _chat_conversation_repair, "_resolve_live_voice_state", lambda *_a, **_k: {}
     )
 
     reply = chat_routes._build_grounded_introspection_reply(
@@ -134,7 +135,7 @@ def test_grounded_topology_reply_uses_lock_free_summary_read_model(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {}
+        _chat_conversation_repair, "_resolve_live_voice_state", lambda *_args, **_kwargs: {}
     )
 
     reply = chat_routes._build_grounded_introspection_reply(

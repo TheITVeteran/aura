@@ -59,6 +59,10 @@ class SendOutcome:
         return self.delivered
 
 
+def _is_connection_pair(connection: Any) -> bool:
+    return isinstance(connection, tuple) and len(connection) == 2
+
+
 class LocalPipeBus:
     """
     High-performance, zero-config intra-process communication using multiprocessing.Pipe.
@@ -78,9 +82,6 @@ class LocalPipeBus:
     except (TypeError, ValueError):
         _HANDLER_EXEC_TIMEOUT_S = 300.0
 
-    @staticmethod
-    def _is_connection_pair(connection: Any) -> bool:
-        return isinstance(connection, tuple) and len(connection) == 2
 
     @classmethod
     def shutdown_executor(cls) -> None:
@@ -104,7 +105,7 @@ class LocalPipeBus:
         self.is_child = is_child
         self.start_reader = start_reader
         
-        if self._is_connection_pair(connection):
+        if _is_connection_pair(connection):
             self.read_conn, self.write_conn = connection
         elif connection is not None:
             raise ValueError(

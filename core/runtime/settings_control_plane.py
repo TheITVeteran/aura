@@ -231,6 +231,15 @@ def _active_unknown_keys(unknown: Iterable[str]) -> tuple[str, ...]:
     return tuple(key for key in unknown if key not in _RETIRED_SETTING_TYPES)
 
 
+def _history_entry(snapshot: SettingsSnapshot) -> dict[str, Any]:
+    return {
+        "revision": snapshot.revision,
+        "updated_at": snapshot.updated_at,
+        "last_receipt_hash": snapshot.last_receipt_hash,
+        "values": dict(snapshot.integrity_values or snapshot.values),
+    }
+
+
 class RuntimeSettingsStore:
     """One atomic settings owner with CAS, rollback, and chained receipts."""
 
@@ -781,7 +790,7 @@ class RuntimeSettingsStore:
             )
 
             history = list(current.history)
-            history.append(self._history_entry(current))
+            history.append(_history_entry(current))
             history = history[-_HISTORY_LIMIT:]
             snapshot = SettingsSnapshot(
                 revision=revision,
@@ -1017,7 +1026,7 @@ class RuntimeSettingsStore:
                 )
             next_values, unknown = validated_settings_snapshot(reconstructed)
             history = list(recovered.history)
-            history.append(self._history_entry(recovered))
+            history.append(_history_entry(recovered))
             recovered = SettingsSnapshot(
                 revision=revision,
                 values=next_values,
@@ -1442,14 +1451,6 @@ class RuntimeSettingsStore:
             raise ValueError("request_id may not contain control characters")
         return normalized
 
-    @staticmethod
-    def _history_entry(snapshot: SettingsSnapshot) -> dict[str, Any]:
-        return {
-            "revision": snapshot.revision,
-            "updated_at": snapshot.updated_at,
-            "last_receipt_hash": snapshot.last_receipt_hash,
-            "values": dict(snapshot.integrity_values or snapshot.values),
-        }
 
     def _write_snapshot_locked(self, snapshot: SettingsSnapshot) -> None:
         envelope = {

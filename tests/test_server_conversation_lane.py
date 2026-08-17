@@ -15,6 +15,7 @@ import interface.routes.chat_desktop_repair as _chat_desktop_repair
 import interface.routes.chat_memory_state as _chat_memory_state
 import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
+import interface.routes.chat_conversation_repair as _chat_conversation_repair
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
@@ -9942,7 +9943,7 @@ async def test_desktop_stabilizer_keeps_complex_self_process_questions_substanti
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
@@ -14545,7 +14546,7 @@ async def test_stabilize_user_facing_reply_blocks_ungrounded_search_turn_fallbac
             return ""
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: state)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_looks_generic_assistantish", lambda _msg, _text: (False, ""))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -14572,7 +14573,7 @@ async def test_stabilize_user_facing_reply_blocks_ungrounded_search_turn_fallbac
 def test_grounded_private_cognitive_model_reply_has_causal_contract(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_chat_conversation_repair, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -14599,7 +14600,7 @@ def test_grounded_private_cognitive_model_reply_has_causal_contract(monkeypatch)
 async def test_stabilize_private_cognitive_model_uses_grounded_reply_before_tail_completion(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_chat_conversation_repair, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         chat_routes.ServiceContainer,
         "get",
@@ -14649,7 +14650,7 @@ async def test_cognitive_engine_required_private_model_report_uses_cognitive_eng
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_chat_conversation_repair, "_resolve_live_voice_state", lambda *_args, **_kwargs: {})
     patch_chat_lane(monkeypatch, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
@@ -14713,7 +14714,7 @@ async def test_stabilize_user_facing_reply_rejects_objective_parrot(monkeypatch)
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
     monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
@@ -14749,7 +14750,7 @@ async def test_stabilize_user_facing_reply_clarifies_specificity_push(monkeypatc
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
     monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
@@ -14785,7 +14786,7 @@ async def test_stabilize_user_facing_reply_acknowledges_parrot_callout(monkeypat
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
     monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
@@ -14821,7 +14822,7 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
     monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
@@ -14879,7 +14880,7 @@ async def test_stabilize_user_facing_reply_does_not_turn_timeout_confusion_into_
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(
-        chat_routes,
+        _chat_conversation_repair,
         "_build_grounded_introspection_reply",
         lambda _msg: "There is strain around temporal discontinuity and foreground locks.",
     )
@@ -14922,7 +14923,7 @@ async def test_stabilize_user_facing_reply_blocks_semantic_glitch(monkeypatch):
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
     monkeypatch.setattr(chat_routes, "_record_recent_response", lambda *_args, **_kwargs: None)
@@ -14966,7 +14967,7 @@ async def test_stabilize_user_facing_reply_rejects_identity_collapse_disclaimer(
             return text
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -15038,7 +15039,7 @@ async def test_desktop_required_stabilizer_does_not_add_a_third_generation_by_de
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
@@ -15112,7 +15113,7 @@ async def test_desktop_required_capability_repair_uses_grounded_inventory_withou
 
     monkeypatch.delenv("AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR", raising=False)
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
@@ -15191,7 +15192,7 @@ async def test_stabilizer_skips_second_generation_under_critical_memory_pressure
     inference_gate = _InferenceGate()
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
     monkeypatch.setattr(chat_routes, "_apply_aura_voice_shaping_compat", lambda text, _msg: str(text))
     monkeypatch.setattr(chat_routes, "_has_unexpected_cjk", lambda _msg, _text: False)
@@ -15266,7 +15267,7 @@ async def test_desktop_required_stabilizer_uses_protected_primary_contract(monke
         ),
     )
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
-    monkeypatch.setattr(chat_routes, "_build_grounded_introspection_reply", lambda _msg: "")
+    monkeypatch.setattr(_chat_conversation_repair, "_build_grounded_introspection_reply", lambda _msg: "")
     monkeypatch.setattr(chat_routes, "_build_grounded_traceability_reply", AsyncCallFixture(return_value=""))
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(_chat_desktop_repair, "_apply_aura_voice_shaping", lambda text: str(text))
@@ -15492,7 +15493,7 @@ async def test_stabilize_user_facing_reply_uses_live_grounding_for_specificity_p
 
     monkeypatch.setattr(_chat_preflight, "_resolve_live_aura_state", lambda: None)
     monkeypatch.setattr(
-        chat_routes,
+        _chat_conversation_repair,
         "_build_grounded_introspection_reply",
         lambda _msg: "Something just shifted in how I was modeling this. I need a moment.",
     )
@@ -15967,7 +15968,7 @@ def test_protected_foreground_system_prompt_prefers_cached_state_snapshot(monkey
         },
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_conversation_repair,
         "_resolve_live_voice_state",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("live voice state should not be consulted")),
     )
