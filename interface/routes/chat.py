@@ -2914,11 +2914,32 @@ async def _resolve_traceability_anchor(user_message: str) -> str | None:
     return None
 
 
-async def _resolve_referential_followup_anchor(user_message: str) -> str | None:
+async def _resolve_referential_followup_anchor(
+    user_message: str,
+    *,
+    session_id: str = "",
+) -> str | None:
     if not _is_referential_followup_request(user_message):
         return None
 
-    recent = await _gather_recent_user_messages_for_relevance(user_message, limit=8)
+    # Referential ownership is session-local. The general continuity loader is
+    # allowed to reach into an earlier session after a restart, but doing that
+    # here can bind "that" to an unrelated old question. Resolve from the
+    # explicit session ledger first; the ambient ContextVar is only a fallback
+    # for direct internal callers that do not own a session id.
+    recent_exchanges = await _chat_memory_state._recent_completed_conversation_exchanges(
+        current_user_message=user_message,
+        session_id=session_id,
+        limit=8,
+        allow_cross_session=False,
+    )
+    recent = [
+        str(exchange.get("user") or "").strip()
+        for exchange in recent_exchanges
+        if str(exchange.get("user") or "").strip()
+    ]
+    if not recent:
+        recent = await _gather_recent_user_messages_for_relevance(user_message, limit=8)
     current = str(user_message or "").strip()
     for candidate in reversed(recent):
         candidate_text = str(candidate or "").strip()
@@ -5101,7 +5122,10 @@ async def _run_cognitive_engine_chat_turn(
     self_condition_evidence: dict[str, Any] = {}
     if self_condition_contract:
         try:
-            self_condition_evidence = _build_self_condition_evidence(visible)
+            self_condition_evidence = _build_self_condition_evidence(
+                visible,
+                session_id=session_id,
+            )
         except _CHAT_RECOVERABLE_ERRORS as exc:
             record_degradation("chat.self_condition", exc)
             logger.debug("Self-condition evidence unavailable before CognitiveEngine: %s", exc)
@@ -5287,6 +5311,7 @@ async def _run_cognitive_engine_chat_turn(
             current_user_message=visible,
             session_id=session_id,
             limit=recent_context_limit,
+            allow_cross_session=not self_condition_contract,
         )
     else:
         recent_exchanges = []
@@ -10040,27 +10065,68 @@ def _project_self_condition_claims(
     return projected.text
 
 
-def _build_self_condition_evidence(user_message: str) -> dict[str, Any]:
+def _build_self_condition_evidence(
+    user_message: str,
+    *,
+    session_id: str = "",
+) -> dict[str, Any]:
     """Return the one typed condition projection used by prompt and reply gates."""
 
     from core.self.self_condition import (
         build_self_condition_projection,
+        compare_self_condition_projections,
+        observe_self_condition_projection,
+        render_self_condition_comparison_reply,
         render_self_condition_reply,
     )
 
     projection = build_self_condition_projection(
         kernel_state=_chat_preflight._resolve_live_aura_state(),
     )
+    previous = observe_self_condition_projection(session_id, projection)
+    comparison = compare_self_condition_projections(projection, previous)
+    projection_dict = projection.to_dict()
+    if comparison is not None:
+        projection_dict["comparison"] = comparison.to_dict()
+    comparison_request = bool(
+        re.search(
+            r"\b(?:compare|compared|difference|different|changed|change|"
+            r"same|unchanged|ago|earlier|before)\b",
+            str(user_message or ""),
+            re.IGNORECASE,
+        )
+    )
+    prompt_block = projection.to_language_grounding()
+    if comparison is not None:
+        prompt_block += (
+            " Measured same-session comparison: "
+            + json.dumps(
+                comparison.to_dict(),
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "."
+        )
     return {
         "projection": projection,
-        "projection_dict": projection.to_dict(),
+        "projection_dict": projection_dict,
+        "comparison": comparison,
         # The full status representation remains available on the typed
         # projection for audit. Language generation receives one compact
         # semantic view instead of imitating a metric card.
-        "prompt_block": projection.to_language_grounding(),
-        "reply": render_self_condition_reply(
-            projection,
-            user_message=user_message,
+        "prompt_block": prompt_block,
+        "reply": (
+            render_self_condition_comparison_reply(
+                projection,
+                comparison,
+                user_message=user_message,
+            )
+            if comparison_request
+            else render_self_condition_reply(
+                projection,
+                user_message=user_message,
+            )
         ),
     }
 
@@ -17188,7 +17254,10 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
         preflight_context_message = str(body.message or "")
         effective_user_message = _semantic_user_message
         referential_anchor = (
-            await _resolve_referential_followup_anchor(_semantic_user_message)
+            await _resolve_referential_followup_anchor(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+            )
             if allow_chat_fastpaths
             else None
         )

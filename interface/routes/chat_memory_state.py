@@ -1609,6 +1609,7 @@ async def _recent_completed_conversation_exchanges(
     current_user_message: str,
     session_id: str = "",
     limit: int = 6,
+    allow_cross_session: bool = True,
 ) -> list[dict[str, str]]:
     current = str(current_user_message or "").strip()
     safe_session_id = str(session_id or "")[:64]
@@ -1664,6 +1665,7 @@ async def _recent_completed_conversation_exchanges(
     durable = await _load_durable_conversation_exchanges(
         limit=max(1, int(limit)),
         session_id=safe_session_id,
+        allow_cross_session=allow_cross_session,
     )
     in_memory_ids = {
         str(entry.get("exchange_id") or "").strip()
@@ -1722,6 +1724,7 @@ def _load_durable_conversation_exchanges_sync(
     *,
     limit: int,
     session_id: str = "",
+    allow_cross_session: bool = True,
 ) -> list[dict[str, str]]:
     persistence = ServiceContainer.get("persistence", default=None)
     get_recent_sessions = getattr(persistence, "get_recent_sessions", None)
@@ -1766,7 +1769,11 @@ def _load_durable_conversation_exchanges_sync(
         1 for row in current_rows if str(row.get("role") or "").strip().lower() == "user"
     )
     rows: list[dict[str, Any]] = []
-    if exchanges_here < max(1, int(limit)) and callable(get_recent_sessions):
+    if (
+        allow_cross_session
+        and exchanges_here < max(1, int(limit))
+        and callable(get_recent_sessions)
+    ):
         # Sessions with nothing in them are boot artifacts, and a bounded scan
         # that counts them spends its whole window on restarts instead of
         # conversations — three reboots used to hide yesterday entirely.
@@ -1924,6 +1931,7 @@ async def _load_durable_conversation_exchanges(
     *,
     limit: int,
     session_id: str = "",
+    allow_cross_session: bool = True,
 ) -> list[dict[str, str]]:
     try:
         return await asyncio.wait_for(
@@ -1931,6 +1939,7 @@ async def _load_durable_conversation_exchanges(
                 _load_durable_conversation_exchanges_sync,
                 limit=max(1, int(limit)),
                 session_id=str(session_id or "")[:64],
+                allow_cross_session=allow_cross_session,
             ),
             timeout=_DURABLE_CONVERSATION_CONTEXT_TIMEOUT_S,
         )

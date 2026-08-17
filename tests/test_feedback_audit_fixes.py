@@ -1745,7 +1745,7 @@ def test_simple_affect_check_uses_canonical_self_condition_projection(monkeypatc
     monkeypatch.setattr(
         chat_module,
         "_build_self_condition_evidence",
-        lambda _message: {
+        lambda _message, **_kwargs: {
             "reply": (
                 "Yes, I am okay. I feel steady, my distress is low, and my "
                 "continuity is holding on this thread."

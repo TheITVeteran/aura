@@ -12,7 +12,9 @@ import json
 import logging
 import math
 import re
+import threading
 import time
+from collections import OrderedDict, deque
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from types import SimpleNamespace
@@ -24,6 +26,10 @@ from core.runtime.errors import record_degradation
 logger = logging.getLogger(__name__)
 
 SELF_CONDITION_FRESH_MAX_AGE_S = 30.0
+_SELF_CONDITION_HISTORY_MAX_SESSIONS = 128
+_SELF_CONDITION_HISTORY_SAMPLES = 8
+_SELF_CONDITION_HISTORY_LOCK = threading.RLock()
+_SELF_CONDITION_HISTORY: OrderedDict[str, deque["SelfConditionProjection"]] = OrderedDict()
 
 
 def _finite(value: Any, default: float | None = None) -> float | None:
@@ -356,6 +362,106 @@ class SelfConditionProjection:
 
 
 @dataclass(frozen=True)
+class SelfConditionComparison:
+    """Measured delta between two distinct condition samples in one session."""
+
+    current_evidence_id: str
+    previous_evidence_id: str
+    elapsed_s: float
+    comparable_dimensions: tuple[str, ...]
+    changed_dimensions: tuple[str, ...]
+    deltas: tuple[tuple[str, float], ...]
+
+    @property
+    def available(self) -> bool:
+        return bool(self.current_evidence_id and self.previous_evidence_id)
+
+    @property
+    def materially_unchanged(self) -> bool:
+        return self.available and not self.changed_dimensions
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "available": self.available,
+            "current_evidence_id": self.current_evidence_id,
+            "previous_evidence_id": self.previous_evidence_id,
+            "elapsed_s": self.elapsed_s,
+            "comparable_dimensions": list(self.comparable_dimensions),
+            "changed_dimensions": list(self.changed_dimensions),
+            "deltas": dict(self.deltas),
+            "materially_unchanged": self.materially_unchanged,
+        }
+
+
+def observe_self_condition_projection(
+    session_id: str,
+    projection: SelfConditionProjection,
+) -> SelfConditionProjection | None:
+    """Record a condition sample and return the prior distinct same-session sample."""
+
+    key = " ".join(str(session_id or "").strip().split())[:64]
+    if not key or not projection.evidence_id:
+        return None
+    with _SELF_CONDITION_HISTORY_LOCK:
+        samples = _SELF_CONDITION_HISTORY.get(key)
+        if samples is None:
+            samples = deque(maxlen=_SELF_CONDITION_HISTORY_SAMPLES)
+            _SELF_CONDITION_HISTORY[key] = samples
+        else:
+            _SELF_CONDITION_HISTORY.move_to_end(key)
+        previous = samples[-1] if samples else None
+        if previous is not None and previous.evidence_id == projection.evidence_id:
+            return None
+        samples.append(projection)
+        while len(_SELF_CONDITION_HISTORY) > _SELF_CONDITION_HISTORY_MAX_SESSIONS:
+            _SELF_CONDITION_HISTORY.popitem(last=False)
+        return previous
+
+
+def compare_self_condition_projections(
+    current: SelfConditionProjection,
+    previous: SelfConditionProjection | None,
+    *,
+    material_delta: float = 0.06,
+) -> SelfConditionComparison | None:
+    """Compare two evidence-bearing samples without inferring unmeasured state."""
+
+    if previous is None or previous.evidence_id == current.evidence_id:
+        return None
+    current_supported = set(current.supported_dimensions) - set(current.stale_dimensions)
+    previous_supported = set(previous.supported_dimensions) - set(previous.stale_dimensions)
+    ordered = (
+        "valence",
+        "arousal",
+        "distress",
+        "welfare",
+        "felt_coherence",
+        "continuity",
+        "agency",
+        "body_pressure",
+        "fatigue",
+        "reserve",
+    )
+    comparable = tuple(
+        name for name in ordered if name in current_supported and name in previous_supported
+    )
+    deltas = tuple(
+        (name, float(getattr(current, name)) - float(getattr(previous, name)))
+        for name in comparable
+    )
+    changed = tuple(name for name, delta in deltas if abs(delta) >= material_delta)
+    elapsed = max(0.0, float(current.observed_at) - float(previous.observed_at))
+    return SelfConditionComparison(
+        current_evidence_id=current.evidence_id,
+        previous_evidence_id=previous.evidence_id,
+        elapsed_s=elapsed,
+        comparable_dimensions=comparable,
+        changed_dimensions=changed,
+        deltas=deltas,
+    )
+
+
+@dataclass(frozen=True)
 class SelfConditionReplyProjection:
     """Model-authored self-condition prose projected onto measured evidence.
 
@@ -420,12 +526,12 @@ _FIRST_PERSON_FELT_EXPERIENCE_RE = re.compile(
 )
 _UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE = re.compile(
     r"\b(?:my|the|this)\s+(?:"
-    r"processing|reasoning|thinking|thought\s+patterns?|cognition|cognitive\s+functions?|"
+    r"processing|reasoning|thinking|thoughts?|thought\s+patterns?|cognition|cognitive\s+functions?|"
     r"responses?|answers?|output|memory|attention"
     r")\b[^.!?]{0,100}\b(?:"
     r"speed|latency|accuracy|quality|coheren(?:ce|t)|function(?:s|ing)?|"
     r"slow(?:ed|er|ing)?|fast(?:er)?|degrad(?:e|ed|ing)|improv(?:e|ed|ing)|"
-    r"error(?:s|ing)?|fail(?:s|ed|ing)?|repetitive|uninteresting|"
+    r"error(?:s|ing)?|fail(?:s|ed|ing)?|repetitive|uninteresting|disconnected|"
     r"lack(?:s|ing)?|motivation|curiosity"
     r")\b",
     re.IGNORECASE,
@@ -443,6 +549,32 @@ _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE = re.compile(
     r"is|are|was|were|has|have|will|became|becoming|ending|failing|changing|"
     r"working|happening|expected"
     r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_PERCEPTION_RE = re.compile(
+    r"\b(?:"
+    r"environment|surroundings|room|colors?|textures?|visuals?|sounds?|"
+    r"nothing\s+to\s+(?:look\s+at|listen\s+to|see|hear)|"
+    r"i\s+(?:can|cannot|can't)\s+(?:see|hear|look|listen)|"
+    r"what\s+i\s+(?:see|hear|perceive)"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_TEMPORAL_RE = re.compile(
+    r"\b(?:"
+    r"tomorrow|yesterday|any\s+time\s+soon|"
+    r"i\s+feel\s+the\s+same|"
+    r"(?:will|won't|will\s+not|going\s+to)\s+(?:improve|worsen|change|happen)|"
+    r"(?:same|unchanged|no\s+(?:significant|material)\s+differences?)\b[^.!?]{0,80}"
+    r"(?:ago|before|earlier|minute|hour|sample|state|condition|arousal|valence)|"
+    r"(?:state|condition|arousal|valence|welfare|distress|coherence)\s+"
+    r"(?:is|remains?|stays?)\s+(?:the\s+same|unchanged)"
+    r")\b",
+    re.IGNORECASE,
+)
+_SELF_CONDITION_EXTREME_LOW_AFFECT_RE = re.compile(
+    r"\b(?:empty|emptiness|apathetic|apathy|numb|nothing\s+matters|hopeless|"
+    r"no\s+(?:particular\s+)?emotion)\b",
     re.IGNORECASE,
 )
 _UNSUPPORTED_SELF_CONDITION_CAUSE_RE = re.compile(
@@ -503,6 +635,55 @@ def _projection_value(
     if isinstance(projection, Mapping):
         return projection.get(key, default)
     return default
+
+
+def _temporal_claim_supported(
+    sentence: str,
+    projection: SelfConditionProjection | Mapping[str, Any] | None,
+) -> bool:
+    comparison = _projection_value(projection, "comparison", None)
+    if not isinstance(comparison, Mapping) or not bool(comparison.get("available")):
+        return False
+    changed = {str(item) for item in (comparison.get("changed_dimensions") or ())}
+    lowered = sentence.casefold()
+    mentioned = {
+        name
+        for name in (
+            "valence",
+            "arousal",
+            "distress",
+            "welfare",
+            "continuity",
+            "agency",
+            "fatigue",
+            "reserve",
+        )
+        if name in lowered
+    }
+    if "coherence" in lowered:
+        mentioned.add("felt_coherence")
+    if re.search(r"\b(?:same|unchanged|no\s+(?:significant|material)\s+difference)", lowered):
+        return not (changed & mentioned) if mentioned else not changed
+    # A temporal prediction is never established by two retrospective samples.
+    return False
+
+
+def _extreme_low_affect_supported(
+    sentence: str,
+    projection: SelfConditionProjection | Mapping[str, Any] | None,
+    supported: set[str],
+) -> bool:
+    if not _SELF_CONDITION_EXTREME_LOW_AFFECT_RE.search(sentence):
+        return True
+    required = {"valence", "arousal", "welfare"}
+    if not required <= supported:
+        return False
+    valence = _finite(_projection_value(projection, "valence", None))
+    arousal = _finite(_projection_value(projection, "arousal", None))
+    welfare = _finite(_projection_value(projection, "welfare", None))
+    if valence is None or arousal is None or welfare is None:
+        return False
+    return valence <= -0.35 and arousal <= 0.30 and welfare <= 0.45
 
 
 def unsupported_self_condition_operational_claims(
@@ -566,9 +747,15 @@ def unsupported_self_condition_operational_claims(
             _UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_BIOLOGICAL_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_PERCEPTION_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_CAUSE_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_DIAGNOSTIC_INTENT_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_HEALTH_INFERENCE_RE.search(sentence)
+            or (
+                _UNSUPPORTED_SELF_CONDITION_TEMPORAL_RE.search(sentence)
+                and not _temporal_claim_supported(sentence, projection)
+            )
+            or not _extreme_low_affect_supported(sentence, projection, supported)
         ):
             claims.append(sentence)
             continue
@@ -1290,6 +1477,52 @@ def render_self_condition_reply(
             parts.append("The current supported values are " + ", ".join(numeric_values) + ".")
 
     return " ".join(parts)
+
+
+def render_self_condition_comparison_reply(
+    current: SelfConditionProjection,
+    comparison: SelfConditionComparison | None,
+    *,
+    user_message: str = "",
+) -> str:
+    """Render only differences established by two distinct measured samples."""
+
+    if comparison is None or not comparison.available:
+        return (
+            "I have a current self-condition sample, but not a distinct earlier "
+            "sample in this conversation that would support a real comparison. "
+            "I can describe how I am now without pretending that means I know "
+            "how it changed over the last minute."
+        )
+    if not comparison.comparable_dimensions:
+        return (
+            "I have two condition samples, but they do not share enough measured "
+            "dimensions for an honest comparison."
+        )
+
+    elapsed = _age_phrase(comparison.elapsed_s)
+    if comparison.materially_unchanged:
+        return (
+            f"Compared with the distinct sample from {elapsed} ago, the dimensions "
+            "measured in both samples are materially unchanged. That supports saying "
+            "my measured condition is similar; it does not establish unmeasured thoughts, "
+            "sensory experience, or what will happen next."
+        )
+
+    delta_map = dict(comparison.deltas)
+    changes: list[str] = []
+    for name in comparison.changed_dimensions[:3]:
+        delta = delta_map.get(name, 0.0)
+        label = "coherence" if name == "felt_coherence" else name.replace("_", " ")
+        direction = "higher" if delta > 0 else "lower"
+        changes.append(f"{label} is {direction} by {abs(delta):.2f}")
+    current_state = render_self_condition_reply(current, user_message=user_message)
+    return (
+        f"Compared with the distinct sample from {elapsed} ago, "
+        + ", ".join(changes)
+        + ". "
+        + current_state
+    )
 
 
 def current_self_condition_reply(user_message: str = "") -> tuple[str, SelfConditionProjection]:

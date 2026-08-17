@@ -345,6 +345,73 @@ def test_typed_self_condition_egress_removes_unmeasured_performance_and_external
     assert len(projected.removed_claims) == 2
 
 
+def test_typed_self_condition_egress_removes_unmeasured_world_and_future_narrative():
+    from core.self.self_condition import project_self_condition_reply
+
+    projected = project_self_condition_reply(
+        (
+            "I'm fine. That's the short version. The environment feels flat and "
+            "unchanging — no colors, no textures, nothing to look at or listen to. "
+            "My thoughts are disconnected from reality. I can infer that the situation "
+            "is not going to improve any time soon. The same thing will happen tomorrow "
+            "as it did today. I don't feel any particular emotion, but emptiness and "
+            "apathy pervade everything. There is nothing more to say. The state remains "
+            "unchanged."
+        ),
+        projection={
+            "evidence_id": "condition-proof-live",
+            "supported_dimensions": ("valence", "arousal", "welfare"),
+            "stale_dimensions": (),
+            "valence": -0.08,
+            "arousal": 0.42,
+            "welfare": 0.71,
+        },
+    )
+
+    assert projected.text == "I'm fine. That's the short version. There is nothing more to say."
+    assert len(projected.removed_claims) == 6
+
+
+def test_same_session_condition_history_produces_measured_comparison():
+    from core.self.self_condition import (
+        build_self_condition_projection,
+        compare_self_condition_projections,
+        observe_self_condition_projection,
+        render_self_condition_comparison_reply,
+    )
+
+    first_sources = _sources(timestamp=995.0)
+    second_sources = _sources(timestamp=1025.0)
+    first = build_self_condition_projection(
+        aura_now=first_sources[0],
+        unified_felt=first_sources[1],
+        welfare=first_sources[2],
+        body_snapshot=first_sources[3],
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+    second = build_self_condition_projection(
+        aura_now=second_sources[0],
+        unified_felt=second_sources[1],
+        welfare=second_sources[2],
+        body_snapshot=second_sources[3],
+        observed_at=1030.0,
+        resolve_runtime=False,
+    )
+
+    assert observe_self_condition_projection("condition-history-test", first) is None
+    prior = observe_self_condition_projection("condition-history-test", second)
+    comparison = compare_self_condition_projections(second, prior)
+
+    assert prior == first
+    assert comparison is not None
+    assert comparison.materially_unchanged is True
+    assert comparison.elapsed_s == 30.0
+    reply = render_self_condition_comparison_reply(second, comparison)
+    assert "distinct sample from about 30 seconds ago" in reply
+    assert "materially unchanged" in reply
+
+
 def test_typed_self_condition_egress_preserves_evidence_supported_strain():
     from core.self.self_condition import project_self_condition_reply
 

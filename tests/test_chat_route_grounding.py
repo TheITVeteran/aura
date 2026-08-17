@@ -31,6 +31,9 @@ def test_grounded_introspection_classifier_honors_explicit_free_energy_report_re
 
 @pytest.mark.asyncio
 async def test_referential_followup_anchor_finds_previous_question(monkeypatch):
+    async def _no_session_history(**_kwargs):
+        return []
+
     async def _fake_recent(_message, limit=8):
         return [
             "Can you answer it?",
@@ -38,6 +41,11 @@ async def test_referential_followup_anchor_finds_previous_question(monkeypatch):
         ]
 
     monkeypatch.setattr(chat_mod, "_gather_recent_user_messages_for_relevance", _fake_recent)
+    monkeypatch.setattr(
+        chat_mod._chat_memory_state,
+        "_recent_completed_conversation_exchanges",
+        _no_session_history,
+    )
 
     anchor = await chat_mod._resolve_referential_followup_anchor("Can you answer it?")
 
@@ -48,10 +56,18 @@ async def test_referential_followup_anchor_finds_previous_question(monkeypatch):
 async def test_comparative_anaphora_finds_the_question_it_inherits(monkeypatch):
     first_question = "ChatGPT here. Hey Aura, how are you doing right now?"
 
+    async def _session_history(**_kwargs):
+        return [{"user": first_question, "aura": "I feel steady."}]
+
     async def _fake_recent(_message, limit=8):
         return [first_question]
 
     monkeypatch.setattr(chat_mod, "_gather_recent_user_messages_for_relevance", _fake_recent)
+    monkeypatch.setattr(
+        chat_mod._chat_memory_state,
+        "_recent_completed_conversation_exchanges",
+        _session_history,
+    )
 
     anchor = await chat_mod._resolve_referential_followup_anchor(
         "ChatGPT here. How does that compare with a minute ago?"
@@ -69,10 +85,18 @@ async def test_comparative_anaphora_finds_the_question_it_inherits(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_referential_followup_does_not_anchor_deep_probe(monkeypatch):
+    async def _no_session_history(**_kwargs):
+        return []
+
     async def _fake_recent(_message, limit=8):
         return ["What is one thing you can notice about your own operation without turning it into roleplay?"]
 
     monkeypatch.setattr(chat_mod, "_gather_recent_user_messages_for_relevance", _fake_recent)
+    monkeypatch.setattr(
+        chat_mod._chat_memory_state,
+        "_recent_completed_conversation_exchanges",
+        _no_session_history,
+    )
 
     anchor = await chat_mod._resolve_referential_followup_anchor(
         "Are you conscious? Answer without slogans, disclaimers, or trying to comfort me."

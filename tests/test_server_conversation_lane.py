@@ -8929,7 +8929,7 @@ async def test_required_self_condition_turn_projects_mixed_operational_claims_wi
     monkeypatch.setattr(
         chat_routes,
         "_build_self_condition_evidence",
-        lambda _message: {
+        lambda _message, **_kwargs: {
             "prompt_block": (
                 "condition=well freshness=fresh distress=0.08 welfare=0.82 "
                 "felt_coherence=0.93 continuity=0.96 agency=0.84"
@@ -9060,7 +9060,7 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
     monkeypatch.setattr(
         chat_routes,
         "_build_self_condition_evidence",
-        lambda _message: {
+        lambda _message, **_kwargs: {
             "prompt_block": (
                 "condition=well freshness=fresh distress=0.08 welfare=0.82 "
                 "felt_coherence=0.93 continuity=0.96 agency=0.84"
@@ -12465,6 +12465,12 @@ async def test_chat_restart_recovers_completed_exchange_from_ui_session(
         session_id="different-visible-session",
         limit=6,
     )
+    isolated_session = await chat_routes._recent_completed_conversation_exchanges(
+        current_user_message="How are you doing right now?",
+        session_id="fresh-condition-session",
+        limit=6,
+        allow_cross_session=False,
+    )
 
     assert recovered
     assert recovered[-1]["user"] == "Remember the UI lane continuity detail."
@@ -12482,6 +12488,7 @@ async def test_chat_restart_recovers_completed_exchange_from_ui_session(
     for exchange in wrong_session:
         assert exchange["session_id"] != "different-visible-session"
         assert exchange["session_id"] == "desktop-visible-session"
+    assert isolated_session == []
 
 
 @pytest.mark.asyncio
