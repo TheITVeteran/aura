@@ -2776,6 +2776,35 @@ async def test_ensure_foreground_ready_allows_first_visible_turn_to_prove_ready(
 
 
 @pytest.mark.asyncio
+async def test_ensure_foreground_ready_accepts_loaded_lane_after_marker_race(monkeypatch):
+    gate = InferenceGate()
+    lane = {
+        "state": "ready",
+        "last_failure_reason": "",
+        "conversation_ready": False,
+        "readiness_blockers": [],
+        "warmup_attempted": True,
+        "warmup_in_flight": False,
+        "active_generations": 0,
+    }
+
+    class _AlreadyLoadedLane:
+        warmup_calls = 0
+
+        async def warmup(self):
+            self.warmup_calls += 1
+            raise AssertionError("loaded lane must not begin a duplicate warmup")
+
+    gate._mlx_client = _AlreadyLoadedLane()
+    monkeypatch.setattr(gate, "get_conversation_status", lambda: dict(lane))
+
+    result = await gate.ensure_foreground_ready(timeout=15.0)
+
+    assert result == lane
+    assert gate._mlx_client.warmup_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_generate_attempts_ready_lane_that_only_lacks_visible_turn_proof():
     gate = InferenceGate()
 

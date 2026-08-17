@@ -3956,11 +3956,16 @@ class InferenceGate:
             for item in (lane.get("readiness_blockers") or [])
             if str(item or "").strip()
         }
-        if blockers != {"visible_conversation_probe_missing"}:
+        if blockers not in (set(), {"visible_conversation_probe_missing"}):
             return False
         if str(lane.get("state", "") or "").lower() != "ready":
             return False
         if bool(lane.get("warmup_in_flight", False)):
+            return False
+        reason = str(lane.get("last_failure_reason", "") or "").strip()
+        if reason and reason != "visible_conversation_probe_missing":
+            return False
+        if InferenceGate._lane_reports_active_generation(lane):
             return False
         # `warmup_attempted` defaulted to True, so a lane payload that simply
         # did not carry the field satisfied "the worker is loaded" on the

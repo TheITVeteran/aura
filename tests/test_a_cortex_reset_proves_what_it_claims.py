@@ -223,6 +223,45 @@ def test_a_lane_that_reports_a_warmup_is_ready():
     assert InferenceGate._lane_only_needs_visible_conversation_proof(lane) is True
 
 
+def test_loaded_lane_without_transient_marker_can_attempt_first_visible_turn():
+    lane = {
+        "state": "ready",
+        "warmup_attempted": True,
+        "warmup_in_flight": False,
+        "readiness_blockers": [],
+        "last_failure_reason": "",
+        "active_generations": 0,
+    }
+
+    assert InferenceGate._lane_only_needs_visible_conversation_proof(lane) is True
+
+
+def test_loaded_lane_without_transient_marker_does_not_hide_real_failure():
+    lane = {
+        "state": "ready",
+        "warmup_attempted": True,
+        "warmup_in_flight": False,
+        "readiness_blockers": [],
+        "last_failure_reason": "foreground_lane_not_ready",
+        "active_generations": 0,
+    }
+
+    assert InferenceGate._lane_only_needs_visible_conversation_proof(lane) is False
+
+
+def test_loaded_lane_without_transient_marker_does_not_race_active_generation():
+    lane = {
+        "state": "ready",
+        "warmup_attempted": True,
+        "warmup_in_flight": False,
+        "readiness_blockers": [],
+        "last_failure_reason": "",
+        "active_generations": 1,
+    }
+
+    assert InferenceGate._lane_only_needs_visible_conversation_proof(lane) is False
+
+
 def test_a_lane_that_reports_no_warmup_is_not_ready():
     lane = {
         "state": "ready",
