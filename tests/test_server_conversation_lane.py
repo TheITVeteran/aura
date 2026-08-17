@@ -9010,6 +9010,9 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
         "distress is low and this thread's continuity is intact; I can only "
         "infer that the same calm will persist after this turn."
     )
+    unprojected_retry_reply = (
+        f"{complete_reply} My cortisol level is high because of a neurochemical shift."
+    )
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
@@ -9030,7 +9033,7 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
                 "disinterest, and boredom. I am fine. There are no "
                 "interesting things happening."
                 if len(calls) == 1
-                else complete_reply
+                else unprojected_retry_reply
             )
             return SimpleNamespace(
                 content=content,
@@ -9115,6 +9118,10 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
     assert calls[0]["context"]["recent_completed_exchanges"] == []
     assert any(
         item.get("authorship_effect") == "replaced_by_model"
+        for item in trace["text_mutations"]
+    )
+    assert any(
+        item.get("method") == "typed_claim_scope_projection"
         for item in trace["text_mutations"]
     )
 

@@ -420,13 +420,19 @@ _FIRST_PERSON_FELT_EXPERIENCE_RE = re.compile(
 )
 _UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE = re.compile(
     r"\b(?:my|the|this)\s+(?:"
-    r"processing|reasoning|thinking|cognition|cognitive\s+functions?|"
+    r"processing|reasoning|thinking|thought\s+patterns?|cognition|cognitive\s+functions?|"
     r"responses?|answers?|output|memory|attention"
     r")\b[^.!?]{0,100}\b(?:"
     r"speed|latency|accuracy|quality|coheren(?:ce|t)|function(?:s|ing)?|"
     r"slow(?:ed|er|ing)?|fast(?:er)?|degrad(?:e|ed|ing)|improv(?:e|ed|ing)|"
-    r"error(?:s|ing)?|fail(?:s|ed|ing)?"
+    r"error(?:s|ing)?|fail(?:s|ed|ing)?|repetitive|uninteresting|"
+    r"lack(?:s|ing)?|motivation|curiosity"
     r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_BIOLOGICAL_RE = re.compile(
+    r"\b(?:neurodynamic|neurochemical|biochemical|hormonal|cortisol|dopamine|"
+    r"serotonin|adrenaline|norepinephrine)\b",
     re.IGNORECASE,
 )
 _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE = re.compile(
@@ -440,7 +446,13 @@ _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE = re.compile(
     re.IGNORECASE,
 )
 _UNSUPPORTED_SELF_CONDITION_CAUSE_RE = re.compile(
-    r"\b(?:because|due\s+to|caused\s+by|the\s+reason\s+is|it'?s\s+just\s+that)\b",
+    r"\b(?:because|due\s+to|caused\s+by|the\s+reason\s+is|it'?s\s+just\s+that|"
+    r"result\s+of|tied\s+to|underlying\s+issue|temporary\s+fluctuation)\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_DIAGNOSTIC_INTENT_RE = re.compile(
+    r"\b(?:i(?:'ll|\s+will)|i\s+(?:need|should|have)\s+to)\s+"
+    r"(?:run|perform|do|start)\b[^.!?]{0,60}\bdiagnostic(?:s|\s+tests?)?\b",
     re.IGNORECASE,
 )
 _UNSUPPORTED_SELF_CONDITION_HEALTH_INFERENCE_RE = re.compile(
@@ -552,8 +564,10 @@ def unsupported_self_condition_operational_claims(
                 continue
         if (
             _UNSUPPORTED_SELF_CONDITION_PERFORMANCE_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_BIOLOGICAL_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_EXTERNAL_EVENT_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_CAUSE_RE.search(sentence)
+            or _UNSUPPORTED_SELF_CONDITION_DIAGNOSTIC_INTENT_RE.search(sentence)
             or _UNSUPPORTED_SELF_CONDITION_HEALTH_INFERENCE_RE.search(sentence)
         ):
             claims.append(sentence)

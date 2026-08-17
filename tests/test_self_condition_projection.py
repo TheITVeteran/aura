@@ -618,3 +618,31 @@ class TestNamingATermToRefuseItIsNotAClaim:
         )
 
         assert claims, "a disclaimer in the first clause excused the second"
+
+
+def test_projection_removes_unmeasured_biology_cause_and_diagnostic_intent():
+    from core.self.self_condition import project_self_condition_reply
+
+    reply = (
+        "I'm doing alright. My neurodynamic state is elevated, which suggests an "
+        "affective downturn. I feel tired because my cortisol level is high. My "
+        "thought patterns are repetitive and lack motivation or curiosity. This "
+        "could be the result of an underlying neurochemical issue. I will run "
+        "diagnostic tests before reaching a conclusion. The causal interpretation "
+        "is speculative rather than something I know from the current sample."
+    )
+    projected = project_self_condition_reply(
+        reply,
+        projection={
+            "evidence_id": "condition-evidence",
+            "supported_dimensions": ("valence", "arousal", "distress"),
+            "stale_dimensions": (),
+        },
+    )
+
+    assert projected.changed is True
+    assert projected.text == (
+        "I'm doing alright. The causal interpretation is speculative rather than "
+        "something I know from the current sample."
+    )
+    assert len(projected.removed_claims) == 5

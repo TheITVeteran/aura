@@ -6198,6 +6198,13 @@ async def _run_cognitive_engine_chat_turn(
                 no_reply_action,
             )
             return None
+        retry_projection_trace: dict[str, Any] = {"live_mind_surface_control_receipt": {}}
+        if self_condition_contract and self_condition_contract_covers_turn:
+            retry_text = _project_self_condition_claims(
+                retry_text,
+                context.get("canonical_self_condition_projection"),
+                retry_projection_trace,
+            )
         retry_surface_receipt = retry_metadata.get("live_mind_surface_control_receipt")
         if not isinstance(retry_surface_receipt, dict):
             retry_surface_receipt = retry_metadata.get("surface_control_receipt")
@@ -6336,6 +6343,7 @@ async def _run_cognitive_engine_chat_turn(
                 return _accept_retry_text(
                     accepted_retry,
                     pre_grounding_text=retry_text,
+                    intermediate_mutations=retry_projection_trace.get("text_mutations"),
                 )
             logger.warning(
                 "CognitiveEngine desktop chat repair retry remained below the required "
@@ -6400,7 +6408,10 @@ async def _run_cognitive_engine_chat_turn(
             return _accept_retry_text(
                 accepted_retry,
                 pre_grounding_text=retry_repaired,
-                intermediate_mutations=retry_repair_trace.get("text_mutations"),
+                intermediate_mutations=merge_text_mutations(
+                    retry_projection_trace.get("text_mutations"),
+                    retry_repair_trace.get("text_mutations"),
+                ),
             )
         logger.warning(
             "CognitiveEngine desktop chat repair retry failed reliability gate "
@@ -6560,35 +6571,11 @@ async def _run_cognitive_engine_chat_turn(
             authorship_effect="preserved",
         )
     if self_condition_contract and self_condition_contract_covers_turn:
-        try:
-            from core.self.self_condition import project_self_condition_reply
-
-            condition_projection = project_self_condition_reply(
-                text,
-                projection=context.get("canonical_self_condition_projection"),
-            )
-        except _CHAT_RECOVERABLE_ERRORS as exc:
-            record_degradation("chat.self_condition_egress", exc)
-        else:
-            if condition_projection.changed:
-                grounded_text = condition_projection.text
-                logger.warning(
-                    "Self-condition egress removed %d unsupported operational "
-                    "claim(s) under evidence %s while preserving model-authored prose.",
-                    len(condition_projection.removed_claims),
-                    condition_projection.evidence_id,
-                )
-                _append_turn_text_mutation(
-                    turn_trace,
-                    stage="chat.self_condition_evidence_projection",
-                    method="typed_claim_scope_projection",
-                    reasons=["unsupported_self_condition_operational_claim"],
-                    before=text,
-                    after=grounded_text,
-                    deterministic=True,
-                    authorship_effect="preserved",
-                )
-                text = grounded_text
+        text = _project_self_condition_claims(
+            text,
+            context.get("canonical_self_condition_projection"),
+            turn_trace,
+        )
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
     except _CHAT_RECOVERABLE_ERRORS as exc:
