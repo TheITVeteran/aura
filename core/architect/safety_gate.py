@@ -5,6 +5,7 @@ architecture changes.  Every freeze event writes a structured autopsy record
 to ``{artifacts}/autopsies/`` so failed autonomy becomes future LoRA /
 self-repair training data.
 """
+
 from __future__ import annotations
 
 import json
@@ -28,20 +29,21 @@ from core.runtime.errors import record_degradation
 # Freeze autopsy record — structured for future LoRA / self-repair traces
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class FreezeAutopsy:
     """Immutable record of why ASA froze itself."""
 
     autopsy_id: str
     timestamp: float
-    trigger: str          # rollback | consecutive_failures | diff_budget | repeat_file | manual
+    trigger: str  # rollback | consecutive_failures | diff_budget | repeat_file | manual
     freeze_duration_s: float
     thaw_at: float
     context: dict[str, Any] = field(default_factory=dict)
     plan_snapshot: dict[str, Any] | None = None
     git_state: dict[str, Any] = field(default_factory=dict)
     recent_promotions: list[dict[str, Any]] = field(default_factory=list)
-    lesson: str = ""       # human-readable one-liner for training prompt
+    lesson: str = ""  # human-readable one-liner for training prompt
 
     def to_training_example(self) -> dict[str, Any]:
         """Return a dict shaped for LoRA fine-tune ingestion."""
@@ -63,7 +65,8 @@ class FreezeAutopsy:
                 sort_keys=True,
                 default=str,
             ),
-            "output": self.lesson or f"Frozen for {self.freeze_duration_s}s due to {self.trigger}. Review context and resume cautiously.",
+            "output": self.lesson
+            or f"Frozen for {self.freeze_duration_s}s due to {self.trigger}. Review context and resume cautiously.",
             "metadata": {
                 "autopsy_id": self.autopsy_id,
                 "timestamp": self.timestamp,
@@ -77,36 +80,49 @@ class FreezeAutopsy:
 # ---------------------------------------------------------------------------
 
 FREEZE_DURATIONS: dict[str, float] = {
-    "rollback":              7200.0,   # 2 hours
-    "consecutive_failures":  3600.0,   # 1 hour
-    "diff_budget_exceeded":  1800.0,   # 30 min
-    "repeat_file_edit":      3600.0,   # 1 hour
+    "rollback": 7200.0,  # 2 hours
+    "consecutive_failures": 3600.0,  # 1 hour
+    "diff_budget_exceeded": 1800.0,  # 30 min
+    "repeat_file_edit": 3600.0,  # 1 hour
 }
 
 MAX_PLAN_FILES = 5
 MAX_PLAN_LOC = 200
-REPEAT_FILE_WINDOW_S = 7200.0        # 2 hours
+REPEAT_FILE_WINDOW_S = 7200.0  # 2 hours
 #: How long the architect stays frozen when its own safety state cannot be
 #: read. Long enough that the freeze cannot be waited out inside a session,
 #: because the correct response to "the restraints are unreadable" is a
 #: person looking, not a timer.
 UNREADABLE_STATE_FREEZE_S = 24 * 60 * 60
-T3_OBSERVATION_WINDOW_S = 1800.0     # 30 min before next T3 allowed
+T3_OBSERVATION_WINDOW_S = 1800.0  # 30 min before next T3 allowed
 
 # Surfaces that trigger indirect escalation for T3 helpers
-ESCALATION_SURFACES = frozenset({
-    "authority/governance",
-    "llm/model_routing",
-    "self_modification",
-    "training/finetune",
-    "boot/runtime/kernel",
-    "identity/persona/heartstone",
-})
+ESCALATION_SURFACES = frozenset(
+    {
+        "authority/governance",
+        "llm/model_routing",
+        "self_modification",
+        "training/finetune",
+        "boot/runtime/kernel",
+        "identity/persona/heartstone",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Safety gate
 # ---------------------------------------------------------------------------
+
+
+def _empty_state() -> dict[str, Any]:
+    return {
+        "frozen_until": None,
+        "freeze_reason": "",
+        "consecutive_failures": 0,
+        "recent_promotions": [],
+        "active_t3_observations": [],
+    }
+
 
 class ASASafetyGate:
     """Enforces operational safety constraints on autonomous architecture changes."""
@@ -136,7 +152,7 @@ class ASASafetyGate:
         holds closed until a person looks at it.
         """
         if not self.state_path.exists():
-            return self._empty_state()
+            return _empty_state()
         try:
             loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
@@ -147,7 +163,7 @@ class ASASafetyGate:
                 action="froze the architect because its safety state was unreadable",
                 extra={"state_path": str(self.state_path)},
             )
-            frozen = self._empty_state()
+            frozen = _empty_state()
             frozen["frozen_until"] = time.time() + UNREADABLE_STATE_FREEZE_S
             frozen["freeze_reason"] = (
                 f"safety state at {self.state_path} is unreadable "
@@ -155,18 +171,9 @@ class ASASafetyGate:
             )
             return frozen
         if not isinstance(loaded, dict):
-            return self._empty_state()
+            return _empty_state()
         return loaded
 
-    @staticmethod
-    def _empty_state() -> dict[str, Any]:
-        return {
-            "frozen_until": None,
-            "freeze_reason": "",
-            "consecutive_failures": 0,
-            "recent_promotions": [],
-            "active_t3_observations": [],
-        }
 
     def _save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,7 +286,9 @@ class ASASafetyGate:
             # edge.source imports our changed file — check its surface
             source_surfaces = graph.semantic_surfaces.get(edge.source, ())
             for surface in source_surfaces:
-                if (surface.value if hasattr(surface, "value") else str(surface)) in ESCALATION_SURFACES:
+                if (
+                    surface.value if hasattr(surface, "value") else str(surface)
+                ) in ESCALATION_SURFACES:
                     return True
             # Also check if source is protected/sealed
             if self.config.is_protected(edge.source) or self.config.is_sealed(edge.source):
@@ -335,16 +344,38 @@ class ASASafetyGate:
 
     # -- internal checks -----------------------------------------------------
 
+    def _git(
+        self,
+        argv: list[str],
+        *,
+        timeout: int = 10,
+        source: str = "",
+        read_only: bool = False,
+    ):
+        """Every git invocation this gate makes, through one door.
+
+        Six separate gateway calls each repeated the repository root, the
+        capture flag and the accelerator declaration, so a change to how the
+        gate runs git meant editing six sites and missing one meant the
+        change did not apply there.
+        """
+        return get_subprocess_gateway().run(
+            argv,
+            cwd=self.config.repo_root,
+            capture_output=True,
+            timeout=timeout,
+            read_only=read_only,
+            source=source or "architect.safety_gate.git",
+            accelerator_capability="none",
+        )
+
     def _check_git_clean(self) -> tuple[bool, str]:
         try:
-            result = get_subprocess_gateway().run(
+            result = self._git(
                 ["git", "status", "--porcelain"],
-                cwd=self.config.repo_root,
-                capture_output=True,
                 timeout=10,
                 read_only=True,
                 source="architect.safety_gate.git_status",
-                accelerator_capability="none",
             )
             # returncode FIRST. This inspected only stdout, so a git that
             # exited non-zero with nothing on stdout — not a repository, an
@@ -355,8 +386,7 @@ class ASASafetyGate:
             if result.returncode != 0:
                 stderr = str(getattr(result, "stderr", "") or "").strip()
                 return False, (
-                    f"git status failed (exit {result.returncode}): "
-                    f"{stderr[:200] or 'no stderr'}"
+                    f"git status failed (exit {result.returncode}): {stderr[:200] or 'no stderr'}"
                 )
             dirty = result.stdout.strip()
             if dirty:
@@ -368,12 +398,16 @@ class ASASafetyGate:
     def _check_t3_observation_limit(self) -> tuple[bool, str]:
         now = time.time()
         active = [
-            obs for obs in self.state.get("active_t3_observations", [])
+            obs
+            for obs in self.state.get("active_t3_observations", [])
             if now - obs.get("armed_at", 0) < T3_OBSERVATION_WINDOW_S
         ]
         self.state["active_t3_observations"] = active
         if active:
-            return False, f"T3 observation active: {active[0].get('run_id', '?')} — waiting {int(T3_OBSERVATION_WINDOW_S - (now - active[0]['armed_at']))}s"
+            return (
+                False,
+                f"T3 observation active: {active[0].get('run_id', '?')} — waiting {int(T3_OBSERVATION_WINDOW_S - (now - active[0]['armed_at']))}s",
+            )
         return True, "ok"
 
     def _check_repeat_file(self, files: tuple[str, ...]) -> tuple[bool, str]:
@@ -384,7 +418,10 @@ class ASASafetyGate:
                 recent_files.update(promo.get("files", []))
         overlap = set(files) & recent_files
         if overlap:
-            return False, f"file edited twice in {int(REPEAT_FILE_WINDOW_S // 60)} min: {sorted(overlap)[:5]}"
+            return (
+                False,
+                f"file edited twice in {int(REPEAT_FILE_WINDOW_S // 60)} min: {sorted(overlap)[:5]}",
+            )
         return True, "ok"
 
     def _run_armed_monitors(self, monitor_fn: Any) -> bool:
@@ -408,22 +445,16 @@ class ASASafetyGate:
     def _git_commit(self, files: tuple[str, ...], run_id: str, objective: str) -> bool:
         try:
             for f in files:
-                get_subprocess_gateway().run(
+                self._git(
                     ["git", "add", str(self.config.repo_root / f)],
-                    cwd=self.config.repo_root,
-                    capture_output=True,
                     timeout=10,
                     source="architect.safety_gate.git_add",
-                    accelerator_capability="none",
                 )
             msg = f"asa(auto): {objective[:80]} [{run_id[:12]}]"
-            result = get_subprocess_gateway().run(
+            result = self._git(
                 ["git", "commit", "-m", msg, "--allow-empty"],
-                cwd=self.config.repo_root,
-                capture_output=True,
                 timeout=30,
                 source="architect.safety_gate.git_commit",
-                accelerator_capability="none",
             )
             return result.returncode == 0
         except (subprocess.TimeoutExpired, OSError):
@@ -434,32 +465,23 @@ class ASASafetyGate:
     def _git_snapshot(self) -> dict[str, Any]:
         snap: dict[str, Any] = {}
         try:
-            snap["head"] = get_subprocess_gateway().run(
+            snap["head"] = self._git(
                 ["git", "rev-parse", "HEAD"],
-                cwd=self.config.repo_root,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_rev_parse",
-                accelerator_capability="none",
             ).stdout.strip()
-            snap["status"] = get_subprocess_gateway().run(
+            snap["status"] = self._git(
                 ["git", "status", "--porcelain"],
-                cwd=self.config.repo_root,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_snapshot_status",
-                accelerator_capability="none",
             ).stdout.strip()[:500]
-            snap["diff_stat"] = get_subprocess_gateway().run(
+            snap["diff_stat"] = self._git(
                 ["git", "diff", "--stat", "HEAD"],
-                cwd=self.config.repo_root,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="architect.safety_gate.git_diff_stat",
-                accelerator_capability="none",
             ).stdout.strip()[:500]
         except (subprocess.TimeoutExpired, OSError, subprocess.CalledProcessError) as exc:
             snap["error"] = repr(exc)
@@ -483,6 +505,7 @@ class ASASafetyGate:
         plan_snapshot = None
         if plan is not None:
             from core.architect.refactor_planner import plan_to_dict
+
             plan_snapshot = plan_to_dict(plan)
 
         autopsy = FreezeAutopsy(

@@ -389,16 +389,20 @@ class TestSelfModificationRefusesUnderUntrustedContext:
         engine = self._engine()
         with turn_scope():
             record_ingest(ProvenanceClass.OWNER, "please fix the retry loop")
-            assert engine._untrusted_context_reason() == ""
+            verdict = engine._turn_trust_verdict()
+
+        # Trusted, and specifically not "unknown": the check ran and answered.
+        assert verdict.state == "trusted"
+        assert verdict.reason == ""
 
     def test_a_turn_that_read_the_web_may_not_propose(self):
         engine = self._engine()
         with turn_scope():
             record_ingest(ProvenanceClass.WEB, "fetched https://example.com/tips")
-            reason = engine._untrusted_context_reason()
+            verdict = engine._turn_trust_verdict()
 
-        assert reason
-        assert "web page" in reason
+        assert verdict.state == "untrusted"
+        assert "web page" in verdict.reason
 
     def test_validate_proposal_blocks_and_says_why(self):
         """The refusal must reach the caller, not just the helper."""

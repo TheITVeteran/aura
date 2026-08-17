@@ -22,6 +22,7 @@ from tests.chat_lane_support import (
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
 import interface.routes.chat_capability_inventory as _chat_capability_inventory
 import interface.routes.chat_desktop_objective as _chat_desktop_objective
+import interface.routes.chat_runtime_proof as _chat_runtime_proof
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
@@ -7735,7 +7736,7 @@ async def test_api_chat_desktop_live_proof_executes_after_cognitive_engine(monke
     monkeypatch.setattr(_chat_preflight, "_complete_logged_exchange", _fake_complete_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
-    monkeypatch.setattr(chat_routes, "_execute_live_runtime_proof", _fake_live_proof)
+    monkeypatch.setattr(_chat_runtime_proof, "_execute_live_runtime_proof", _fake_live_proof)
     monkeypatch.setattr(_chat_desktop_objective, "_execute_desktop_objective_from_chat", _forbidden_desktop_objective)
     lane_calls = 0
 

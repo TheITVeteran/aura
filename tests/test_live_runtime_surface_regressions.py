@@ -13,6 +13,7 @@ import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
 import interface.routes.chat_capability_inventory as _chat_capability_inventory
 from tests.chat_lane_support import chat_lane_source
+import interface.routes.chat_runtime_proof as _chat_runtime_proof
 
 
 def _clear_proof_run_signals(monkeypatch):
@@ -2201,9 +2202,7 @@ def test_chat_live_proof_classifier_requires_explicit_proof_intent():
 
 
 def test_chat_live_desktop_proof_has_no_specific_calculator_notes_chain():
-    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
-        encoding="utf-8"
-    )
+    source = chat_lane_source()
 
     assert "_execute_desktop_chain_from_chat" not in source
     assert "tell application \"Calculator\"" not in source
@@ -2494,7 +2493,7 @@ async def test_chained_live_proof_rejects_failed_observation(monkeypatch, tmp_pa
         return {"ok": False, "error": "computer_use unavailable"}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
+    monkeypatch.setattr(_chat_runtime_proof, "_write_live_proof_file", verified_write)
     monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", failed_observation)
 
     result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")
@@ -2524,7 +2523,7 @@ async def test_chained_live_proof_accepts_only_matching_pwd_observation(monkeypa
         return {"ok": True, "output": str(tmp_path.resolve()), "exit_code": 0}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(chat_module, "_write_live_proof_file", verified_write)
+    monkeypatch.setattr(_chat_runtime_proof, "_write_live_proof_file", verified_write)
     monkeypatch.setattr(_chat_capability_inventory, "_execute_governed_live_skill", verified_observation)
 
     result = await chat_module._execute_live_runtime_proof("Run a chained live proof.")

@@ -166,19 +166,42 @@ class GitIntegration:
         """Check if git is installed and repo exists (Async)"""
         return await asyncio.to_thread(self._check_git_available_sync)
 
+    async def _git(
+        self,
+        argv: list[str],
+        *,
+        timeout: int = 10,
+        source: str = "",
+        read_only: bool = False,
+    ):
+        """Every git invocation this class makes, through one door.
+
+        There were eleven separate gateway calls here, each repeating the
+        working directory, the capture flag and the accelerator declaration —
+        so adding a check to how Aura runs git against her own repository
+        meant finding and editing eleven sites, and missing one meant the
+        check did not apply.
+        """
+        return await get_subprocess_gateway().run_async(
+            argv,
+            cwd=self.repo_path,
+            capture_output=True,
+            timeout=timeout,
+            read_only=read_only,
+            source=source or "core.self_modification.safe_modification.git",
+            accelerator_capability="none",
+        )
+
     async def is_worktree_dirty(self) -> bool:
         """Return True when the repository has any local changes."""
         if not self.git_available:
             return False
         try:
-            result = await get_subprocess_gateway().run_async(
+            result = await self._git(
                 ["git", "status", "--porcelain"],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.git_status",
-                accelerator_capability="none",
             )
             return bool(result.stdout.strip())
         except (subprocess.SubprocessError, OSError) as e:
@@ -200,13 +223,10 @@ class GitIntegration:
         try:
             branch_name = self._validate_branch_name(branch_name)
             # Create branch
-            result = await get_subprocess_gateway().run_async(
+            result = await self._git(
                 ["git", "checkout", "-b", branch_name],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.create_branch",
-                accelerator_capability="none",
             )
 
             if result.returncode == 0:
@@ -229,23 +249,18 @@ class GitIntegration:
         try:
             file_path = self._validate_path(file_path)
             # Stage file
-            await get_subprocess_gateway().run_async(
+            await self._git(
                 ["git", "add", file_path],
-                cwd=self.repo_path,
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.git_add",
-                accelerator_capability="none",
             )
 
             # Commit
-            result = await get_subprocess_gateway().run_async(
+            result = await self._git(
                 ["git", "commit", "-m", message],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.git_commit",
-                accelerator_capability="none",
             )
 
             if result.returncode != 0:
@@ -253,14 +268,11 @@ class GitIntegration:
                 return None
 
             # Get commit hash
-            hash_result = await get_subprocess_gateway().run_async(
+            hash_result = await self._git(
                 ["git", "rev-parse", "HEAD"],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.rev_parse_head",
-                accelerator_capability="none",
             )
 
             commit_hash = hash_result.stdout.strip()
@@ -279,24 +291,19 @@ class GitIntegration:
 
         try:
             # Checkout main
-            await get_subprocess_gateway().run_async(
+            await self._git(
                 ["git", "checkout", "main"],
-                cwd=self.repo_path,
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.checkout_main_for_merge",
-                accelerator_capability="none",
             )
 
             branch_name = self._validate_branch_name(branch_name)
             # Merge
-            result = await get_subprocess_gateway().run_async(
+            result = await self._git(
                 ["git", "merge", "--no-ff", branch_name, "-m", f"Auto-merge: {branch_name}"],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=10,
                 source="core.self_modification.safe_modification.merge_to_main",
-                accelerator_capability="none",
             )
 
             if result.returncode == 0:
@@ -318,13 +325,11 @@ class GitIntegration:
 
         try:
             branch_name = self._validate_branch_name(branch_name)
-            await get_subprocess_gateway().run_async(
+            await self._git(
                 ["git", "branch", "-D", branch_name],
-                cwd=self.repo_path,
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.delete_branch",
-                accelerator_capability="none",
             )
             logger.info("Deleted branch: %s", branch_name)
             return True
@@ -339,13 +344,11 @@ class GitIntegration:
             return False
 
         try:
-            await get_subprocess_gateway().run_async(
+            await self._git(
                 ["git", "checkout", "main"],
-                cwd=self.repo_path,
                 check=True,
                 timeout=5,
                 source="core.self_modification.safe_modification.checkout_main",
-                accelerator_capability="none",
             )
             return True
         except (subprocess.SubprocessError, OSError):
@@ -357,14 +360,11 @@ class GitIntegration:
             return None
 
         try:
-            result = await get_subprocess_gateway().run_async(
+            result = await self._git(
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self.repo_path,
-                capture_output=True,
                 timeout=5,
                 read_only=True,
                 source="core.self_modification.safe_modification.current_branch",
-                accelerator_capability="none",
             )
             return result.stdout.strip()
         except (subprocess.SubprocessError, OSError):
@@ -501,6 +501,15 @@ def _owner_approved(fix: Any) -> bool:
         or getattr(fix, "human_approved", False)
         or getattr(fix, "explicit_owner_approval", False)
     )
+
+
+def _file_hash(path: Path) -> str:
+    """SHA-256 hash of a file for integrity verification."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class SafeSelfModification:
@@ -899,14 +908,6 @@ class SafeSelfModification:
         decision = source_promotion_decision(supervised=supervised)
         return decision.allowed, decision.reason
 
-    @staticmethod
-    def _file_hash(path: Path) -> str:
-        """SHA-256 hash of a file for integrity verification."""
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
 
     async def apply_fix(
         self,
@@ -985,7 +986,7 @@ class SafeSelfModification:
             return False, "Backup creation failed"
 
         # Issue 76: Rollback Hash (Capture before change)
-        pre_mod_hash = self._file_hash(target_path)
+        pre_mod_hash = _file_hash(target_path)
 
         # Create a collision-resistant quarantine staging file that preserves
         # the target's repo-relative path. Reusing only target_path.name can
@@ -1320,7 +1321,7 @@ class SafeSelfModification:
                     raw_meta = await asyncio.to_thread(metadata_path.read_text, encoding="utf-8")
                     meta = json.loads(raw_meta)
                     restored_path = Path(meta["original_path"])
-                    actual_hash = self._file_hash(restored_path)
+                    actual_hash = _file_hash(restored_path)
                     if actual_hash == expected_hash:
                         logger.info("✓ Backup integrity verified (SHA-256 match)")
                     else:

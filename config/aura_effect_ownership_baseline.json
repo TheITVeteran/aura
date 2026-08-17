@@ -14150,23 +14150,7 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/architect/safety_gate.py",
-      "scope": "<module>.ASASafetyGate._check_git_clean"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 2,
-      "path": "core/architect/safety_gate.py",
-      "scope": "<module>.ASASafetyGate._git_commit"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 3,
-      "path": "core/architect/safety_gate.py",
-      "scope": "<module>.ASASafetyGate._git_snapshot"
+      "scope": "<module>.ASASafetyGate._git"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -15206,55 +15190,7 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.checkout_main"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 3,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.commit_changes"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.create_branch"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.delete_branch"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.get_current_branch"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.is_worktree_dirty"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 2,
-      "path": "core/self_modification/safe_modification.py",
-      "scope": "<module>.GitIntegration.merge_to_main"
+      "scope": "<module>.GitIntegration._git"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -15954,6 +15890,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "07dad1cc418820d54c3f5efc31583590fc766b4e6756421f91541a0b1c4f99a5",
+  "inventory_sha256": "c0abee87b447437157ed6ac817689ff96cea3c55f135c35feb5ac853070aee54",
   "schema_version": 1
 }
