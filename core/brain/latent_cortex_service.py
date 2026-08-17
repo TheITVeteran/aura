@@ -4894,7 +4894,10 @@ class LatentCortexService:
             # at persona-lane temperature — the episode was mechanically
             # complete and the ANSWER SURFACE was the only failing stage.
             from core.brain.llm.latent_cortex.output_quality import request_facets
-            from core.runtime.structured_input import analyze_prompt_shape
+            from core.runtime.structured_input import (
+                analyze_prompt_shape,
+                answer_surface_token_floor,
+            )
 
             visible_objective = self._visible_objective(question, messages)
             objective_facets = request_facets(visible_objective)
@@ -4906,10 +4909,16 @@ class LatentCortexService:
                 or objective_shape["imperative_parts"] >= 3
                 or objective_shape["question_parts"] >= 3
             )
+            self._last_allocation["objective_facets"] = list(objective_facets)
+            self._last_allocation["objective_prompt_shape"] = objective_shape
+            self._last_allocation["compound_objective"] = compound_objective
             if compound_objective:
+                structural_answer_floor = answer_surface_token_floor(
+                    visible_objective
+                )
                 config["decode_max_tokens"] = max(
-                    256,
-                    min(384, max(requested_decode_tokens, 320)),
+                    structural_answer_floor,
+                    min(1536, max(requested_decode_tokens, 320)),
                 )
                 config["decode_bridge_policy"] = "assistant_answer_v3"
                 # EOS floor: a compound answer abandoned 16 tokens in is
@@ -4942,28 +4951,36 @@ class LatentCortexService:
             config["decode_repetition_penalty"] = 1.25
             config["decode_repetition_window"] = 72
             if compound_objective:
-                # The 105s wall-clock floor was tuned for 256-token answers.
-                # A 384-token compound answer measures ≈116s on the resident
-                # 32B; grant up to 150s but never exceed what the owner's
-                # timeout can actually wait for.
+                # Reserve the answer floor before optional recurrent work.
+                # The resident profile has measured a conservative 65s for
+                # prefill, verifier previews, recurrence, cleanup, and about
+                # 0.26s for each output token.  The former fixed 150s/384-token
+                # ceiling contradicted a five-obligation 768-token caller and
+                # physically forced the answer to stop in section two.
+                target_decode_tokens = int(config["decode_max_tokens"])
+                required_wall_clock_s = 65.0 + (0.26 * target_decode_tokens)
+                available_wall_clock_s = max(15.0, float(timeout_s) - 8.0)
                 budget["wall_clock_s"] = min(
-                    max(150.0, float(budget.get("wall_clock_s") or 0.0)),
-                    max(15.0, float(timeout_s) - 8.0),
+                    max(required_wall_clock_s, float(budget.get("wall_clock_s") or 0.0)),
+                    available_wall_clock_s,
                 )
-                # Fit the answer surface to the wall clock actually granted.
-                # CP120 measured ~100s before final decode because five
-                # 48-token verifier previews dominated the episode. The v2
-                # interactive profile shortens those previews and reuses the
-                # verified winner score; a conservative 65s still reserves
-                # prefill, all causal mechanisms, bridge, and cleanup. Never
-                # promise a 384-token surface the owner cannot finish.
-                affordable_tokens = int((float(budget["wall_clock_s"]) - 65.0) / 0.26)
-                config["decode_max_tokens"] = max(
-                    128, min(int(config["decode_max_tokens"]), affordable_tokens)
+                self._last_allocation["answer_surface_required_wall_clock_s"] = round(
+                    required_wall_clock_s, 3
                 )
-            self._last_allocation["objective_facets"] = list(objective_facets)
-            self._last_allocation["objective_prompt_shape"] = objective_shape
-            self._last_allocation["compound_objective"] = compound_objective
+                self._last_allocation["answer_surface_available_wall_clock_s"] = round(
+                    available_wall_clock_s, 3
+                )
+                if available_wall_clock_s + 1e-9 < required_wall_clock_s:
+                    # Do not spend most of the turn proving that a complete
+                    # answer cannot fit and then leave a fragment. No model
+                    # owner has been acquired yet, so ResponseGeneration can
+                    # use the same resident checkpoint's ordinary lane with
+                    # the full answer surface immediately.
+                    self._last_allocation["config"] = dict(config)
+                    self._last_allocation["budget"] = dict(budget)
+                    return self._record_failure(
+                        "answer_surface_unaffordable_before_execution"
+                    )
         if require_full_stack:
             config["latent_opt"] = True
             config["latent_opt_control"] = False

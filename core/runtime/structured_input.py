@@ -326,6 +326,41 @@ class PromptShape:
         }
 
 
+def answer_surface_token_floor(text: str) -> int:
+    """Minimum decode capacity needed to answer the visible request once.
+
+    This is a structural capacity calculation, not an instruction to the
+    model.  A five-part request cannot fit through the same answer surface as
+    a closed question, regardless of sampling style or affective state.  The
+    floor is intentionally coarse and rounded to allocator-sized blocks; EOS
+    may still finish early, so granting capacity does not force verbosity.
+    """
+
+    shape = analyze_prompt_shape(text)
+    obligations = max(
+        1,
+        int(shape.question_parts),
+        int(shape.numbered_parts),
+        int(shape.imperative_parts),
+        len(shape.question_segments),
+    )
+    if not (
+        shape.prefers_extended_answer
+        or shape.requires_single_reply_coverage
+        or obligations >= 2
+    ):
+        return 256
+
+    # One block carries framing/conclusion; each independently checkable
+    # obligation receives another block.  Five visible obligations therefore
+    # receive 768 tokens rather than the former fixed 384-token ceiling.
+    required = 192 + (96 * obligations)
+    if shape.prefers_extended_answer and obligations == 1:
+        required = max(required, 512)
+    block = 128
+    return min(1536, max(384, ((required + block - 1) // block) * block))
+
+
 #: Splits an utterance into the units a person would count as separate asks:
 #: sentence enders, and the line breaks / numbered items that carry a list.
 _ASK_SPLIT_RE = re.compile(r"(?<=[.?!])\s+|\n+")

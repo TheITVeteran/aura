@@ -183,3 +183,37 @@ class TestTheVanillaFloor:
         clear_preserved_draft()
         record_raw_model_draft("Both red.")
         assert best_available_reply() == ""
+
+    def test_short_continuation_cannot_erase_the_raw_incumbent(self):
+        from core.conversation.surface_disposition import (
+            clear_preserved_draft,
+            raw_model_draft,
+            record_raw_model_draft,
+        )
+
+        clear_preserved_draft()
+        incumbent = (
+            "The complete incumbent has several independently authored sections "
+            "and remains the canonical answer floor for this turn."
+        )
+        record_raw_model_draft(incumbent)
+        record_raw_model_draft("A short child continuation.")
+
+        assert raw_model_draft() == incumbent
+
+    def test_short_continuation_cannot_erase_the_preserved_draft(self):
+        from core.conversation.surface_disposition import (
+            clear_preserved_draft,
+            preserve_draft,
+            preserved_draft,
+        )
+
+        clear_preserved_draft()
+        incumbent = (
+            "The preserved draft contains the earlier authored work and all of "
+            "the progress that a later continuation must extend."
+        )
+        preserve_draft(incumbent)
+        preserve_draft("A short child continuation.")
+
+        assert preserved_draft() == incumbent

@@ -990,6 +990,49 @@ async def test_response_generation_honors_live_caller_token_cap_after_biases(mon
 
 
 @pytest.mark.asyncio
+async def test_response_generation_biases_cannot_erase_compound_answer_capacity(
+    monkeypatch,
+):
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Explain Dijkstra's algorithm in one complete response. Include: "
+        "(1) the core invariant, (2) numbered pseudocode, (3) a worked example "
+        "with five weighted edges, (4) binary-heap and array complexity, and "
+        "(5) a negative-weight failure and the correct alternative."
+    )
+    state.cognition.current_origin = "user"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    state.response_modifiers["sampling_bias"] = {"max_tokens_factor": 0.25}
+    state.response_modifiers["imagination_sampling_bias"] = {
+        "max_tokens_factor": 0.25
+    }
+
+    router = _Router()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "system", "content": "context"}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 1536,
+        },
+    )
+
+    assert router.calls
+    assert router.calls[0]["max_tokens"] >= 768
+
+
+@pytest.mark.asyncio
 async def test_response_generation_forwards_compiled_visible_output_contract(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = 'Reply exactly: "yes"'

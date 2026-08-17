@@ -101,7 +101,10 @@ from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
 )
-from core.runtime.structured_input import analyze_prompt_shape
+from core.runtime.structured_input import (
+    analyze_prompt_shape,
+    answer_surface_token_floor,
+)
 from core.runtime.version import version_string
 from core.self.inner_language import say_focus
 from core.utils.injected_blocks import stamp_runtime_payload
@@ -921,7 +924,7 @@ _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    236.0,
+    360.0,
     minimum=60.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
@@ -8507,10 +8510,11 @@ def _foreground_timeout_for_lane(
                 from core.brain.llm.model_registry import ACTIVE_MODEL
 
                 prompt_tokens = max(2048, 1800 + len(str(user_message or "")) // 4)
+                answer_tokens = answer_surface_token_floor(user_message)
                 deadline, _confidence, _samples = recommended_foreground_deadline(
                     model=ACTIVE_MODEL,
                     prompt_tokens=prompt_tokens,
-                    decode_tokens=512,
+                    decode_tokens=answer_tokens,
                     minimum_seconds=ready_timeout,
                     maximum_seconds=(
                         _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S

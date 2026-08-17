@@ -37,6 +37,7 @@ from core.runtime.conversation_support import (
 from core.runtime.desktop_task_contract import desktop_task_action_sentence
 from core.runtime.errors import record_degradation
 from core.runtime.flags import env_present
+from core.runtime.structured_input import answer_surface_token_floor
 from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
 
 from ..state.aura_state import AuraState, CognitiveMode
@@ -1723,6 +1724,25 @@ class ResponseGenerationPhase(BasePhase):
                     token_budget,
                     max(1, int(visible_output_contract.hard_token_ceiling)),
                 )
+            else:
+                # Sampling biases may make an answer terser; they may not make
+                # the response surface physically too small for the visible
+                # obligations.  Live 2026-08-17: five requested Dijkstra
+                # sections entered with a 1,536-token route allowance, were
+                # halved by an internal bias, then capped again by RLC at 326.
+                # The model stopped during pseudocode and four sections never
+                # had a chance to exist.  Restore only the structural floor,
+                # still bounded by the caller's declared cap.
+                answer_floor = answer_surface_token_floor(
+                    user_surface_validation_prompt
+                )
+                caller_cap = token_budget
+                if requested_token_cap is not None:
+                    try:
+                        caller_cap = max(1, int(requested_token_cap))
+                    except (TypeError, ValueError, OverflowError):
+                        caller_cap = token_budget
+                token_budget = max(token_budget, min(caller_cap, answer_floor))
             runtime_context["_effective_generation_max_tokens"] = token_budget
             runtime_context["requested_output_contract"] = (
                 dict(visible_output_contract_payload)
@@ -1753,6 +1773,15 @@ class ResponseGenerationPhase(BasePhase):
                     is_background=is_background,
                     deep_handoff=deep_handoff,
                 )
+                if not is_background:
+                    # The static 180-second generation window was calibrated
+                    # for short chat.  Size permission to the answer surface;
+                    # the owning CognitiveEngine deadline remains the hard
+                    # bound and natural EOS returns immediately.
+                    request_timeout = max(
+                        request_timeout,
+                        min(360.0, 45.0 + (0.34 * float(token_budget))),
+                    )
                 request_timeout = self._bounded_request_timeout(
                     runtime_context,
                     request_timeout,
@@ -1811,16 +1840,15 @@ class ResponseGenerationPhase(BasePhase):
                             "reason": "latent_service_not_registered",
                         }
                     else:
-                        # The 165s owner budget contains the complete compound
-                        # episode, including verifier previews and adaptation,
-                        # and retains an 8s outer cleanup reserve. The service
-                        # sizes the final answer from measured resident-32B
-                        # stage costs; do not duplicate a stale token estimate
-                        # here or let the request layer promise more decode
-                        # than the causal stack can complete.
+                        # The owner budget contains the complete compound
+                        # episode, including its answer floor. A fixed 165s
+                        # cap silently contradicted the structurally sized
+                        # token budget and forced five-part answers to stop
+                        # mid-sentence. The service performs its own measured
+                        # admission; pass the real remaining owner window.
                         latent_timeout = self._bounded_request_timeout(
                             runtime_context,
-                            min(165.0, request_timeout),
+                            request_timeout,
                             reserve_s=8.0,
                         )
                         if latent_timeout < 15.0:
@@ -2094,10 +2122,13 @@ class ResponseGenerationPhase(BasePhase):
                                 latent_trace.get("latent_cortex_progress") or {},
                             )
                             return state
-                        logger.warning(
-                            "Recursive Latent Cortex declined the selected foreground turn (%s); using one ordinary resident generation.",
-                            failure_reason,
-                        )
+                        else:
+                            logger.warning(
+                                "Recursive Latent Cortex declined the selected "
+                                "foreground turn (%s); using one ordinary resident "
+                                "generation.",
+                                failure_reason,
+                            )
 
                 if response_text is None:
                     ordinary_timeout = self._bounded_request_timeout(

@@ -88,7 +88,14 @@ _PRESERVED_DRAFT: contextvars.ContextVar[str] = contextvars.ContextVar(
 def preserve_draft(text: Any) -> None:
     """Record a draft this turn could serve if nothing better arrives."""
     body = str(text or "").strip()
-    if body:
+    current = preserved_draft()
+    # This store is fallback custody, not a latest-event slot. A continuation
+    # is generated as a child fragment and passes through the same response
+    # phase; last-write-wins let an 87-token continuation erase a 329-token
+    # incumbent on 2026-08-17. The normal return path may still choose a
+    # shorter proven repair, but fallback custody only advances when the
+    # candidate contains at least as much authored material.
+    if body and (not current or len(body) >= len(current)):
         _PRESERVED_DRAFT.set(body)
 
 
@@ -195,7 +202,11 @@ _RAW_MODEL_DRAFT: contextvars.ContextVar[str] = contextvars.ContextVar(
 def record_raw_model_draft(text: Any) -> None:
     """Remember what the model actually said, before the pipeline touched it."""
     body = str(text or "").strip()
-    if body:
+    current = raw_model_draft()
+    # The first ordinary incumbent is the answer floor. Retry and
+    # continuation generations are downstream candidates, not authority to
+    # overwrite that floor with a shorter fragment.
+    if body and (not current or len(body) >= len(current)):
         _RAW_MODEL_DRAFT.set(body)
 
 

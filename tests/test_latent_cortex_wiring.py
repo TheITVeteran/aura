@@ -3184,7 +3184,7 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
                 "decode_temperature": 0.58,
                 "decode_top_p": 0.85,
             },
-            timeout_s=157.0,
+            timeout_s=240.0,
             foreground_request=True,
         )
     )
@@ -3193,7 +3193,7 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     # CP126 5879d2b5: a refusal now carries a bounded receipt tying
     # it to this call, so exact-dict equality is no longer the contract.
     assert result["refusal_receipt"]["reason"] == result["reason"]
-    assert 320 <= captured["config"]["decode_max_tokens"] <= 384
+    assert captured["config"]["decode_max_tokens"] >= 512
     # Compound answers decode near-greedy for coverage determinism — safe
     # now that the repetition penalty, EOS floor, and newline discipline
     # guard against the degeneration CP105 measured at low temperature.
@@ -3201,8 +3201,8 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
     assert captured["config"]["decode_repetition_penalty"] == 1.25
     assert captured["config"]["decode_repetition_window"] == 72
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v3"
-    assert captured["budget"]["wall_clock_s"] >= 140.0
-    assert captured["budget"]["wall_clock_s"] <= 157.0 - 8.0
+    assert captured["budget"]["wall_clock_s"] >= 198.0
+    assert captured["budget"]["wall_clock_s"] <= 240.0 - 8.0
     allocation = svc._last_allocation
     assert allocation["compound_objective"] is True
     assert set(allocation["objective_facets"]) >= {"compare", "select", "verify"}
@@ -3221,16 +3221,35 @@ def test_compound_objective_expands_answer_surface(monkeypatch):
             stakes=0.75,
             uncertainty=0.8,
             config_overrides={"decode_max_tokens": 256},
-            timeout_s=157.0,
+            timeout_s=300.0,
             foreground_request=True,
         )
     )
     assert captured["config"]["decode_bridge_policy"] == "assistant_answer_v3"
-    assert 320 <= captured["config"]["decode_max_tokens"] <= 384
-    assert captured["budget"]["wall_clock_s"] >= 140.0
+    assert captured["config"]["decode_max_tokens"] == 768
+    assert captured["budget"]["wall_clock_s"] >= 264.0
     inline_allocation = svc._last_allocation
     assert inline_allocation["compound_objective"] is True
     assert inline_allocation["objective_prompt_shape"]["numbered_parts"] == 5
+
+    # An owner window that cannot physically hold the answer floor is rejected
+    # before acquiring or spending the resident model. ResponseGeneration can
+    # then use the ordinary lane with the full surface instead of waiting for
+    # a guaranteed RLC fragment.
+    captured.clear()
+    result = asyncio.run(
+        svc.deep_reason(
+            inline_obligations,
+            stakes=0.75,
+            uncertainty=0.8,
+            config_overrides={"decode_max_tokens": 768},
+            timeout_s=180.0,
+            foreground_request=True,
+        )
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "answer_surface_unaffordable_before_execution"
+    assert captured == {}
 
     # A simple objective keeps the tight interactive profile.
     captured.clear()

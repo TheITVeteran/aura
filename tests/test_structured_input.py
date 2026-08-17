@@ -1,4 +1,7 @@
-from core.runtime.structured_input import analyze_prompt_shape
+from core.runtime.structured_input import (
+    analyze_prompt_shape,
+    answer_surface_token_floor,
+)
 
 
 def test_compound_compare_choose_explain_prompt_is_multipart() -> None:
@@ -44,12 +47,13 @@ def test_coordinated_nouns_do_not_create_fake_imperative_parts() -> None:
 
 
 def test_inline_parenthesized_obligations_are_first_class_request_parts() -> None:
-    shape = analyze_prompt_shape(
+    prompt = (
         "Explain Dijkstra's algorithm in one complete response. Include: "
         "(1) the core invariant, (2) numbered pseudocode, (3) a worked example "
         "with five weighted edges, (4) binary-heap and array complexity, and "
         "(5) a negative-weight failure and the correct alternative."
     )
+    shape = analyze_prompt_shape(prompt)
 
     assert shape.numbered_parts == 5
     assert shape.question_parts == 6
@@ -63,6 +67,11 @@ def test_inline_parenthesized_obligations_are_first_class_request_parts() -> Non
         "binary-heap and array complexity, and",
         "a negative-weight failure and the correct alternative",
     )
+    assert answer_surface_token_floor(prompt) == 768
+
+
+def test_answer_surface_floor_keeps_simple_questions_compact() -> None:
+    assert answer_surface_token_floor("What time zone does the scheduler use?") == 256
 
 
 def test_parenthesized_numbers_without_a_contiguous_list_remain_one_part() -> None:
