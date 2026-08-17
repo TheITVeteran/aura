@@ -133,6 +133,21 @@ def get_models_dir() -> Path:
     return Path(configured).expanduser() if configured else BASE_DIR / "models"
 
 
+def get_fused_model_root() -> Path:
+    """Return the runtime-wide model promotion root.
+
+    Promotion state belongs to the running Aura installation, not to an
+    individual source worktree.  A worktree must therefore observe the same
+    active manifest as the primary checkout or it can silently substitute an
+    unqualified base checkpoint for the promoted cortex.
+    """
+
+    configured = str(os.getenv("AURA_FUSED_MODEL_ROOT", "")).strip()
+    if configured:
+        return Path(configured).expanduser()
+    return BASE_DIR / "training" / "fused-model"
+
+
 PRIMARY_ENDPOINT = "Cortex"
 DEEP_ENDPOINT = "Solver"
 BRAINSTEM_ENDPOINT = "Brainstem"
@@ -238,7 +253,7 @@ def _resolve_active_fused_model() -> str | None:
     editing .env. An explicit AURA_LLM__MLX_MODEL_PATH still wins, so
     operators can pin a specific build for diagnostics.
     """
-    manifest = BASE_DIR / "training" / "fused-model" / "active.json"
+    manifest = get_fused_model_root() / "active.json"
     try:
         if not manifest.exists():
             return None

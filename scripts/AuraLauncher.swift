@@ -2176,6 +2176,23 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             ])
         }
         launchProvenanceEnvironment["AURA_MODELS_DIR"] = modelsURL.path
+        let fusedModelPathFile = resourcesURL.appendingPathComponent("aura-fused-model-path")
+        if let fusedModelPath = try? String(contentsOf: fusedModelPathFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !fusedModelPath.isEmpty {
+            let fusedModelURL = URL(
+                fileURLWithPath: fusedModelPath,
+                isDirectory: true
+            ).standardizedFileURL
+            var isFusedModelDirectory: ObjCBool = false
+            if fileManager.fileExists(
+                atPath: fusedModelURL.path,
+                isDirectory: &isFusedModelDirectory
+            ), isFusedModelDirectory.boolValue,
+               fileManager.isReadableFile(atPath: fusedModelURL.path) {
+                launchProvenanceEnvironment["AURA_FUSED_MODEL_ROOT"] = fusedModelURL.path
+            }
+        }
         let envPathFile = resourcesURL.appendingPathComponent("aura-env-path")
         if let envPath = try? String(contentsOf: envPathFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),

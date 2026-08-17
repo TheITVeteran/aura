@@ -94,6 +94,24 @@ def test_explicit_shared_model_root_is_independent_of_source_root(monkeypatch, t
     )
 
 
+def test_explicit_promotion_root_wins_from_worktree_source(monkeypatch, tmp_path):
+    source_root = tmp_path / "worktree"
+    promotion_root = tmp_path / "primary" / "training" / "fused-model"
+    promoted_model = promotion_root / "promoted-cortex"
+    promoted_model.mkdir(parents=True)
+    (promotion_root / "active.json").write_text(
+        '{"active_model_path": "' + str(promoted_model) + '"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(model_registry, "BASE_DIR", source_root)
+    monkeypatch.setenv("AURA_FUSED_MODEL_ROOT", str(promotion_root))
+    monkeypatch.setattr(model_registry, "_cortex_path_cache", None)
+
+    assert model_registry.get_model_path("Qwen2.5-32B-Instruct-8bit") == str(
+        promoted_model.resolve()
+    )
+
+
 def _reset_lane_audit_cache():
     model_registry._LANE_AUDIT_CACHE.update(key=None, at=0.0, result=None)
 

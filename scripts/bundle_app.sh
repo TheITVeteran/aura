@@ -88,6 +88,7 @@ ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
 PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"
 ENV_PATH_FILE="${RESOURCES_DIR}/aura-env-path"
 MODELS_PATH_FILE="${RESOURCES_DIR}/aura-models-path"
+FUSED_MODEL_PATH_FILE="${RESOURCES_DIR}/aura-fused-model-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
 PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
@@ -170,6 +171,11 @@ if [ -n "${PRIMARY_ROOT}" ] && [ -d "${PRIMARY_ROOT}/models" ]; then
     MODELS_ROOT="${PRIMARY_ROOT}/models"
 fi
 printf '%s\n' "${MODELS_ROOT}" > "${MODELS_PATH_FILE}"
+FUSED_MODEL_ROOT="${ROOT_DIR}/training/fused-model"
+if [ -n "${PRIMARY_ROOT}" ] && [ -d "${PRIMARY_ROOT}/training/fused-model" ]; then
+    FUSED_MODEL_ROOT="${PRIMARY_ROOT}/training/fused-model"
+fi
+printf '%s\n' "${FUSED_MODEL_ROOT}" > "${FUSED_MODEL_PATH_FILE}"
 ENV_SOURCE=""
 for candidate in "${ROOT_DIR}/.env" "${PRIMARY_ROOT:+${PRIMARY_ROOT}/.env}"; do
     if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then

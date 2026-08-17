@@ -13,6 +13,9 @@ if [ -z "${AURA_MODELS_DIR:-}" ]; then
         if [ -d "$AURA_PRIMARY_ROOT/models" ]; then
             export AURA_MODELS_DIR="$AURA_PRIMARY_ROOT/models"
         fi
+        if [ -d "$AURA_PRIMARY_ROOT/training/fused-model" ]; then
+            export AURA_FUSED_MODEL_ROOT="$AURA_PRIMARY_ROOT/training/fused-model"
+        fi
     fi
 fi
 cd "$AURA_ROOT" || exit 1

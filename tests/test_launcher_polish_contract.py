@@ -256,11 +256,13 @@ def test_installed_launcher_binds_the_repository_python_across_worktrees():
     assert 'PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"' in bundle
     assert 'ENV_PATH_FILE="${RESOURCES_DIR}/aura-env-path"' in bundle
     assert 'MODELS_PATH_FILE="${RESOURCES_DIR}/aura-models-path"' in bundle
+    assert 'FUSED_MODEL_PATH_FILE="${RESOURCES_DIR}/aura-fused-model-path"' in bundle
     assert "git rev-parse --path-format=absolute --git-common-dir" in bundle
     assert '"${PRIMARY_ROOT}/.venv/bin/python3"' in bundle
     assert "import sys, httpx" in bundle
     assert 'printf \'%s\\n\' "${PYTHON_RUNTIME}" > "${PYTHON_RUNTIME_FILE}"' in bundle
     assert 'printf \'%s\\n\' "${MODELS_ROOT}" > "${MODELS_PATH_FILE}"' in bundle
+    assert 'printf \'%s\\n\' "${FUSED_MODEL_ROOT}" > "${FUSED_MODEL_PATH_FILE}"' in bundle
     assert '"${PRIMARY_ROOT:+${PRIMARY_ROOT}/.env}"' in bundle
     assert "resolvePythonExecutable(resourcesURL: resourcesURL)" in swift
     resolver = swift.split(
@@ -275,6 +277,8 @@ def test_installed_launcher_binds_the_repository_python_across_worktrees():
     assert 'launchProvenanceEnvironment["AURA_ENV_FILE"] = envURL.path' in swift
     assert 'appendingPathComponent("aura-models-path")' in swift
     assert 'launchProvenanceEnvironment["AURA_MODELS_DIR"] = modelsURL.path' in swift
+    assert 'appendingPathComponent("aura-fused-model-path")' in swift
+    assert 'launchProvenanceEnvironment["AURA_FUSED_MODEL_ROOT"] = fusedModelURL.path' in swift
 
 
 def test_runtime_loads_the_signed_external_environment_before_module_boot():
