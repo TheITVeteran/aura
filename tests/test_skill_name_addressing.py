@@ -66,7 +66,10 @@ def test_every_enabled_skill_is_reachable_by_its_own_name(engine: CapabilityEngi
         "knowledge_base",
         "internal_sandbox",
         "train_self",
-        "spawn_agent",
+        # `spawn_agent` used to sit here. It is an ACTION of world_forge, not
+        # a registered skill, so no phrasing could ever select it and this pin
+        # was asserting against a name that never existed.
+        "world_forge",
         "search_web",
         "test_generator",
         "query_beliefs",
@@ -76,6 +79,11 @@ def test_named_skills_that_had_no_trigger_patterns(
     engine: CapabilityEngine, skill: str
 ) -> None:
     """Spot checks from the 37, including the ones worth asking for by name."""
+    assert skill in engine.skills, (
+        f"{skill} is not a registered skill, so this pin asserts nothing about "
+        "addressability — it asserts that a name nobody registered stays "
+        "unreachable, which it always will"
+    )
     assert skill in engine.detect_intent(f"please run {skill} on this")
 
 
@@ -167,3 +175,27 @@ def test_very_short_names_produce_no_forms() -> None:
     """Too short to match without false positives."""
     assert CapabilityEngine._skill_name_forms("ls") == ()
     assert CapabilityEngine._skill_name_forms("") == ()
+
+
+def test_the_activation_list_only_names_skills_that_exist(
+    engine: CapabilityEngine,
+) -> None:
+    """A name in the activation set with no skill behind it is a dead entry.
+
+    `spawn_agent` and `spawn_agents_parallel` are world_forge ACTIONS, and
+    they sat in the engine's activation list as if they were skills. Nothing
+    failed, because activation silently skips a name it cannot resolve — so
+    the list read as a capability inventory while two of its entries could
+    never be reached by any phrasing at all.
+    """
+    unresolvable = sorted(
+        name
+        for name in engine.active_skills
+        if name not in engine.skills
+        and engine.resolve_skill_name(name) not in engine.skills
+    )
+
+    assert unresolvable == [], (
+        "the activation list names skills that are not registered: "
+        + ", ".join(unresolvable)
+    )

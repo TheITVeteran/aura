@@ -25,6 +25,7 @@ from core.senses.sight import (
     reset_capture_broker_for_test,
 )
 from core.senses.sight_intent import classify
+from tests.chat_lane_support import chat_lane_source
 
 
 @pytest.fixture(autouse=True)
@@ -384,11 +385,7 @@ def test_the_capture_lane_is_separate_from_the_presence_lane() -> None:
 
 def test_a_sight_question_reaches_the_camera_before_the_reply() -> None:
     """Otherwise she answers a question about the visible world from memory."""
-    from pathlib import Path
-
-    source = (
-        Path(__file__).resolve().parents[1] / "interface" / "routes" / "chat.py"
-    ).read_text(encoding="utf-8")
+    source = chat_lane_source()
     assert "from core.senses.sight_intent import classify as _classify_sight" in source
     assert "from core.senses.sight import look as _look" in source
     # What she is handed is a reading to speak from, not an answer to repeat.
@@ -402,7 +399,7 @@ def test_turning_the_camera_on_moves_the_control_not_just_the_record() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    chat = (root / "interface" / "routes" / "chat.py").read_text(encoding="utf-8")
+    chat = chat_lane_source()
     client = (root / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 
     assert "def _apply_camera_control(" in chat

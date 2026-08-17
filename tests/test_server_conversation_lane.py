@@ -16,30 +16,29 @@ import interface.routes.chat_memory_state as _chat_memory_state
 import interface.routes.chat_preflight as _chat_preflight
 from tests.chat_lane_support import patch_chat_lane
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
+import interface.routes.chat_turn_contract as _chat_turn_contract
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
     """Mark every runtime subsystem available for a desktop full-mind-path turn.
 
-    The desktop ``full_mind_path`` contract requires all six runtime subsystems
-    (kernel, cognitive_engine, inference, memory, tool_governance, substrate_voice)
-    to be available, or the turn fails closed. Tests that replace only the cognitive
-    engine must also assert the rest of the runtime is present, otherwise they are
-    asserting against a half-booted process that legitimately fails closed.
+The desktop ``full_mind_path`` contract requires all six runtime subsystems
+(kernel, cognitive_engine, inference, memory, tool_governance, substrate_voice)
+to be available, or the turn fails closed. Tests that replace only the cognitive
+engine must also assert the rest of the runtime is present, otherwise they are
+asserting against a half-booted process that legitimately fails closed.
     """
-    from interface.routes import chat_desktop_repair as _chat_desktop_repair
-
+    # Sweep every lane: these probes are imported by several modules now, and
+    # patching one leaves the rest running the real check.
     for name in (
         "_runtime_kernel_available",
         "_runtime_cognitive_engine_available",
         "_runtime_memory_available",
+        "_runtime_tool_governance_available",
         "_runtime_substrate_voice_available",
     ):
-        monkeypatch.setattr(chat_routes, name, lambda: True)
-    # This one is defined in the desktop-repair lane, and every caller reads it
-    # from there. Patching the chat module would leave the real check running.
-    monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *a, **k: True)
+        patch_chat_lane(monkeypatch, name, lambda: True)
+    patch_chat_lane(monkeypatch, "_runtime_inference_available", lambda *a, **k: True)
 
 
 def _bound_live_mind_controls_trace():
@@ -2685,12 +2684,12 @@ async def test_api_chat_desktop_capability_inventory_uses_cognitive_engine_first
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(_chat_preflight, "_log_exchange", _fake_log_exchange)
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", AsyncCallFixture())
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         _chat_preflight,
         "_collect_conversation_lane_status",
@@ -2989,11 +2988,11 @@ async def test_required_capability_inventory_binds_catalog_after_weak_engine_rep
 def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3536,11 +3535,11 @@ def test_strict_live_inference_readiness_requires_lane_status(monkeypatch):
 def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3581,11 +3580,11 @@ def test_live_turn_contract_allows_proven_generation_to_satisfy_inference(monkey
 def test_live_turn_contract_preserves_stale_preflight_subsystem_state(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -3657,12 +3656,12 @@ def test_live_turn_contract_refuses_engine_text_without_live_mind_context(monkey
 def test_live_turn_contract_refuses_failure_envelope_as_full_mind(monkeypatch):
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *_args, **_kwargs: True)
 
     payload = chat_routes._build_live_turn_contract_payload(
         desktop_required=True,
@@ -5708,11 +5707,11 @@ async def test_api_chat_desktop_required_presence_check_uses_cognitive_engine(mo
     monkeypatch.setattr(_chat_preflight, "_begin_logged_exchange", _fake_begin_exchange)
     chat_routes._recent_responses.clear()
     chat_routes._recent_response_pairs.clear()
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
     monkeypatch.setattr(
         _chat_preflight,
         "_collect_conversation_lane_status",
@@ -5820,12 +5819,12 @@ async def test_api_chat_desktop_cold_lane_timeout_is_not_reported_as_failed_reas
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(chat_routes, "_runtime_kernel_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_memory_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_kernel_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_memory_available", lambda: True)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_substrate_voice_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_inference_available", lambda *a, **k: False)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_substrate_voice_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_inference_available", lambda *a, **k: False)
 
     response = await server_module.api_chat(
         server_module.ChatRequest(message="Are you with me?"),
@@ -7991,7 +7990,7 @@ async def test_api_chat_desktop_runtime_status_uses_cognitive_engine_when_requir
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         _chat_preflight,
@@ -8077,7 +8076,7 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         _chat_preflight,
@@ -8153,7 +8152,7 @@ async def test_api_chat_desktop_coherence_status_uses_cognitive_engine_when_requ
     monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
     monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
     monkeypatch.setattr(_chat_desktop_repair, "_runtime_tool_governance_available", lambda: True)
-    monkeypatch.setattr(chat_routes, "_runtime_cognitive_engine_available", lambda: True)
+    monkeypatch.setattr(_chat_turn_contract, "_runtime_cognitive_engine_available", lambda: True)
     monkeypatch.setattr(chat_routes, "_gather_recent_user_messages_for_relevance", AsyncCallFixture(return_value=[]))
     monkeypatch.setattr(
         _chat_preflight,

@@ -135,6 +135,28 @@ def _image_suffix_from_bytes(raw: bytes) -> str:
     return ""
 
 
+def _screen_text_unavailable(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return True
+    return normalized in {
+        "[accessibility error or ui unresponsive]",
+        "[read_screen_text failed]",
+    }
+
+
+def _screen_text_unavailable_is_accessibility(text: str) -> bool:
+    """Whether the read failed on accessibility rather than on content.
+
+    The AppleScript window tree is queried through System Events, which
+    needs the same Accessibility grant the text read just failed on. When
+    that is the reason, the fallback cannot succeed and running it only
+    costs the caller another eight-second timeout.
+    """
+    lowered = str(text or "").lower()
+    return "accessibility" in lowered or "ui unresponsive" in lowered
+
+
 class ComputerUseSkill(BaseSkill):
     name = "computer_use"
     description = (
@@ -2993,7 +3015,7 @@ end tell
                         snapshot = await get_screen_perception().capture(save_screenshot=True)
                         perception_result = self._screen_snapshot_result(snapshot)
                         text = str(perception_result.get("text") or "")
-                        if text and not self._screen_text_unavailable(text):
+                        if text and not _screen_text_unavailable(text):
                             perception_result["accessibility_blocked"] = True
                             perception_result["permission_result"] = blocked
                             perception_result["source"] = "screen_perception_permission_fallback"
@@ -3090,7 +3112,7 @@ end tell
                         snapshot = await get_screen_perception().capture(save_screenshot=True)
                         perception_result = self._screen_snapshot_result(snapshot)
                         text = str(perception_result.get("text") or "")
-                        if text and not self._screen_text_unavailable(text):
+                        if text and not _screen_text_unavailable(text):
                             perception_result["accessibility_blocked"] = True
                             perception_result["permission_result"] = blocked
                             perception_result["source"] = "screen_perception_permission_fallback"
@@ -3139,7 +3161,7 @@ end tell
                     )
                     perception_result = self._screen_snapshot_result(snapshot)
                     text = str(perception_result.get("text") or "")
-                    if text and not self._screen_text_unavailable(text):
+                    if text and not _screen_text_unavailable(text):
                         return perception_result
                 except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
                     _record_computer_use_degradation(
@@ -3150,20 +3172,15 @@ end tell
                     )
 
                 result = await asyncio.to_thread(self._read_screen_text_macos)
-                if self._screen_text_unavailable(result):
-                    import sys
-
-                    is_tree_query_mocked = (
-                        getattr(self._query_system_events_window_tree, "__name__", "")
-                        != "_query_system_events_window_tree"
-                        and getattr(
-                            getattr(self._query_system_events_window_tree, "__func__", None),
-                            "__name__",
-                            "",
-                        )
-                        != "_query_system_events_window_tree"
-                    )
-                    if "pytest" in sys.modules and not is_tree_query_mocked:
+                if _screen_text_unavailable(result):
+                    # This used to branch on `"pytest" in sys.modules`, so the
+                    # live runtime and the tests took different paths through
+                    # the same failure. Whether the fallback is worth trying is
+                    # a property of the host, not of who is running the code:
+                    # if accessibility is the thing that just failed, the
+                    # AppleScript window tree runs through the same permission
+                    # and cannot answer either.
+                    if _screen_text_unavailable_is_accessibility(result):
                         return {
                             "ok": False,
                             "status": "unavailable",
@@ -3492,8 +3509,8 @@ end tell
                         )
 
                     screen_verifiable = not (
-                        self._screen_text_unavailable(pre_state)
-                        and self._screen_text_unavailable(post_state)
+                        _screen_text_unavailable(pre_state)
+                        and _screen_text_unavailable(post_state)
                     )
                     if (params.target and params.target[:10] in post_state) or (
                         screen_verifiable and post_state != pre_state
@@ -3700,8 +3717,8 @@ end tell
                     ) as exc:
                         logger.debug("Post-state screen read failed after hotkey: %s", exc)
                 screen_verifiable = not (
-                    self._screen_text_unavailable(pre_state)
-                    and self._screen_text_unavailable(post_state)
+                    _screen_text_unavailable(pre_state)
+                    and _screen_text_unavailable(post_state)
                 )
                 effect_verified = screen_verifiable and post_state != pre_state
                 if effect_verified:
@@ -4872,15 +4889,7 @@ end tell
             return raw[:1500] + "\n... [TRUNCATED] ...\n" + raw[-1500:]
         return raw
 
-    @staticmethod
-    def _screen_text_unavailable(text: str) -> bool:
-        normalized = str(text or "").strip().lower()
-        if not normalized:
-            return True
-        return normalized in {
-            "[accessibility error or ui unresponsive]",
-            "[read_screen_text failed]",
-        }
+
 
     def _read_menu_clock_macos(self) -> str:
         """Read the live menu bar clock through System Events."""

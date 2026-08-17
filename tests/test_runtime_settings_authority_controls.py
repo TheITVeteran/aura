@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -487,3 +488,36 @@ async def test_none_mode_still_reaches_standing_authority_denial(
     assert lease_calls
     assert decision.approved is False
     assert decision.reason == "standing_authority_denied:no_matching_standing_grant"
+
+
+@pytest.mark.asyncio
+async def test_an_isolated_settings_file_is_the_one_actually_read(
+    _isolated_runtime_settings,
+):
+    """The tests above were reading the operator's live settings.
+
+    `clear_runtime_settings_cache` skipped its synchronous prime whenever a
+    loop was running — correct in principle, since a settings read must never
+    do file I/O on the event loop, and wrong in effect: an async test that
+    wrote a settings file and read it back got whatever the background
+    refresh lane still held. Two governance tests were asserting against
+    `~/.aura/data/settings/runtime.json`, and passed or failed according to
+    what the operator had chosen there.
+    """
+    _write_settings(
+        _isolated_runtime_settings,
+        {"autonomy.actions_enabled": True, "governance.approval_mode": "all"},
+    )
+
+    assert runtime_settings._cache_path == os.path.abspath(
+        str(_isolated_runtime_settings)
+    ), "the cache is bound to a different settings file than this test wrote"
+    assert runtime_settings.runtime_approval_mode() == "all"
+
+    _write_settings(
+        _isolated_runtime_settings,
+        {"autonomy.actions_enabled": True, "governance.approval_mode": "destructive"},
+    )
+
+    # Visible immediately, not after the background lane's next tick.
+    assert runtime_settings.runtime_approval_mode() == "destructive"

@@ -410,7 +410,20 @@ def additional_confirmation_required(
 
 
 def clear_runtime_settings_cache() -> None:
-    """Reset and synchronously prime the cache for non-async tests."""
+    """Reset the cache and prime it before returning.
+
+    This used to skip the prime whenever a loop was running, on the correct
+    principle that a settings read must never do file I/O on the event loop.
+    The effect was that a test writing a settings file and reading it back
+    inside an async test got whatever the background refresh lane happened to
+    hold — the write took up to `_WATCH_INTERVAL_SECONDS` to be visible, and
+    the read in between returned defaults. Two governance tests were reading
+    the operator's real approval mode instead of the one they had just
+    written.
+
+    The read runs on a worker thread either way: off the loop, and finished
+    before this returns.
+    """
     global _cache, _cache_epoch, _cache_error_key, _cache_file_seen
     global _cache_identity, _cache_initialized, _cache_last_checked, _cache_path
     with _lock:
@@ -429,3 +442,13 @@ def clear_runtime_settings_cache() -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         _refresh_settings_from_disk()
+        return
+    primer = threading.Thread(
+        target=_refresh_settings_from_disk,
+        name="aura-runtime-settings-prime",
+        daemon=True,
+    )
+    primer.start()
+    primer.join(timeout=5.0)
+    if primer.is_alive():
+        logger.error("Runtime settings prime did not finish inside its budget")

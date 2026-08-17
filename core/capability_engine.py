@@ -1359,7 +1359,7 @@ def _maturity_enforcement_enabled() -> bool:
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _is_transient(self, err: str) -> bool:
+def _is_transient(err: str) -> bool:
     """Checks if an error is likely transient (network, timeout, etc)."""
     return any(x in str(err).lower() for x in ["timeout", "network", "retry", "limit"])
 
@@ -2111,7 +2111,7 @@ class CapabilityEngine(AuraBaseModule):
 
         LIVE, 2026-08-10: 37 of 76 registered skills carry NO trigger patterns —
         improve_own_code, grounded_search, local_reference_search,
-        knowledge_base, internal_sandbox, train_self, spawn_agent among them —
+        knowledge_base, internal_sandbox, train_self, world_forge among them —
         so intent detection could never select them by any phrasing. Naming one
         outright did not work either, because matching was against trigger
         phrases only and no skill's name was a trigger for itself. Half the

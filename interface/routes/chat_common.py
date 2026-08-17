@@ -295,3 +295,7 @@ _TOPIC_STOPWORDS = frozenset(
         "very",
     }
 )
+
+_MAX_USER_SURFACE_CONTINUATIONS = 3
+
+_ORGAN_ABSENCE_STREAKS: dict[str, int] = {}

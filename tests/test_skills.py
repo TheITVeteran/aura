@@ -295,6 +295,25 @@ async def test_computer_use_read_screen_text_reports_accessibility_marker_as_fai
         "_read_screen_text_macos",
         lambda self: "[Accessibility error or UI unresponsive]",
     )
+    # Screen capture is admitted before any text is read, and on a host where
+    # foreground privacy cannot be verified it refuses first — so this test
+    # was asserting an accessibility branch it never reached. Admit the
+    # capture explicitly; refusing it is a different test's subject.
+    from core.security import screen_capture_policy
+
+    class _Admitted:
+        allowed = True
+        public_error = ""
+
+        def to_receipt(self):
+            return {"schema": "aura.security.screen_capture_admission.v1", "allowed": True}
+
+    async def _admit_async():
+        return _Admitted()
+
+    monkeypatch.setattr(
+        screen_capture_policy, "evaluate_screen_capture_admission_async", _admit_async
+    )
 
     result = await computer_use.ComputerUseSkill().execute(
         {"action": "read_screen_text", "target": ""},
