@@ -335,6 +335,21 @@ async def test_mlx_fresh_task_never_borrows_global_surface_receipt():
     }
 
 
+def test_surface_receipt_preserves_a_bounded_rejected_draft():
+    from core.brain.llm.mlx_client import _sanitize_surface_control_receipt
+
+    receipt = _sanitize_surface_control_receipt(
+        {
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_reasons": ["corrupted_language"],
+            "surface_quality_rejected_text": "x" * 9_000,
+        }
+    )
+
+    assert receipt["surface_quality_rejected_text"] == "x" * 8_000
+
+
 def test_worker_rejects_and_repairs_exact_reply_mismatch_before_ipc_success():
     from core.brain.llm.mlx_worker import (
         _repair_live_user_surface_instruction_shape,

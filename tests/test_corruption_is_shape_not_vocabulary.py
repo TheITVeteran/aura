@@ -35,6 +35,11 @@ REAL_ANSWERS = [
     "I use async batching in the runtime to keep latency low.",
     "Honestly? I think preference is the right word for it.",
     "It's 1:24 AM, and I know that from my internal clock.",
+    (
+        "Dijkstra's invariant is final. Dijkstra scans vertices by minimum "
+        "tentative distance. Dijkstra fails on negative weights; Bellman-Ford "
+        "is the correct alternative."
+    ),
 ]
 
 CORRUPTED = [
@@ -64,6 +69,17 @@ def test_shape_beats_vocabulary():
         assert _looks_like_a_word(unknown_but_real)
     for unknown_and_garbage in ("asdkfj", "zxcvbn", "hjklzxcv"):
         assert not _looks_like_a_word(unknown_and_garbage)
+
+
+def test_repetition_of_one_unknown_shape_is_not_independent_corruption_evidence():
+    assert not contains_corrupted_language(
+        "Dijkstra works because Dijkstra finalizes the smallest tentative "
+        "distance; Dijkstra is invalid for negative weights."
+    )
+
+
+def test_one_repeated_keyboard_mash_dominating_output_is_corruption():
+    assert contains_corrupted_language("asdkfj asdkfj asdkfj stop")
 
 
 # ── The verdict may not depend on the host ────────────────────────────────

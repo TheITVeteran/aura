@@ -2956,6 +2956,12 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         receipt["text_mutations"] = normalize_text_mutations(mutations)
         receipt["text_mutation_count"] = len(receipt["text_mutations"])
         receipt.update(summarize_text_mutation_authorship(receipt["text_mutations"]))
+    rejected_text = value.get("surface_quality_rejected_text")
+    if isinstance(rejected_text, str) and rejected_text.strip():
+        # This draft is internal recovery evidence, not a user-facing result.
+        # Bound it independently even though the worker already does so; IPC
+        # input is never trusted merely because another Aura process made it.
+        receipt["surface_quality_rejected_text"] = rejected_text[:8_000]
     return receipt
 
 
@@ -12966,6 +12972,7 @@ class MLXLocalClient:
         died between the alive-check and the queue write, we reboot and
         retry once before giving up.
         """
+        generation_result_sink = kwargs.pop("_generation_result_sink", None)
         self._set_task_surface_control_receipt({})
         request_is_background = bool(kwargs.pop("is_background", False))
         foreground_request = bool(kwargs.pop("foreground_request", False))
@@ -13256,10 +13263,18 @@ class MLXLocalClient:
                 )
                 if _span is not None:
                     _span.set_attribute("result_chars", len(result) if result else 0)
-                if not result:
-                    self._set_task_surface_control_receipt({})
                 return result
         finally:
+            if isinstance(generation_result_sink, dict):
+                # asyncio.wait_for runs this method in a child task. ContextVar
+                # writes are intentionally task-local and therefore cannot be
+                # read by InferenceGate after the await. The request-owned
+                # mutable sink crosses that boundary without exposing another
+                # request's process-wide diagnostics.
+                generation_result_sink.clear()
+                generation_result_sink["surface_control_receipt"] = (
+                    self.get_last_surface_control_receipt()
+                )
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None
             # Read-and-clear, like the deferred verdict above: two generations

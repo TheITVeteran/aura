@@ -155,7 +155,6 @@ _NO_VOWEL_RE = re.compile(rf"^[^{_VOWELS}]+$")
 _IMPOSSIBLE_RUN_RE = re.compile(
     rf"[{_CONSONANTS}]{{5,}}"          # five consonants with no break
     r"|(.)\1{2,}"                      # the same letter three times running
-    rf"|[{_CONSONANTS}]{{4,}}$"        # a consonant wall at the end
 )
 
 
@@ -247,11 +246,23 @@ def contains_corrupted_language(text: str) -> bool:
     # reply. `malformed` is the subset built like nothing in any language. No
     # host resource appears in either.
     malformed = [token for token in checked if not _looks_like_a_word(token)]
-    if len(malformed) >= 2:
+    if not malformed:
+        return False
+
+    # A repeated proper noun is one piece of evidence, not N independent
+    # pieces. In a Dijkstra explanation the old absolute count saw the same
+    # name several times and destroyed the entire technically correct answer.
+    # Requiring diverse malformed shapes plus density still catches collapsed
+    # output while preventing one unfamiliar identifier from becoming fatal.
+    unique_malformed = set(malformed)
+    malformed_ratio = len(malformed) / max(1, len(checked))
+    if len(unique_malformed) >= 2 and malformed_ratio >= 0.20:
         return True
-    # One odd token is a typo, a serial number, or a name — never grounds for
-    # destroying an answer. It takes a reply that is mostly malformed.
-    return len(malformed) >= 1 and (len(malformed) / max(1, len(checked))) >= 0.20
+
+    # A single repeated keyboard mash can still be decisive, but only when it
+    # dominates the visible language. Normal prose that repeatedly names one
+    # algorithm, person, product, or acronym must survive.
+    return len(malformed) >= 2 and malformed_ratio >= 0.60
 
 
 @dataclass(frozen=True)

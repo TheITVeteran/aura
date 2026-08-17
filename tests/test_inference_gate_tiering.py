@@ -3284,6 +3284,46 @@ def test_inference_gate_preserves_failed_surface_receipt_as_semantic_rejection()
     assert metadata["surface_control_receipt"]["surface_quality_gate_attempts"] == 3
 
 
+@pytest.mark.asyncio
+async def test_inference_gate_receives_quality_rejection_across_wait_for_task_boundary():
+    gate = InferenceGate()
+
+    class _Client:
+        async def generate_text_async(self, **kwargs):
+            sink = kwargs["_generation_result_sink"]
+            await asyncio.sleep(0)
+            sink["surface_control_receipt"] = {
+                "surface_quality_gate_enabled": True,
+                "surface_quality_gate_passed": False,
+                "surface_quality_gate_reasons": ["corrupted_language"],
+                "surface_quality_rejected_text": "valid draft held for review",
+            }
+            return None
+
+        @staticmethod
+        def get_last_surface_control_receipt():
+            # This is exactly what the parent task sees from a ContextVar.
+            return {}
+
+    result = await gate._generate_with_client(
+        _Client(),
+        "Explain Dijkstra completely.",
+        "",
+        [],
+        get_deadline(5.0),
+        "Cortex",
+        foreground_request=True,
+    )
+
+    assert result is None
+    metadata = gate.get_last_generation_metadata()
+    assert metadata["error"] == "surface_quality_rejected"
+    assert metadata["failure_reasons"] == ["corrupted_language"]
+    assert gate.get_last_surface_control_receipt()[
+        "surface_quality_rejected_text"
+    ] == "valid draft held for review"
+
+
 def test_inference_gate_records_stabilization_without_prior_provider_receipt():
     gate = InferenceGate()
     gate._clear_last_generation_metadata()

@@ -6115,6 +6115,8 @@ class InferenceGate:
             "foreground_request": foreground_request,
             "owner_label": label,
         }
+        generation_result_sink: dict[str, Any] = {}
+        gen_kwargs["_generation_result_sink"] = generation_result_sink
         if temperature is not None:
             gen_kwargs["temp"] = temperature
         # Explicit parameters are the routing/identity/deadline authority at
@@ -6227,6 +6229,17 @@ class InferenceGate:
             output_contract=(
                 dict(kwargs.get("requested_output_contract"))
                 if isinstance(kwargs.get("requested_output_contract"), dict)
+                else None
+            ),
+            generation_metadata=(
+                {
+                    "surface_control_receipt": dict(
+                        generation_result_sink.get("surface_control_receipt") or {}
+                    )
+                }
+                if isinstance(
+                    generation_result_sink.get("surface_control_receipt"), dict
+                )
                 else None
             ),
         )
