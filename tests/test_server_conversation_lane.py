@@ -1699,8 +1699,8 @@ def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace
 
 
 def test_foreground_timeout_for_cold_or_recovering_lane(monkeypatch):
-    from interface import server as server_module
     from core.brain.llm import measured_admission
+    from interface import server as server_module
 
     monkeypatch.setattr(
         measured_admission,
@@ -1722,6 +1722,36 @@ def test_foreground_timeout_for_cold_or_recovering_lane(monkeypatch):
         elapsed_s=20.0,
     ) == 84.0
     assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 206.0
+
+
+def test_dense_foreground_timeout_accepts_measured_32b_completion_cost(monkeypatch):
+    from core.brain.llm import measured_admission
+    from core.runtime.structured_input import answer_surface_token_floor
+    from interface import server as server_module
+
+    observed = {}
+
+    def _deadline(**kwargs):
+        observed.update(kwargs)
+        return 432.0, measured_admission.Confidence.MEASURED, 8
+
+    monkeypatch.setattr(measured_admission, "recommended_foreground_deadline", _deadline)
+    message = (
+        "Explain Dijkstra in one complete response. Include: (1) the invariant, "
+        "(2) numbered pseudocode, (3) a worked example with at least five edges, "
+        "(4) heap and array complexity, and (5) the negative-weight failure and alternative."
+    )
+
+    outer = server_module._foreground_timeout_for_lane(
+        {"conversation_ready": True, "state": "ready"}, message
+    )
+
+    assert outer == 432.0
+    assert observed["decode_tokens"] == answer_surface_token_floor(message)
+    assert observed["maximum_seconds"] == pytest.approx(484.0)
+    assert server_module._desktop_required_cognitive_budget(
+        foreground_timeout=outer
+    ) == pytest.approx(428.0)
 
 
 def test_reply_topicality_flags_unbridged_relevance_challenge():

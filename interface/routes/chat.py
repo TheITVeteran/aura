@@ -65,6 +65,7 @@ from core.memory.session_pin_ledger import (
 )
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime import resource_psutil as psutil
+from core.runtime import response_policy
 from core.runtime.chat_delivery_journal import (
     AdmissionKind,
     ChatDeliveryFenceLost,
@@ -924,7 +925,7 @@ _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    360.0,
+    response_policy.USER_FACING_COMPLETION_DEADLINE_MAX_S,
     minimum=60.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(

@@ -7,6 +7,12 @@ from core.runtime.service_registry import get_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 
+# Shared hard bound for a caller-admitted user-facing completion. Compact and
+# background lanes apply smaller policy limits; this ceiling exists so every
+# foreground owner agrees on the same maximum rather than shortening another
+# layer's measured deadline.
+USER_FACING_COMPLETION_DEADLINE_MAX_S = 480.0
+
 _LOW_VALUE_BACKGROUND_PREFIXES = (
     "[identity refresh:",
     "researching ",

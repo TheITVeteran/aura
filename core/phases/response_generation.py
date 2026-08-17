@@ -783,6 +783,28 @@ class ResponseGenerationPhase(BasePhase):
             return 210.0
         return 180.0
 
+    @classmethod
+    def _surface_request_timeout(
+        cls,
+        *,
+        is_background: bool,
+        deep_handoff: bool,
+        token_budget: int,
+    ) -> float:
+        request_timeout = cls._request_timeout(
+            is_background=is_background,
+            deep_handoff=deep_handoff,
+        )
+        if is_background:
+            return request_timeout
+        return max(
+            request_timeout,
+            min(
+                response_policy.USER_FACING_COMPLETION_DEADLINE_MAX_S,
+                45.0 + (0.34 * max(1, int(token_budget))),
+            ),
+        )
+
     @staticmethod
     def _bounded_request_timeout(
         runtime_context: dict[str, Any],
@@ -1769,19 +1791,11 @@ class ResponseGenerationPhase(BasePhase):
             }
             amplifier_promotion_authority = "none"
             try:
-                request_timeout = self._request_timeout(
+                request_timeout = self._surface_request_timeout(
                     is_background=is_background,
                     deep_handoff=deep_handoff,
+                    token_budget=token_budget,
                 )
-                if not is_background:
-                    # The static 180-second generation window was calibrated
-                    # for short chat.  Size permission to the answer surface;
-                    # the owning CognitiveEngine deadline remains the hard
-                    # bound and natural EOS returns immediately.
-                    request_timeout = max(
-                        request_timeout,
-                        min(360.0, 45.0 + (0.34 * float(token_budget))),
-                    )
                 request_timeout = self._bounded_request_timeout(
                     runtime_context,
                     request_timeout,

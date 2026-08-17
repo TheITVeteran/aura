@@ -17,7 +17,7 @@ from core.goals.objective_lifecycle import (
     normalize_objective_origin,
 )
 from core.memory.retention_policy import working_history_retention_policy
-from core.runtime import background_policy
+from core.runtime import background_policy, response_policy
 from core.runtime.errors import record_degradation
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.pipeline_blueprint import (
@@ -85,6 +85,12 @@ _COGNITIVE_ENGINE_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+
+# A user-facing caller may admit a larger, measured completion surface. The
+# former universal 240-second cap silently shortened that admitted deadline;
+# on the resident 32B a 2,560-token technical answer then had no possible path
+# to completion. Background and unowned cycles retain the original ceiling.
+_DEFAULT_COGNITIVE_CYCLE_MAX_S = 240.0
 
 
 class _RuntimeServiceAdapter:
@@ -2789,7 +2795,10 @@ class CognitiveEngine:
                 cycle_timeout = 90.0
             else:
                 cycle_timeout = 240.0
-        cycle_timeout = max(8.0, min(240.0, cycle_timeout))
+        cycle_timeout_cap = _DEFAULT_COGNITIVE_CYCLE_MAX_S
+        if explicit_timeout is not None and self._is_user_facing_origin(origin):
+            cycle_timeout_cap = response_policy.USER_FACING_COMPLETION_DEADLINE_MAX_S
+        cycle_timeout = max(8.0, min(cycle_timeout_cap, cycle_timeout))
         cycle_deadline_at = time.monotonic() + cycle_timeout
         context["cognitive_cycle_deadline_monotonic"] = cycle_deadline_at
 
@@ -4033,7 +4042,18 @@ class CognitiveEngine:
         # Preserve it unless memory pressure is truly critical. The MLX gate
         # keeps 64/32-token critical and emergency caps hard.
         completion_floor = max_tokens
-        request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
+        request_timeout_cap = (
+            response_policy.USER_FACING_COMPLETION_DEADLINE_MAX_S
+            if shape_wants_room
+            else 180.0
+        )
+        request_timeout = max(
+            12.0,
+            min(
+                max(12.0, float(timeout_s or 32.0) - 5.0),
+                request_timeout_cap,
+            ),
+        )
         if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             request_timeout = min(request_timeout, 90.0)
         if capability_inventory_contract:

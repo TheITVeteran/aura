@@ -499,13 +499,14 @@ async def test_cognitive_engine_sizes_dense_technical_answer_from_visible_work(m
             "max_tokens": 896,
         },
         is_background=False,
-        timeout_s=240.0,
+        timeout_s=432.0,
     )
 
     assert thought is not None
     assert captured["max_tokens"] == 2560
     assert captured["user_surface_completion_floor"] == 2560
     assert captured["reply_needs_room"] is True
+    assert captured["timeout"] == pytest.approx(427.0)
 
 
 @pytest.mark.asyncio

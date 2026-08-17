@@ -51,6 +51,21 @@ def test_foreground_budgets_are_bounded_for_live_desktop_lane():
     ) == 210.0
 
 
+def test_dense_foreground_generation_inherits_the_admitted_completion_window():
+    from core.phases.response_generation import ResponseGenerationPhase
+
+    assert ResponseGenerationPhase._surface_request_timeout(
+        is_background=False,
+        deep_handoff=False,
+        token_budget=2560,
+    ) == 480.0
+    assert ResponseGenerationPhase._surface_request_timeout(
+        is_background=True,
+        deep_handoff=False,
+        token_budget=2560,
+    ) == 10.0
+
+
 def test_dialogue_corruption_filter_catches_known_live_glitches():
     from core.phases.dialogue_policy import contains_corrupted_language
 
