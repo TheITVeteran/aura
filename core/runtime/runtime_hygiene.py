@@ -1683,6 +1683,18 @@ class RuntimeHygieneManager:
         rogue_children = 0
         owned_descendants = 0
         rogue_samples: list[dict[str, Any]] = []
+        live_process_ids: set[int] | None = None
+        try:
+            pid_observation = self.resource_observer.process_ids()
+            if bool(getattr(pid_observation, "available", False)):
+                live_process_ids = {
+                    int(pid)
+                    for pid in tuple(getattr(pid_observation, "pids", ()) or ())
+                    if int(pid) > 0
+                }
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("runtime_hygiene", exc)
+            logger.debug("RuntimeHygiene: live PID reconciliation skipped: %s", exc)
         try:
             parent_pid = int(os.getpid())
             active_children = [
@@ -1703,6 +1715,19 @@ class RuntimeHygieneManager:
             for child in active_children:
                 child_pid = _process_pid(child)
                 if child_pid in active_registered_pids or _is_python_resource_tracker_process(child):
+                    continue
+                # The enriched host process table is deliberately cached for
+                # up to two seconds. A short-lived governed command can finish
+                # and leave the process ledger before that cached row expires,
+                # which used to turn successful git/osascript probes into
+                # false rogue-child alerts. Reconcile only unregistered rows
+                # against the cheap, uncached PID census. If the census itself
+                # is unavailable, retain the fail-closed cached observation.
+                if (
+                    child_pid > 0
+                    and live_process_ids is not None
+                    and child_pid not in live_process_ids
+                ):
                     continue
                 if (
                     _process_ppid(child) == int(os.getpid())

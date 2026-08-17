@@ -476,6 +476,33 @@ def test_runtime_hygiene_keeps_unowned_child_process_fail_closed(resource_observ
     assert "unexpected-worker" in summary["rogue_samples"][0]["name"]
 
 
+def test_runtime_hygiene_drops_completed_children_from_cached_process_table(
+    resource_observer,
+    monkeypatch,
+):
+    from core.runtime.resource_observation import ProcessIdsObservation
+
+    _observe_children(resource_observer, [{
+        "pid": 62004,
+        "cmdline": ["git", "--no-optional-locks", "status", "--porcelain=v1"],
+        "name": "git",
+    }])
+    monkeypatch.setattr(
+        resource_observer,
+        "process_ids",
+        lambda: ProcessIdsObservation(
+            provenance=resource_observer.provenance,
+            pids=(),
+        ),
+    )
+    hygiene = RuntimeHygieneManager()
+
+    summary = hygiene._process_summary()
+
+    assert summary["rogue_child_processes"] == 0
+    assert summary["rogue_samples"] == []
+
+
 def test_runtime_hygiene_audit_does_not_auto_adopt_unknown_late_child(
     resource_observer,
 ):
