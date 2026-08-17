@@ -94,9 +94,16 @@ def test_nonsense_integers_are_rejected_rather_than_clamped():
 
 
 def test_numeric_strings_are_accepted():
-    result = validate_request_context({"temperature": "0.8", "max_tokens": "512"})
+    result = validate_request_context(
+        {
+            "temperature": "0.8",
+            "max_tokens": "512",
+            "user_surface_completion_floor": "384",
+        }
+    )
     assert result.context["temperature"] == pytest.approx(0.8)
     assert result.context["max_tokens"] == 512
+    assert result.context["user_surface_completion_floor"] == 384
 
 
 def test_undeclared_keys_are_reported_not_forwarded():

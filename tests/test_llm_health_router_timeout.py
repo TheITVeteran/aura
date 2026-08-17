@@ -123,6 +123,15 @@ class _KwargRecordingGenerateClient:
         return "ready"
 
 
+class _ContextRecordingGenerateClient:
+    def __init__(self):
+        self.calls = []
+
+    async def generate(self, prompt: str, *, context=None, **kwargs):
+        self.calls.append({"prompt": prompt, "context": dict(context or {}), **kwargs})
+        return "ready"
+
+
 class _HangingAbortableClient:
     def __init__(self):
         self.abort_reasons = []
@@ -305,6 +314,37 @@ async def test_foreground_local_router_forwards_bounded_cooperative_timeout():
 
 
 @pytest.mark.asyncio
+async def test_router_preserves_user_surface_completion_floor_in_generate_context():
+    router = HealthAwareLLMRouter()
+    client = _ContextRecordingGenerateClient()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="test",
+        is_local=True,
+        tier="local",
+        client=client,
+    )
+
+    result = await router.generate_with_metadata(
+        "answer this foreground turn completely",
+        timeout=30.0,
+        prefer_tier="primary",
+        origin="user",
+        purpose="chat",
+        foreground_request=True,
+        max_tokens=512,
+        user_surface_completion_floor=512,
+        clean_user_surface_contract=True,
+        skip_runtime_payload=True,
+        allow_cloud_fallback=False,
+    )
+
+    assert result["ok"] is True
+    assert client.calls[0]["context"]["user_surface_completion_floor"] == 512
+
+
+@pytest.mark.asyncio
 async def test_router_wall_clock_watchdog_rejects_noncooperative_late_success(monkeypatch):
     router = HealthAwareLLMRouter()
     client = _NonCooperativeBlockingClient()
@@ -341,11 +381,11 @@ async def test_public_think_serializes_full_messages_for_clients_without_kwargs(
     router = HealthAwareLLMRouter()
     client = _PromptOnlyClient()
     router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-test",
-        is_local=False,
-        tier="api_fast",
+        name="Cortex",
+        url="internal",
+        model="local-test",
+        is_local=True,
+        tier="local",
         client=client,
     )
 
@@ -357,7 +397,7 @@ async def test_public_think_serializes_full_messages_for_clients_without_kwargs(
             {"role": "user", "content": "Search the web for the song and tell me what it means."},
         ],
         origin="user",
-        prefer_tier="api_fast",
+        prefer_tier="primary",
     )
 
     assert result == "ready"
@@ -402,18 +442,18 @@ async def test_call_endpoint_prefers_generate_text_async_over_generate_for_dual_
 async def test_router_think_failsofts_when_client_returns_no_text():
     router = HealthAwareLLMRouter()
     router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-test",
-        is_local=False,
-        tier="api_fast",
+        name="Cortex",
+        url="internal",
+        model="local-test",
+        is_local=True,
+        tier="local",
         client=_EmptyClient(),
     )
 
     result = await router.think(
         prompt="With me?",
         origin="user",
-        prefer_tier="api_fast",
+        prefer_tier="primary",
     )
 
     assert result == "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
@@ -462,9 +502,8 @@ async def test_quality_rejection_does_not_trip_healthy_local_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_router_recovers_to_cloud_when_foreground_local_lane_returns_no_text():
+async def test_router_does_not_recover_to_a_removed_remote_provider():
     router = HealthAwareLLMRouter()
-    cloud = _TimeoutRecordingClient()
     router.register(
         name="Cortex",
         url="internal",
@@ -473,22 +512,13 @@ async def test_router_recovers_to_cloud_when_foreground_local_lane_returns_no_te
         tier="local",
         client=_EmptyClient(),
     )
-    router.register(
-        name="Gemini-Fast",
-        url="cloud",
-        model="gemini-test",
-        is_local=False,
-        tier="api_fast",
-        client=cloud,
-    )
 
     result = await router.think(
         prompt="With me?",
         origin="user",
     )
 
-    assert result == "ready"
-    assert cloud.calls
+    assert result == "I lost the reply lane for a moment. Ask that again and I'll answer cleanly."
 
 
 def test_missing_origin_defaults_to_background_when_purpose_is_not_user_facing():

@@ -3084,6 +3084,7 @@ async def test_think_forwards_user_surface_validation_prompt_to_generate():
         origin="desktop_quick_user",
         prefer_tier="primary",
         clean_user_surface_contract=True,
+        user_surface_completion_floor=512,
         user_surface_validation_prompt="With me?",
         runtime_fact_status_contract=True,
         grounded_runtime_status_contract=True,
@@ -3095,6 +3096,7 @@ async def test_think_forwards_user_surface_validation_prompt_to_generate():
 
     context = gate.generate.await_args.kwargs["context"]
     assert context["clean_user_surface_contract"] is True
+    assert context["user_surface_completion_floor"] == 512
     assert context["user_surface_validation_prompt"] == "With me?"
     assert context["runtime_fact_status_contract"] is True
     assert context["grounded_runtime_status_contract"] is True

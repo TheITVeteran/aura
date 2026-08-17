@@ -4088,6 +4088,7 @@ class HealthAwareLLMRouter:
                                 "runtime_fact_status_contract",
                                 "grounded_runtime_status_contract",
                                 "clean_user_surface_contract",
+                                "user_surface_completion_floor",
                                 "user_surface_validation_prompt",
                                 "user_surface_prompt_binding",
                                 "user_surface_grounding_evidence",

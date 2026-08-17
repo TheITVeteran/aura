@@ -131,6 +131,14 @@ REQUEST_FIELDS: dict[str, Field_] = {
     "turn_sensory_evidence": Field_(Kind.OPAQUE),
     # ── sampling ────────────────────────────────────────────────────────
     "max_tokens": Field_(Kind.POSITIVE_INT, minimum=1, maximum=1_000_000),
+    # A user-surface completion floor is distinct from the requested cap.
+    # Adaptive pressure may lower ordinary generation budgets, but it must not
+    # silently turn a complete foreground answer into a clipped one.  Declaring
+    # it here keeps the value typed across InferenceGate.think() rather than
+    # dropping it as an unknown provider kwarg.
+    "user_surface_completion_floor": Field_(
+        Kind.POSITIVE_INT, minimum=1, maximum=1_000_000
+    ),
     "temperature": Field_(Kind.FLOAT, minimum=0.0, maximum=2.0),
     "temp": Field_(Kind.FLOAT, minimum=0.0, maximum=2.0),
     "top_p": Field_(Kind.UNIT_FLOAT),
