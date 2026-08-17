@@ -5196,21 +5196,24 @@ class MLXLocalClient:
         if not text:
             return
         try:
+            from core.conversation.surface_disposition import UNSPEAKABLE_REASONS
             from core.runtime.turn_outcome import current_turn
 
             outcome = current_turn()
             if outcome is None:
                 return
+            bounded_reasons = [str(reason).strip()[:120] for reason in reasons if str(reason).strip()][:8]
+            recoverable = not bool(set(bounded_reasons) & set(UNSPEAKABLE_REASONS))
             candidate_id = outcome.record_candidate(
                 text,
                 source="mlx_worker.surface_quality_rejected",
-                metadata={"worker_quality_reasons": list(reasons)[:8]},
+                metadata={"worker_quality_reasons": bounded_reasons},
             )
             outcome.suppress_candidate(
                 candidate_id,
                 gate="mlx_worker.surface_quality",
-                reasons=list(reasons)[:8],
-                recoverable=True,
+                reasons=bounded_reasons,
+                recoverable=recoverable,
             )
         except Exception:  # noqa: BLE001 — salvage must never break the turn
             logger.debug("could not record suppressed worker draft", exc_info=True)
@@ -13739,40 +13742,29 @@ class MLXLocalClient:
                         "deadline_exceeded",
                     }
                 )
-                if not text and not cooperative_stop:
-                    quality_rejection_reasons = _surface_quality_rejection_reasons(
-                        self.get_last_surface_control_receipt()
+                quality_rejection_reasons = _surface_quality_rejection_reasons(
+                    self.get_last_surface_control_receipt()
+                )
+                if quality_rejection_reasons and (not text or cooperative_stop):
+                    # The worker decoded a draft but could not make it directly
+                    # servable before this request ended. Keep it bound to the
+                    # turn as suppressed recovery evidence; an empty result
+                    # without that custody is indistinguishable from a model
+                    # failure and needlessly opens the Cortex circuit.
+                    self._preserve_lane_after_surface_quality_rejection()
+                    self._record_suppressed_draft(
+                        _rejected_surface_draft(
+                            self.get_last_surface_control_receipt()
+                        ),
+                        quality_rejection_reasons,
                     )
-                    if quality_rejection_reasons:
-                        # The worker decoded and deliberately rejected its own
-                        # drafts. Treating that as cache corruption used to
-                        # repeat the whole request, recycle a healthy 32B
-                        # process, and open the Cortex circuit. Preserve the
-                        # receipt and leave the lane resident for the caller's
-                        # typed recovery policy instead.
-                        self._preserve_lane_after_surface_quality_rejection()
-                        # Hand the rejected draft to the turn before giving up
-                        # on it. Returning None alone reads downstream as
-                        # "client returned no text", which opens the Cortex
-                        # circuit and — for a sovereign turn, where lower-lane
-                        # fallback is refused — ends the turn with a canned
-                        # apology while an answer existed the whole time.
-                        #
-                        # Recorded as SUPPRESSED, so the gates still hold: it
-                        # is served only by the recovery path, only when the
-                        # alternative is nothing at all.
-                        self._record_suppressed_draft(
-                            _rejected_surface_draft(
-                                self.get_last_surface_control_receipt()
-                            ),
-                            quality_rejection_reasons,
-                        )
-                        logger.warning(
-                            "🛡️ [MLX] Worker rejected the visible draft for semantic "
-                            "quality (%s); preserving the resident lane.",
-                            ",".join(quality_rejection_reasons),
-                        )
-                        return None
+                    logger.warning(
+                        "🛡️ [MLX] Worker rejected the visible draft for semantic "
+                        "quality (%s); preserving the resident lane.",
+                        ",".join(quality_rejection_reasons),
+                    )
+                    return None
+                if not text and not cooperative_stop:
                     # Empty warmup can prove process/shader liveness, but it
                     # cannot prove conversation readiness. Keep the lane out of
                     # "ready" until a visible generation succeeds.

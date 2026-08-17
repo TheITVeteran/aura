@@ -66,16 +66,22 @@ class TestCancellationHonoursTerminalContracts:
     def test_the_cancel_path_applies_the_refusals(self):
         from core.brain.llm import mlx_worker
 
-        source = inspect.getsource(mlx_worker)
-        block = source.split("Soft-cancel honored for job seq", 1)[0][-2500:]
+        source = inspect.getsource(mlx_worker._mlx_worker_loop)
+        block = source.split("if soft_cancelled or deadline_hit:", 1)[1].split(
+            "if proof_evaluation_contract and _proof_evaluation_fragment_incomplete",
+            1,
+        )[0]
         assert "_terminal_contract_refusal(" in block
         assert 'response_text = ""' in block
 
     def test_a_refused_cancelled_proof_marks_the_contract_failed(self):
         from core.brain.llm import mlx_worker
 
-        source = inspect.getsource(mlx_worker)
-        block = source.split("Soft-cancel honored for job seq", 1)[0][-2500:]
+        source = inspect.getsource(mlx_worker._mlx_worker_loop)
+        block = source.split("if soft_cancelled or deadline_hit:", 1)[1].split(
+            "if proof_evaluation_contract and _proof_evaluation_fragment_incomplete",
+            1,
+        )[0]
         assert "proof_contract_incomplete = True" in block
 
     def test_the_helper_is_side_effect_free(self):

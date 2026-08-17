@@ -2206,6 +2206,48 @@ def _route_telemetry_sanitizer_draft(
     return text, reasons
 
 
+def _route_cooperative_partial_draft(
+    job: dict[str, Any],
+    text: str,
+    surface_control_state: dict[str, Any],
+    *,
+    is_proof: bool,
+) -> str:
+    """Route a deadline/cancel partial through the same owned surface lane.
+
+    Cooperative termination skips model retries, but it must not skip draft
+    custody. A live user-surface draft that trips the telemetry sanitizer is
+    carried as rejected evidence for the caller's bounded recovery path. A
+    strict, proof, or non-user-surface draft has no such owner and remains
+    withheld.
+    """
+
+    authored_surface_repair_available = _surface_quality_gate_enabled(job)
+    routed, reasons = _route_telemetry_sanitizer_draft(
+        text,
+        is_proof=is_proof,
+        authored_surface_repair_available=authored_surface_repair_available,
+    )
+    bounded_reasons = reasons[:8]
+    surface_control_state["telemetry_sanitizer_reasons"] = bounded_reasons
+    if bounded_reasons and authored_surface_repair_available:
+        existing = surface_control_state.get("surface_quality_gate_reasons")
+        merged = [
+            str(reason).strip()[:120]
+            for reason in (
+                list(existing) if isinstance(existing, (list, tuple)) else []
+            )
+            if str(reason).strip()
+        ]
+        merged.extend(bounded_reasons)
+        surface_control_state["surface_quality_gate_passed"] = False
+        surface_control_state["surface_quality_gate_reasons"] = list(
+            dict.fromkeys(merged)
+        )[:8]
+        surface_control_state["surface_quality_rejected_text"] = str(text or "")[:8_000]
+    return routed
+
+
 _ARTIFACT_REQUEST_RE = re.compile(
     r"```(?:python|json|csv|yaml|toml|sql|html|css|javascript|typescript)?"
     r"|code block|return only(?: the)? complete|return the fixed config"
@@ -7024,15 +7066,16 @@ def _mlx_worker_loop(
                                         # transforms still run — a cancelled partial
                                         # must not ship internal leakage or an
                                         # unnormalized strict fragment.
-                                        sanitized_partial = _sanitize_telemetry_leakage(
+                                        response_text = _route_cooperative_partial_draft(
+                                            job,
                                             response_text,
+                                            surface_control_state,
                                             is_proof=(
                                                 proof_evaluation_contract
                                                 or strict_answer_contract
                                                 or strict_value_contract
                                             ),
                                         )
-                                        response_text = sanitized_partial or ""
                                         if sentinel_ontology_aborted:
                                             response_text = ""
                                         if response_text:

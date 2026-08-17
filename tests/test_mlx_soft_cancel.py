@@ -248,6 +248,51 @@ def test_soft_cancelled_ok_response_bypasses_empty_telemetry_and_retries():
     )
 
 
+def test_cooperative_quality_rejection_is_preserved_before_partial_return():
+    import inspect
+
+    source = inspect.getsource(mlx_client_mod.MLXLocalClient._generate_inner)
+    idx_rejection = source.find(
+        "if quality_rejection_reasons and (not text or cooperative_stop):"
+    )
+    idx_cancel = source.find("if cooperative_stop:")
+
+    assert 0 < idx_rejection < idx_cancel
+    rejection_block = source[idx_rejection:idx_cancel]
+    assert "_record_suppressed_draft(" in rejection_block
+    assert "_preserve_lane_after_surface_quality_rejection()" in rejection_block
+
+
+def test_suppressed_cooperative_partial_respects_unspeakable_boundary():
+    from core.runtime.turn_outcome import TurnOutcome, bind_turn
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    with bind_turn(TurnOutcome("cancelled-partial", origin="test")) as outcome:
+        client._record_suppressed_draft(
+            "PROCEEDING TOOL_ACTION",
+            ["backend_symbolic_surface_leak"],
+        )
+
+    candidate = outcome.candidates()[0]
+    assert candidate.suppressed is not None
+    assert candidate.suppressed.recoverable is False
+
+
+def test_suppressed_repairable_partial_remains_recoverable():
+    from core.runtime.turn_outcome import TurnOutcome, bind_turn
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    with bind_turn(TurnOutcome("cancelled-partial", origin="test")) as outcome:
+        client._record_suppressed_draft(
+            "The answer is complete apart from the final sentence.",
+            ["truncated_tail"],
+        )
+
+    candidate = outcome.candidates()[0]
+    assert candidate.suppressed is not None
+    assert candidate.suppressed.recoverable is True
+
+
 # ── warm-lane preservation on abandoned requests ───────────────────────
 #
 # Historically every abandoned request recycled the worker even when it was

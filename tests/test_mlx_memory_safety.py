@@ -1247,6 +1247,82 @@ def test_sanitizer_still_destroys_unspeakable_draft_without_owned_repair_lane():
     assert reasons == ["backend_symbolic_surface_leak"]
 
 
+def test_cancelled_live_draft_preserves_typed_repair_custody():
+    from core.brain.llm.mlx_worker import _route_cooperative_partial_draft
+
+    draft = "I can answer this, but ExistenceHash must not reach the visible surface."
+    state = {
+        "surface_quality_gate_enabled": True,
+        "surface_quality_gate_passed": False,
+        "surface_quality_gate_reasons": [],
+        "telemetry_sanitizer_reasons": [],
+    }
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": "Explain the result.",
+    }
+
+    routed = _route_cooperative_partial_draft(
+        job,
+        draft,
+        state,
+        is_proof=False,
+    )
+
+    assert routed == draft
+    assert state["telemetry_sanitizer_reasons"] == [
+        "backend_symbolic_surface_leak"
+    ]
+    assert state["surface_quality_gate_reasons"] == [
+        "backend_symbolic_surface_leak"
+    ]
+    assert state["surface_quality_rejected_text"] == draft
+    assert state["surface_quality_gate_passed"] is False
+
+
+def test_cancelled_strict_draft_remains_withheld_without_repair_owner():
+    from core.brain.llm.mlx_worker import _route_cooperative_partial_draft
+
+    state = {
+        "surface_quality_gate_enabled": False,
+        "surface_quality_gate_passed": True,
+    }
+    routed = _route_cooperative_partial_draft(
+        {"strict_answer_contract": True},
+        "PROCEEDING TOOL_ACTION",
+        state,
+        is_proof=True,
+    )
+
+    assert routed == ""
+    assert state["telemetry_sanitizer_reasons"] == [
+        "backend_symbolic_surface_leak"
+    ]
+    assert "surface_quality_rejected_text" not in state
+
+
+def test_cancelled_clean_live_partial_remains_available_for_completion():
+    from core.brain.llm.mlx_worker import _route_cooperative_partial_draft
+
+    state = {
+        "surface_quality_gate_enabled": True,
+        "surface_quality_gate_passed": False,
+    }
+    draft = "Dijkstra's invariant is that each settled distance is final."
+
+    assert _route_cooperative_partial_draft(
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "Explain Dijkstra's algorithm.",
+        },
+        draft,
+        state,
+        is_proof=False,
+    ) == draft
+    assert state["telemetry_sanitizer_reasons"] == []
+    assert "surface_quality_rejected_text" not in state
+
+
 def test_live_surface_quality_retry_preserves_valid_prefill_cache():
     from pathlib import Path
 
