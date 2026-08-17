@@ -158,28 +158,35 @@ main_loop: asyncio.AbstractEventLoop | None = None
 _event_bridge_task: asyncio.Task | None = None
 
 
-async def _prewarm_embeddings_after_cortex_ready(
+async def _prewarm_chat_dependencies_after_cortex_ready(
     *,
     readiness_timeout_s: float = 180.0,
     poll_interval_s: float = 0.5,
 ) -> None:
-    """Move semantic-memory model loading off the first user chat turn."""
+    """Materialize the complete foreground read path before advertising chat."""
+
+    gate = ServiceContainer.get("inference_gate", default=None)
+    set_ready = getattr(gate, "set_chat_dependencies_ready", None)
+    if callable(set_ready):
+        set_ready(False, blocker="chat_dependencies_warming")
 
     deadline = asyncio.get_running_loop().time() + max(1.0, readiness_timeout_s)
     while not is_shutdown_requested():
         gate = ServiceContainer.get("inference_gate", default=None)
-        get_status = getattr(gate, "get_conversation_status", None)
+        get_status = getattr(gate, "get_cortex_readiness_status", None)
+        if not callable(get_status):
+            get_status = getattr(gate, "get_conversation_status", None)
         if callable(get_status):
             try:
                 lane = get_status()
             except _SERVER_BOUNDARY_ERRORS as exc:
-                logger.debug("Embedding prewarm readiness probe deferred: %s", exc)
+                logger.debug("Chat dependency warmup readiness probe deferred: %s", exc)
             else:
                 if isinstance(lane, dict) and lane.get("conversation_ready") is True:
                     break
         if asyncio.get_running_loop().time() >= deadline:
             logger.warning(
-                "Embedding prewarm skipped because Cortex did not become "
+                "Chat dependency warmup skipped because Cortex did not become "
                 "conversation-ready within %.1fs.",
                 readiness_timeout_s,
             )
@@ -188,16 +195,51 @@ async def _prewarm_embeddings_after_cortex_ready(
     if is_shutdown_requested():
         return
 
-    from core.memory.embedding_runtime import prewarm_shared_embedding_runtime
-
     started = time.perf_counter()
-    snapshot = await asyncio.to_thread(prewarm_shared_embedding_runtime)
+    try:
+        from core.consciousness.unified_self import get_unified_self
+        from core.memory.embedding_runtime import prewarm_shared_embedding_runtime
+        from core.memory.profile_manager import ProfileManager
+        from core.self.self_condition import build_self_condition_projection
+
+        # The identity readers are independent and cheap once materialized.
+        # Load them concurrently, while model-backed semantic memory starts in
+        # its own worker.  The self-condition projection follows because it
+        # consumes identity/body authorities initialized by those readers.
+        embedding_task = asyncio.create_task(
+            asyncio.to_thread(prewarm_shared_embedding_runtime)
+        )
+        profile_task = asyncio.create_task(ProfileManager.get_instance())
+        unified_self_task = asyncio.create_task(get_unified_self())
+        _, _, snapshot = await asyncio.gather(
+            profile_task,
+            unified_self_task,
+            embedding_task,
+        )
+        projection = await asyncio.to_thread(build_self_condition_projection)
+        if not getattr(projection, "evidence_id", ""):
+            raise RuntimeError("self-condition warmup produced no evidence identity")
+    except _SERVER_BOUNDARY_ERRORS as exc:
+        if callable(set_ready):
+            set_ready(False, blocker="chat_dependencies_failed")
+        record_degradation(
+            "server.chat_dependency_warmup",
+            exc,
+            severity="degraded",
+            action="kept conversation readiness blocked after dependency warmup failed",
+        )
+        logger.error("Chat dependency warmup failed: %s", exc)
+        return
+
+    if callable(set_ready):
+        set_ready(True)
     logger.info(
-        "Semantic embedding runtime prewarmed after Cortex readiness in %.2fs "
-        "(dimensions=%s, leases=%s).",
+        "Foreground chat dependencies prewarmed after Cortex readiness in %.2fs "
+        "(embedding_dimensions=%s, leases=%s, condition_evidence=%s).",
         time.perf_counter() - started,
         snapshot.get("vector_dimensions"),
         snapshot.get("lease_count"),
+        str(getattr(projection, "evidence_id", ""))[:16],
     )
 
 
@@ -526,8 +568,8 @@ async def lifespan(app: FastAPI):
     system_routes.start_health_read_model()
     if not is_gui_proxy:
         _spawn_server_task(
-            _prewarm_embeddings_after_cortex_ready(),
-            name="embedding_runtime_prewarm",
+            _prewarm_chat_dependencies_after_cortex_ready(),
+            name="chat_dependency_prewarm",
         )
     from interface.routes.chat import start_chat_turn_memory_log_worker
 

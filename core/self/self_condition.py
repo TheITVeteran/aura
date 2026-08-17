@@ -393,14 +393,51 @@ _UNSUPPORTED_SELF_CONDITION_HEALTH_SUMMARY_RE = re.compile(
     r"\b(?:system|runtime|application)\s+(?:is\s+)?(?:healthy|stable|operational)\b)",
     re.IGNORECASE,
 )
+_TOTAL_INTERNAL_ABSENCE_RE = re.compile(
+    r"\b(?:"
+    r"(?:i\s+do\s+not|i\s+don't|i\s+cannot|i\s+can't)\s+(?:have|feel|perceive)\s+"
+    r"(?:any|anything)\s+(?:sensations?|feelings?|internal\s+state|perceptions?)|"
+    r"(?:no|without)\s+(?:sensations?|feelings?|internal\s+state|perceptions?)\s+(?:at\s+all|right\s+now)|"
+    r"(?:disconnected|cut\s+off|detached)\s+from\s+(?:my\s+)?body"
+    r")\b",
+    re.IGNORECASE,
+)
+_OVERLOAD_RE = re.compile(
+    r"\b(?:my\s+)?(?:system|runtime|body)\s+(?:is\s+|feels\s+)?"
+    r"(?:overloaded|overwhelmed|at\s+capacity)\b",
+    re.IGNORECASE,
+)
 
 
-def unsupported_self_condition_operational_claims(reply_text: Any) -> tuple[str, ...]:
-    """Return sentence-level claims outside the self-condition instrument."""
+def _projection_value(
+    projection: SelfConditionProjection | Mapping[str, Any] | None,
+    key: str,
+    default: Any,
+) -> Any:
+    if isinstance(projection, SelfConditionProjection):
+        return getattr(projection, key, default)
+    if isinstance(projection, Mapping):
+        return projection.get(key, default)
+    return default
+
+
+def unsupported_self_condition_operational_claims(
+    reply_text: Any,
+    *,
+    projection: SelfConditionProjection | Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Return claims outside or contradicted by the typed condition evidence."""
 
     raw = str(reply_text or "").strip()
     if not raw:
         return ()
+    supported = {
+        str(item)
+        for item in (_projection_value(projection, "supported_dimensions", ()) or ())
+    } - {
+        str(item)
+        for item in (_projection_value(projection, "stale_dimensions", ()) or ())
+    }
     claims: list[str] = []
     for part in re.split(r"(?<=[.!?])\s+|\n+", raw):
         sentence = part.strip()
@@ -409,6 +446,37 @@ def unsupported_self_condition_operational_claims(reply_text: Any) -> tuple[str,
         if _UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE.search(sentence):
             claims.append(sentence)
             continue
+        if _TOTAL_INTERNAL_ABSENCE_RE.search(sentence) and supported.intersection(
+            {
+                "valence",
+                "arousal",
+                "distress",
+                "welfare",
+                "felt_coherence",
+                "continuity",
+                "agency",
+                "body_pressure",
+                "fatigue",
+                "reserve",
+            }
+        ):
+            claims.append(sentence)
+            continue
+        if _OVERLOAD_RE.search(sentence):
+            body_pressure = _finite(
+                _projection_value(projection, "body_pressure", 0.0)
+            ) or 0.0
+            fatigue = _finite(_projection_value(projection, "fatigue", 0.0)) or 0.0
+            reserve = _finite(_projection_value(projection, "reserve", 1.0))
+            reserve = 1.0 if reserve is None else reserve
+            strain_observed = (
+                ("body_pressure" in supported and body_pressure >= 0.70)
+                or ("fatigue" in supported and fatigue >= 0.70)
+                or ("reserve" in supported and reserve <= 0.35)
+            )
+            if not strain_observed:
+                claims.append(sentence)
+                continue
         # A sentence explicitly framed as felt experience remains a condition
         # statement.  Bare system-health summaries are operational assertions.
         if (
@@ -441,7 +509,9 @@ def project_self_condition_reply(
     if not raw or not evidence_id:
         return SelfConditionReplyProjection(text=raw, evidence_id=evidence_id)
 
-    removed = set(unsupported_self_condition_operational_claims(raw))
+    removed = set(
+        unsupported_self_condition_operational_claims(raw, projection=projection)
+    )
     if not removed:
         return SelfConditionReplyProjection(text=raw, evidence_id=evidence_id)
     kept = [

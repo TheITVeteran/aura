@@ -1000,6 +1000,18 @@ class InferenceGate:
         self._maintenance_task: asyncio.Task | None = None
         self._status_recovery_task: asyncio.Task | None = None
         self._foreground_ready_lock = _threading.Lock()
+        # Cortex readiness only proves that the resident decoder can accept a
+        # request.  A real chat turn also needs the profile, unified-self,
+        # self-condition, and semantic-memory readers.  Those used to be
+        # constructed lazily inside the first foreground request, so health
+        # advertised READY while the user still paid tens of seconds of boot
+        # work.  The server owns this second readiness phase and reports it
+        # through this gate.
+        # ``None`` means the server has not bound the foreground dependency
+        # owner yet.  This keeps the model lane independently usable in
+        # headless/proof processes that do not host the desktop chat surface.
+        self._chat_dependencies_ready: bool | None = None
+        self._chat_dependencies_blocker: str = ""
         self._last_background_memory_shed_at: float = 0.0
         self._last_spare_maintenance_at: float = 0.0
         self._last_cortex_warmup_deferral_log_at: float = 0.0
@@ -1031,6 +1043,72 @@ class InferenceGate:
         )
         type(self)._instance_ref = weakref.ref(self)
         logger.info("🛡️ InferenceGate created.")
+
+    def set_chat_dependencies_ready(
+        self,
+        ready: bool,
+        *,
+        blocker: str = "chat_dependencies_warming",
+    ) -> None:
+        """Publish whether non-model foreground dependencies are materialized."""
+
+        with self._foreground_ready_lock:
+            self._chat_dependencies_ready = bool(ready)
+            self._chat_dependencies_blocker = "" if ready else (
+                str(blocker or "chat_dependencies_warming").strip()[:160]
+                or "chat_dependencies_warming"
+            )
+
+    def get_cortex_readiness_status(self) -> dict[str, Any]:
+        """Read model-lane readiness without the chat-dependency overlay.
+
+        Boot warmup must wait for the resident model before loading dependent
+        readers.  Calling :meth:`get_conversation_status` for that wait would
+        be circular because that public status deliberately remains blocked
+        until those readers finish.
+        """
+
+        client = self._mlx_client
+        getter = (
+            getattr(client, "get_lane_status", None)
+            if client is not None
+            else None
+        )
+        if not callable(getter):
+            return {
+                "conversation_ready": False,
+                "state": "cold",
+                "readiness_blockers": ["cortex_unavailable"],
+            }
+        try:
+            candidate = getter()
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            _record_inference_degradation(
+                exc,
+                action="reported Cortex unready while boot dependency warmup waited",
+                severity="warning",
+            )
+            return {
+                "conversation_ready": False,
+                "state": "recovering",
+                "readiness_blockers": ["cortex_status_unavailable"],
+            }
+        if not isinstance(candidate, Mapping):
+            return {
+                "conversation_ready": False,
+                "state": "recovering",
+                "readiness_blockers": ["cortex_status_invalid"],
+            }
+        blockers = [
+            str(item)
+            for item in (candidate.get("readiness_blockers") or ())
+            if str(item or "").strip()
+        ]
+        return {
+            "conversation_ready": bool(candidate.get("conversation_ready")) and not blockers,
+            "state": str(candidate.get("state") or "cold"),
+            "readiness_blockers": blockers,
+        }
 
     def _record_user_generation_endpoint(
         self, label: str, *, provisional: bool = False
@@ -3491,6 +3569,24 @@ class InferenceGate:
             lane["foreground_endpoint"] = PRIMARY_ENDPOINT
         elif lane_state != "ready":
             lane["conversation_ready"] = False
+        chat_dependencies_state = getattr(self, "_chat_dependencies_ready", None)
+        if chat_dependencies_state is False:
+            blocker = str(
+                getattr(
+                    self,
+                    "_chat_dependencies_blocker",
+                    "chat_dependencies_warming",
+                )
+                or "chat_dependencies_warming"
+            )
+            blockers = list(lane.get("readiness_blockers") or ())
+            if blocker not in blockers:
+                blockers.append(blocker)
+            lane["readiness_blockers"] = blockers
+            lane["conversation_ready"] = False
+            lane["chat_dependencies_ready"] = False
+        else:
+            lane["chat_dependencies_ready"] = chat_dependencies_state is True
         lane_state = str(lane.get("state", "") or "").lower()
         if (
             self._cortex_recovery_in_progress

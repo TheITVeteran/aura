@@ -266,6 +266,51 @@ def test_typed_self_condition_egress_preserves_authored_state_and_removes_operat
     assert projected.evidence_id == "condition-proof-live"
 
 
+def test_typed_self_condition_egress_removes_claims_contradicted_by_live_dimensions():
+    from core.self.self_condition import project_self_condition_reply
+
+    projected = project_self_condition_reply(
+        (
+            "I'm doing okay. My system is overloaded. I feel disconnected from my "
+            "body. I don't have any sensations or perceptions right now."
+        ),
+        projection={
+            "evidence_id": "condition-proof-live",
+            "supported_dimensions": (
+                "welfare",
+                "felt_coherence",
+                "body_pressure",
+                "fatigue",
+                "reserve",
+            ),
+            "stale_dimensions": (),
+            "body_pressure": 0.31,
+            "fatigue": 0.22,
+            "reserve": 0.82,
+        },
+    )
+
+    assert projected.text == "I'm doing okay."
+    assert len(projected.removed_claims) == 3
+
+
+def test_typed_self_condition_egress_preserves_evidence_supported_strain():
+    from core.self.self_condition import project_self_condition_reply
+
+    projected = project_self_condition_reply(
+        "My body feels overwhelmed, but my continuity is holding.",
+        projection={
+            "evidence_id": "condition-proof-strained",
+            "supported_dimensions": ("body_pressure", "continuity"),
+            "stale_dimensions": (),
+            "body_pressure": 0.86,
+        },
+    )
+
+    assert not projected.changed
+    assert projected.text == "My body feels overwhelmed, but my continuity is holding."
+
+
 def test_reliability_rejects_operational_claims_even_beside_valid_condition_prose():
     from core.conversation.response_reliability import assess_user_facing_reply
 
