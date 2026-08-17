@@ -1060,6 +1060,80 @@ def _semantic_surface_stop_ready(
     return not _surface_quality_failure_reasons(job, response_text)
 
 
+def _semantic_completion_eos_ids(tokenizer: Any) -> tuple[int, ...]:
+    """Return every EOS id the active tokenizer exposes."""
+
+    raw_ids = getattr(tokenizer, "eos_token_ids", None)
+    if raw_ids is None:
+        raw_ids = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(raw_ids, int):
+        raw_ids = (raw_ids,)
+    try:
+        candidates = tuple(raw_ids or ())
+    except TypeError:
+        candidates = ()
+    return tuple(
+        sorted(
+            {
+                int(token_id)
+                for token_id in candidates
+                if isinstance(token_id, int) and int(token_id) >= 0
+            }
+        )
+    )
+
+
+def _build_semantic_completion_eos_guard(
+    tokenizer: Any,
+    job: dict[str, Any],
+    *,
+    prompt_token_count: int,
+    tensor_ops: Any,
+) -> Callable[[Any, Any], Any] | None:
+    """Keep EOS unavailable until the decoded answer satisfies its contract.
+
+    This is decode control, not prompt conditioning. The model retains complete
+    authorship of every visible token; the guard only prevents a terminal token
+    from winning while the same typed coverage predicate used at the public
+    surface still reports missing obligations.
+    """
+
+    if not bool(job.get("semantic_completion_contract", False)):
+        return None
+    eos_ids = _semantic_completion_eos_ids(tokenizer)
+    if not eos_ids:
+        return None
+    prompt_tokens = max(0, int(prompt_token_count))
+    state: dict[str, Any] = {"bucket": -1, "complete": False}
+
+    def semantic_completion_eos_guard(tokens: Any, logits: Any) -> Any:
+        generated_count = max(0, int(len(tokens)) - prompt_tokens)
+        bucket = generated_count // 8
+        if generated_count >= 8 and bucket != state["bucket"]:
+            state["bucket"] = bucket
+            try:
+                generated_ids = tokens[prompt_tokens:].tolist()
+                generated_text = str(tokenizer.decode(generated_ids) or "")
+                state["complete"] = _semantic_surface_stop_ready(
+                    job,
+                    generated_text,
+                    generated_tokens=generated_count,
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                state["complete"] = False
+        if state["complete"]:
+            return logits
+        mask = tensor_ops.zeros_like(logits)
+        for token_id in eos_ids:
+            try:
+                mask[:, token_id] = -float("inf")
+            except (IndexError, TypeError, ValueError):
+                continue
+        return logits + mask
+
+    return semantic_completion_eos_guard
+
+
 def _classify_generation_stop_reason(
     *,
     soft_cancelled: bool,
@@ -6751,6 +6825,28 @@ def _mlx_worker_loop(
                                         # response, which is why reading it from
                                         # there captured nothing.
                                         final_prompt_cache = cache
+
+                                    semantic_eos_guard = _build_semantic_completion_eos_guard(
+                                        tokenizer,
+                                        job,
+                                        prompt_token_count=(
+                                            len(remaining_tokens)
+                                            if cache is not None
+                                            else len(tokens)
+                                        ),
+                                        tensor_ops=mx,
+                                    )
+                                    attempt_logits_processors = list(logits_processors)
+                                    if semantic_eos_guard is not None:
+                                        attempt_logits_processors.append(semantic_eos_guard)
+                                        logger.info(
+                                            "🧩 [WORKER] Semantic EOS admission ACTIVE; "
+                                            "termination requires complete request coverage."
+                                        )
+                                    if attempt_logits_processors:
+                                        kwargs["logits_processors"] = attempt_logits_processors
+                                    else:
+                                        kwargs.pop("logits_processors", None)
 
                                     # [STABILITY v57] Reset activity immediately before loop to maximize budget for prefill
                                     try:

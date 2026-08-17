@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from core.brain.llm.mlx_worker import (
+    _build_semantic_completion_eos_guard,
     _classify_generation_stop_reason,
     _semantic_surface_stop_ready,
     _surface_quality_candidate,
@@ -130,3 +133,42 @@ def test_semantic_stop_waits_for_all_requested_epistemic_facets():
 
     assert not _semantic_surface_stop_ready(job, incomplete, generated_tokens=40)
     assert _semantic_surface_stop_ready(job, complete, generated_tokens=64)
+
+
+def test_semantic_eos_guard_blocks_termination_until_coverage_is_complete():
+    mx = pytest.importorskip("mlx.core")
+
+    class Tokenizer:
+        eos_token_ids = {9}
+
+        @staticmethod
+        def decode(token_ids):
+            return "".join(chr(int(token_id)) for token_id in token_ids)
+
+    prompt = "Give one complete response with (1) alpha and (2) beta."
+    job = {
+        "clean_user_surface_contract": True,
+        "semantic_completion_contract": True,
+        "user_surface_validation_prompt": prompt,
+    }
+    guard = _build_semantic_completion_eos_guard(
+        Tokenizer(),
+        job,
+        prompt_token_count=2,
+        tensor_ops=mx,
+    )
+    assert guard is not None
+
+    incomplete = [1, 2, *map(ord, "1. Alpha is covered but the second")]
+    logits = mx.zeros((1, 128))
+    blocked = guard(mx.array(incomplete), logits)
+    assert math.isinf(float(blocked[0, 9]))
+    assert float(blocked[0, 9]) < 0
+
+    complete = [
+        1,
+        2,
+        *map(ord, "1. Alpha is covered. 2. Beta is covered."),
+    ]
+    allowed = guard(mx.array(complete), logits)
+    assert float(allowed[0, 9]) == 0.0

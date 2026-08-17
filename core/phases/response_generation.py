@@ -1601,6 +1601,9 @@ class ResponseGenerationPhase(BasePhase):
                 or objective
                 or ""
             ).strip()
+            structural_answer_floor = answer_surface_token_floor(
+                user_surface_validation_prompt
+            )
             visible_output_contract = requested_output_contract(
                 user_surface_validation_prompt
             )
@@ -1733,16 +1736,16 @@ class ResponseGenerationPhase(BasePhase):
                 # The model stopped during pseudocode and four sections never
                 # had a chance to exist.  Restore only the structural floor,
                 # still bounded by the caller's declared cap.
-                answer_floor = answer_surface_token_floor(
-                    user_surface_validation_prompt
-                )
                 caller_cap = token_budget
                 if requested_token_cap is not None:
                     try:
                         caller_cap = max(1, int(requested_token_cap))
                     except (TypeError, ValueError, OverflowError):
                         caller_cap = token_budget
-                token_budget = max(token_budget, min(caller_cap, answer_floor))
+                token_budget = max(
+                    token_budget,
+                    min(caller_cap, structural_answer_floor),
+                )
             runtime_context["_effective_generation_max_tokens"] = token_budget
             runtime_context["requested_output_contract"] = (
                 dict(visible_output_contract_payload)
@@ -2197,6 +2200,10 @@ class ResponseGenerationPhase(BasePhase):
                         runtime_fact_status_contract=runtime_fact_status_contract,
                         grounded_runtime_status_contract=runtime_fact_status_contract,
                         clean_user_surface_contract=clean_user_surface_contract,
+                        semantic_completion_contract=bool(
+                            clean_user_surface_contract
+                            and structural_answer_floor >= 384
+                        ),
                         user_surface_validation_prompt=user_surface_validation_prompt,
                         user_surface_prompt_binding=dict(
                             runtime_context.get("user_surface_prompt_binding") or {}
@@ -2819,6 +2826,10 @@ class ResponseGenerationPhase(BasePhase):
                     runtime_fact_status_contract=runtime_fact_status_contract,
                     grounded_runtime_status_contract=runtime_fact_status_contract,
                     clean_user_surface_contract=clean_user_surface_contract,
+                    semantic_completion_contract=bool(
+                        clean_user_surface_contract
+                        and structural_answer_floor >= 384
+                    ),
                     user_surface_validation_prompt=user_surface_validation_prompt,
                     user_surface_prompt_binding=dict(
                         runtime_context.get("user_surface_prompt_binding") or {}
