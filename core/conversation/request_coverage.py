@@ -140,6 +140,16 @@ _RELATION_REQUEST_RE = re.compile(
 # The important case is epistemic provenance: saying the word ``state`` does
 # not satisfy "distinguish what you know from what you can only infer".
 _COVERAGE_EQUIVALENCE = {
+    # Natural check-ins commonly restate one intent twice: "Are you okay?
+    # Feeling fine?" is not two independent tasks.  Collapsing these surface
+    # forms into one semantic side lets concise direct answers satisfy the
+    # request without disabling coverage for genuinely compound turns.
+    "okay": "self_condition",
+    "fine": "self_condition",
+    "feel": "self_condition",
+    "feeling": "self_condition",
+    "steady": "self_condition",
+    "condition": "self_condition",
     "know": "epistemic_known",
     "known": "epistemic_known",
     "knowing": "epistemic_known",

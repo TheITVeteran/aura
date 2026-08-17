@@ -5052,8 +5052,6 @@ _HOST_TELEMETRY_RE = re.compile(
 
 def _has_self_condition_substance(reply_text: Any) -> bool:
     reply = _normalize(reply_text)
-    if _word_count(reply) < 6:
-        return False
     if not re.search(r"\b(?:i|i'm|i am|my|me|myself)\b", reply):
         return False
     return bool(_SELF_CONDITION_SUBSTANCE_RE.search(reply))
@@ -5066,6 +5064,23 @@ def _host_telemetry_substitutes_for_self_condition(prompt: Any, reply_text: Any)
         _HOST_TELEMETRY_RE.search(str(reply_text or ""))
         and not _has_self_condition_substance(reply_text)
     )
+
+
+def _has_unsupported_self_condition_operational_claim(
+    prompt: Any, reply_text: Any
+) -> bool:
+    if not is_self_condition_turn(prompt):
+        return False
+    try:
+        from core.self.self_condition import (
+            unsupported_self_condition_operational_claims,
+        )
+
+        return bool(unsupported_self_condition_operational_claims(reply_text))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        # The existing telemetry detector remains the conservative floor if the
+        # typed projector cannot be imported during partial boot.
+        return bool(_HOST_TELEMETRY_RE.search(str(reply_text or "")))
 
 
 def _has_status_substance(reply_text: Any) -> bool:
@@ -7258,6 +7273,8 @@ def _model_text_integrity_reasons(
         reasons.append("template_telemetry_greeting")
     if user_facing and _host_telemetry_substitutes_for_self_condition(prompt, raw):
         reasons.append("host_telemetry_substituted_for_self_condition")
+    if user_facing and _has_unsupported_self_condition_operational_claim(prompt, raw):
+        reasons.append("unsupported_self_condition_operational_claim")
     if user_facing and _has_unfounded_alarm_derailment(prompt, raw):
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_unfounded_voice_intrusion(prompt, raw):
@@ -7406,6 +7423,7 @@ def assess_model_text_integrity(
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
         "host_telemetry_substituted_for_self_condition",
+        "unsupported_self_condition_operational_claim",
         "unfounded_alarm_derailment",
         "unfounded_voice_intrusion",
         "unrequested_pop_culture_intrusion",
@@ -7815,6 +7833,7 @@ def _assess_user_facing_reply(
             "unsupported_affection_claim",
             "unsupported_self_telemetry_claim",
             "host_telemetry_substituted_for_self_condition",
+            "unsupported_self_condition_operational_claim",
             "format_meta_artifact",
             "search_meta_artifact",
             "corrupted_language",
@@ -7969,7 +7988,12 @@ def _assess_user_facing_reply(
                 str(m) for m in (recent_user_messages or []) if str(m or "").strip()
             ] + ([str(antecedent)] if antecedent else []),
         )
-        if thread.abandoned:
+        self_condition_answered = bool(
+            is_self_condition_turn(user_message)
+            and _has_self_condition_substance(raw)
+            and not _host_telemetry_substitutes_for_self_condition(user_message, raw)
+        )
+        if thread.abandoned and not self_condition_answered:
             reasons.append("reply_abandons_thread")
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation(
@@ -8029,6 +8053,7 @@ def _assess_user_facing_reply(
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
         "host_telemetry_substituted_for_self_condition",
+        "unsupported_self_condition_operational_claim",
         "unfounded_alarm_derailment",
         "unfounded_voice_intrusion",
         "unsupported_context_continuation_claim",

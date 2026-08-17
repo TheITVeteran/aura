@@ -7599,6 +7599,36 @@ async def _run_cognitive_engine_chat_turn(
             deterministic=True,
             authorship_effect="preserved",
         )
+    if self_condition_contract and self_condition_contract_covers_turn:
+        try:
+            from core.self.self_condition import project_self_condition_reply
+
+            condition_projection = project_self_condition_reply(
+                text,
+                projection=context.get("canonical_self_condition_projection"),
+            )
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.self_condition_egress", exc)
+        else:
+            if condition_projection.changed:
+                grounded_text = condition_projection.text
+                logger.warning(
+                    "Self-condition egress removed %d unsupported operational "
+                    "claim(s) under evidence %s while preserving model-authored prose.",
+                    len(condition_projection.removed_claims),
+                    condition_projection.evidence_id,
+                )
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.self_condition_evidence_projection",
+                    method="typed_claim_scope_projection",
+                    reasons=["unsupported_self_condition_operational_claim"],
+                    before=text,
+                    after=grounded_text,
+                    deterministic=True,
+                    authorship_effect="preserved",
+                )
+                text = grounded_text
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -22663,6 +22693,4 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 #: The three inner values are bound conditionally, so the caller must be able
 #: to leave a name unbound exactly where the original code did — substituting a
 #: default would turn a path that raised into one that quietly proceeds.
-
-
 

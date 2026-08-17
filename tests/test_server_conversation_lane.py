@@ -8961,7 +8961,7 @@ async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs_host_only_reply(
+async def test_required_self_condition_turn_projects_mixed_operational_claims_without_retry(
     monkeypatch,
 ):
     from core.providers import engine_connection_pool as pool_module
@@ -8985,16 +8985,13 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
                     "kwargs": dict(kwargs),
                 }
             )
-            if len(calls) == 1:
-                content = (
-                    "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
-                    "CPU load is 25.8% on this host."
-                )
-            else:
-                content = (
-                    "Yes, I am okay. I feel steady, my distress is low, and my "
-                    "continuity is holding while I stay with this thread."
-                )
+            content = (
+                "I'm fresh but steady. Everything's running smoothly on my end, "
+                "and there are no errors or warnings in the system logs. My CPU "
+                "usage is low, memory allocation is within acceptable limits, and "
+                "disk space remains ample. Network connectivity appears stable with "
+                "no packet loss detected. In summary, I am functioning as expected."
+            )
             return SimpleNamespace(
                 content=content,
                 metadata=_bound_live_mind_controls_metadata(),
@@ -9052,7 +9049,7 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
         turn_trace=trace,
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 1
     context = calls[0]["context"]
     assert context["self_condition_contract"] is True
     assert context["desktop_quick_reply_contract"] is True
@@ -9061,14 +9058,14 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
     assert "felt_coherence=0.93" in context["canonical_self_condition_context"]
     assert "Self-condition contract" not in calls[0]["objective"]
     assert calls[0]["objective"] == prompt
-    assert reply == canonical_reply
+    assert reply == "I'm fresh but steady."
     assert trace["engine_think_invoked"] is True
     assert trace["cognitive_engine_reply_accepted"] is True
-    assert trace["response_path"] == "cognitive_engine_repair_retry"
-    assert trace["repair_retry_attempt_count"] == 1
-    assert trace["foreground_model_generation_count"] == 2
+    assert trace["repair_retry_attempt_count"] == 0
+    assert trace["foreground_model_generation_count"] == 1
     assert any(
-        item.get("authorship_effect") == "replaced_by_model"
+        item.get("method") == "typed_claim_scope_projection"
+        and item.get("authorship_effect") == "preserved"
         for item in trace["text_mutations"]
     )
 
@@ -9077,12 +9074,12 @@ async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs
         request_surface="desktop-ui",
         lane_status={"conversation_ready": True, "state": "ready"},
         response_confidence="high",
-        status="cognitive_engine_repair_retry",
-        reply_source="cognitive_engine_repair_retry",
+        status="cognitive_engine_reply",
+        reply_source="cognitive_engine_reply",
         turn_trace=trace,
     )
     assert contract["single_owner_model_generation_proven"] is True
-    assert contract["model_replacement_applied"] is True
+    assert contract["model_replacement_applied"] is False
     assert contract["authorship_replacement_applied"] is False
 
 

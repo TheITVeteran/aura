@@ -245,6 +245,40 @@ def test_reliability_rejects_host_telemetry_as_a_condition_answer():
     assert "host_telemetry_substituted_for_self_condition" in wrapped.reasons
 
 
+def test_typed_self_condition_egress_preserves_authored_state_and_removes_operational_claims():
+    from core.self.self_condition import project_self_condition_reply
+
+    raw = (
+        "I'm fresh but steady. Everything's running smoothly on my end, and there "
+        "are no errors or warnings in the system logs. My CPU usage is low, memory "
+        "allocation is within acceptable limits, and disk space remains ample. "
+        "Network connectivity appears stable with no packet loss detected. In "
+        "summary, I am functioning as expected."
+    )
+    projected = project_self_condition_reply(
+        raw,
+        projection={"evidence_id": "condition-proof-live"},
+    )
+
+    assert projected.changed
+    assert projected.text == "I'm fresh but steady."
+    assert len(projected.removed_claims) == 4
+    assert projected.evidence_id == "condition-proof-live"
+
+
+def test_reliability_rejects_operational_claims_even_beside_valid_condition_prose():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Hey Aura, how are you doing right now?",
+        "I'm fresh but steady. Network connectivity is stable with no packet loss.",
+    )
+
+    assert not assessment.ok
+    assert assessment.hard_failure
+    assert "unsupported_self_condition_operational_claim" in assessment.reasons
+
+
 def test_reliability_accepts_direct_grounded_condition_answer():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -260,6 +294,12 @@ def test_reliability_accepts_direct_grounded_condition_answer():
         "Honestly, I feel rough and exhausted today, but I am still coherent enough to talk.",
     )
     assert natural.ok
+
+    concise = assess_user_facing_reply(
+        "How are you doing?",
+        "I'm fresh but steady.",
+    )
+    assert concise.ok
 
 
 def test_learning_admission_rejects_misgrounded_condition_reply():

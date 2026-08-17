@@ -13,7 +13,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -353,6 +353,115 @@ class SelfConditionProjection:
             "observed. Activity, tool use, location, and external events are "
             "outside this evidence's scope."
         )
+
+
+@dataclass(frozen=True)
+class SelfConditionReplyProjection:
+    """Model-authored self-condition prose projected onto measured evidence.
+
+    The projection does not rewrite Aura's voice.  It removes complete claims
+    about operational domains that the self-condition instrument does not
+    measure, and records exactly what was removed.  This makes evidence scope
+    an executable egress property rather than an instruction the decoder may
+    ignore.
+    """
+
+    text: str
+    removed_claims: tuple[str, ...] = ()
+    evidence_id: str = ""
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.removed_claims)
+
+
+_UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE = re.compile(
+    r"\b(?:"
+    r"cpu(?:\s+(?:load|usage|utilization))?|gpu(?:\s+(?:load|usage|utilization))?|"
+    r"ram(?:\s+(?:pressure|usage|available))?|memory\s+(?:allocation|pressure|usage|available)|"
+    r"\d+(?:\.\d+)?\s*(?:gb|mb)\s+available|disk(?:\s+(?:space|usage|pressure))?|"
+    r"storage(?:\s+(?:space|usage|available))?|swap|thermal|host\s+load|load\s+average|"
+    r"network(?:\s+(?:state|status|connectivity|pressure|up|down|online|offline))?|"
+    r"connectivity|packet\s+loss|system\s+logs?|runtime\s+logs?|application\s+logs?|"
+    r"(?:errors?|warnings?)(?:\s+(?:in|from|within)\s+(?:the\s+)?(?:system|runtime|application|logs?))?"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_SELF_CONDITION_HEALTH_SUMMARY_RE = re.compile(
+    r"(?:\beverything(?:'s|\s+is)?\s+running\s+smoothly\b|"
+    r"\b(?:i\s+am|i'm)\s+functioning\s+as\s+expected\b|"
+    r"\b(?:system|runtime|application)\s+(?:is\s+)?(?:healthy|stable|operational)\b)",
+    re.IGNORECASE,
+)
+
+
+def unsupported_self_condition_operational_claims(reply_text: Any) -> tuple[str, ...]:
+    """Return sentence-level claims outside the self-condition instrument."""
+
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return ()
+    claims: list[str] = []
+    for part in re.split(r"(?<=[.!?])\s+|\n+", raw):
+        sentence = part.strip()
+        if not sentence:
+            continue
+        if _UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE.search(sentence):
+            claims.append(sentence)
+            continue
+        # A sentence explicitly framed as felt experience remains a condition
+        # statement.  Bare system-health summaries are operational assertions.
+        if (
+            _UNSUPPORTED_SELF_CONDITION_HEALTH_SUMMARY_RE.search(sentence)
+            and not re.search(r"\b(?:feel|feels|felt|seem|seems)\b", sentence, re.IGNORECASE)
+        ):
+            claims.append(sentence)
+    return tuple(claims)
+
+
+def project_self_condition_reply(
+    reply_text: Any,
+    *,
+    projection: SelfConditionProjection | Mapping[str, Any] | None,
+) -> SelfConditionReplyProjection:
+    """Preserve grounded model prose and remove unsupported operational claims.
+
+    Mutation is authorized only by a provenance-carrying typed projection.  If
+    no usable self-condition evidence exists, the original reply is returned
+    unchanged so the normal reliability path can reject or ground it rather
+    than silently laundering it.
+    """
+
+    raw = str(reply_text or "").strip()
+    evidence_id = ""
+    if isinstance(projection, SelfConditionProjection):
+        evidence_id = str(projection.evidence_id or "").strip()
+    elif isinstance(projection, Mapping):
+        evidence_id = str(projection.get("evidence_id") or "").strip()
+    if not raw or not evidence_id:
+        return SelfConditionReplyProjection(text=raw, evidence_id=evidence_id)
+
+    removed = set(unsupported_self_condition_operational_claims(raw))
+    if not removed:
+        return SelfConditionReplyProjection(text=raw, evidence_id=evidence_id)
+    kept = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+|\n+", raw)
+        if part.strip() and part.strip() not in removed
+    ]
+    # Do not turn a wholly unsupported answer into an anonymous empty reply.
+    # Leaving it intact lets the existing gate use the canonical projection.
+    if not kept:
+        return SelfConditionReplyProjection(text=raw, evidence_id=evidence_id)
+    return SelfConditionReplyProjection(
+        text=" ".join(kept),
+        removed_claims=tuple(
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+|\n+", raw)
+            if part.strip() in removed
+        ),
+        evidence_id=evidence_id,
+    )
 
 
 def _select_metric(
