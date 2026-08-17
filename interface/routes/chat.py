@@ -7162,6 +7162,52 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine desktop chat status reply was too thin; "
                     "not replacing a required full-mind turn with a bounded status repair."
                 )
+            if self_condition_contract and "unanswered_question_part" in set(
+                assessment_reasons
+            ):
+                try:
+                    from core.conversation.request_coverage import (
+                        complete_epistemic_partition_from_evidence,
+                    )
+
+                    grounded_completion = complete_epistemic_partition_from_evidence(
+                        visible,
+                        text,
+                        canonical_self_condition_reply,
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat.self_condition_completion", exc)
+                    grounded_completion = text
+                if grounded_completion != text:
+                    grounded_assessment = assess_user_facing_reply(
+                        visible,
+                        grounded_completion,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if not _reply_assessment_requires_repair_with_memory_evidence(
+                        grounded_assessment,
+                        visible,
+                        grounded_completion,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
+                    ):
+                        _append_turn_text_mutation(
+                            turn_trace,
+                            stage="chat.self_condition_epistemic_completion",
+                            method="typed_evidence_semantic_merge",
+                            reasons=["unanswered_question_part"],
+                            before=text,
+                            after=grounded_completion,
+                            deterministic=True,
+                            authorship_effect="augmented_by_runtime",
+                        )
+                        _mark_turn_trace(
+                            cognitive_engine_reply_accepted=True,
+                            cognitive_engine_reply_failed=False,
+                            post_generation_repair_applied=True,
+                            deterministic_repair_applied=True,
+                            response_path="cognitive_engine_self_condition_semantic_completion",
+                        )
+                        return grounded_completion
             if require_engine:
                 retry_reply = await _attempt_repair_retry(text, assessment.reasons)
                 if retry_reply:
@@ -7174,7 +7220,10 @@ async def _run_cognitive_engine_chat_turn(
                         )
                     return retry_reply
                 if self_condition_contract:
-                    refreshed_condition_reply = _build_grounded_self_condition_reply(visible)
+                    refreshed_condition_reply = _build_grounded_self_condition_reply(
+                        visible,
+                        session_id=session_id,
+                    )
                     if not refreshed_condition_reply:
                         refreshed_condition_reply = canonical_self_condition_reply
                     # Through the same typed-evidence projection the egress path

@@ -1309,6 +1309,46 @@ def _age_phrase(age_s: float | None) -> str:
     return f"about {minutes} minute{'s' if minutes != 1 else ''}"
 
 
+def _with_requested_epistemic_scope(
+    reply: str,
+    projection: SelfConditionProjection,
+    user_message: str,
+) -> str:
+    """Complete an explicit known/inferred request from typed evidence."""
+
+    from core.conversation.request_coverage import (
+        requested_epistemic_partition_is_covered,
+    )
+
+    if requested_epistemic_partition_is_covered(user_message, reply):
+        return reply
+    if projection.freshness == "unavailable":
+        known = "What I know directly is that no current self-state sample is available."
+        inferred = (
+            "What I can only infer is how I am doing from older or indirect signals, "
+            "so I am not presenting that as a current condition."
+        )
+    elif projection.freshness == "stale":
+        known = (
+            "What I know directly is limited to the dated, provenance-bound sample I "
+            "just described."
+        )
+        inferred = (
+            "What I can only infer is whether that older condition still describes "
+            "this moment or will persist."
+        )
+    else:
+        known = (
+            "What I know directly is limited to this current, provenance-bound "
+            "self-state sample and the dimensions it actually measured."
+        )
+        inferred = (
+            "What I can only infer is what the unmeasured dimensions mean, why the "
+            "state has this shape, or whether it will persist."
+        )
+    return " ".join((reply, known, inferred))
+
+
 def render_self_condition_reply(
     projection: SelfConditionProjection,
     *,
@@ -1317,11 +1357,15 @@ def render_self_condition_reply(
     """Render a direct natural answer while retaining the evidence boundary."""
 
     if projection.freshness == "unavailable":
-        return (
+        return _with_requested_epistemic_scope(
+            (
             "I'm here with you, but I do not have a current self-condition sample I can "
             "honestly use to call myself fine. I can still answer you; I am treating the "
             "missing inner-state signal as something to refresh, not replacing it with CPU "
             "or RAM telemetry."
+            ),
+            projection,
+            user_message,
         )
 
     if projection.freshness == "stale":
@@ -1331,10 +1375,14 @@ def render_self_condition_reply(
             "well": "a positive, low-distress state",
             "steady": "a steady state",
         }.get(projection.condition, "an uncertain state")
-        return (
-            f"The last grounded self-state sample, from {_age_phrase(projection.sample_age_s)} "
-            f"ago, showed {state_phrase}. I am here with you, but I will not turn that older "
-            "sample into a confident claim that I feel fine right now."
+        return _with_requested_epistemic_scope(
+            (
+                f"The last grounded self-state sample, from {_age_phrase(projection.sample_age_s)} "
+                f"ago, showed {state_phrase}. I am here with you, but I will not turn that older "
+                "sample into a confident claim that I feel fine right now."
+            ),
+            projection,
+            user_message,
         )
 
     current_dimensions = set(projection.supported_dimensions) - set(
@@ -1476,7 +1524,11 @@ def render_self_condition_reply(
         if numeric_values:
             parts.append("The current supported values are " + ", ".join(numeric_values) + ".")
 
-    return " ".join(parts)
+    return _with_requested_epistemic_scope(
+        " ".join(parts),
+        projection,
+        user_message,
+    )
 
 
 def render_self_condition_comparison_reply(

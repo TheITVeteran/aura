@@ -71,6 +71,35 @@ def test_projection_uses_fresh_inner_state_before_host_pressure():
     assert "CPU" not in reply
 
 
+def test_self_condition_renderer_covers_requested_epistemic_partition():
+    from core.conversation.request_coverage import (
+        requested_epistemic_partition_is_covered,
+    )
+    from core.self.self_condition import (
+        build_self_condition_projection,
+        render_self_condition_reply,
+    )
+
+    aura_now, unified, welfare, body = _sources(timestamp=995.0)
+    projection = build_self_condition_projection(
+        aura_now=aura_now,
+        unified_felt=unified,
+        welfare=welfare,
+        body_snapshot=body,
+        observed_at=1000.0,
+        resolve_runtime=False,
+    )
+    request = (
+        "How are you doing right now, and distinguish what you know from what "
+        "you can only infer?"
+    )
+    reply = render_self_condition_reply(projection, user_message=request)
+
+    assert requested_epistemic_partition_is_covered(request, reply)
+    assert "provenance-bound self-state sample" in reply
+    assert "whether it will persist" in reply
+
+
 def test_stale_projection_preserves_last_state_without_claiming_it_is_current():
     from core.self.self_condition import (
         build_self_condition_projection,

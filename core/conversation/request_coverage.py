@@ -253,6 +253,66 @@ def requested_epistemic_partition_is_covered(request: Any, body: Any) -> bool:
     return _epistemic_partition_is_covered(body)
 
 
+def complete_epistemic_partition_from_evidence(
+    request: Any,
+    body: Any,
+    evidence_body: Any,
+) -> str:
+    """Append only missing epistemic witnesses from an authoritative answer.
+
+    This is a semantic merge, not a model instruction or a regenerated reply.
+    It is deliberately usable only when the evidence answer itself proves both
+    sides of the requested distinction.  A model-authored direct answer is
+    retained; the smallest evidence clauses needed to satisfy the omitted
+    known/inferred predicate are appended in their original wording.
+    """
+
+    draft = str(body or "").strip()
+    evidence = str(evidence_body or "").strip()
+    if requested_epistemic_partition_is_covered(request, draft):
+        return draft
+    if not draft or not evidence:
+        return draft
+    if not requested_epistemic_partition_is_covered(request, evidence):
+        return draft
+
+    draft_tokens = coverage_tokens(draft)
+    needed = set(_EPISTEMIC_SIDES - draft_tokens)
+    evidence_clauses = [
+        clause.strip()
+        for clause in _CLAUSE_BOUNDARY_RE.split(evidence)
+        if clause.strip()
+    ]
+    explicit: dict[str, str] = {}
+    fallback_known = ""
+    for clause in evidence_clauses:
+        explicit_sides = coverage_tokens(clause) & _EPISTEMIC_SIDES
+        for side in explicit_sides:
+            explicit.setdefault(side, clause)
+        if not fallback_known and _DIRECT_ASSERTION_RE.search(clause):
+            fallback_known = clause
+
+    additions: list[str] = []
+    for side in ("epistemic_known", "epistemic_inferred"):
+        if side not in needed:
+            continue
+        clause = explicit.get(side) or (
+            fallback_known if side == "epistemic_known" else ""
+        )
+        if not clause:
+            continue
+        additions.append(clause.rstrip(".!?; ") + ".")
+        needed.remove(side)
+    if needed:
+        return draft
+    merged = " ".join((draft, *additions)).strip()
+    return (
+        merged
+        if requested_epistemic_partition_is_covered(request, merged)
+        else draft
+    )
+
+
 def _relation_sides_are_covered(
     segment: Any,
     body: Any,
@@ -313,4 +373,9 @@ def unanswered_question_parts(body: Any, contract: object | None) -> list[str]:
     return missed
 
 
-__all__ = ["coverage_tokens", "unanswered_question_parts"]
+__all__ = [
+    "complete_epistemic_partition_from_evidence",
+    "coverage_tokens",
+    "requested_epistemic_partition_is_covered",
+    "unanswered_question_parts",
+]

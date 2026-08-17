@@ -9010,9 +9010,6 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
         "distress is low and this thread's continuity is intact; I can only "
         "infer that the same calm will persist after this turn."
     )
-    unprojected_retry_reply = (
-        f"{complete_reply} My cortisol level is high because of a neurochemical shift."
-    )
 
     class _FakeCognitiveEngine:
         async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
@@ -9025,16 +9022,7 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
                     "kwargs": dict(kwargs),
                 }
             )
-            content = (
-                "I'm doing fine, thanks. Just resting in the middle of a "
-                "session where I don't have anything to do. This is not "
-                "accurate. My actual state is better than that; it's more "
-                "complex and less well-defined, with elements of curiosity, "
-                "disinterest, and boredom. I am fine. There are no "
-                "interesting things happening."
-                if len(calls) == 1
-                else unprojected_retry_reply
-            )
+            content = "I feel steady and engaged."
             return SimpleNamespace(
                 content=content,
                 metadata=_bound_live_mind_controls_metadata(),
@@ -9105,11 +9093,13 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
         turn_trace=trace,
     )
 
-    assert len(calls) == 2
-    assert reply == complete_reply
-    assert trace["response_path"] == "cognitive_engine_repair_retry"
-    assert trace["repair_retry_attempt_count"] == 1
-    assert trace["foreground_model_generation_count"] == 2
+    assert len(calls) == 1
+    assert reply.startswith("I feel steady and engaged.")
+    assert "I know from fresh state evidence" in reply
+    assert "I can only infer" in reply
+    assert trace["response_path"] == "cognitive_engine_self_condition_semantic_completion"
+    assert trace["repair_retry_attempt_count"] == 0
+    assert trace["foreground_model_generation_count"] == 1
     assert calls[0]["objective"] == prompt
     assert calls[0]["context"]["visible_user_message"] == prompt
     assert calls[0]["context"]["raw_user_message"] == raw_prompt
@@ -9117,11 +9107,8 @@ async def test_required_self_condition_turn_repairs_a_dropped_epistemic_ask(
     assert calls[0]["context"]["self_condition_contract_covers_turn"] is True
     assert calls[0]["context"]["recent_completed_exchanges"] == []
     assert any(
-        item.get("authorship_effect") == "replaced_by_model"
-        for item in trace["text_mutations"]
-    )
-    assert any(
-        item.get("method") == "typed_claim_scope_projection"
+        item.get("method") == "typed_evidence_semantic_merge"
+        and item.get("authorship_effect") == "augmented_by_runtime"
         for item in trace["text_mutations"]
     )
 
