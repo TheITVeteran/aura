@@ -7,8 +7,7 @@ must use these helpers. No ad-hoc os.environ checks.
 
 Modes:
     production  — Default. Research features disabled. Fail-closed. Unsigned
-                  skills do not load. Self-modification disabled. Cloud fallback
-                  requires explicit opt-in.
+                  skills do not load. Self-modification disabled.
     live        — Strictly live mode. No simulation or mocking. Fail-closed.
     simulated   — Sandboxed environment for testing. No real side effects.
                   All tool calls are mocked.
@@ -61,7 +60,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": True,
         "allows_tools": True,
-        "allows_cloud": True,
         "allows_unsigned_skills": False,
         "fail_closed_on_degradation": True,
         "max_autonomy_level": 2,
@@ -79,7 +77,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": True,
         "allows_tools": True,
-        "allows_cloud": True,
         "allows_unsigned_skills": False,
         "fail_closed_on_degradation": True,
         "max_autonomy_level": 2,
@@ -97,7 +94,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": True,
         "allows_autonomous": True,
         "allows_tools": True,
-        "allows_cloud": True,
         "allows_unsigned_skills": True,
         "fail_closed_on_degradation": False,
         "max_autonomy_level": 5,
@@ -115,7 +111,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": True,
         "allows_tools": True,
-        "allows_cloud": False,
         "allows_unsigned_skills": True,
         "fail_closed_on_degradation": False,
         "max_autonomy_level": 3,
@@ -133,7 +128,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": False,
         "allows_tools": True,
-        "allows_cloud": False,
         "allows_unsigned_skills": True,
         "fail_closed_on_degradation": False,
         "max_autonomy_level": 1,
@@ -151,7 +145,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": True,
         "allows_tools": True,
-        "allows_cloud": True,
         "allows_unsigned_skills": True,
         "fail_closed_on_degradation": False,
         "max_autonomy_level": 4,
@@ -169,7 +162,6 @@ MODE_MANIFESTS: dict[AuraMode, dict[str, Any]] = {
         "allows_self_modification": False,
         "allows_autonomous": False,
         "allows_tools": False,
-        "allows_cloud": False,
         "allows_unsigned_skills": False,
         "fail_closed_on_degradation": True,
         "max_autonomy_level": 0,
@@ -320,11 +312,6 @@ def allows_tool_execution() -> bool:
     return get_active_manifest()["allows_tools"]
 
 
-def allows_cloud_fallback() -> bool:
-    """True if the current mode allows cloud model fallback."""
-    return get_active_manifest()["allows_cloud"]
-
-
 def allows_unsigned_skills() -> bool:
     """True if the current mode allows unsigned/unmanifested skills."""
     return get_active_manifest()["allows_unsigned_skills"]
@@ -354,7 +341,6 @@ def mode_context() -> dict[str, Any]:
         "allows_self_modification": manifest["allows_self_modification"],
         "allows_autonomous": manifest["allows_autonomous"],
         "allows_tools": manifest["allows_tools"],
-        "allows_cloud": manifest["allows_cloud"],
         "allows_unsigned_skills": manifest["allows_unsigned_skills"],
         "max_autonomy_level": manifest["max_autonomy_level"],
         "llm_backend": manifest["llm_backend"],

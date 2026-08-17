@@ -19,7 +19,6 @@ from interface.routes.settings import _RUNTIME_MODE_KEYS, SCHEMA
 WIRED = {
     "model.local_path",
     "model.deep_path",
-    "model.cloud_fallback_enabled",
     "voice.input_enabled",
     "voice.output_enabled",
     "voice.output_rate",

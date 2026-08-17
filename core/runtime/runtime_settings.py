@@ -23,9 +23,9 @@ See ``docs/SETTINGS_WIRING_AUDIT.md`` for the complete owner/evidence matrix::
 """
 from __future__ import annotations
 
+import atexit
 import json
 import logging
-import atexit
 import os
 import threading
 import time
@@ -76,7 +76,6 @@ _PROTECTED_DEFAULTS = {
 _FAIL_CLOSED_OVERRIDES: dict[str, Any] = {
     "autonomy.self_modification": "blocked",
     "governance.approval_mode": "all",
-    "model.cloud_fallback_enabled": False,
     "permissions.camera": False,
     "permissions.files_workspace": False,
     "permissions.screen": False,

@@ -3,7 +3,7 @@
  *
  * Steps 1..10 from the polish spec:
  *   1 Welcome / 2 System check / 3 Model / 4 Memory location /
- *   5 Permissions / 6 Safety / 7 Fallback / 8 Test voice /
+ *   5 Permissions / 6 Safety / 7 Local recovery / 8 Test voice /
  *   9 Test chat / 10 Ready
  *
  * The wizard reads and writes settings via /api/settings; world-channel
@@ -107,9 +107,8 @@
         break;
       case "fallback":
         panel.innerHTML = `
-          <h2>Fallback</h2>
-          <p>If your local cortex is unavailable, should Aura route to a configured cloud provider?</p>
-          <div><input type="checkbox" id="cloud_fallback" /> <label for="cloud_fallback">Allow cloud fallback</label></div>`;
+          <h2>Local recovery</h2>
+          <p>If the primary Cortex is unavailable, Aura keeps recovery on this machine and uses the available local model lanes.</p>`;
         break;
       case "test_voice":
         panel.innerHTML = `
@@ -168,8 +167,6 @@
         "privacy.mode": document.getElementById("privacy_mode").value,
         "safety.safe_mode": document.getElementById("safe_mode").checked,
       });
-    } else if (id === "fallback") {
-      await patchSettings({ "model.cloud_fallback_enabled": document.getElementById("cloud_fallback").checked });
     } else if (id === "ready") {
       try { await fetch("/api/settings/auth/fresh", {method: "POST"}); } catch {}
     }

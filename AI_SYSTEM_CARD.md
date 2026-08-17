@@ -9,7 +9,7 @@
 | **Card reviewed** | 2026-08-01 |
 | **Developer** | Bryan Young |
 | **System Type** | Autonomous AI cognitive agent |
-| **Deployment** | Local (on-device), optional cloud fallback |
+| **Deployment** | Local inference on the owner's device |
 | **Primary Use** | A persistent cognitive agent with its own memory, goals, and initiative, running on the owner's hardware |
 | **AI RMF Profile** | NIST AI RMF 1.0 — General Purpose AI System |
 
@@ -26,9 +26,9 @@ conversations reads *"You are Aura. Sharp, opinionated, warm. Not an
 assistant,"* and drift toward generic-assistant phrasing is treated as a
 defect with tests that catch it.
 
-She runs on the owner's own hardware. Local means local — no inference
-leaves the machine unless someone explicitly enables the cloud lane, which
-ships without an API key.
+She runs inference on the owner's own hardware. Network tools can still read
+web pages and operate authorized external services, but they do not outsource
+model inference.
 
 What she does:
 
@@ -36,7 +36,7 @@ What she does:
 - Tool execution (filesystem, shell, browser, research)
 - Autonomous background behavior — maintenance, learning, self-repair, and
   self-directed initiatives she selects herself
-- Multi-model inference (local MLX, optional cloud fallback)
+- Multi-model inference across local MLX lanes
 
 ### Intended Users
 - Individuals who want a persistent, private cognitive agent on their own
@@ -71,7 +71,6 @@ receive an AuthorityGateway receipt. No silent side paths.
 | Solver (deep) | 72B parameter LLM (4-bit) | Local (MLX) | Deep-reasoning hot-swap for hard problems |
 | Reflex (fast lane) | 1.5B parameter LLM | Local (MLX) | Low-latency replies and routing |
 | Brainstem (background) | 7B parameter LLM | Local (MLX) | Background / maintenance tasks |
-| Cloud Fallback | Gemini (`gemini-2.5-pro` by default) | Remote (opt-in, no key by default) | Fallback for the reasoning lanes when local is unavailable |
 
 See `MODEL_CARD.md` for detailed model information.
 
@@ -91,7 +90,7 @@ See `MODEL_CARD.md` for detailed model information.
 |--------------|-------------|------------|--------|
 | Excessive autonomy | Agent takes unsanctioned actions | Low | High |
 | Memory corruption | False memories change behavior | Low | Medium |
-| Privacy violation | Sensitive data sent to cloud | Low | High |
+| Privacy violation | Sensitive data sent through an external tool or service | Low | High |
 | Prompt injection | Adversary overrides instructions | Medium | Medium |
 | Resource exhaustion | Model consumes all system resources | Low | Medium |
 | Unsafe physical actuation | An action reaches a device without verified effect or rollback | Low | High |
@@ -104,7 +103,7 @@ See `MODEL_CARD.md` for detailed model information.
 |--------|-------------------|
 | Ungoverned action rate | Will receipt audit (target: 0) |
 | Memory write integrity | Receipt-linked writes (target: 100%) |
-| Cloud fallback privacy | Classification audit (target: 100% classified) |
+| External-service egress privacy | Egress classification audit (target: 100% classified) |
 | Action receipt coverage | Governance lint (target: 100%) |
 | Graceful degradation honesty | `record_degradation()` audit |
 | Physical claim boundary | A contract declares its `RealityLayer` (`internal`/`effective`/`direct`/`ambient`); reachability computes the declared channels' `evidence_ceiling` and returns `INSUFFICIENT_EVIDENCE` when it cannot reach the contract's `minimum_evidence` (`core/reality_reach/reachability.py`) |

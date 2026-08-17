@@ -192,20 +192,6 @@ class SecurityConfig(BaseModel):
     max_modifications_per_day: int = Field(default=100, ge=0, le=86_400)
     allow_network_access: bool = True
     allowed_domains: list[str] = Field(default_factory=lambda: ["*"])
-    # Credentials never leave this machine regardless of this setting — see
-    # core/security/egress_privacy.py. This governs only the personal tier
-    # (email, phone, card, SSN) on requests to a third-party model provider,
-    # where a turn's context becomes somebody else's log line. Turning it off
-    # buys a cloud fallback that can read the owner's contact details back to
-    # them; it does not affect local inference, which never crosses a wire.
-    redact_personal_data_to_model_providers: bool = True
-    # Whether the LoRA distillation pipe may use a CLOUD teacher. That pipe
-    # embeds the owner's original prompts verbatim, so this decides whether
-    # learning from their own conversations involves a third party at all.
-    # Redaction is not the same decision: a redacted transcript of the owner's
-    # work is still the owner's work. Defaults off — the local secondary
-    # teacher trains the adapter without one.
-    allow_cloud_teacher_distillation: bool = False
     enable_stealth_mode: bool = True
     force_unity_on: bool = False
 
@@ -395,7 +381,6 @@ class RedisConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     provider: str = "local_runtime"
-    api_key: str | None = None
 
     # Tri-Cameral Architecture (Phase 16) — Tuned for M5 Pro 64 GB
     # Tier 1: Brainstem (Heartbeat, telemetry, background tasks)
@@ -412,13 +397,6 @@ class LLMConfig(BaseModel):
     deep_model: str = "Qwen2.5-72B-Instruct-4bit"
     deep_max_tokens: int = Field(default=8192, gt=0)
     deep_temperature: float = Field(default=0.4, ge=0.0, le=2.0, allow_inf_nan=False)
-
-    # Teacher/Oracle: Cloud API for distillation and emergency fallback
-    teacher_model: str = "gemini-2.5-pro"
-
-    # Cloud API Keys
-    # ISSUE #70 - resolved env lookup inside Pydantic by moving to model_validator
-    gemini_api_key: str | None = None
 
     vision_model: str = "Qwen2.5-32B-Instruct-8bit"  # Use cortex-aligned model for vision
     whisper_model: str = "small.en"
@@ -546,10 +524,6 @@ class AuraConfig(BaseSettings):
         except ImportError as _e:
             logger.debug('Ignored ImportError in config.py: %s', _e)
 
-        # ISSUE #70 - evaluate gemini_api_key env lookup safely
-        if not self.llm.gemini_api_key:
-            self.llm.gemini_api_key = os.environ.get("GEMINI_API_KEY")
-
         # Mirror the effective security posture into the process environment so
         # older boot paths and tests see the same contract as config-backed code.
         os.environ["AURA_SECURITY_PROFILE"] = self.security.security_profile
@@ -592,10 +566,6 @@ class AuraConfig(BaseSettings):
             if not self.api_token:
                 logger.critical("CRITICAL ERROR: Missing AURA_API_TOKEN for PROD environment.")
                 sys.exit(1)
-            if not os.environ.get("GEMINI_API_KEY"):
-                logger.critical("CRITICAL ERROR: Missing GEMINI_API_KEY for PROD environment.")
-                sys.exit(1)
-
         return self
 
     def save(self) -> None:

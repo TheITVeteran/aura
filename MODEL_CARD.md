@@ -100,32 +100,6 @@ model. Never used for substantive full-mind replies.
 
 ---
 
-## Cloud Fallback Model
-
-| Field | Value |
-|-------|-------|
-| **Role** | Fallback when local models unavailable |
-| **Provider** | Google Gemini (`llm.teacher_model`, default `gemini-2.5-pro`) via `core/brain/llm/gemini_adapter.py` |
-| **Credential** | `GEMINI_API_KEY` / `llm.gemini_api_key` — absent by default |
-| **Activation** | Opt-in only; requires explicit configuration |
-| **Privacy** | Prompts classified before transmission |
-
-### Intended Use
-Emergency fallback only. Activated when local models are unavailable and
-the user has explicitly opted in. With no API key configured — the default
-state — this lane cannot activate at all.
-
-### Privacy Controls
-- Cloud use is a governed action domain
-  (`ActionDomain.CLOUD_FALLBACK` in `core/governance/will.py`), so it passes
-  the Unified Will and leaves a receipt like any other consequential action.
-- Prompts are classified before transmission; sensitive and restricted
-  content is not sent.
-- Cloud usage is logged in the Will receipt trail and is visible in the
-  audit chain export.
-
----
-
 ## Speech-to-Text Model
 
 | Field | Value |

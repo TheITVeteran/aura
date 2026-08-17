@@ -51,15 +51,6 @@ SCHEMA: tuple[SettingDef, ...] = (
         owner="model_registry",
     ),
     SettingDef(
-        "model.cloud_fallback_enabled",
-        "Enable cloud fallback",
-        "models",
-        False,
-        "Permit configured off-device inference only after normal routing policy approves it.",
-        "bool",
-        owner="inference_router",
-    ),
-    SettingDef(
         "voice.input_enabled",
         "Microphone input",
         "voice",

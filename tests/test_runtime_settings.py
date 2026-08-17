@@ -435,18 +435,6 @@ def test_self_modification_staged_passes_the_policy_gate(tmp_path):
     assert any(p.id == "p2" for p in ladder._proposals)
 
 
-# ── model.cloud_fallback_enabled (authoritative over caller request) ─────────
-
-def test_cloud_fallback_setting_default_off(tmp_path):
-    from core.runtime.runtime_settings import get_runtime_setting
-
-    # Default off → a caller requesting cloud fallback is still gated to False
-    # (allow_cloud_fallback = requested AND this setting).
-    assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is False
-    _write_settings(tmp_path, {"model.cloud_fallback_enabled": True})
-    assert bool(get_runtime_setting("model.cloud_fallback_enabled", False)) is True
-
-
 # ── memory.retention_days (recency horizon in the sovereign pruner) ──────────
 
 def test_memory_retention_days_extends_recency_horizon(tmp_path):

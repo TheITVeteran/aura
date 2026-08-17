@@ -54,12 +54,12 @@ hardware produced it.
   - `governed runtime`, `persistent memory`, `causal internal state`, `affect steering`, `System 2 planning/search`, `self-repair`
   - `operational volition`, `autonomous agency`, `entity-in-a-box behavior`
   - `experience-adjacent functional indicators`
-* **Disallowed Claims**: `DNU AGI`, `AGI-candidate`, `external real-world validation` (requires cloud APIs and high-horizon scale), `indefinite autonomy`.
+* **Disallowed Claims**: `DNU AGI`, `AGI-candidate`, `external real-world validation` (requires independent high-horizon evaluation), `indefinite autonomy`.
 * **Tests That Can Run**:
   - Local model-aware agency emergence batteries
   - Local sandbox/boxed entity suites
   - Medium-duration longevity soak (e.g., `local_4h`)
-* **Tests That Are Blocked**: Multi-day longevity soak (e.g., `local_72h`), full cloud-scale external validation.
+* **Tests That Are Blocked**: Multi-day longevity soak (e.g., `local_72h`) and high-horizon external validation.
 
 ---
 
@@ -74,30 +74,13 @@ hardware produced it.
   - Heavy local model reasoning runs
   - Local System 2 search rollouts
   - Longer longevity soak (e.g., `local_24h`)
-* **Tests That Are Blocked**: Full cloud-scale third-party benchmark gates.
+* **Tests That Are Blocked**: Third-party benchmark gates that exceed local compute capacity.
 
 ---
 
-## 5. Cloud / External Model Profile
-* **Target Hardware**: Any host with network access to the Google Gemini API — the only cloud adapter Aura ships (`core/brain/llm/gemini_adapter.py`). Cloud is an opt-in fallback for the reasoning lanes, never the default substrate; the local MLX tiers remain primary.
-* **Required Models**: Gemini 3.5 Flash (chat / deep lanes) and Gemini 3.5 Pro (thinking lane) by default, with per-model daily/minute rate-limit tiers overridable via `AURA_GEMINI_*` environment variables.
-* **Memory/Compute**: Network-bound, infinite API compute resources.
-* **Allowed Claims**:
-  - All local properties, plus:
-  - `DNU AGI` (requires complete API budget and execution unblocking)
-  - `AGI-candidate`
-  - `external real-world validation`
-* **Disallowed Claims**: `subjective consciousness`, `personhood`, `metaphysical free will` (strictly banned).
-* **Tests That Can Run**:
-  - Full 100-task DNU AGI battery
-  - External live validation scenarios using web/browser tools
-* **Tests That Are Blocked**: Bounded only by rate limits and network connection status.
-
----
-
-## 6. Live Hardware / Browser Profile
+## 5. Live Hardware / Browser Profile
 * **Target Hardware**: Dedicated robotic/embodied system or developer workstation with full system access and live web interface hooks.
-* **Required Models**: Mixed local and cloud LLM runtime.
+* **Required Models**: Local Cortex, Solver, Brainstem, and Reflex lanes.
 * **Memory/Compute**: Unconstrained host access.
 * **Allowed Claims**: Bounded by authorization/compliance profiles.
 * **Disallowed Claims**: `mature RSI` (unless sandboxed with rollback), subjective consciousness.
