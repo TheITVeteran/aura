@@ -5,12 +5,16 @@ import json
 import sqlite3
 import stat
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from core.communication.contact_directory import MessagesContact
+from core.communication.contact_directory import (
+    ContactNotConfiguredError,
+    MessagesContact,
+)
 from core.communication.messages_journal import (
     MessagesDeliveryJournal,
     MessagesJournalCorruptionError,
@@ -59,6 +63,11 @@ class _Directory:
     async def load_async(self, alias: str) -> MessagesContact:
         assert alias == "primary_operator"
         return _contact()
+
+
+class _EmptyDirectory:
+    async def load_async(self, alias: str) -> MessagesContact:
+        raise ContactNotConfiguredError(alias)
 
 
 def _history_db(path: Path) -> None:
@@ -226,6 +235,43 @@ class _Driver:
             HistoryMessage(row_id=10 + self.calls, guid=f"out-{self.calls}", text=body)
         )
         return {"accepted": True}
+
+
+@pytest.mark.asyncio
+async def test_transport_stop_handoffs_to_poll_task_owner_loop(tmp_path: Path) -> None:
+    owner_loop = asyncio.new_event_loop()
+    owner_thread = threading.Thread(target=owner_loop.run_forever, daemon=True)
+    owner_thread.start()
+
+    async def create_on_owner() -> MessagesTransport:
+        transport = MessagesTransport(
+            chat_turn=lambda *_args, **_kwargs: None,
+            directory=_EmptyDirectory(),
+            journal=MessagesDeliveryJournal(tmp_path / "journal.sqlite3"),
+            history=_History(),
+            driver=_Driver(_History()),
+            poll_interval_s=30.0,
+        )
+        await transport.start(
+            task_factory=lambda coro, name: asyncio.create_task(coro, name=name)
+        )
+        return transport
+
+    transport = await asyncio.wrap_future(
+        asyncio.run_coroutine_threadsafe(create_on_owner(), owner_loop)
+    )
+    try:
+        assert transport._task is not None
+        assert transport._task.get_loop() is owner_loop
+
+        await transport.stop()
+
+        assert transport._task is None
+        await transport.stop()
+    finally:
+        owner_loop.call_soon_threadsafe(owner_loop.stop)
+        owner_thread.join(timeout=2.0)
+        owner_loop.close()
 
 
 @pytest.mark.asyncio

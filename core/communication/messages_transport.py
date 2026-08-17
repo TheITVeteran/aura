@@ -274,10 +274,49 @@ class MessagesTransport:
             self._task = task_factory(coroutine, name="messages_transport.poll")
 
     async def stop(self) -> None:
-        self._stop_event.set()
         task = self._task
         if task is None:
             return
+        owner_loop = task.get_loop()
+        current_loop = asyncio.get_running_loop()
+        if owner_loop is current_loop:
+            await self._stop_owned_task(task)
+            return
+        if owner_loop.is_closed() or not owner_loop.is_running():
+            # There is no loop on which this task can make further progress.
+            # Detach the stale handle rather than trying to await a foreign
+            # Future, which raises and aborts the rest of ordered shutdown.
+            if self._task is task:
+                self._task = None
+            return
+
+        # The transport is created by the uvicorn lifespan loop but is also a
+        # ServiceContainer member. Ordered process shutdown runs on aura_main's
+        # loop and can therefore reach this hook before uvicorn's own lifespan
+        # cleanup. Cancellation and awaiting must happen on the task's owner.
+        try:
+            stop_future = asyncio.run_coroutine_threadsafe(
+                self._stop_owned_task(task),
+                owner_loop,
+            )
+        except RuntimeError:
+            # The owner can finish between the liveness check and submission.
+            if task.done() or owner_loop.is_closed() or not owner_loop.is_running():
+                if self._task is task:
+                    self._task = None
+                return
+            raise
+        await asyncio.wait_for(
+            asyncio.wrap_future(stop_future),
+            timeout=max(2.0, self._poll_interval_s + 2.0),
+        )
+
+    async def _stop_owned_task(self, task: asyncio.Task[Any]) -> None:
+        """Cancel one polling generation on its owning event loop."""
+
+        if self._task is not task:
+            return
+        self._stop_event.set()
         if not task.done():
             task.cancel()
         try:
@@ -285,7 +324,8 @@ class MessagesTransport:
         except asyncio.CancelledError:
             pass
         finally:
-            self._task = None
+            if self._task is task:
+                self._task = None
 
     async def on_stop_async(self) -> None:
         await self.stop()
