@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SETTINGS_SCHEMA_NAME = "aura.runtime_settings"
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 3
 SETTINGS_AUDIT_SCHEMA = "aura.runtime_settings.audit.v1"
 SETTINGS_APPLICATION_AUDIT_SCHEMA = "aura.runtime_settings.application.v1"
 

@@ -37,6 +37,10 @@ logger = logging.getLogger("Aura.RuntimeSettings.ControlPlane")
 
 _HISTORY_LIMIT = 16
 _GENESIS_HASH = "sha256:" + "0" * 64
+_AUDITED_SETTINGS_SCHEMA_MIN_VERSION = 2
+_RETIRED_SETTING_TYPES = {
+    "model.cloud_fallback_enabled": "bool",
+}
 _APPLICATION_STATUSES = frozenset(
     {
         "applied",
@@ -89,6 +93,11 @@ class SettingsSnapshot:
     history: tuple[dict[str, Any], ...] = ()
     migrated_from: str = ""
     unknown_keys: tuple[str, ...] = ()
+    integrity_values: dict[str, Any] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def public(self) -> dict[str, Any]:
         return {
@@ -199,6 +208,27 @@ def _coerce_timestamp(value: Any, *, field_name: str) -> float:
     if not math.isfinite(timestamp) or timestamp < 0.0:
         raise ValueError(f"{field_name} must be a finite timestamp")
     return timestamp
+
+
+def _validate_persisted_values(values: Any) -> dict[str, Any]:
+    """Validate known fields while retaining hash-covered historical fields."""
+
+    if not isinstance(values, dict):
+        raise TypeError("settings values must be an object")
+    retained = dict(values)
+    for key, value in retained.items():
+        normalized = str(key)
+        if normalized in SCHEMA_BY_KEY:
+            validate_setting_value(normalized, value)
+            continue
+        retired_type = _RETIRED_SETTING_TYPES.get(normalized)
+        if retired_type == "bool" and not isinstance(value, bool):
+            raise TypeError(f"retired setting {normalized} must be a boolean")
+    return retained
+
+
+def _active_unknown_keys(unknown: Iterable[str]) -> tuple[str, ...]:
+    return tuple(key for key in unknown if key not in _RETIRED_SETTING_TYPES)
 
 
 class RuntimeSettingsStore:
@@ -760,6 +790,7 @@ class RuntimeSettingsStore:
                 last_receipt_hash=str(receipt["receipt_hash"]),
                 history=tuple(history),
                 migrated_from=current.migrated_from,
+                integrity_values=dict(next_values),
             )
             self._write_snapshot_locked(snapshot)
             self._snapshot = snapshot
@@ -961,22 +992,30 @@ class RuntimeSettingsStore:
                 raise SettingsIntegrityError(
                     "prepared settings receipt has no changed values"
                 )
-            next_values = dict(recovered.values)
-            for key, transition in changed.items():
-                if not isinstance(transition, dict):
-                    raise SettingsIntegrityError(
-                        f"prepared transition for {key} must be an object"
-                    )
-                if recovered.values.get(key) != transition.get("previous"):
-                    raise SettingsIntegrityError(
-                        f"prepared transition previous value mismatch for {key}"
-                    )
-                next_values[key] = transition.get("value")
-            next_values, unknown = validated_settings_snapshot(next_values)
-            if unknown or receipt.get("values_sha256") != _sha256(next_values):
+            bases = [dict(recovered.values)]
+            raw_base = dict(recovered.integrity_values or recovered.values)
+            if raw_base != bases[0]:
+                bases.append(raw_base)
+            reconstructed: dict[str, Any] | None = None
+            for base in bases:
+                candidate = dict(base)
+                for key, transition in changed.items():
+                    if not isinstance(transition, dict):
+                        raise SettingsIntegrityError(
+                            f"prepared transition for {key} must be an object"
+                        )
+                    if candidate.get(key) != transition.get("previous"):
+                        break
+                    candidate[key] = transition.get("value")
+                else:
+                    if receipt.get("values_sha256") == _sha256(candidate):
+                        reconstructed = candidate
+                        break
+            if reconstructed is None:
                 raise SettingsIntegrityError(
                     "prepared settings receipt does not reconstruct its state hash"
                 )
+            next_values, unknown = validated_settings_snapshot(reconstructed)
             history = list(recovered.history)
             history.append(self._history_entry(recovered))
             recovered = SettingsSnapshot(
@@ -989,6 +1028,8 @@ class RuntimeSettingsStore:
                 last_receipt_hash=str(receipt["receipt_hash"]),
                 history=tuple(history[-_HISTORY_LIMIT:]),
                 migrated_from=recovered.migrated_from,
+                unknown_keys=_active_unknown_keys(unknown),
+                integrity_values=reconstructed,
             )
 
         self._assert_owned_paths()
@@ -1037,7 +1078,7 @@ class RuntimeSettingsStore:
             raise SettingsVersionError(
                 f"settings schema v{version} is newer than supported v{SETTINGS_SCHEMA_VERSION}"
             )
-        if version < SETTINGS_SCHEMA_VERSION:
+        if version < _AUDITED_SETTINGS_SCHEMA_MIN_VERSION:
             payload = raw.get("payload")
             values, unknown = migrated_settings_snapshot(payload)
             return SettingsSnapshot(
@@ -1052,7 +1093,8 @@ class RuntimeSettingsStore:
             )
 
         revision = _coerce_revision(raw.get("revision"), field_name="revision")
-        values, unknown = validated_settings_snapshot(raw.get("values"))
+        integrity_values = _validate_persisted_values(raw.get("values"))
+        values, unknown = validated_settings_snapshot(integrity_values)
         history = self._validated_history(raw.get("history", []))
         if revision == 0 and history:
             raise SettingsIntegrityError("revision zero settings state has history")
@@ -1069,8 +1111,16 @@ class RuntimeSettingsStore:
             ),
             last_receipt_hash=str(raw.get("last_receipt_hash") or ""),
             history=history,
-            migrated_from=str(raw.get("migrated_from") or "")[:120],
-            unknown_keys=unknown,
+            migrated_from=(
+                str(raw.get("migrated_from") or "")[:120]
+                or (
+                    f"envelope_v{version}"
+                    if version < SETTINGS_SCHEMA_VERSION
+                    else ""
+                )
+            ),
+            unknown_keys=_active_unknown_keys(unknown),
+            integrity_values=integrity_values,
         )
 
     @staticmethod
@@ -1091,7 +1141,7 @@ class RuntimeSettingsStore:
                 raise SettingsIntegrityError(
                     "settings history revisions must be contiguous"
                 )
-            values, _unknown = validated_settings_snapshot(entry.get("values"))
+            values = _validate_persisted_values(entry.get("values"))
             history.append(
                 {
                     "revision": revision,
@@ -1174,7 +1224,10 @@ class RuntimeSettingsStore:
                         f"settings audit changes invalid at line {line_number}"
                     )
                 for key, transition in changed.items():
-                    if key not in SCHEMA_BY_KEY or not isinstance(transition, dict):
+                    if (
+                        key not in SCHEMA_BY_KEY
+                        and key not in _RETIRED_SETTING_TYPES
+                    ) or not isinstance(transition, dict):
                         raise SettingsIntegrityError(
                             f"settings audit transition invalid for {key}"
                         )
@@ -1183,8 +1236,12 @@ class RuntimeSettingsStore:
                             f"settings audit transition fields invalid for {key}"
                         )
                     try:
-                        validate_setting_value(key, transition["previous"])
-                        validate_setting_value(key, transition["value"])
+                        if key in SCHEMA_BY_KEY:
+                            validate_setting_value(key, transition["previous"])
+                            validate_setting_value(key, transition["value"])
+                        else:
+                            _validate_persisted_values({key: transition["previous"]})
+                            _validate_persisted_values({key: transition["value"]})
                     except (KeyError, TypeError, ValueError) as exc:
                         raise SettingsIntegrityError(
                             f"settings audit transition value invalid for {key}"
@@ -1337,7 +1394,8 @@ class RuntimeSettingsStore:
             raise SettingsIntegrityError("settings state receipt is missing from audit chain")
         if int(matching.get("revision", -1)) != snapshot.revision:
             raise SettingsIntegrityError("settings state revision does not match its receipt")
-        if matching.get("values_sha256") != _sha256(snapshot.values):
+        integrity_values = snapshot.integrity_values or snapshot.values
+        if matching.get("values_sha256") != _sha256(integrity_values):
             raise SettingsIntegrityError("settings state values do not match their receipt")
 
     @staticmethod
@@ -1390,7 +1448,7 @@ class RuntimeSettingsStore:
             "revision": snapshot.revision,
             "updated_at": snapshot.updated_at,
             "last_receipt_hash": snapshot.last_receipt_hash,
-            "values": dict(snapshot.values),
+            "values": dict(snapshot.integrity_values or snapshot.values),
         }
 
     def _write_snapshot_locked(self, snapshot: SettingsSnapshot) -> None:
@@ -1401,7 +1459,7 @@ class RuntimeSettingsStore:
             "updated_at": snapshot.updated_at,
             "last_receipt_hash": snapshot.last_receipt_hash,
             "history": list(snapshot.history),
-            "values": snapshot.values,
+            "values": snapshot.integrity_values or snapshot.values,
             **(
                 {"migrated_from": snapshot.migrated_from}
                 if snapshot.migrated_from

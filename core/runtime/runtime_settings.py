@@ -66,6 +66,7 @@ _refresh_thread: threading.Thread | None = None
 
 _WATCH_INTERVAL_SECONDS = 0.5
 _STALE_FAIL_CLOSED_SECONDS = 5.0
+_AUDITED_SETTINGS_SCHEMA_MIN_VERSION = 2
 
 _PROTECTED_DEFAULTS = {
     definition.key: definition.default
@@ -145,7 +146,7 @@ def _read_settings_file(path: Path) -> dict[str, Any]:
             or version > SETTINGS_SCHEMA_VERSION
         ):
             raise ValueError("settings schema version is incompatible")
-        if version == SETTINGS_SCHEMA_VERSION:
+        if version >= _AUDITED_SETTINGS_SCHEMA_MIN_VERSION:
             from core.runtime.settings_control_plane import RuntimeSettingsStore
 
             verified = RuntimeSettingsStore(path).snapshot(refresh=True)

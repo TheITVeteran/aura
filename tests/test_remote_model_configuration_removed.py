@@ -45,7 +45,7 @@ def test_boot_configuration_never_reads_the_retired_gemini_secret():
 def test_retired_cloud_setting_is_rejected_and_removed_during_migration():
     key = "model.cloud_fallback_enabled"
 
-    assert SETTINGS_SCHEMA_VERSION == 2
+    assert SETTINGS_SCHEMA_VERSION == 3
     assert key not in SCHEMA_BY_KEY
     assert key not in DEFAULT_VALUES
     with pytest.raises(KeyError, match="unknown_setting:model.cloud_fallback_enabled"):

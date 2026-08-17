@@ -31,7 +31,7 @@ def test_first_commit_is_versioned_audited_and_acknowledged(tmp_path):
 
     state = json.loads((tmp_path / "runtime.json").read_text(encoding="utf-8"))
     assert state["schema"] == "aura.runtime_settings"
-    assert state["schema_version"] == 2
+    assert state["schema_version"] == 3
     assert state["revision"] == 1
     assert state["values"]["theme.reduced_motion"] is True
     assert result.receipt is not None
@@ -371,6 +371,138 @@ def test_legacy_flat_state_migrates_on_first_mutation(tmp_path):
         "migrated_from": "legacy_flat_v1",
     }
     assert store.verify_integrity()["ok"] is True
+
+
+def _write_v2_state_with_retired_setting(
+    tmp_path,
+    *,
+    retired_previous=False,
+):
+    path = tmp_path / "runtime.json"
+    values = {
+        **control_plane.DEFAULT_VALUES,
+        "model.cloud_fallback_enabled": False,
+        "notify.enabled": False,
+    }
+    timestamp = 1_725_000_000.0
+    changed = {
+        "notify.enabled": {"previous": True, "value": False},
+    }
+    if retired_previous is not False:
+        changed["model.cloud_fallback_enabled"] = {
+            "previous": retired_previous,
+            "value": False,
+        }
+    receipt = RuntimeSettingsStore._build_receipt(
+        revision=1,
+        operation="patch",
+        actor="v2-runtime",
+        request_id="v2-retired-setting",
+        request_fingerprint=control_plane._sha256(
+            {
+                "operation": "patch",
+                "changes": {
+                    key: transition["value"]
+                    for key, transition in changed.items()
+                },
+                "metadata": {},
+            }
+        ),
+        changed=changed,
+        values=values,
+        previous_receipt_hash=control_plane._GENESIS_HASH,
+        metadata={},
+        timestamp=timestamp,
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "aura.runtime_settings",
+                "schema_version": 2,
+                "revision": 1,
+                "updated_at": timestamp,
+                "last_receipt_hash": receipt["receipt_hash"],
+                "history": [
+                    {
+                        "revision": 0,
+                        "updated_at": 0.0,
+                        "last_receipt_hash": "",
+                        "values": {
+                            **control_plane.DEFAULT_VALUES,
+                            "model.cloud_fallback_enabled": retired_previous,
+                        },
+                    }
+                ],
+                "values": values,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "runtime.audit.jsonl").write_text(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_audited_v2_state_authenticates_before_retired_setting_migration(tmp_path):
+    from core.runtime import runtime_settings
+
+    path = _write_v2_state_with_retired_setting(tmp_path)
+
+    store = RuntimeSettingsStore(path)
+    snapshot = store.snapshot()
+
+    assert snapshot.revision == 1
+    assert snapshot.migrated_from == "envelope_v2"
+    assert snapshot.unknown_keys == ()
+    assert "model.cloud_fallback_enabled" not in snapshot.values
+    assert store.verify_integrity()["ok"] is True
+    assert "model.cloud_fallback_enabled" not in runtime_settings._read_settings_file(
+        path
+    )
+
+    result = store.patch(
+        {"theme.reduced_motion": True},
+        expected_revision=1,
+        request_id="complete-v3-migration",
+    )
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert result.snapshot.revision == 2
+    assert persisted["schema_version"] == 3
+    assert "model.cloud_fallback_enabled" not in persisted["values"]
+    assert "model.cloud_fallback_enabled" in persisted["history"][-1]["values"]
+    assert store.verify_integrity()["ok"] is True
+
+
+def test_retired_v2_audit_transition_remains_verifiable_but_not_active(tmp_path):
+    path = _write_v2_state_with_retired_setting(
+        tmp_path,
+        retired_previous=True,
+    )
+
+    store = RuntimeSettingsStore(path)
+
+    assert store.verify_integrity()["ok"] is True
+    assert "model.cloud_fallback_enabled" not in store.snapshot().values
+
+
+def test_retired_historical_setting_remains_covered_by_receipt_hash(tmp_path):
+    path = _write_v2_state_with_retired_setting(tmp_path)
+    store = RuntimeSettingsStore(path)
+    store.patch(
+        {"theme.reduced_motion": True},
+        expected_revision=1,
+        request_id="retain-v2-history",
+    )
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["history"][-1]["values"]["model.cloud_fallback_enabled"] = True
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    damaged = RuntimeSettingsStore(path)
+
+    assert damaged.describe()["integrity"]["ok"] is False
+    assert "settings history value mismatch at revision 1" in damaged._load_error
 
 
 def test_rollback_creates_a_new_audited_revision(tmp_path):
