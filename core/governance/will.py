@@ -42,6 +42,10 @@ from enum import StrEnum
 from typing import Any
 
 from core.container import ServiceContainer
+from core.executive.execution_policy import (
+    classify_execution_risk,
+    resolve_execution_effect_scope,
+)
 from core.identity.self_contract import contains_identity_erasure
 from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
@@ -718,7 +722,30 @@ class UnifiedWill:
         try:
             pm = ServiceContainer.get("permission_model", default=None)
             if pm and self._permission_model_applies(domain):
-                pm_decision = pm.check_permission(domain.value, content, context)
+                permission_effect_scope = ""
+                permission_execution_risk = ""
+                if domain == ActionDomain.TOOL_EXECUTION:
+                    tool_name = str(
+                        context.get("tool") or context.get("skill") or ""
+                    ).strip()
+                    if not tool_name and content.startswith("tool:"):
+                        tool_name = content.split(":", 1)[1].split()[0].strip()
+                    permission_effect_scope = resolve_execution_effect_scope(
+                        tool_name,
+                        context,
+                    )
+                    permission_execution_risk = classify_execution_risk(
+                        tool_name,
+                        context,
+                        effect_scope=permission_effect_scope,
+                    )
+                pm_decision = pm.check_permission(
+                    domain.value,
+                    content,
+                    context,
+                    effect_scope=permission_effect_scope,
+                    execution_risk=permission_execution_risk,
+                )
                 if not pm_decision.approved:
                     if pm_decision.requires_confirmation:
                         outcome = WillOutcome.DEFER

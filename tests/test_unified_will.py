@@ -155,6 +155,74 @@ class TestAllDomains:
         assert decision.reason == "permission_model_check_failed"
         assert "permission_model_failure" in decision.constraints
 
+    def test_repeated_typed_read_only_tools_do_not_self_escalate(self, will, monkeypatch):
+        """Will must preserve the gateway's typed contract across repeated reads."""
+
+        from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
+
+        pm = PermissionRiskModel()
+        pm.modality.email = True
+        monkeypatch.setattr(
+            "core.will.ServiceContainer.get",
+            lambda name, default=None: pm if name == "permission_model" else default,
+        )
+
+        decisions = [
+            will.decide(
+                content="tool:email_adapter",
+                source="autonomous_initiative_loop",
+                domain=ActionDomain.TOOL_EXECUTION,
+                priority=0.9,
+                context={
+                    "tool": "email_adapter",
+                    "skill": "email_adapter",
+                    "mode": "read",
+                    "uid": uid,
+                    "effect_scope": "read_only",
+                    "risk_level": "low",
+                    "read_only": True,
+                },
+            )
+            for uid in ("101", "102", "103", "104")
+        ]
+
+        assert all(decision.is_approved() for decision in decisions)
+        assert all(
+            decision.risk_level is RiskLevel.LOW
+            for decision in pm._decision_history
+        )
+        assert not any(
+            "rapid MEDIUM" in decision.reason
+            for decision in pm._decision_history
+        )
+
+    def test_unregistered_tool_cannot_self_declare_low_risk(self, will, monkeypatch):
+        """Will recomputes tool risk instead of trusting caller-supplied labels."""
+
+        from core.capabilities.permission_model import PermissionRiskModel
+
+        pm = PermissionRiskModel()
+        monkeypatch.setattr(
+            "core.will.ServiceContainer.get",
+            lambda name, default=None: pm if name == "permission_model" else default,
+        )
+
+        decision = will.decide(
+            content="tool:unregistered_power_tool",
+            source="untrusted_caller",
+            domain=ActionDomain.TOOL_EXECUTION,
+            priority=0.9,
+            context={
+                "tool": "unregistered_power_tool",
+                "effect_scope": "read_only",
+                "risk_level": "low",
+                "read_only": True,
+            },
+        )
+
+        assert not decision.is_approved()
+        assert "requires_user_confirmation" in decision.constraints
+
     def test_aura_now_defer_allows_read_only_observation_tool(self, will, monkeypatch):
         """Present-state deferral must not block harmless observation needed for stabilization."""
 
