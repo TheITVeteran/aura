@@ -99,3 +99,57 @@ def test_continuous_cognition_rejects_malformed_drive_vector(monkeypatch):
 
     assert submitted == []
     assert ("continuous_cognition", "ValueError") in recorded
+
+
+def test_continuous_cognition_staggers_cold_periodic_dependencies(monkeypatch):
+    loop = ContinuousCognitionLoop()
+    calls: list[str] = []
+
+    class _Drive:
+        budgets = {}
+
+    class _World:
+        def update(self):
+            calls.append("world")
+
+    class _Neurochemical:
+        def tick(self, *, dt):
+            calls.append(f"neurochemical:{dt}")
+
+    class _Affect:
+        def drift_toward_baseline(self, *, dt):
+            calls.append(f"affect:{dt}")
+
+    monkeypatch.setattr(loop, "_get_drive_engine", lambda: calls.append("drive") or _Drive())
+    monkeypatch.setattr(loop, "_get_world_state", lambda: _World())
+    monkeypatch.setattr(loop, "_get_neurochemical", lambda: _Neurochemical())
+    monkeypatch.setattr(loop, "_get_affect", lambda: _Affect())
+    monkeypatch.setattr(loop, "_seed_initiative_from_drives", lambda: calls.append("initiative"))
+    monkeypatch.setattr(loop, "_check_for_salient_changes", lambda: calls.append("salient"))
+
+    loop._cognitive_step()
+    assert calls == ["drive"]
+
+    for tick in range(1, 61):
+        loop._tick_count = tick
+        loop._cognitive_step()
+
+    assert calls.count("world") == 12
+    assert calls.count("neurochemical:0.5") == 30
+    assert calls.count("affect:2.0") == 15
+    assert calls.count("initiative") == 2
+    assert calls.count("salient") == 6
+
+
+def test_continuous_cognition_times_worker_without_event_loop_delay(monkeypatch):
+    loop = ContinuousCognitionLoop()
+    readings = [10.0, 10.125]
+    original_monotonic = continuous_cognition.time.monotonic
+    monkeypatch.setattr(
+        continuous_cognition.time,
+        "monotonic",
+        lambda: readings.pop(0) if readings else original_monotonic(),
+    )
+    monkeypatch.setattr(loop, "_cognitive_step", lambda: None)
+
+    assert loop._timed_cognitive_step() == pytest.approx(0.125)

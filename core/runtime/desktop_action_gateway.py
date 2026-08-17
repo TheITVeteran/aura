@@ -50,13 +50,27 @@ def _refuse_if_untrusted_context(operation: str, source: str) -> dict[str, Any] 
     """
     try:
         from core.security.content_provenance import describe_untrusted_context
-        from core.security.rule_of_two import get_rule_of_two_registry
+        from core.security.rule_of_two import (
+            get_rule_of_two_registry,
+            install_known_handlers,
+        )
 
         handler = get_rule_of_two_registry().get("desktop_automation")
         if handler is None:
-            if governance_runtime_active():
-                raise RuntimeError("desktop_automation rule-of-two handler is not installed")
-            return None
+            # These declarations are immutable security metadata, not a
+            # service that should depend on orchestrator boot order. The API
+            # becomes reachable before engineering foundations finish, so an
+            # early desktop-access poll can reach this gate first. Install the
+            # canonical declarations here, then check the registry again. A
+            # failed declaration still fails closed below.
+            install_known_handlers()
+            handler = get_rule_of_two_registry().get("desktop_automation")
+            if handler is None:
+                if governance_runtime_active():
+                    raise RuntimeError(
+                        "desktop_automation rule-of-two handler is not installed"
+                    )
+                return None
         if not handler.violates_now():
             return None
         why = describe_untrusted_context() or "this turn read untrusted content"

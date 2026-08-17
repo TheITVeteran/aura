@@ -107,6 +107,7 @@ class ContinuousCognitionLoop:
         self._consecutive_loop_failures: int = 0
         self._last_loop_error_at: float = 0.0
         self._last_step_duration_s: float = 0.0
+        self._last_scheduler_delay_s: float = 0.0
 
         # Cached service references (lazy-loaded)
         self._drive_engine = None
@@ -165,6 +166,7 @@ class ContinuousCognitionLoop:
         try:
             while self._running:
                 t0 = time.monotonic()
+                worker_elapsed: float | None = None
                 try:
                     # CP126 (critical): "Continuous cognition invokes
                     # synchronous services on the event loop. World-state
@@ -183,7 +185,7 @@ class ContinuousCognitionLoop:
                     #
                     # Off the loop, so a slow dependency costs a late tick
                     # instead of a frozen runtime.
-                    await asyncio.to_thread(self._cognitive_step)
+                    worker_elapsed = await asyncio.to_thread(self._timed_cognitive_step)
                     self._consecutive_loop_failures = 0
                 except _CONTINUOUS_COGNITION_ERRORS as exc:
                     self._consecutive_loop_failures += 1
@@ -205,15 +207,17 @@ class ContinuousCognitionLoop:
                 self._tick_count += 1
 
                 elapsed = time.monotonic() - t0
-                self._last_step_duration_s = max(0.0, elapsed)
+                if worker_elapsed is not None:
+                    self._last_step_duration_s = max(0.0, worker_elapsed)
+                    self._last_scheduler_delay_s = max(0.0, elapsed - worker_elapsed)
                 # A step that overruns its own interval is a dependency
                 # blocking, and it used to be invisible: the loop simply
                 # ticked late. Say so, once it is bad enough to matter.
-                if elapsed > _SLOW_STEP_SECONDS:
+                if self._last_step_duration_s > _SLOW_STEP_SECONDS:
                     self._slow_step_count += 1
                     _record_continuous_cognition_degradation(
                         TimeoutError(
-                            f"cognitive step took {elapsed:.2f}s "
+                            f"cognitive step took {self._last_step_duration_s:.2f}s "
                             f"(interval {self._INTERVAL:.2f}s)"
                         ),
                         action="continued the cognition loop after a slow step",
@@ -230,6 +234,16 @@ class ContinuousCognitionLoop:
         finally:
             self._running = False
 
+    def _timed_cognitive_step(self) -> float:
+        """Run one worker step and return worker time without scheduler delay."""
+        started = time.monotonic()
+        self._cognitive_step()
+        return max(0.0, time.monotonic() - started)
+
+    def _periodic_due(self, period: int, offset: int) -> bool:
+        """Keep periodic work at its cadence without a tick-zero fan-in."""
+        return self._tick_count >= offset and (self._tick_count - offset) % period == 0
+
     def _cognitive_step(self) -> None:
         """One step of continuous cognition. Pure Python, no LLM.
 
@@ -238,7 +252,7 @@ class ContinuousCognitionLoop:
         has a rich, current context to work with.
         """
         # 1. WorldState telemetry (every 5th step = ~2.5s)
-        if self._tick_count % 5 == 0:
+        if self._periodic_due(5, 3):
             try:
                 ws = self._get_world_state()
                 if ws:
@@ -269,7 +283,7 @@ class ContinuousCognitionLoop:
             logger.debug("CognitionLoop: drive pressure update failed: %s", exc)
 
         # 3. Neurochemical metabolism (every 2nd step = ~1s)
-        if self._tick_count % 2 == 0:
+        if self._periodic_due(2, 1):
             try:
                 nchem = self._get_neurochemical()
                 if nchem and hasattr(nchem, "tick"):
@@ -283,7 +297,7 @@ class ContinuousCognitionLoop:
                 logger.debug("CognitionLoop: neurochemical tick failed: %s", exc)
 
         # 4. Affect drift toward baseline (every 4th step = ~2s)
-        if self._tick_count % 4 == 0:
+        if self._periodic_due(4, 2):
             try:
                 affect = self._get_affect()
                 if affect and hasattr(affect, "drift_toward_baseline"):
@@ -297,11 +311,11 @@ class ContinuousCognitionLoop:
                 logger.debug("CognitionLoop: affect drift failed: %s", exc)
 
         # 5. Initiative seeding from drive pressure (every 30th step = ~15s)
-        if self._tick_count % 30 == 0:
+        if self._periodic_due(30, 7):
             self._seed_initiative_from_drives()
 
         # 6. Salient event check (every 10th step = ~5s)
-        if self._tick_count % 10 == 0:
+        if self._periodic_due(10, 4):
             self._check_for_salient_changes()
 
     def _seed_initiative_from_drives(self) -> None:
@@ -481,6 +495,8 @@ class ContinuousCognitionLoop:
         return {
             "running": self._running,
             "ticks": self._tick_count,
+            "last_worker_step_ms": round(self._last_step_duration_s * 1000.0, 3),
+            "last_scheduler_delay_ms": round(self._last_scheduler_delay_s * 1000.0, 3),
             "hz": self._HZ,
             "uptime_s": round(max(0.0, time.monotonic() - self._boot_time), 1),
             "last_initiative_seed": round(time.monotonic() - self._last_initiative_seed, 1)

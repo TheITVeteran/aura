@@ -978,6 +978,8 @@ async def _activate_ulysses_covenant_for_boot() -> dict[str, Any] | None:
     if not _env_flag("AURA_ENABLE_ULYSSES_COVENANT", True):
         logger.info("Ulysses Covenant disabled by explicit runtime configuration.")
         return None
+
+
     try:
         from core.sovereignty.ulysses import boot_ulysses_covenant
 
@@ -998,6 +1000,17 @@ async def _activate_ulysses_covenant_for_boot() -> dict[str, Any] | None:
         record_degradation("aura_main", exc)
         logger.warning("Ulysses Covenant boot failed: %s", exc)
         return None
+
+
+async def _load_verifier_foundry_off_loop() -> tuple[Any, dict[str, Any]]:
+    """Restore and inspect the verifier ledger outside the event-loop thread."""
+    def _load() -> tuple[Any, dict[str, Any]]:
+        from core.brain.verifiers.foundry import boot_verifier_foundry
+
+        foundry = boot_verifier_foundry()
+        return foundry, foundry.status()
+
+    return await asyncio.to_thread(_load)
 
 
 async def _boot_runtime_orchestrator(
@@ -1253,10 +1266,7 @@ async def _boot_runtime_orchestrator(
 
     if _env_flag("AURA_ENABLE_VERIFIER_FOUNDRY", True):
         try:
-            from core.brain.verifiers.foundry import boot_verifier_foundry
-
-            foundry = boot_verifier_foundry()
-            fstatus = foundry.status()
+            foundry, fstatus = await _load_verifier_foundry_off_loop()
             logger.info(
                 "🔬 Verifier Foundry online — %d reliability cells, %d pending "
                 "verdicts, admissions: %s.",

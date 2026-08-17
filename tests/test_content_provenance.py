@@ -343,6 +343,30 @@ class TestTheDesktopGateActuallyRefuses:
         assert refusal["ok"] is False
         assert refusal["refused"] == "provenance_guard_unavailable"
 
+    def test_the_gate_installs_static_policy_before_foundations_finish(self, monkeypatch):
+        import core.runtime.desktop_action_gateway as gateway
+        import core.security.rule_of_two as rule_of_two
+
+        clean_handler = SimpleNamespace(violates_now=lambda: False)
+        state = {"handler": None, "installs": 0}
+        registry = SimpleNamespace(
+            get=lambda _name: state["handler"],
+        )
+
+        def _install():
+            state["installs"] += 1
+            state["handler"] = clean_handler
+            return ["desktop_automation"]
+
+        monkeypatch.setattr(rule_of_two, "get_rule_of_two_registry", lambda: registry)
+        monkeypatch.setattr(rule_of_two, "install_known_handlers", _install)
+        monkeypatch.setattr(gateway, "governance_runtime_active", lambda: True)
+
+        refusal = gateway._refuse_if_untrusted_context("run_applescript", "test")
+
+        assert refusal is None
+        assert state["installs"] == 1
+
 
 class TestSelfModificationRefusesUnderUntrustedContext:
     """The loudest surface: Aura rewriting her own source.

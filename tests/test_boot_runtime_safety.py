@@ -695,6 +695,51 @@ def test_desktop_boot_sets_hardened_governance_defaults():
     assert 'os.environ["AURA_CONTRACTS_ENFORCE"] = "1"' in source
 
 
+@pytest.mark.asyncio
+async def test_verifier_foundry_restore_runs_off_event_loop(monkeypatch):
+    import aura_main
+    import core.brain.verifiers.foundry as foundry_module
+
+    foundry = SimpleNamespace(status=lambda: {"cells": {}, "pending_verdicts": 0})
+    calls: list[object] = []
+
+    async def _to_thread(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(aura_main.asyncio, "to_thread", _to_thread)
+    monkeypatch.setattr(foundry_module, "boot_verifier_foundry", lambda: foundry)
+
+    loaded, status = await aura_main._load_verifier_foundry_off_loop()
+
+    assert loaded is foundry
+    assert status["pending_verdicts"] == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_ulysses_boot_remains_reachable(monkeypatch):
+    import aura_main
+    import core.sovereignty.ulysses as ulysses_module
+
+    expected = {
+        "active_contracts": 1,
+        "hard": 1,
+        "integrity": 1.0,
+        "chain_length": 1,
+    }
+    covenant = SimpleNamespace(status=lambda: expected)
+
+    async def _to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(aura_main, "_env_flag", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(aura_main.asyncio, "to_thread", _to_thread)
+    monkeypatch.setattr(ulysses_module, "boot_ulysses_covenant", lambda: covenant)
+
+    assert await aura_main._activate_ulysses_covenant_for_boot() == expected
+
+
 def test_desktop_boot_overrides_inherited_weak_governance_when_guard_is_preconfigured(
     monkeypatch,
 ):
