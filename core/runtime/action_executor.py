@@ -791,7 +791,19 @@ class ActionExecutor:
         external_dispatch_attempt_id = ""
         external_dispatch_heartbeat: asyncio.Task[None] | None = None
         try:
-            async with governed_scope(decision):
+            verifier_budget_s = (
+                float(verification_timeout_s)
+                if verification_timeout_s is not None
+                else float(_VERIFIER_TIMEOUT_FLAG.value())
+            )
+            # The governed scope must cover the operation it authorizes. The
+            # default 30-second token otherwise expires inside legitimate
+            # browser and desktop actions whose declared transaction budget is
+            # longer, leaving a partially applied effect with no live receipt.
+            # The scope is still revoked immediately when this lexical block
+            # exits; this only prevents premature expiry while it is active.
+            governance_ttl_s = execution_timeout + max(0.0, verifier_budget_s) + 15.0
+            async with governed_scope(decision, ttl=governance_ttl_s):
                 pre_state = await capture_pre_action_state(domain, params)
                 if external_execution_offer is not None:
                     begin_task = get_task_tracker().create_task(
@@ -860,9 +872,7 @@ class ActionExecutor:
                     pre_state=pre_state,
                     verifier=effect_verifier,
                     verifier_timeout_s=(
-                        float(verification_timeout_s)
-                        if verification_timeout_s is not None
-                        else float(_VERIFIER_TIMEOUT_FLAG.value())
+                        verifier_budget_s
                     ),
                 )
                 result.update(observation)

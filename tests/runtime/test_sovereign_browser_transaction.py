@@ -109,13 +109,17 @@ async def test_action_executor_managed_browser_does_not_reenter_executor(
         raise AssertionError("managed browser execution re-entered ActionExecutor")
 
     monkeypatch.setattr(browser_module.ActionExecutor, "execute", must_not_run)
+    managed_context = {
+        "action_executor_managed_welfare_transaction": True,
+        "will_receipt_id": "will-managed-1",
+    }
     result = await skill.execute(
-        {"mode": "search", "query": "bounded test"},
-        {"action_executor_managed_welfare_transaction": True},
+        {"mode": "search", "query": "bounded test"}, managed_context
     )
 
     assert result == expected
     execute_browser.assert_awaited_once()
+    assert execute_browser.await_args.kwargs["action_context"] == managed_context
 
 
 def test_browser_verifier_requires_observed_navigation_content_and_actions() -> None:
@@ -187,15 +191,231 @@ async def test_interaction_failure_is_not_reported_as_completed(
     )
     monkeypatch.setattr(skill, "_safe_read_content", AsyncMock(return_value="page body"))
 
-    result = await skill._handle_interact(
-        browser,
-        "",
-        [BrowserAction(type="click", selector="#missing")],
+    from core.governance_context import governed_scope
+
+    decision = SimpleNamespace(
+        receipt_id="will-browser-failure",
+        domain="network_call",
+        source="browser_test",
+        constraints={},
     )
+    async with governed_scope(decision):
+        result = await skill._handle_interact(
+            browser,
+            "",
+            [BrowserAction(type="click", selector="#missing")],
+            action_context={"will_receipt_id": decision.receipt_id},
+        )
 
     assert result["ok"] is False
     assert result["error"] == "browser_interaction_incomplete"
     assert result["action_report"] == [{"action": "click", "ok": False}]
+    assert result["browser_authority"]["issued"] is True
+    assert result["browser_authority"]["revoked"] is True
+
+
+@pytest.mark.asyncio
+async def test_effectful_interaction_requires_matching_live_action_receipt() -> None:
+    from core.skills.sovereign_browser import BrowserAction, SovereignBrowserSkill
+
+    skill = SovereignBrowserSkill()
+    browser = SimpleNamespace(
+        click=AsyncMock(return_value=True),
+        page=SimpleNamespace(url="https://example.com/start"),
+    )
+
+    result = await skill._handle_interact(
+        browser,
+        "",
+        [BrowserAction(type="click", selector="#submit")],
+        action_context={"will_receipt_id": "caller-forged-receipt"},
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "browser_interaction_authority_unavailable"
+    assert result["browser_authority"]["issued"] is False
+    browser.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_effectful_interaction_spends_and_revokes_exact_origin_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.capabilities.browser_authority import (
+        BrowserAction as AuthorityAction,
+        authorize_browser_action,
+    )
+    from core.governance_context import governed_scope
+    from core.skills.sovereign_browser import BrowserAction, SovereignBrowserSkill
+    import core.runtime.url_policy as url_policy
+
+    monkeypatch.setattr(
+        url_policy,
+        "validate_browser_url",
+        lambda url: (url, ""),
+    )
+    skill = SovereignBrowserSkill()
+    captured: dict[str, str] = {}
+
+    async def governed_click(*, selector: str, lease_id: str = "") -> bool:
+        captured["lease_id"] = lease_id
+        return authorize_browser_action(
+            AuthorityAction.CLICK,
+            principal="sovereign_browser",
+            url="https://example.com/start",
+            lease_id=lease_id,
+            target=selector,
+        ).allowed
+
+    browser = SimpleNamespace(
+        click=governed_click,
+        page=SimpleNamespace(url="https://example.com/start"),
+    )
+    monkeypatch.setattr(skill, "_safe_read_content", AsyncMock(return_value="page body"))
+    decision = SimpleNamespace(
+        receipt_id="will-browser-success",
+        domain="network_call",
+        source="browser_test",
+        constraints={},
+    )
+
+    async with governed_scope(decision):
+        result = await skill._handle_interact(
+            browser,
+            "",
+            [BrowserAction(type="click", selector="#submit")],
+            action_context={"will_receipt_id": decision.receipt_id},
+        )
+
+    assert result["ok"] is True
+    assert result["browser_authority"] == {
+        "issued": True,
+        "lease_id": captured["lease_id"],
+        "origin": "https://example.com",
+        "interactions": 1,
+        "revoked": True,
+    }
+    revoked = authorize_browser_action(
+        AuthorityAction.CLICK,
+        principal="sovereign_browser",
+        url="https://example.com/start",
+        lease_id=captured["lease_id"],
+    )
+    assert revoked.allowed is False
+    assert "needs a lease" in revoked.reason
+
+
+@pytest.mark.asyncio
+async def test_type_lease_covers_focus_click_and_typing_then_is_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.capabilities.browser_authority import (
+        BrowserAction as AuthorityAction,
+        authorize_browser_action,
+    )
+    from core.governance_context import governed_scope
+    from core.skills.sovereign_browser import BrowserAction, SovereignBrowserSkill
+    import core.runtime.url_policy as url_policy
+
+    monkeypatch.setattr(url_policy, "validate_browser_url", lambda url: (url, ""))
+    skill = SovereignBrowserSkill()
+    captured: dict[str, str] = {}
+
+    async def governed_type(
+        selector: str, text: str, *, lease_id: str = ""
+    ) -> bool:
+        captured["lease_id"] = lease_id
+        typed = authorize_browser_action(
+            AuthorityAction.TYPE,
+            principal="sovereign_browser",
+            url="https://example.com/form",
+            lease_id=lease_id,
+            target=selector,
+        )
+        focused = authorize_browser_action(
+            AuthorityAction.CLICK,
+            principal="sovereign_browser",
+            url="https://example.com/form",
+            lease_id=lease_id,
+            target=selector,
+        )
+        return typed.allowed and focused.allowed and text == "hello"
+
+    browser = SimpleNamespace(
+        type=governed_type,
+        page=SimpleNamespace(url="https://example.com/form"),
+    )
+    monkeypatch.setattr(skill, "_safe_read_content", AsyncMock(return_value="form"))
+    decision = SimpleNamespace(
+        receipt_id="will-browser-type",
+        domain="tool_execution",
+        source="browser_test",
+        constraints={},
+    )
+
+    async with governed_scope(decision):
+        result = await skill._handle_interact(
+            browser,
+            "",
+            [BrowserAction(type="type", selector="#message", value="hello")],
+            action_context={"will_receipt_id": decision.receipt_id},
+        )
+
+    assert result["ok"] is True
+    assert result["browser_authority"]["interactions"] == 2
+    assert result["browser_authority"]["revoked"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_interaction_revokes_browser_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from core.capabilities.browser_authority import (
+        BrowserAction as AuthorityAction,
+        authorize_browser_action,
+    )
+    from core.governance_context import governed_scope
+    from core.skills.sovereign_browser import BrowserAction, SovereignBrowserSkill
+    import core.runtime.url_policy as url_policy
+
+    monkeypatch.setattr(url_policy, "validate_browser_url", lambda url: (url, ""))
+    skill = SovereignBrowserSkill()
+    captured: dict[str, str] = {}
+
+    async def cancelled_click(*, selector: str, lease_id: str = "") -> bool:
+        captured["lease_id"] = lease_id
+        raise asyncio.CancelledError
+
+    browser = SimpleNamespace(
+        click=cancelled_click,
+        page=SimpleNamespace(url="https://example.com/start"),
+    )
+    decision = SimpleNamespace(
+        receipt_id="will-browser-cancel",
+        domain="network_call",
+        source="browser_test",
+        constraints={},
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        async with governed_scope(decision):
+            await skill._handle_interact(
+                browser,
+                "",
+                [BrowserAction(type="click", selector="#submit")],
+                action_context={"will_receipt_id": decision.receipt_id},
+            )
+
+    revoked = authorize_browser_action(
+        AuthorityAction.CLICK,
+        principal="sovereign_browser",
+        url="https://example.com/start",
+        lease_id=captured["lease_id"],
+    )
+    assert revoked.allowed is False
+    assert "needs a lease" in revoked.reason
 
 
 @pytest.mark.asyncio

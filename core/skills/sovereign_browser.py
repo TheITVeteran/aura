@@ -10,7 +10,14 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.capabilities.browser_authority import (
+    BrowserAction as AuthorityAction,
+    issue_browser_lease,
+    origin_of,
+    revoke_browser_lease,
+)
 from core.capabilities.phantom_browser import PhantomBrowser
+from core.governance_context import get_active_governance
 from core.governance.will import ActionDomain
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
@@ -281,10 +288,10 @@ class SovereignBrowserSkill(BaseSkill):
                 return {"ok": False, "error": f"Invalid input schema: {e}"}
         context = dict(context or {})
         if context.get("action_executor_managed_welfare_transaction"):
-            return await self._execute_browser(params)
+            return await self._execute_browser(params, action_context=context)
 
-        async def perform_browser_action(_action_context: Mapping[str, Any]) -> dict[str, Any]:
-            return await self._execute_browser(params)
+        async def perform_browser_action(action_context: Mapping[str, Any]) -> dict[str, Any]:
+            return await self._execute_browser(params, action_context=action_context)
 
         source = str(context.get("source") or "sovereign_browser.direct")[:240]
         return await ActionExecutor.execute(
@@ -311,7 +318,12 @@ class SovereignBrowserSkill(BaseSkill):
             verification_timeout_s=5.0,
         )
 
-    async def _execute_browser(self, params: BrowserInput) -> dict[str, Any]:
+    async def _execute_browser(
+        self,
+        params: BrowserInput,
+        *,
+        action_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Execute one ephemeral browser session inside an established transaction."""
 
         browser: PhantomBrowser | None = None
@@ -332,7 +344,12 @@ class SovereignBrowserSkill(BaseSkill):
                     )
                 elif params.mode == "interact":
                     return await asyncio.wait_for(
-                        self._handle_interact(browser, params.url, params.actions),
+                        self._handle_interact(
+                            browser,
+                            params.url,
+                            params.actions,
+                            action_context=action_context,
+                        ),
                         timeout=self.INTERACTION_TIMEOUT,
                     )
                 else:
@@ -545,6 +562,8 @@ class SovereignBrowserSkill(BaseSkill):
         browser: PhantomBrowser,
         url: str | None,
         actions: list[BrowserAction] | None,
+        *,
+        action_context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if url and not await self._safe_browse(browser, url):
             return {"ok": False, "error": f"Failed to load start URL: {url}"}
@@ -552,54 +571,121 @@ class SovereignBrowserSkill(BaseSkill):
         if not actions:
             return {"ok": False, "error": "Interact mode requires 'actions'."}
 
-        results = []
+        authority_actions: set[AuthorityAction] = set()
+        interaction_count = 0
         for action in actions:
-            logger.info("🎬 Action: %s | Sel: %s", action.type, action.selector)
-            try:
-                if action.type == "click":
-                    success = await asyncio.wait_for(
-                        browser.click(selector=action.selector or ""),
-                        timeout=10.0,
-                    )
-                elif action.type == "type":
-                    success = await asyncio.wait_for(
-                        browser.type(action.selector or "", action.value or ""),
-                        timeout=10.0,
-                    )
-                elif action.type == "scroll":
-                    success = await asyncio.wait_for(
-                        browser.scroll(direction=action.value or "down"),
-                        timeout=5.0,
-                    )
-                elif action.type == "wait":
-                    await asyncio.sleep(min(float(action.value or 1), 10.0))  # Cap wait at 10s
-                    success = True
-                elif action.type == "get_html":
-                    if browser.page:
-                        html = await asyncio.wait_for(browser.page.content(), timeout=10.0)
-                        results.append({"type": "html", "content": html[:60000]})
-                        success = bool(html)
+            if action.type == "click":
+                authority_actions.add(AuthorityAction.CLICK)
+                interaction_count += 1
+            elif action.type == "type":
+                # ``PhantomBrowser.type`` first focuses the target through its
+                # governed click boundary, then authorizes the actual typing.
+                authority_actions.update({AuthorityAction.CLICK, AuthorityAction.TYPE})
+                interaction_count += 2
+
+        browser_lease = None
+        authority_receipt = str((action_context or {}).get("will_receipt_id") or "")
+        if authority_actions:
+            token = get_active_governance()
+            authorized_domains = {
+                ActionDomain.NETWORK_CALL.value,
+                ActionDomain.TOOL_EXECUTION.value,
+            }
+            if (
+                token is None
+                or not token.authorizes
+                or token.receipt_id != authority_receipt
+                or token.domain not in authorized_domains
+            ):
+                return {
+                    "ok": False,
+                    "error": "browser_interaction_authority_unavailable",
+                    "action_report": [],
+                    "browser_authority": {
+                        "issued": False,
+                        "reason": "no matching live ActionExecutor receipt",
+                    },
+                }
+            interaction_origin = origin_of(self._observed_url(browser))
+            if not interaction_origin:
+                return {
+                    "ok": False,
+                    "error": "browser_interaction_origin_unobserved",
+                    "action_report": [],
+                    "browser_authority": {
+                        "issued": False,
+                        "reason": "the current page origin was not observable",
+                    },
+                }
+            browser_lease = issue_browser_lease(
+                principal="sovereign_browser",
+                origin=interaction_origin,
+                actions=authority_actions,
+                ttl_s=self.INTERACTION_TIMEOUT,
+                interactions=interaction_count,
+                purpose="complete one governed sovereign_browser interaction sequence",
+            )
+
+        results = []
+        lease_revoked = browser_lease is None
+        try:
+            for action in actions:
+                logger.info("🎬 Action: %s | Sel: %s", action.type, action.selector)
+                try:
+                    if action.type == "click":
+                        success = await asyncio.wait_for(
+                            browser.click(
+                                selector=action.selector or "",
+                                lease_id=browser_lease.lease_id if browser_lease else "",
+                            ),
+                            timeout=10.0,
+                        )
+                    elif action.type == "type":
+                        success = await asyncio.wait_for(
+                            browser.type(
+                                action.selector or "",
+                                action.value or "",
+                                lease_id=browser_lease.lease_id if browser_lease else "",
+                            ),
+                            timeout=10.0,
+                        )
+                    elif action.type == "scroll":
+                        success = await asyncio.wait_for(
+                            browser.scroll(direction=action.value or "down"),
+                            timeout=5.0,
+                        )
+                    elif action.type == "wait":
+                        await asyncio.sleep(min(float(action.value or 1), 10.0))  # Cap wait at 10s
+                        success = True
+                    elif action.type == "get_html":
+                        if browser.page:
+                            html = await asyncio.wait_for(browser.page.content(), timeout=10.0)
+                            results.append({"type": "html", "content": html[:60000]})
+                            success = bool(html)
+                        else:
+                            success = False
+                    elif action.type == "screenshot":
+                        ss = await asyncio.wait_for(browser.screenshot(), timeout=10.0)
+                        if ss:
+                            results.append({"type": "screenshot", "data": ss})
+                        success = bool(ss)
                     else:
                         success = False
-                elif action.type == "screenshot":
-                    ss = await asyncio.wait_for(browser.screenshot(), timeout=10.0)
-                    if ss:
-                        results.append({"type": "screenshot", "data": ss})
-                    success = bool(ss)
-                else:
+                        logger.warning("Unsupported action type: %s", action.type)
+                except TimeoutError:
+                    logger.warning("Action '%s' timed out", action.type)
                     success = False
-                    logger.warning("Unsupported action type: %s", action.type)
-            except TimeoutError:
-                logger.warning("Action '%s' timed out", action.type)
-                success = False
-            except (RuntimeError, AttributeError) as action_exc:
-                record_degradation('sovereign_browser', action_exc)
-                logger.warning("Action '%s' failed: %s", action.type, action_exc)
-                success = False
+                except (RuntimeError, AttributeError) as action_exc:
+                    record_degradation('sovereign_browser', action_exc)
+                    logger.warning("Action '%s' failed: %s", action.type, action_exc)
+                    success = False
 
-            results.append({"action": action.type, "ok": success})
-            if not success:
-                break
+                results.append({"action": action.type, "ok": success})
+                if not success:
+                    break
+        finally:
+            if browser_lease is not None:
+                lease_revoked = revoke_browser_lease(browser_lease.lease_id)
 
         final_content = await self._safe_read_content(browser)
         final_url = ""
@@ -620,6 +706,13 @@ class SovereignBrowserSkill(BaseSkill):
             "navigation_confirmed": bool(final_url),
             "content": final_content,
             "action_report": results,
+            "browser_authority": {
+                "issued": browser_lease is not None,
+                "lease_id": browser_lease.lease_id if browser_lease else "",
+                "origin": browser_lease.origin if browser_lease else "",
+                "interactions": interaction_count,
+                "revoked": lease_revoked,
+            },
             "message": (
                 "I've completed the sequence of interactions on the page."
                 if completed

@@ -357,6 +357,40 @@ async def test_custom_effect_handler_runs_inside_canonical_transaction(
 
 
 @pytest.mark.asyncio
+async def test_action_governance_lease_covers_declared_transaction_budget(
+    action_runtime: Any,
+) -> None:
+    executor, _fake_will, _store = action_runtime
+    observed: dict[str, float | bool] = {}
+
+    async def bounded_handler(_context: dict[str, Any]) -> dict[str, Any]:
+        from core.governance_context import get_active_governance
+
+        token = get_active_governance()
+        observed["authorizes"] = bool(token and token.authorizes)
+        observed["ttl"] = float(token.ttl if token else 0.0)
+        return {"ok": True, "observed": True}
+
+    result = await executor.ActionExecutor.execute(
+        domain="network_call",
+        action_name="long_browser_action",
+        params={"url": "https://example.test"},
+        source="effect_test",
+        effect_handler=bounded_handler,
+        effect_verifier=lambda context: {
+            "effect_verified": context["result"].get("observed") is True,
+            "observation": {"observed": context["result"].get("observed")},
+        },
+        execution_timeout_s=90.0,
+        verification_timeout_s=7.0,
+    )
+
+    assert result["ok"] is True
+    assert observed["authorizes"] is True
+    assert observed["ttl"] == pytest.approx(112.0)
+
+
+@pytest.mark.asyncio
 async def test_custom_effect_handler_requires_verifier_and_permitted_domain(
     action_runtime: Any,
     tmp_path: Path,
