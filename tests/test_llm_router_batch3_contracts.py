@@ -1,9 +1,9 @@
 """CP126 batch-3 remediation contracts for the legacy IntelligentLLMRouter.
 
 Each test pins one closed finding from the CP126 semantic review
-(artifacts/closeout/semantic_review/cp126/): credential redaction, circuit
-half-open leases, sanitized health events, registration integrity, egress
-policy, cache identity, tool authorization, and stream atomicity.
+(artifacts/closeout/semantic_review/cp126/): status redaction, circuit
+half-open leases, sanitized health events, registration integrity, local-only
+routing, cache identity, tool authorization, and stream atomicity.
 """
 from __future__ import annotations
 
@@ -23,20 +23,15 @@ from core.brain.llm.llm_router import (
 
 
 class TestEndpointModel:
-    def test_to_dict_redacts_credentials_and_client(self):
+    def test_to_dict_redacts_live_client(self):
         endpoint = LLMEndpoint(
-            name="cloudy",
+            name="local-secondary",
             tier=LLMTier.SECONDARY,
-            api_key="sk-super-secret",
             client=object(),
-            egress="cloud",
         )
         data = endpoint.to_dict()
-        assert "api_key" not in data
         assert "client" not in data
-        assert data["has_api_key"] is True
         assert data["has_client"] is True
-        assert "sk-super-secret" not in str(data)
 
     def test_field_validation_rejects_unsafe_values(self):
         with pytest.raises(ValueError):
@@ -45,8 +40,16 @@ class TestEndpointModel:
             LLMEndpoint(name="x", tier=LLMTier.PRIMARY, temperature=float("nan"))
         with pytest.raises(ValueError):
             LLMEndpoint(name="x", tier=LLMTier.PRIMARY, timeout=-5)
-        with pytest.raises(ValueError):
-            LLMEndpoint(name="x", tier=LLMTier.PRIMARY, egress="martian")
+        with pytest.raises(ValueError, match="remote_model_provider_removed"):
+            LLMEndpoint(name="x", tier=LLMTier.PRIMARY, egress="cloud")
+        with pytest.raises(ValueError, match="remote_model_provider_removed"):
+            LLMEndpoint(
+                name="x",
+                tier=LLMTier.PRIMARY,
+                endpoint_url="https://models.example.test/generate",
+            )
+        with pytest.raises(ValueError, match="remote_model_provider_removed"):
+            LLMEndpoint(name="Gemini-Fast", tier=LLMTier.SECONDARY)
 
 
 class TestHealthMonitor:
@@ -151,24 +154,37 @@ class TestRegistrationIntegrity:
         assert router.endpoints["Lane-A"].model_name == "evil"
 
 
-class TestEgressPolicy:
-    def test_local_only_removes_cloud_endpoints(self):
+class TestLocalEndpointInvariant:
+    @staticmethod
+    def _stale_remote_endpoint() -> LLMEndpoint:
+        return LLMEndpoint.model_construct(
+            name="Gemini-Fast",
+            tier=LLMTier.SECONDARY,
+            endpoint_url="https://generativelanguage.googleapis.com/v1beta/models",
+            egress="cloud",
+        )
+
+    def test_registration_rejects_stale_remote_endpoint_even_if_validation_was_bypassed(self):
+        router = _bare_router()
+        remote = self._stale_remote_endpoint()
+
+        with pytest.raises(ValueError, match="remote_model_provider_removed"):
+            router.register_endpoint(remote)
+
+        assert "Gemini-Fast" not in router.endpoints
+
+    def test_selection_omits_stale_remote_registry_entry(self):
         router = _bare_router()
         router.register_endpoint(LLMEndpoint(name="Local-L", tier=LLMTier.PRIMARY))
-        router.register_endpoint(
-            LLMEndpoint(name="Cloud-C", tier=LLMTier.SECONDARY, egress="cloud")
-        )
-        ordered = ["Local-L", "Cloud-C"]
-        assert router._filter_cloud_egress(ordered, {"local_only": True}) == ["Local-L"]
-        assert router._filter_cloud_egress(ordered, {}) == ordered
+        router.endpoints["Gemini-Fast"] = self._stale_remote_endpoint()
 
-    def test_env_kill_switch(self, monkeypatch):
-        router = _bare_router()
-        router.register_endpoint(
-            LLMEndpoint(name="Cloud-C", tier=LLMTier.SECONDARY, egress="cloud")
+        ordered = router._get_ordered_endpoints(
+            prefer_tier=LLMTier.PRIMARY,
+            prefer_endpoint="Gemini-Fast",
         )
-        monkeypatch.setenv("AURA_NO_CLOUD_EGRESS", "1")
-        assert router._filter_cloud_egress(["Cloud-C"], {}) == []
+
+        assert ordered[0] == "Local-L"
+        assert "Gemini-Fast" not in ordered
 
 
 class TestRequestBudget:

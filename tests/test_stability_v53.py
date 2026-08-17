@@ -334,7 +334,7 @@ class TestLLMRouterFailover:
         assert monitor.is_healthy("test_ep"), "Successful probe closes the circuit"
 
     def test_default_tier_priority_includes_secondary(self):
-        """v53 fix: default failover chain must include SECONDARY (cloud)."""
+        """Default local failover must retain the SECONDARY tier."""
         from core.brain.llm.llm_router import IntelligentLLMRouter, LLMTier, LLMEndpoint
         router = IntelligentLLMRouter.__new__(IntelligentLLMRouter)
         router.endpoints = {
@@ -343,7 +343,7 @@ class TestLLMRouterFailover:
             "tertiary": LLMEndpoint(name="tertiary", tier=LLMTier.TERTIARY),
         }
         ordered = router._get_ordered_endpoints(prefer_tier=None)
-        assert "secondary" in ordered, "Default failover must include secondary (cloud)"
+        assert "secondary" in ordered, "Default local failover must include secondary"
         primary_idx = ordered.index("primary")
         secondary_idx = ordered.index("secondary")
         assert primary_idx < secondary_idx, "Primary should come before secondary"

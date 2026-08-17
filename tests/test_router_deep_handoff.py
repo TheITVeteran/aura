@@ -7,9 +7,8 @@ The mechanism is a nice illustration of how a guard becomes a fiction:
 
   1. DEEP_ENDPOINT ("Solver") is registered on LLMTier.SECONDARY, deliberately,
      with the comment "Moved to SECONDARY to prevent accidental promotion".
-  2. The Gemini cloud endpoints are also on SECONDARY.
-  3. SECONDARY is included in PRIMARY's failover chain ON PURPOSE, so the 32B
-     degrades to Gemini instead of dropping to the 7B brainstem.
+  2. Ordinary local secondary endpoints use the same tier.
+  3. SECONDARY is included in PRIMARY's local failover chain.
   4. So (1) put the Solver in exactly the tier that (3) always includes. The
      chain came out [Cortex, Solver, Brainstem] and any Cortex failure invoked
      the 72B — the precise outcome (1) intended to prevent.
@@ -31,13 +30,13 @@ from core.brain.llm.model_registry import DEEP_ENDPOINT, PRIMARY_ENDPOINT
 @pytest.fixture
 def router():
     r = IntelligentLLMRouter()
-    # The real lane layout: Solver AND the cloud endpoints share SECONDARY.
+    # Solver and ordinary local fallback lanes can share SECONDARY.
     r.endpoints = {
-        PRIMARY_ENDPOINT: LLMEndpoint(name=PRIMARY_ENDPOINT, tier=LLMTier.PRIMARY, url="x"),
-        DEEP_ENDPOINT: LLMEndpoint(name=DEEP_ENDPOINT, tier=LLMTier.SECONDARY, url="x"),
-        "Gemini-Fast": LLMEndpoint(name="Gemini-Fast", tier=LLMTier.SECONDARY, url="x"),
-        "Brainstem": LLMEndpoint(name="Brainstem", tier=LLMTier.TERTIARY, url="x"),
-        "Static-Reflex": LLMEndpoint(name="Static-Reflex", tier=LLMTier.EMERGENCY, url="x"),
+        PRIMARY_ENDPOINT: LLMEndpoint(name=PRIMARY_ENDPOINT, tier=LLMTier.PRIMARY),
+        DEEP_ENDPOINT: LLMEndpoint(name=DEEP_ENDPOINT, tier=LLMTier.SECONDARY),
+        "Local-Secondary": LLMEndpoint(name="Local-Secondary", tier=LLMTier.SECONDARY),
+        "Brainstem": LLMEndpoint(name="Brainstem", tier=LLMTier.TERTIARY),
+        "Static-Reflex": LLMEndpoint(name="Static-Reflex", tier=LLMTier.EMERGENCY),
     }
     return r
 
@@ -63,20 +62,18 @@ def test_the_flag_actually_changes_the_chain(router):
     assert off != on, "allow_secondary is inert — it is read and then ignored"
 
 
-def test_the_cloud_fallback_survives_the_fix(router):
-    """The fix must not re-break what the chain was designed for.
+def test_local_secondary_fallback_survives_the_solver_gate(router):
+    """Filtering Solver must preserve ordinary local secondary failover.
 
-    SECONDARY is in PRIMARY's failover chain so the 32B degrades to Gemini
-    instead of dropping to the 7B brainstem. Excluding the whole tier would
-    have traded one defect for another; only the Solver endpoint is excluded.
+    Excluding the whole tier would discard a healthy local fallback; only the
+    Solver endpoint is governed by explicit deep handoff.
     """
     chain = router._get_ordered_endpoints(LLMTier.PRIMARY, allow_secondary=False)
-    assert "Gemini-Fast" in chain, (
-        "excluding the Solver also removed the cloud fallback — the 32B now "
-        "drops straight to the 7B brainstem"
+    assert "Local-Secondary" in chain, (
+        "excluding Solver also removed the ordinary local secondary fallback"
     )
-    assert chain.index(PRIMARY_ENDPOINT) < chain.index("Gemini-Fast")
-    assert chain.index("Gemini-Fast") < chain.index("Brainstem")
+    assert chain.index(PRIMARY_ENDPOINT) < chain.index("Local-Secondary")
+    assert chain.index("Local-Secondary") < chain.index("Brainstem")
 
 
 def test_solver_cannot_be_smuggled_in_as_a_preferred_endpoint(router):
@@ -108,7 +105,7 @@ def test_secondary_preference_still_excludes_the_solver_without_handoff(router):
     chain = router._get_ordered_endpoints(LLMTier.SECONDARY, allow_secondary=False)
     assert DEEP_ENDPOINT not in chain, (
         "preferring the SECONDARY tier pulled in the Solver — the tier is mixed "
-        "(cloud + deep), so tier preference must not imply deep handoff"
+        "with ordinary local fallback, so tier preference must not imply deep handoff"
     )
 
 

@@ -3,7 +3,7 @@
 Routing Priority:
 1. Substrate readout for low-error stateful continuations.
 2. Local powerful model (Qwen/Cortex lane) for high-coherence language work.
-3. Direct client solver lanes when explicitly configured or required.
+3. Local solver lanes when explicitly configured or required.
 4. Emergency rule-based fallback when model endpoints are unavailable.
 
 Never fails. Always has a working brain.
@@ -22,8 +22,9 @@ from collections import OrderedDict
 from enum import StrEnum
 from functools import partial
 from typing import Any
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from core.brain.llm.deferral_record import record_deferral
 from core.brain.llm.model_registry import (
@@ -202,7 +203,7 @@ class LLMTier(StrEnum):
 
 
 class LLMTierAlias:
-    """Canonical string aliases for LLM tiers — use these instead of magic strings."""
+    """Compatibility labels for local tiers; they do not denote remote APIs."""
     API_DEEP   = "api_deep"
     API_FAST   = "api_fast"
     LOCAL      = "local"
@@ -218,26 +219,23 @@ TIER_ALIAS_MAP: dict[str, LLMTier] = {
 
 
 class LLMEndpoint(BaseModel):
-    """Configuration for an LLM endpoint"""
+    """Configuration for a local LLM endpoint."""
 
     name: str
     tier: LLMTier
     endpoint_url: str | None = None
     model_name: str | None = None
     client: Any | None = None  # Direct client object
-    api_key: str | None = None
     max_tokens: int = 4096
     temperature: float = 0.7
     supports_function_calling: bool = False
     supports_streaming: bool = False
     timeout: float = 180.0
-    # Egress class: "local" endpoints never leave the machine, "cloud" ones
-    # send the full prompt (with any memory/system context) off-host. The
-    # router filters cloud endpoints out when the request or environment
-    # forbids egress.
+    # Retained so stale configuration fails with a precise migration error.
+    # The router accepts only local model execution.
     egress: str = "local"
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @field_validator("max_tokens")
     @classmethod
@@ -266,9 +264,16 @@ class LLMEndpoint(BaseModel):
     @classmethod
     def _validate_egress(cls, value: str) -> str:
         normalized = str(value or "local").strip().lower()
-        if normalized not in {"local", "cloud"}:
-            raise ValueError(f"egress must be 'local' or 'cloud', got {value!r}")
-        return normalized
+        if normalized != "local":
+            raise ValueError("remote_model_provider_removed")
+        return "local"
+
+    @model_validator(mode="after")
+    def _validate_local_identity(self) -> "LLMEndpoint":
+        reason = _retired_remote_endpoint_reason(self)
+        if reason:
+            raise ValueError(f"remote_model_provider_removed:{reason}")
+        return self
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for compatibility.
@@ -277,10 +282,64 @@ class LLMEndpoint(BaseModel):
         payloads — they can leak API keys and non-serializable internals to
         any health consumer or log sink.
         """
-        data = self.model_dump(exclude={"api_key", "client"})
-        data["has_api_key"] = bool(self.api_key)
+        data = self.model_dump(exclude={"client"})
         data["has_client"] = self.client is not None
         return data
+
+
+_REMOTE_IDENTITY_MARKERS = (
+    "cloud",
+    "gemini",
+    "generativelanguage.googleapis.com",
+    "google.generativeai",
+    "google.genai",
+)
+_LOCAL_NETWORK_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _retired_remote_endpoint_reason(endpoint: Any) -> str | None:
+    """Return why an endpoint violates the router's local-only contract."""
+
+    if str(getattr(endpoint, "egress", "local") or "local").strip().lower() != "local":
+        return "non_local_egress"
+
+    endpoint_url = str(getattr(endpoint, "endpoint_url", "") or "").strip()
+    if endpoint_url:
+        parsed = urlsplit(endpoint_url)
+        scheme = parsed.scheme.lower()
+        if (
+            scheme in {"http", "https", "ws", "wss"}
+            and parsed.hostname
+            and parsed.hostname.lower() not in _LOCAL_NETWORK_HOSTS
+        ):
+            return "non_local_endpoint_url"
+        if scheme not in {
+            "",
+            "file",
+            "http",
+            "https",
+            "internal",
+            "local",
+            "mlx",
+            "unix",
+            "ws",
+            "wss",
+        }:
+            return "unsupported_endpoint_transport"
+
+    client = getattr(endpoint, "client", None)
+    identity = " ".join(
+        (
+            str(getattr(endpoint, "name", "") or ""),
+            str(getattr(endpoint, "model_name", "") or ""),
+            endpoint_url,
+            type(client).__module__ if client is not None else "",
+            type(client).__qualname__ if client is not None else "",
+        )
+    ).lower()
+    if any(marker in identity for marker in _REMOTE_IDENTITY_MARKERS):
+        return "retired_provider_identity"
+    return None
 
 
 _RATE_LIMIT_TOKEN_RE = re.compile(r"(?:\b429\b|rate.?limit|quota)", re.IGNORECASE)
@@ -984,7 +1043,7 @@ class IntelligentLLMRouter:
         self._recovery_states.clear()
 
     def register_endpoint(self, endpoint: LLMEndpoint, *, replace: bool = False) -> None:
-        """Register an LLM endpoint.
+        """Register a local LLM endpoint.
 
         A later registration under an existing name can silently hijack a
         canonical routing identity (client, tier, URL). Identical re-registration
@@ -992,6 +1051,17 @@ class IntelligentLLMRouter:
         identity requires ``replace=True`` and is refused (with a degradation
         receipt) otherwise.
         """
+        remote_reason = _retired_remote_endpoint_reason(endpoint)
+        if remote_reason:
+            error = ValueError(f"remote_model_provider_removed:{remote_reason}")
+            _record_router_degradation(
+                error,
+                action="refused retired remote-model endpoint registration",
+                severity="warning",
+                extra={"endpoint": str(getattr(endpoint, "name", ""))},
+            )
+            raise error
+
         normalized_name = normalize_endpoint_name(endpoint.name) or endpoint.name
         if normalized_name != endpoint.name:
             endpoint.name = normalized_name
@@ -1212,32 +1282,6 @@ class IntelligentLLMRouter:
         if not math.isfinite(budget) or budget <= 0.0:
             budget = 240.0
         return min(budget, 600.0)
-
-    def _filter_cloud_egress(self, ordered: list[str], kwargs: dict[str, Any]) -> list[str]:
-        """Drop cloud endpoints when the request or environment forbids egress.
-
-        Failover deliberately includes cloud tiers for quality, but a request
-        carrying private context can forbid off-host egress (local_only /
-        no_cloud kwargs) and the operator can forbid it globally
-        (AURA_NO_CLOUD_EGRESS=1). Filtering happens before dispatch so a
-        failing local lane can never leak the prompt to a cloud provider.
-        """
-        blocked = bool(kwargs.get("local_only") or kwargs.get("no_cloud")) or (
-            os.getenv("AURA_NO_CLOUD_EGRESS", "").strip().lower() in {"1", "true", "yes", "on"}
-        )
-        if not blocked:
-            return ordered
-        filtered = [
-            name
-            for name in ordered
-            if getattr(self.endpoints.get(name), "egress", "local") != "cloud"
-        ]
-        if len(filtered) != len(ordered):
-            logger.info(
-                "🔒 Router: %d cloud endpoint(s) removed from the cascade (egress blocked).",
-                len(ordered) - len(filtered),
-            )
-        return filtered
 
     @staticmethod
     def _background_cache_key(
@@ -1669,7 +1713,6 @@ class IntelligentLLMRouter:
             allow_secondary=deep_handoff and not is_background,
             is_background=is_background,
         )
-        endpoints_to_try = self._filter_cloud_egress(endpoints_to_try, kwargs)
 
         # Absolute request deadline. Endpoint timeouts alone never bounded the
         # CASCADE — retries, sleeps, and recovery calls could stack multiple
@@ -2019,7 +2062,6 @@ class IntelligentLLMRouter:
             allow_secondary=deep_handoff and not is_background,
             is_background=is_background,
         )
-        endpoints_to_try = self._filter_cloud_egress(endpoints_to_try, kwargs)
         last_stream_error = "streaming endpoints unavailable"
         with self._stats_lock:
             self.stats["total_calls"] += 1
@@ -2170,18 +2212,21 @@ class IntelligentLLMRouter:
         tier_list = [LLMTier.PRIMARY, LLMTier.SECONDARY, LLMTier.TERTIARY, LLMTier.EMERGENCY]
         by_tier: dict[LLMTier, list[str]] = {tier: [] for tier in tier_list}
         for name, endpoint in self.endpoints.items():
+            if _retired_remote_endpoint_reason(endpoint):
+                continue
             by_tier[endpoint.tier].append(name)
         
         ordered: list[str] = []
-        if prefer_endpoint and prefer_endpoint in self.endpoints:
+        if (
+            prefer_endpoint
+            and prefer_endpoint in self.endpoints
+            and not _retired_remote_endpoint_reason(self.endpoints[prefer_endpoint])
+        ):
             ordered.append(prefer_endpoint)
             
         if is_background:
             tier_priority = [LLMTier.TERTIARY, LLMTier.EMERGENCY]
         elif prefer_tier == LLMTier.PRIMARY and not allow_secondary:
-            # Include SECONDARY (Gemini) in the failover chain so the 32B
-            # doesn't drop directly to 7B brainstem on failure.  The user
-            # experience on Gemini Flash is far better than 7B.
             tier_priority = [LLMTier.PRIMARY, LLMTier.SECONDARY, LLMTier.TERTIARY, LLMTier.EMERGENCY]
         elif prefer_tier == LLMTier.PRIMARY and allow_secondary:
             tier_priority = [LLMTier.PRIMARY, LLMTier.SECONDARY, LLMTier.TERTIARY, LLMTier.EMERGENCY]
@@ -2192,9 +2237,8 @@ class IntelligentLLMRouter:
         elif prefer_tier == LLMTier.EMERGENCY:
             tier_priority = [LLMTier.EMERGENCY]
         else:
-            # [STABILITY v53] Include SECONDARY (cloud) in default failover.
-            # Previously skipped cloud and went straight from 32B to 7B brainstem,
-            # which is a massive quality drop. Cloud is far better fallback.
+            # Every tier is local. Preserve the strongest-to-lightest fallback
+            # order when no caller preference is present.
             tier_priority = [LLMTier.PRIMARY, LLMTier.SECONDARY, LLMTier.TERTIARY, LLMTier.EMERGENCY]
         
         if prefer_tier:
@@ -2217,23 +2261,9 @@ class IntelligentLLMRouter:
         # The deep Solver must be UNREACHABLE without an explicit handoff — not
         # merely un-preferred.
         #
-        # The bug this closes: DEEP_ENDPOINT ("Solver", the 72B) is registered on
-        # LLMTier.SECONDARY, deliberately, "to prevent accidental promotion". But
-        # the Gemini cloud endpoints live on SECONDARY too, and SECONDARY is
-        # included in PRIMARY's failover chain on purpose (see above: so the 32B
-        # degrades to Gemini rather than dropping to the 7B brainstem). Including
-        # the tier therefore re-admitted the Solver through the back door: the
-        # chain came out as [Cortex, Solver, Brainstem] and any Cortex failure
-        # invoked the 72B — exactly the thing the tier move meant to prevent.
-        #
-        # `allow_secondary` was supposed to control this and did nothing at all:
-        # the `prefer_tier == PRIMARY and not allow_secondary` and
-        # `prefer_tier == PRIMARY and allow_secondary` branches produced
-        # identical tier lists. A flag that is read and then ignored is worse
-        # than no flag, because callers believe they disabled something.
-        #
-        # Filtering the endpoint (not the tier) enforces the disable while
-        # keeping the cloud fallback the failover chain was designed around.
+        # Solver shares SECONDARY with ordinary local secondary lanes, so the
+        # explicit deep-handoff control must filter that endpoint rather than
+        # remove the whole tier.
         if not allow_secondary and DEEP_ENDPOINT in ordered:
             ordered = [name for name in ordered if name != DEEP_ENDPOINT]
             logger.debug(
@@ -2252,8 +2282,7 @@ class IntelligentLLMRouter:
         # request fragments, and this string goes straight to the user.
         logger.critical("🚨 ULTIMATE FAILURE: All LLM tiers failed. Error: %s", last_error)
         return (
-            "I can't reach any of my language backends right now — local "
-            "pathways are unstable and cloud fallback didn't respond either. "
+            "I can't reach any of my local language pathways right now. "
             "I'm still running and will keep trying to recover; please give "
             "me a moment and try again."
         )
@@ -2439,6 +2468,8 @@ class IntelligentLLMRouter:
         if not bool(lane_audit.get("ok", True)):
             return False
         for name, endpoint in self.endpoints.items():
+            if _retired_remote_endpoint_reason(endpoint):
+                continue
             tier = getattr(endpoint, "tier", None)
             tier_value = getattr(tier, "value", tier)
             if str(tier_value or "").strip().lower() == "emergency":
@@ -2455,8 +2486,7 @@ class IntelligentLLMRouter:
         }
         for name, endpoint in self.endpoints.items():
             status["endpoints"][name] = {
-                # to_dict excludes api_key and the live client object —
-                # credentials must never reach health/status consumers.
+                # Live client objects must never reach health/status consumers.
                 **endpoint.to_dict(),
                 "healthy": self.health_monitor.peek_healthy(name),
                 "failures": self.health_monitor.failure_counts.get(name, 0),
