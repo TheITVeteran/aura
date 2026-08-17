@@ -568,37 +568,76 @@ class OrchestratorBootMixin(
                     else:
                         await self._inference_gate.initialize()
                     ServiceContainer.register_instance("inference_gate", self._inference_gate)
-                    logger.info("✅ [BOOT] InferenceGate registered and initialized.")
+                    if getattr(self._inference_gate, "_initialized", False):
+                        logger.info("✅ [BOOT] Local InferenceGate registered and initialized.")
+                    else:
+                        receipt_reader = getattr(
+                            self._inference_gate, "initialization_receipt", None
+                        )
+                        receipt = receipt_reader() if callable(receipt_reader) else {}
+                        reason = str(
+                            receipt.get("reason")
+                            or getattr(self._inference_gate, "_init_error", "")
+                            or "local_initialization_incomplete"
+                        )
+                        init_error = RuntimeError(reason)
+                        _record_boot_degradation(
+                            init_error,
+                            action=(
+                                "registered unready local inference gate for bounded local retry"
+                            ),
+                            severity="degraded",
+                        )
+                        logger.error(
+                            "⚠️ [BOOT] Local InferenceGate is registered but unready (%s). "
+                            "Foreground demand will retry local initialization.",
+                            reason,
+                        )
                 except (ImportError, AttributeError, RuntimeError) as gate_err:
                     _record_boot_degradation(
                         gate_err,
-                        action="created cloud-only inference gate fallback",
+                        action="kept inference local and unready after gate initialization failed",
                         severity="degraded",
                     )
                     logger.error(
-                        "⚠️ [BOOT] InferenceGate init failed: %s. Creating cloud-only gate.",
+                        "⚠️ [BOOT] Local InferenceGate init failed: %s. "
+                        "Remote inference is retired; the local gate remains retryable.",
                         gate_err,
                         exc_info=True,
                     )
-                    # ALWAYS create a gate — cloud fallback is better than Legacy Pipeline
-                    from core.brain.inference_gate import InferenceGate
-
-                    self._inference_gate = InferenceGate(self)
-                    self._inference_gate._initialized = True  # Skip MLX, use cloud only
-                    ServiceContainer.register_instance("inference_gate", self._inference_gate)
-                    logger.warning("⚠️ [BOOT] InferenceGate running in CLOUD-ONLY mode.")
+                    if self._inference_gate is not None:
+                        ServiceContainer.register_instance(
+                            "inference_gate", self._inference_gate
+                        )
 
                 boot_profiler.mark("inference_gate")
 
-                # INVARIANT: _inference_gate must NEVER be None after this point
+                # Preserve a structural local gate when construction is possible. Never
+                # forge readiness: callers can distinguish an unready retryable gate from
+                # a gate that completed initialization.
                 if not self._inference_gate:
                     logger.critical(
-                        "🛑 [BOOT] CRITICAL: _inference_gate is STILL None after init! Force-creating."
+                        "🛑 [BOOT] Local InferenceGate is absent after initialization. "
+                        "Attempting one bounded local reconstruction."
                     )
-                    from core.brain.inference_gate import InferenceGate
+                    try:
+                        from core.brain.inference_gate import InferenceGate
 
-                    self._inference_gate = InferenceGate(self)
-                    self._inference_gate._initialized = True
+                        self._inference_gate = InferenceGate(self)
+                        ServiceContainer.register_instance(
+                            "inference_gate", self._inference_gate
+                        )
+                    except (ImportError, AttributeError, RuntimeError) as gate_err:
+                        _record_boot_degradation(
+                            gate_err,
+                            action="continued boot without a constructible local inference gate",
+                            severity="error",
+                        )
+                        logger.critical(
+                            "🛑 [BOOT] Local InferenceGate reconstruction failed: %s.",
+                            gate_err,
+                            exc_info=True,
+                        )
 
                 # Now build the LLM router — it will find the InferenceGate in ServiceContainer
                 from core.brain.llm_health_router import build_router_from_config

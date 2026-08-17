@@ -259,7 +259,7 @@ class MessagePipelineMixin:
             return "I recorded a cognitive engine error and withheld a speculative answer."
 
     async def _apply_constitutional_guard(self, response: str) -> str:
-        """Runs the Gemini safety check with a hard 5s timeout. Fails open."""
+        """Run Aura's local constitutional check with a hard five-second timeout."""
         try:
             guarded = await asyncio.wait_for(self._run_guard_inner(response), timeout=5.0)
             return guarded

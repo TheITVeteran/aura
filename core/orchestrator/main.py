@@ -2364,19 +2364,21 @@ class RobustOrchestrator(
 
     async def _ensure_inference_gate_ready(self, context: str = "runtime") -> bool:
         """Ensure the unified inference gate is ready before user-facing chat begins."""
-        if self._inference_gate is not None:
+        if self._inference_gate is not None and getattr(
+            self._inference_gate, "_initialized", False
+        ):
             return True
 
         container_gate = ServiceContainer.get("inference_gate", default=None)
-        if container_gate is not None:
+        if self._inference_gate is None and container_gate is not None:
             self._inference_gate = container_gate
-            logger.info("✅ InferenceGate adopted from ServiceContainer during %s.", context)
-            return True
+            logger.info("InferenceGate adopted from ServiceContainer during %s.", context)
 
-        logger.warning("⚠️ InferenceGate missing during %s. Creating it now...", context)
-        from core.brain.inference_gate import InferenceGate
+        if self._inference_gate is None:
+            logger.warning("⚠️ InferenceGate missing during %s. Creating it now...", context)
+            from core.brain.inference_gate import InferenceGate
 
-        self._inference_gate = InferenceGate(self)
+            self._inference_gate = InferenceGate(self)
         try:
             lightweight_test_boot = bool(os.environ.get("PYTEST_CURRENT_TEST")) and not bool(
                 os.environ.get("AURA_FULL_TEST_BOOT")
@@ -2389,22 +2391,45 @@ class RobustOrchestrator(
             else:
                 await self._inference_gate.initialize()
             ServiceContainer.register_instance("inference_gate", self._inference_gate)
-            logger.info("✅ InferenceGate initialized successfully during %s.", context)
+            if getattr(self._inference_gate, "_initialized", False):
+                logger.info("✅ Local InferenceGate initialized during %s.", context)
+                return True
+
+            receipt_reader = getattr(self._inference_gate, "initialization_receipt", None)
+            receipt = receipt_reader() if callable(receipt_reader) else {}
+            reason = str(
+                receipt.get("reason")
+                or getattr(self._inference_gate, "_init_error", "")
+                or "local_initialization_incomplete"
+            )
+            init_error = RuntimeError(reason)
+            _record_main_degradation(
+                init_error,
+                action="kept unready local InferenceGate registered for bounded retry",
+                severity="error",
+            )
+            logger.error(
+                "⚠️ [ZENITH] Local InferenceGate remains unready during %s: %s. "
+                "A later foreground turn may retry local initialization.",
+                context,
+                reason,
+            )
+            return False
         except _ORCHESTRATOR_RECOVERABLE_ERRORS as gate_err:
             _record_main_degradation(
                 gate_err,
-                action="registered degraded InferenceGate for cloud-only recovery mode",
+                action="kept local InferenceGate unready after initialization raised",
                 severity="error",
             )
 
             logger.error(
-                "⚠️ [ZENITH] InferenceGate init failed during %s: %s. Cloud-only mode.",
+                "⚠️ [ZENITH] Local InferenceGate init failed during %s: %s. "
+                "Remote inference is retired; local initialization remains retryable.",
                 context,
                 gate_err,
             )
-            self._inference_gate._initialized = True
             ServiceContainer.register_instance("inference_gate", self._inference_gate)
-        return self._inference_gate is not None
+            return False
 
     # enqueue_from_thread -> MessageHandlingMixin
     # _deep_circular_safe_sanitize -> MessageHandlingMixin

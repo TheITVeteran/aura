@@ -867,16 +867,21 @@ class MessageHandlingMixin:
         if self._is_user_facing_origin(origin):
             # INVARIANT: _inference_gate must never be None for user messages.
             # Boot.py sets it, but if something went catastrophically wrong, lazy-init here.
-            if not self._inference_gate:
-                await self._ensure_inference_gate_ready(context="user_message")
+            gate_ready = bool(
+                self._inference_gate
+                and getattr(self._inference_gate, "_initialized", False)
+            )
+            if not gate_ready:
+                gate_ready = await self._ensure_inference_gate_ready(context="user_message")
 
-            # [HARDENING] Final None guard: if InferenceGate is STILL None after lazy-init,
-            # return a safe fallback instead of crashing on NoneType.generate().
-            if self._inference_gate is None:
+            # An unready local gate is a retryable infrastructure state, not
+            # evidence that another inference substrate exists. Do not call
+            # generate() on a gate whose initialization contract failed.
+            if self._inference_gate is None or not gate_ready:
                 logger.error(
-                    "🛑 InferenceGate is None after ensure_ready(). Cannot process user message."
+                    "🛑 Local InferenceGate is unavailable after ensure_ready(). "
+                    "Cannot process this user message."
                 )
-                # [STABILITY v55] Return empty instead of robot message
                 return ""
 
             current_task = asyncio.current_task()
@@ -1008,9 +1013,9 @@ class MessageHandlingMixin:
                         logger.debug("Emergency retry failed: %s", retry_err)
 
                     if not response:
-                        # Allow the empty string to propagate back to the caller
-                        # so that it can trigger cloud fallback instead of masking
-                        # the failure with a robotic reflex.
+                        # Preserve the local failure sentinel for the caller's
+                        # governed response-repair path. Remote inference is not
+                        # an available recovery substrate.
                         response = ""
 
                 # ── Auto-Continuation Reflex ──────────────────────────────────

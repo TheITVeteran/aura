@@ -449,7 +449,15 @@ class ResilientBoot:
         if stage_name == "Sensory Systems":
             logger.warning("🔇 [FALLBACK] Sensory failure. Entering Text-Only Mode.")
         elif stage_name == "LLM Infrastructure":
-            logger.warning("☁️ [FALLBACK] Local LLM failure. Forcing Cloud-Only Mode.")
+            status = getattr(self.orchestrator, "status", None)
+            health_metrics = getattr(status, "health_metrics", None)
+            if isinstance(health_metrics, dict):
+                health_metrics["local_inference"] = "unavailable_retryable"
+            logger.warning(
+                "🧠 [DEGRADED] Local inference is unavailable. Non-inference "
+                "services remain active and local initialization may be retried; "
+                "remote inference is retired."
+            )
         elif stage_name == "Cognitive Core":
             logger.critical("🧠 [FALLBACK] Cognitive Core failure. Entering Reflexive Mode.")
             # Map identity to a basic reflex loop if possible

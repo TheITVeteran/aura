@@ -99,3 +99,17 @@ async def test_resilient_boot_non_strict_runtime_degrades_on_llm_stage_error(ser
 
     assert status is BootStatus.DEGRADED
     assert boot.results["LLM Infrastructure"].success is False
+    assert orchestrator.status.health_metrics["local_inference"] == "unavailable_retryable"
+
+
+@pytest.mark.asyncio
+async def test_llm_fallback_keeps_runtime_local_and_retryable(caplog):
+    orchestrator = SimpleNamespace(status=SimpleNamespace(health_metrics={}))
+    boot = ResilientBoot(orchestrator)
+
+    with caplog.at_level("WARNING", logger="Aura.Boot"):
+        await boot._apply_fallback("LLM Infrastructure")
+
+    assert orchestrator.status.health_metrics["local_inference"] == "unavailable_retryable"
+    assert "local initialization may be retried" in caplog.text
+    assert "cloud" not in caplog.text.lower()
