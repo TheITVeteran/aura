@@ -284,6 +284,18 @@ def test_proof_and_health_endpoint_budgets_keep_explicit_timeout_contract():
     assert health_wall == _endpoint_call_timeout(180.0)
 
 
+def test_long_form_foreground_endpoint_keeps_owning_desktop_deadline():
+    cooperative, wall = _endpoint_call_budgets(
+        356.0,
+        foreground_local=True,
+        prompt_chars=7600,
+        max_tokens=2560,
+    )
+
+    assert cooperative == 356.0
+    assert wall == _endpoint_call_timeout(356.0)
+
+
 @pytest.mark.asyncio
 async def test_foreground_local_router_forwards_bounded_cooperative_timeout():
     router = HealthAwareLLMRouter()

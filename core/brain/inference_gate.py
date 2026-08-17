@@ -80,7 +80,10 @@ from core.runtime.proof_policy import (
     proof_run_active,
 )
 from core.runtime.shutdown_coordinator import is_shutdown_requested
-from core.runtime.structured_input import analyze_prompt_shape
+from core.runtime.structured_input import (
+    analyze_prompt_shape,
+    answer_surface_token_floor,
+)
 from core.utils.deadlines import Deadline, get_deadline
 from core.utils.task_tracker import get_task_tracker
 
@@ -9792,6 +9795,32 @@ class InferenceGate:
                 explicit_max_tokens_cap = max(1, int(context.get("max_tokens") or 1))
             except (TypeError, ValueError, OverflowError):
                 explicit_max_tokens_cap = None
+        if (
+            desktop_cognitive_engine_contract
+            and not bool(context.get("hard_output_token_ceiling", False))
+            and not bool(context.get("resource_stakes_blocked", False))
+        ):
+            try:
+                completion_floor = max(
+                    1,
+                    int(
+                        context.get("user_surface_completion_floor")
+                        or answer_surface_token_floor(initial_visible_user_prompt)
+                    ),
+                )
+            except (TypeError, ValueError, OverflowError):
+                completion_floor = answer_surface_token_floor(initial_visible_user_prompt)
+            context["user_surface_completion_floor"] = completion_floor
+            if max_tokens < completion_floor:
+                logger.info(
+                    "🧠 Foreground completion contract raised the decode budget %d→%d.",
+                    max_tokens,
+                    completion_floor,
+                )
+                max_tokens = completion_floor
+            if explicit_max_tokens_cap is not None:
+                explicit_max_tokens_cap = max(explicit_max_tokens_cap, completion_floor)
+                context["max_tokens"] = explicit_max_tokens_cap
         if "max_tokens" not in context:
             max_tokens = self._adaptive_max_tokens_for_prompt(
                 initial_visible_user_prompt,

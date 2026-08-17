@@ -4299,6 +4299,7 @@ def _desktop_live_reply_token_budget(
         return 384
 
     shape = analyze_prompt_shape(user_message)
+    structural_floor = answer_surface_token_floor(user_message)
     question_parts = int(getattr(shape, "question_parts", 0) or 0)
     extended = bool(
         bounded_planning_contract
@@ -4307,10 +4308,10 @@ def _desktop_live_reply_token_budget(
         or question_parts >= 2
     )
     if extended:
-        return 1536
+        return max(1536, structural_floor)
     if len(str(user_message or "")) > 600:
-        return 1280
-    return 896
+        return max(1280, structural_floor)
+    return max(896, structural_floor)
 
 
 def _requested_visible_required_phrases(user_message: str) -> tuple[str, ...]:
@@ -5406,6 +5407,7 @@ async def _run_cognitive_engine_chat_turn(
         )
         context["max_tokens"] = live_reply_token_budget
         context["num_predict"] = live_reply_token_budget
+        context["user_surface_completion_floor"] = answer_surface_token_floor(visible)
     if private_cognitive_model_contract:
         context["grounded_private_model_context"] = (
             _chat_conversation_repair._build_grounded_introspection_reply(visible) or ""

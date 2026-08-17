@@ -532,18 +532,29 @@ def _endpoint_call_budgets(
         except (TypeError, ValueError, OverflowError):
             token_count = 0
         compact_turn = int(prompt_chars or 0) <= 10_000 and token_count <= 768
-        env_name = (
-            "AURA_FOREGROUND_LOCAL_COMPACT_WALL_TIMEOUT_S"
-            if compact_turn
-            else "AURA_FOREGROUND_LOCAL_EXTENDED_WALL_TIMEOUT_S"
-        )
-        default_cap = 105.0 if compact_turn else 150.0
-        try:
-            cap_s = max(30.0, float(os.environ.get(env_name, str(default_cap)) or default_cap))
-        except (TypeError, ValueError, OverflowError):
-            cap_s = default_cap
-        wall_s = min(wall_s, cap_s)
-        cooperative_s = min(cooperative_s, max(5.0, wall_s - 2.0))
+        extended_turn = not compact_turn and token_count <= 1536
+        if compact_turn or extended_turn:
+            env_name = (
+                "AURA_FOREGROUND_LOCAL_COMPACT_WALL_TIMEOUT_S"
+                if compact_turn
+                else "AURA_FOREGROUND_LOCAL_EXTENDED_WALL_TIMEOUT_S"
+            )
+            default_cap = 105.0 if compact_turn else 150.0
+            try:
+                cap_s = max(
+                    30.0,
+                    float(os.environ.get(env_name, str(default_cap)) or default_cap),
+                )
+            except (TypeError, ValueError, OverflowError):
+                cap_s = default_cap
+            wall_s = min(wall_s, cap_s)
+            cooperative_s = min(cooperative_s, max(5.0, wall_s - 2.0))
+        else:
+            # A long-form answer already carries a bounded owning deadline from
+            # the desktop route.  Replacing it here with the ordinary 150-second
+            # cap makes the requested token budget impossible to consume and
+            # turns healthy slow decoding into a false endpoint failure.
+            cooperative_s = min(cooperative_s, max(5.0, wall_s - 2.0))
 
     return cooperative_s, wall_s
 

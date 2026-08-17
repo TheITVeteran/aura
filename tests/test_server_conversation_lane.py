@@ -12780,6 +12780,13 @@ def test_inline_five_part_technical_request_uses_deep_lane():
         )
         is False
     )
+    assert chat_routes._desktop_live_reply_token_budget(
+        user_message,
+        capability_inventory_contract=False,
+        bounded_planning_contract=True,
+        runtime_fact_status_contract=False,
+        memory_state_contract=False,
+    ) == chat_routes.answer_surface_token_floor(user_message)
 
 
 def test_self_contained_choice_does_not_request_stale_conversation_context():
@@ -13275,7 +13282,9 @@ async def test_desktop_required_bounded_planning_uses_foreground_cognitive_engin
     assert len(calls) == 1
     assert calls[0]["context"]["bounded_planning_contract"] is True
     assert calls[0]["context"]["require_full_foreground_mind_reply"] is True
-    assert calls[0]["context"]["max_tokens"] == 1536
+    expected_floor = chat_routes.answer_surface_token_floor(user_message)
+    assert calls[0]["context"]["max_tokens"] == max(1536, expected_floor)
+    assert calls[0]["context"]["user_surface_completion_floor"] == expected_floor
     assert "one natural paragraph" in calls[0]["context"]["response_style_contract"]
     assert "do not invent a specific example" in calls[0]["context"]["response_style_contract"]
     assert reply

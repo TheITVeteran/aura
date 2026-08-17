@@ -200,6 +200,17 @@ def test_semantic_eos_guard_blocks_termination_until_coverage_is_complete():
     assert math.isinf(float(blocked[0, 9]))
     assert float(blocked[0, 9]) < 0
 
+    checkpoint_text = (
+        incomplete_text
+        + " The unsettled queue therefore preserves that invariant after every "
+        + "successful edge relaxation, and finalized distances never decrease."
+    )
+    checkpoint = [1, 2, *map(ord, checkpoint_text)]
+    checkpoint_logits = mx.zeros((1, 128))
+    checkpoint_logits[0, 9] = 4.0
+    checkpoint_allowed = guard(mx.array(checkpoint), checkpoint_logits)
+    assert float(checkpoint_allowed[0, 9]) == 4.0
+
     complete_text = (
         incomplete_text
         + " 2. Numbered pseudocode initializes distances and repeatedly relaxes edges."

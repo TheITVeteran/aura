@@ -1133,16 +1133,26 @@ def _build_semantic_completion_eos_guard(
     if not eos_ids:
         return None
     prompt_tokens = max(0, int(prompt_token_count))
-    state: dict[str, Any] = {"bucket": -1, "complete": False}
+    state: dict[str, Any] = {
+        "bucket": -1,
+        "complete": False,
+        "generated_text": "",
+    }
 
     def semantic_completion_eos_guard(tokens: Any, logits: Any) -> Any:
         generated_count = max(0, int(len(tokens)) - prompt_tokens)
+        try:
+            top_token = int(tensor_ops.argmax(logits, axis=-1).reshape(-1)[0].item())
+        except (AttributeError, IndexError, RuntimeError, TypeError, ValueError):
+            top_token = -1
         bucket = generated_count // 8
-        if generated_count >= 8 and bucket != state["bucket"]:
+        natural_eos = top_token in eos_ids
+        if generated_count >= 8 and (bucket != state["bucket"] or natural_eos):
             state["bucket"] = bucket
             try:
                 generated_ids = tokens[prompt_tokens:].tolist()
                 generated_text = str(tokenizer.decode(generated_ids) or "")
+                state["generated_text"] = generated_text
                 state["complete"] = _semantic_surface_stop_ready(
                     job,
                     generated_text,
@@ -1151,6 +1161,21 @@ def _build_semantic_completion_eos_guard(
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 state["complete"] = False
         if state["complete"]:
+            return logits
+        # A natural EOS after a substantial, syntactically closed, clean prefix
+        # is a composable checkpoint, not corruption.  Let the model end this
+        # segment and let the owning surface verifier append only the missing
+        # obligations.  Permanently masking EOS here forced correct prefixes to
+        # repeat until TokenSentinel discarded them and restarted from token 0.
+        checkpoint = str(state.get("generated_text") or "").rstrip()
+        if (
+            generated_count >= 64
+            and top_token in eos_ids
+            and len(checkpoint) >= 160
+            and len(checkpoint.split()) >= 30
+            and checkpoint.endswith((".", "!", "?", '"', "'", "”", "’", ")", "]"))
+            and not _surface_quality_failure_reasons(job, checkpoint)
+        ):
             return logits
         mask = tensor_ops.zeros_like(logits)
         for token_id in eos_ids:

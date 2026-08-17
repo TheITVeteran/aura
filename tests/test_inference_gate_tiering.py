@@ -3026,6 +3026,68 @@ async def test_protected_capability_inventory_keeps_min_budget_under_resource_en
     assert client.kwargs[0]["max_tokens"] == 384
 
 
+@pytest.mark.asyncio
+async def test_required_desktop_long_form_floor_overrides_stale_route_cap():
+    gate = InferenceGate()
+    now = time.time()
+
+    class _ReadyGeneratingLane(_RecordingClient):
+        def get_lane_status(self):
+            return {
+                "state": "ready",
+                "last_error": "",
+                "conversation_ready": True,
+                "readiness_blockers": [],
+                "last_ready_at": now,
+                "last_progress_at": now,
+                "last_visible_readiness_at": now,
+                "last_user_facing_completed_at": now,
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+            }
+
+        def is_alive(self):
+            return True
+
+    prompt = (
+        "Explain Dijkstra's shortest-path algorithm in one complete response. Include: "
+        "(1) the core invariant, (2) numbered pseudocode, (3) a worked example "
+        "on vertices A, B, C, D with at least five weighted edges, (4) time "
+        "complexity with a binary heap and an array, and (5) a negative-weight "
+        "failure and the correct alternative."
+    )
+    client = _ReadyGeneratingLane(
+        "1. The invariant finalizes the unsettled vertex with minimum tentative "
+        "distance when weights are nonnegative. 2. Pseudocode initializes dist[s]=0, "
+        "extracts the minimum, and relaxes each edge. 3. For A-B=1, A-C=4, B-C=2, "
+        "B-D=5, and C-D=1, the distances from A are A=0, B=1, C=3, D=4. "
+        "4. A binary heap takes O((V+E) log V); an array takes O(V^2+E). "
+        "5. Negative weights invalidate finalization, so use Bellman-Ford."
+    )
+    gate._mlx_client = client
+
+    result = await gate.generate(
+        prompt,
+        context={
+            "origin": "desktop_quick_user",
+            "prefer_tier": "primary",
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "allow_cloud_fallback": False,
+            "allow_mesh_cognition": False,
+            "max_tokens": 1536,
+            "user_surface_completion_floor": 2560,
+            "user_surface_validation_prompt": prompt,
+        },
+        timeout=20.0,
+    )
+
+    assert result
+    assert client.kwargs[0]["max_tokens"] == 2560
+
+
 def test_note_foreground_timeout_schedules_fast_reprewarm(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     gate = InferenceGate()
