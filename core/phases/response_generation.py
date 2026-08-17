@@ -1733,24 +1733,16 @@ class ResponseGenerationPhase(BasePhase):
                     max(1, int(visible_output_contract.hard_token_ceiling)),
                 )
             else:
-                # Sampling biases may make an answer terser; they may not make
-                # the response surface physically too small for the visible
-                # obligations.  Live 2026-08-17: five requested Dijkstra
+                # Sampling biases and stale caller defaults may make an answer
+                # terser; neither may make the executable surface smaller than
+                # the visible request. Live 2026-08-17: five requested Dijkstra
                 # sections entered with a 1,536-token route allowance, were
                 # halved by an internal bias, then capped again by RLC at 326.
                 # The model stopped during pseudocode and four sections never
-                # had a chance to exist.  Restore only the structural floor,
-                # still bounded by the caller's declared cap.
-                caller_cap = token_budget
-                if requested_token_cap is not None:
-                    try:
-                        caller_cap = max(1, int(requested_token_cap))
-                    except (TypeError, ValueError, OverflowError):
-                        caller_cap = token_budget
-                token_budget = max(
-                    token_budget,
-                    min(caller_cap, structural_answer_floor),
-                )
+                # had a chance to exist. The structural planner is the owner of
+                # this floor. A true user-declared output ceiling is handled by
+                # the constrained branch above.
+                token_budget = max(token_budget, structural_answer_floor)
             runtime_context["_effective_generation_max_tokens"] = token_budget
             runtime_context["requested_output_contract"] = (
                 dict(visible_output_contract_payload)
@@ -2935,6 +2927,7 @@ class ResponseGenerationPhase(BasePhase):
                         and not is_test_run
                         and not latent_response_owned
                         and amplifier_promotion_authority == "none"
+                        and not clean_user_surface_contract
                     )
                     else None
                 ),

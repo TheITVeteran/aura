@@ -345,7 +345,7 @@ async def test_depth_worthy_desktop_turn_uses_one_latent_generation(monkeypatch)
     assert router.calls == []
     assert latent.calls[0]["messages"][-1]["content"] == objective
     assert latent.calls[0]["config_overrides"] == {
-        "decode_max_tokens": 512,
+        "decode_max_tokens": 1024,
         "decode_temperature": 0.61,
         "decode_top_p": 0.87,
     }
@@ -1037,7 +1037,7 @@ async def test_response_generation_answers_from_search_evidence_when_cortex_fail
 
 
 @pytest.mark.asyncio
-async def test_response_generation_honors_live_caller_token_cap_after_biases(monkeypatch):
+async def test_response_generation_rejects_internal_cap_below_visible_surface(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "How would that uncertainty change your next decision?"
     state.cognition.current_origin = "user"
@@ -1068,7 +1068,7 @@ async def test_response_generation_honors_live_caller_token_cap_after_biases(mon
     )
 
     assert router.calls
-    assert router.calls[0]["max_tokens"] == 1
+    assert router.calls[0]["max_tokens"] == 256
 
 
 @pytest.mark.asyncio
@@ -1111,8 +1111,8 @@ async def test_response_generation_biases_cannot_erase_compound_answer_capacity(
     )
 
     assert router.calls
-    assert router.calls[0]["max_tokens"] >= 768
-    assert router.calls[0]["user_surface_completion_floor"] == 768
+    assert router.calls[0]["max_tokens"] >= 2304
+    assert router.calls[0]["user_surface_completion_floor"] == 2304
 
 
 @pytest.mark.asyncio
@@ -1443,25 +1443,18 @@ async def test_response_generation_quality_gate_uses_visible_desktop_prompt(monk
 
 
 @pytest.mark.asyncio
-async def test_response_generation_dialogue_retry_preserves_live_mind_contract(monkeypatch):
+async def test_response_generation_leaves_user_surface_retry_to_route_owner(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = "Explain how confusion changes your reasoning."
     state.cognition.current_origin = "desktop_ui"
     state.cognition.current_mode = CognitiveMode.REACTIVE
 
     router = _Router()
-    replies = iter(
-        (
-            "Confusion increases uncertainty, so I slow down and check competing interpretations before answering.",
-            "When confusion rises, I compare alternatives explicitly and preserve uncertainty until the evidence separates them.",
-        )
-    )
-
-    async def _distinct_retry_think(**kwargs):
+    async def _single_owner_think(**kwargs):
         router.calls.append(kwargs)
-        return next(replies)
+        return "Confusion increases uncertainty, so I slow down and check competing interpretations before answering."
 
-    router.think = _distinct_retry_think
+    router.think = _single_owner_think
     phase = ResponseGenerationPhase(_Container({"llm_router": router}))
 
     monkeypatch.setattr(
@@ -1477,8 +1470,8 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
     )
 
     async def _force_retry(response, contract, *, retry_generate, state):
-        retried = await retry_generate("Repair the answer without leaving the live mind path.")
-        return retried, SimpleNamespace(to_dict=lambda: {"valid": True}), True
+        assert retry_generate is None
+        return response, SimpleNamespace(to_dict=lambda: {"valid": False}), False
 
     monkeypatch.setattr(
         "core.phases.response_generation.enforce_dialogue_contract",
@@ -1505,26 +1498,10 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
         },
     )
 
-    assert len(router.calls) == 2
-    retry_call = router.calls[1]
-    assert retry_call["desktop_cognitive_engine_required"] is True
-    assert retry_call["live_runtime_payload_required"] is True
-    assert retry_call["clean_user_surface_contract"] is True
-    assert retry_call["live_mind_controls_bound"] is True
-    assert retry_call["clean_user_surface_recurrent_loops"] == 2
-    assert retry_call["clean_user_surface_steering_alpha"] == 0.34
-    assert retry_call["temperature"] == 0.49
-    assert retry_call["top_p"] == 0.81
-    assert retry_call["user_surface_completion_floor"] >= 256
+    assert len(router.calls) == 1
     assert router.calls[0]["desktop_cognitive_engine_required"] is True
     assert router.calls[0]["allow_cloud_fallback"] is False
-    mutations = result.response_modifiers["live_mind_surface_control_receipt"][
-        "text_mutations"
-    ]
-    assert any(
-        item["stage"] == "response_generation.dialogue_contract_retry"
-        for item in mutations
-    )
+    assert result.cognition.last_response.startswith("Confusion increases")
 
 
 @pytest.mark.asyncio

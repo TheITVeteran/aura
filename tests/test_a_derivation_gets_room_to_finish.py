@@ -17,9 +17,8 @@ two-part derivation whichever lane carries it. The extended band already
 existed and was gated behind ``require_full_foreground_mind_reply``, which the
 quick lane does not set.
 
-The quick lane still exists for latency, so a question whose shape asks for
-room gets a middle band rather than the full one — enough to finish a
-derivation, not enough to turn every two-part question into an essay.
+The quick lane still exists for latency, but capacity follows the requested
+work. Natural EOS keeps ordinary answers short without clipping compound ones.
 """
 from __future__ import annotations
 
@@ -85,12 +84,11 @@ def test_the_shape_is_consulted_independently_of_the_lane() -> None:
     ) in src
 
 
-def test_the_quick_lane_gets_a_middle_band_not_the_full_one() -> None:
+def test_the_quick_lane_uses_the_structural_answer_floor() -> None:
     src = SOURCE.read_text(encoding="utf-8")
     assert "elif shape_wants_room:" in src
-    assert "max_tokens = max(896, min(max_tokens, 1536))" in src
-    # The full band stays reserved for the full lane.
-    assert "max_tokens = max(1024, min(max_tokens, 2048))" in src
+    assert "max_tokens = max(896, structural_answer_floor, min(max_tokens, 4096))" in src
+    assert "max_tokens = max(1024, structural_answer_floor, min(max_tokens, 4096))" in src
 
 
 def test_the_conversational_floor_is_unchanged_for_everything_else() -> None:

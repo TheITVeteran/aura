@@ -11778,13 +11778,13 @@ async def test_truncated_completion_replacement_cannot_become_authoritative(monk
     )
 
     assert reply is None
-    assert engine.calls == 4
-    assert trace["completion_retry_count"] == 3
-    assert trace["foreground_model_generation_count"] == 4
+    assert engine.calls == 2
+    assert trace["completion_retry_count"] == 1
+    assert trace["foreground_model_generation_count"] == 2
 
 
 @pytest.mark.asyncio
-async def test_completion_can_finish_across_multiple_same_worker_continuations(monkeypatch):
+async def test_incomplete_continuation_does_not_fan_out_into_more_generations(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -11882,12 +11882,11 @@ async def test_completion_can_finish_across_multiple_same_worker_continuations(m
         turn_trace=trace,
     )
 
-    assert reply is not None
-    assert reply.endswith("peak.")
-    assert len(engine.calls) == 3
-    assert engine.calls[2][1]["user_surface_continuation_partial"].endswith("where the")
-    assert trace["completion_retry_count"] == 2
-    assert trace["foreground_model_generation_count"] == 3
+    assert reply is None
+    assert len(engine.calls) == 2
+    assert engine.calls[1][1]["user_surface_continuation_partial"].endswith("from the")
+    assert trace["completion_retry_count"] == 1
+    assert trace["foreground_model_generation_count"] == 2
 
 
 @pytest.mark.asyncio

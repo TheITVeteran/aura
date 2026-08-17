@@ -351,14 +351,32 @@ def answer_surface_token_floor(text: str) -> int:
     ):
         return 256
 
-    # One block carries framing/conclusion; each independently checkable
-    # obligation receives another block.  Five visible obligations therefore
-    # receive 768 tokens rather than the former fixed 384-token ceiling.
-    required = 192 + (96 * obligations)
+    # Reserve capacity by required work, not merely by clause count. A worked
+    # example and executable pseudocode each need substantially more surface
+    # than a one-line definition. Cardinality, paired comparisons and a named
+    # alternative add independently verifiable content. This is admission
+    # accounting only: semantic EOS can still return as soon as the work is
+    # complete.
+    lowered = str(text or "").lower()
+    required = 256 + (192 * obligations)
+    if re.search(r"\b(?:pseudo\s*code|code|algorithm|procedure)\b", lowered):
+        required += 384
+    if re.search(r"\b(?:worked|concrete|step[- ]by[- ]step)\s+example\b", lowered):
+        required += 384
+    if re.search(
+        r"\b(?:at\s+least|minimum(?:\s+of)?|no\s+fewer\s+than)\s+"
+        r"(?:[a-z-]+|\d+)\b",
+        lowered,
+    ):
+        required += 128
+    if re.search(r"\b(?:both|each\s+of|compare|contrast)\b", lowered):
+        required += 128
+    if re.search(r"\b(?:correct|proper|recommended)\s+alternative\b", lowered):
+        required += 128
     if shape.prefers_extended_answer and obligations == 1:
         required = max(required, 512)
     block = 128
-    return min(1536, max(384, ((required + block - 1) // block) * block))
+    return min(4096, max(384, ((required + block - 1) // block) * block))
 
 
 #: Splits an utterance into the units a person would count as separate asks:

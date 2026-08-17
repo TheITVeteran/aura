@@ -25,6 +25,7 @@ from core.runtime.pipeline_blueprint import (
     legacy_runtime_phase_specs,
 )
 from core.runtime.service_registry import get_runtime_service
+from core.runtime.structured_input import answer_surface_token_floor
 from core.runtime.turn_outcome import (
     TurnOutcome,
     UserVisibleState,
@@ -3936,6 +3937,12 @@ class CognitiveEngine:
         prompt_shape = context.get("prompt_shape")
         if not isinstance(prompt_shape, dict):
             prompt_shape = {}
+        visible_capacity_request = str(
+            context.get("visible_user_message") or objective or ""
+        ).strip()
+        structural_answer_floor = answer_surface_token_floor(
+            visible_capacity_request
+        )
         # How much room an answer needs is a property of the question, not of
         # the lane it arrived on. "When does the second train catch the first,
         # and how far from the station?" is a two-part derivation either way;
@@ -3949,6 +3956,7 @@ class CognitiveEngine:
             or prompt_shape.get("prefers_extended_answer", False)
             or prompt_shape.get("requires_single_reply_coverage", False)
             or int(prompt_shape.get("question_parts", 0) or 0) >= 2
+            or structural_answer_floor > 256
             or _turn_wants_a_derivation(
                 str(context.get("visible_user_message") or objective or "")
             )
@@ -4011,12 +4019,12 @@ class CognitiveEngine:
         elif capability_inventory_contract and not shape_wants_room:
             max_tokens = max(160, min(max_tokens, 220))
         elif extended_full_mind_reply:
-            max_tokens = max(1024, min(max_tokens, 2048))
+            max_tokens = max(1024, structural_answer_floor, min(max_tokens, 4096))
         elif shape_wants_room:
-            # The quick lane exists for latency, so this is a middle band
-            # rather than the full one — enough to finish a derivation, not
-            # enough to turn every two-part question into an essay.
-            max_tokens = max(896, min(max_tokens, 1536))
+            # Capacity follows the visible work contract. Natural EOS keeps a
+            # short answer short; reducing a five-part answer to a generic
+            # middle band only guarantees a later retry.
+            max_tokens = max(896, structural_answer_floor, min(max_tokens, 4096))
         else:
             # 512-token floor: a live conversational reply must have room to
             # finish its sentences even after advisory reductions.
@@ -4819,10 +4827,10 @@ class CognitiveEngine:
                 "timeout": request_timeout,
             }
             if continuation_contract:
-                # The first pass already paid for the body of the answer. The
-                # continuation needs enough room to finish, not another 1,536-
-                # token reservation that cannot fit the bounded repair deadline.
-                continuation_tokens = max(256, min(max_tokens, 768))
+                # One continuation owns the remaining surface. Keep enough
+                # capacity for any unserved obligations rather than splitting
+                # completion across a chain of progressively smaller decodes.
+                continuation_tokens = max(512, min(structural_answer_floor, 2048))
                 router_kwargs["max_tokens"] = continuation_tokens
                 router_kwargs["num_predict"] = continuation_tokens
                 router_kwargs["user_surface_completion_floor"] = continuation_tokens

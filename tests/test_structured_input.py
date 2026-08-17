@@ -67,7 +67,18 @@ def test_inline_parenthesized_obligations_are_first_class_request_parts() -> Non
         "binary-heap and array complexity, and",
         "a negative-weight failure and the correct alternative",
     )
-    assert answer_surface_token_floor(prompt) == 768
+    assert answer_surface_token_floor(prompt) == 2304
+
+
+def test_dense_technical_request_reserves_capacity_for_every_work_type() -> None:
+    prompt = (
+        "Explain Dijkstra in one response. Include: (1) the invariant, "
+        "(2) numbered pseudocode, (3) a worked example with at least five edges, "
+        "(4) complexity with both a heap and an array, and (5) a negative-weight "
+        "failure and the correct alternative."
+    )
+
+    assert answer_surface_token_floor(prompt) == 2560
 
 
 def test_response_contract_carries_numbered_obligations_into_live_validation() -> None:

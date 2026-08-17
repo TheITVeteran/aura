@@ -462,6 +462,53 @@ async def test_cognitive_engine_desktop_quick_reply_uses_governed_primary_router
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_sizes_dense_technical_answer_from_visible_work(monkeypatch):
+    engine = CognitiveEngine()
+    state = AuraState.default()
+    engine.state_repository = StateRepositoryFixture(state)
+    captured = {}
+    visible = (
+        "Explain Dijkstra in one response. Include: (1) the invariant, "
+        "(2) numbered pseudocode, (3) a worked example with at least five edges, "
+        "(4) complexity with both a heap and an array, and (5) a negative-weight "
+        "failure and the correct alternative."
+    )
+
+    class _Router:
+        async def think(self, **kwargs):
+            captured.update(kwargs)
+            return "A complete answer generated inside the reserved surface."
+
+    monkeypatch.setattr(
+        "core.brain.cognitive_engine.get_container",
+        lambda: SimpleNamespace(
+            get=lambda name, default=None: _Router() if name == "llm_router" else default
+        ),
+    )
+
+    thought = await engine._run_thinking_loop(
+        state,
+        visible,
+        ThinkingMode.FAST,
+        "desktop_ui",
+        context={
+            "desktop_quick_reply_contract": True,
+            "visible_user_message": visible,
+            "cognitive_engine_required": True,
+            "desktop_cognitive_engine_required": True,
+            "max_tokens": 896,
+        },
+        is_background=False,
+        timeout_s=240.0,
+    )
+
+    assert thought is not None
+    assert captured["max_tokens"] == 2560
+    assert captured["user_surface_completion_floor"] == 2560
+    assert captured["reply_needs_room"] is True
+
+
+@pytest.mark.asyncio
 async def test_cognitive_engine_desktop_quick_reply_carries_fresh_turn_sight(monkeypatch):
     from core.senses.turn_evidence import build_camera_turn_evidence
 
