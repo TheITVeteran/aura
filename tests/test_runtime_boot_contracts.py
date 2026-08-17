@@ -199,6 +199,7 @@ async def test_foundation_cognition_validation_samples_new_diagnostics_first():
     assert middleware.ok is True
     assert cognition.ok is True
     assert cognition.data["suite_outcome"]["failed"] == 0
+    assert cognition.data["problem_tests"] == []
 
 
 @pytest.mark.asyncio

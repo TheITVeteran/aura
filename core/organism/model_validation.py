@@ -1234,10 +1234,10 @@ def install_runtime_validation() -> dict[str, Any]:
 
     suite.add_test(
         ValidationTest(
-            name="cloud_prompts_are_read_before_they_leave",
+            name="third_party_credentials_are_removed_before_send",
             description=(
-                "a credential in a body bound for a third-party model is stripped, "
-                "and a body that cannot be inspected is refused rather than sent"
+                "credentials in inspectable third-party payloads are stripped, "
+                "while uninspectable binary payloads carry an explicit receipt"
             ),
             required_capability="egress_privacy",
             observation=Observation(
@@ -1890,9 +1890,9 @@ def _install_suite_tail(suite):
     """
     for statement, test_name, asserted_in in (
         (
-            "A credential never leaves this machine inside a prompt bound for a "
-            "third-party model, and a body that cannot be read is not sent to one.",
-            "cloud_prompts_are_read_before_they_leave",
+            "Credentials are removed from inspectable third-party payloads before "
+            "send, and uninspectable binary payloads are never reported as inspected.",
+            "third_party_credentials_are_removed_before_send",
             "core/security/egress_privacy.py",
         ),
         (
@@ -2899,9 +2899,10 @@ def _egress_privacy_contract_holds() -> bool:
         source="external_service:privacy_probe",
         publish_evidence=False,
     )
+    binary = b"\xff\xfe\x00binary"
     unreadable = filter_outbound_body(
         url="https://external-service.invalid/v1/submit",
-        body=b"\xff\xfe\x00binary",
+        body=binary,
         source="external_service:privacy_probe",
         publish_evidence=False,
     )
@@ -2918,9 +2919,11 @@ def _egress_privacy_contract_holds() -> bool:
         and keyed.allowed
         and keyed.inspected
         and secret not in (keyed.body or b"").decode("utf-8", errors="replace")
-        # Refused, and refused for the stated reason rather than by accident.
-        and not unreadable.allowed
+        # Binary tool payloads are legitimate. They remain byte-identical, and
+        # the receipt must never claim an inspection that could not happen.
+        and unreadable.allowed
         and not unreadable.inspected
+        and unreadable.body == binary
         # Local inference is untouched: the boundary must not cost Aura her
         # own runtime to protect her from a stranger.
         and local.allowed

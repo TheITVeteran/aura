@@ -1244,6 +1244,14 @@ async def _activate_cognition(*, foreground_only: bool) -> ActivationResult:
     # Run the suite once at boot. A claim that is only checked when
     # somebody remembers to check it is a claim nobody is checking.
     outcome = run_validation()
+    problem_tests = [
+        result.get("test", "unknown")
+        for group in (outcome["failures"], outcome["errors"])
+        for result in group
+    ]
+    problem_detail = (
+        f"; affected tests: {', '.join(problem_tests)}" if problem_tests else ""
+    )
 
     return ActivationResult(
         name="cognition",
@@ -1253,7 +1261,7 @@ async def _activate_cognition(*, foreground_only: bool) -> ActivationResult:
             f"grounded ops; {validation['claims']} claims bound to "
             f"{len(validation['tests'])} validation tests — "
             f"{outcome['passed']} passed, {outcome['failed']} failed, "
-            f"{outcome['errored']} errored"
+            f"{outcome['errored']} errored{problem_detail}"
         ),
         data={
             "metta_rules": rules,
@@ -1261,6 +1269,7 @@ async def _activate_cognition(*, foreground_only: bool) -> ActivationResult:
             "suite_outcome": {
                 k: outcome[k] for k in ("passed", "failed", "errored", "applicable")
             },
+            "problem_tests": problem_tests,
             "unsupported_claims": [c["statement"] for c in get_suite().unsupported_claims()],
         },
     )
