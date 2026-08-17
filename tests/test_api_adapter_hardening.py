@@ -63,14 +63,12 @@ class TestErrorVersusEmpty:
 class TestStopClearsCapability:
     def test_stop_revokes_advertised_capability(self):
         adapter = APIAdapter()
-        adapter.has_gemini = True
         adapter.has_local = True
 
         asyncio.run(adapter.stop())
 
-        assert adapter.has_gemini is False
         assert adapter.has_local is False
-        assert adapter.get_status()["gemini"] is False
+        assert adapter.get_status()["local"] is False
         assert adapter.get_available_tiers() == []
 
 
@@ -78,19 +76,17 @@ class TestStatusIsACopy:
     def test_counters_cannot_be_mutated_through_status(self):
         adapter = APIAdapter()
         status = adapter.get_status()
-        status["calls"]["gemini"] = 999
-        assert adapter._call_count["gemini"] == 0
+        status["calls"]["local"] = 999
+        assert adapter._call_count["local"] == 0
 
 
 class TestEmbeddingSpaceIsIdentified:
     def test_local_fallback_declares_its_vector_space(self):
         adapter = APIAdapter()
-        adapter.has_gemini = False
 
         vector = asyncio.run(adapter.embed_async("hello world"))
 
         assert isinstance(vector, list) and vector
-        # A lexical vector must be distinguishable from a cloud embedding so
-        # callers never mix incomparable spaces in one index.
+        # The adapter exposes one explicit local vector space; callers cannot
+        # accidentally mix it with a retired remote-provider embedding space.
         assert adapter.last_embedding_space() == APIAdapter.LOCAL_EMBED_SPACE
-        assert adapter.last_embedding_space() != APIAdapter.CLOUD_EMBED_SPACE
