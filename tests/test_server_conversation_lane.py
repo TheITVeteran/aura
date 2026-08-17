@@ -12740,6 +12740,33 @@ def test_structured_code_explanation_uses_the_completion_sized_quick_lane():
         is True
     )
 
+
+def test_inline_five_part_technical_request_uses_deep_lane():
+    from core.brain.types import ThinkingMode
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Explain Dijkstra's shortest-path algorithm in one complete response. Include: "
+        "(1) the core invariant, (2) numbered pseudocode, (3) a worked example "
+        "on four vertices with at least five weighted edges, (4) time complexity "
+        "with a binary heap and an array, and (5) one negative-weight failure "
+        "and the correct alternative."
+    )
+
+    assert chat_routes._select_cognitive_chat_mode(
+        user_message, user_message
+    ) is ThinkingMode.DEEP
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
+            capability_inventory_contract=False,
+        )
+        is False
+    )
+
+
 def test_self_contained_choice_does_not_request_stale_conversation_context():
     from core.brain.types import ThinkingMode
     from interface.routes import chat as chat_routes

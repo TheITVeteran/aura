@@ -58,6 +58,9 @@ _REPEATED_CLAUSE_RE = re.compile(
 )
 
 _NUMBERED_ITEM_RE = re.compile(r"(?:^|\n)\s*\d+[.)]\s+")
+_INLINE_NUMBERED_ITEM_RE = re.compile(
+    r"(?<!\w)\((?P<number>[1-9]|1[0-2])\)\s+"
+)
 
 # --- Supplied material -------------------------------------------------------
 #
@@ -328,6 +331,34 @@ class PromptShape:
 _ASK_SPLIT_RE = re.compile(r"(?<=[.?!])\s+|\n+")
 
 
+def _inline_numbered_segments(text: str) -> tuple[str, ...]:
+    """Return a contiguous ``(1) ... (N) ...`` obligation list.
+
+    Parenthesized numbers also occur in prose and mathematics, so a single
+    marker is not structural evidence.  A list is admitted only when it starts
+    at one and advances without gaps.  This lets chat messages carry compact
+    inline checklists without turning ``f(2)`` or a citation such as ``(3)``
+    into a multi-part request.
+    """
+
+    raw = str(text or "")
+    matches = tuple(_INLINE_NUMBERED_ITEM_RE.finditer(raw))
+    if len(matches) < 2:
+        return ()
+    numbers = tuple(int(match.group("number")) for match in matches)
+    if numbers != tuple(range(1, len(matches) + 1)):
+        return ()
+
+    segments: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+        segment = raw[match.end() : end].strip(" \t\r\n,;:.!")
+        if not segment:
+            return ()
+        segments.append(segment)
+    return tuple(segments)
+
+
 def _question_segments(text: str) -> tuple[str, ...]:
     """The individual asks in an utterance, as text.
 
@@ -356,11 +387,26 @@ def _question_segments(text: str) -> tuple[str, ...]:
     if not raw:
         return ()
     segments = [part.strip() for part in _ASK_SPLIT_RE.split(raw) if part.strip()]
-    return tuple(
+    sentence_asks = tuple(
         part
         for part in segments
         if part.endswith("?") or _DIRECTIVE_LINE_RE.match(part)
     )
+    inline_obligations = _inline_numbered_segments(raw)
+    if not inline_obligations:
+        return sentence_asks
+
+    # The sentence containing the inline list is a container for the same
+    # obligations, not an additional request. Keep unrelated asks before it,
+    # then expose each numbered requirement independently to coverage checks.
+    first_marker = _INLINE_NUMBERED_ITEM_RE.search(raw)
+    prefix = raw[: first_marker.start()] if first_marker is not None else ""
+    prefix_asks = tuple(
+        part
+        for part in _question_segments(prefix)
+        if part not in inline_obligations
+    )
+    return (*prefix_asks, *inline_obligations)
 
 
 def analyze_prompt_shape(text: str) -> PromptShape:
@@ -383,7 +429,11 @@ def analyze_prompt_shape(text: str) -> PromptShape:
             directive_lines += 1
 
     connector_parts = len(_CONNECTOR_RE.findall(raw))
-    numbered_parts = len(_NUMBERED_ITEM_RE.findall(raw))
+    inline_numbered_segments = _inline_numbered_segments(raw)
+    numbered_parts = max(
+        len(_NUMBERED_ITEM_RE.findall(raw)),
+        len(inline_numbered_segments),
+    )
     repeated_clause_parts = max(0, len(_REPEATED_CLAUSE_RE.findall(raw)) - 1)
     imperative_parts = len(_COORDINATED_DIRECTIVE_RE.findall(raw))
 
