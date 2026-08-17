@@ -455,6 +455,76 @@ async def test_selected_latent_refusal_falls_back_to_exactly_one_generation(monk
 
 
 @pytest.mark.asyncio
+async def test_materialized_latent_incumbent_is_served_without_second_generation(
+    monkeypatch,
+):
+    objective = "Compare both architectures and recommend the safer design."
+    incumbent = (
+        "The ownership-first architecture is safer than late deduplication because "
+        "one component owns the turn from admission through publication. Late "
+        "deduplication permits two generators to consume compute and race before the "
+        "publisher notices the conflict, whereas early ownership prevents the second "
+        "writer from starting. I recommend ownership-first because it preserves a "
+        "single causal receipt and makes cancellation authoritative. Verify it by "
+        "cancelling the active owner and asserting that no stale successor can publish. "
+        "Then force a deadline during generation and confirm that the materialized "
+        "incumbent remains the only visible answer, with exactly one generation in the "
+        "turn receipt and no second resident decode."
+    )
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    router = _Router()
+    receipt = _live_latent_receipt(incumbent, objective)
+    receipt.update(
+        {
+            "honest_flags": [
+                "vanilla_incumbent_captured_before_adaptation",
+                "fallback_vanilla:ComputeBudgetUnaffordable",
+                "fallback_reused_materialized_incumbent",
+            ],
+            "resident_owner_released": True,
+            "resident_state_reusable": True,
+            "last_stage": "latent_optimization",
+        }
+    )
+    latent = _LatentService(
+        {
+            "ok": False,
+            "reason": "receipt_contract_failed:latent_optimization_budget_exhausted",
+            "text": incumbent,
+            "receipt": receipt,
+            "progress": {"stage": "failed", "elapsed_s": 151.0},
+        }
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert len(latent.calls) == 1
+    assert router.calls == []
+    assert result.cognition.working_memory[-1]["content"] == incumbent
+    assert result.response_modifiers["latent_cortex_succeeded"] is False
+    assert result.response_modifiers["latent_cortex_fallback_used"] is True
+    assert result.response_modifiers["latent_cortex_incumbent_fallback_served"] is True
+    assert result.response_modifiers["model_retry_suppressed"] is True
+    assert result.response_modifiers["response_path"] == (
+        "cognitive_engine_latent_incumbent_fallback"
+    )
+
+
+@pytest.mark.asyncio
 async def test_latent_timeout_preserves_attempt_and_suppresses_second_model_owner(
     monkeypatch,
 ):

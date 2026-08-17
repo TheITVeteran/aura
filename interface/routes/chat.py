@@ -4920,9 +4920,22 @@ async def _run_cognitive_engine_chat_turn(
         )
         if count_foreground_generation:
             _record_foreground_generation(metadata)
-        raw_latent_receipt = metadata.get("latent_cortex_receipt")
-        turn_trace.update(
-            {
+        latent_metadata_present = any(
+            key in metadata
+            for key in (
+                "latent_cortex_selected",
+                "latent_cortex_attempted",
+                "latent_cortex_succeeded",
+                "latent_cortex_fallback_used",
+                "latent_cortex_failure_reason",
+                "latent_cortex_receipt",
+                "latent_cortex_progress",
+            )
+        )
+        if latent_metadata_present:
+            raw_latent_receipt = metadata.get("latent_cortex_receipt")
+            turn_trace.update(
+                {
                 "latent_cortex_selected": bool(metadata.get("latent_cortex_selected", False)),
                 "latent_cortex_selection_reason": str(
                     metadata.get("latent_cortex_selection_reason") or ""
@@ -4970,8 +4983,8 @@ async def _run_cognitive_engine_chat_turn(
                     if isinstance(metadata.get("latent_cortex_progress"), dict)
                     else {}
                 ),
-            }
-        )
+                }
+            )
         metadata_response_path = str(metadata.get("response_path") or "").strip()
         if adopt_response_path and metadata_response_path:
             turn_trace["response_path"] = metadata_response_path

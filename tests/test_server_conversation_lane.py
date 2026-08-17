@@ -11471,6 +11471,15 @@ async def test_truncated_foreground_answer_gets_one_same_worker_continuation(mon
         {
             "reply_generation_incomplete": True,
             "reply_generation_stop_reason": "max_tokens",
+            "latent_cortex_selected": True,
+            "latent_cortex_attempted": True,
+            "latent_cortex_succeeded": False,
+            "latent_cortex_fallback_used": True,
+            "latent_cortex_failure_reason": "latent_optimization_budget_exhausted",
+            "latent_cortex_receipt": {
+                "episode_id": "preserved-across-continuation",
+                "last_stage": "latent_optimization",
+            },
         }
     )
     first_metadata["live_mind_surface_control_receipt"].update(
@@ -11565,6 +11574,12 @@ async def test_truncated_foreground_answer_gets_one_same_worker_continuation(mon
     assert trace["foreground_model_generation_count"] == 2
     assert trace["completion_retry_count"] == 1
     assert trace["response_path"] == "cognitive_engine_completion_retry"
+    assert trace["latent_cortex_selected"] is True
+    assert trace["latent_cortex_attempted"] is True
+    assert trace["latent_cortex_fallback_used"] is True
+    assert trace["latent_cortex_receipt"]["episode_id"] == (
+        "preserved-across-continuation"
+    )
 
 
 @pytest.mark.asyncio

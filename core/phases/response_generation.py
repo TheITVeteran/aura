@@ -813,6 +813,46 @@ class ResponseGenerationPhase(BasePhase):
         return latent_owner_exhausted(reason, receipt)
 
     @staticmethod
+    def _materialized_latent_incumbent(
+        result: Any,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Return the immutable ordinary answer captured by a failed episode.
+
+        The latent engine materializes the checkpoint's ordinary decode before
+        recurrence mutates any cache or attaches temporary weights.  If a later
+        optional phase fails, that answer is still the only completed resident
+        generation for the turn.  Treating the service's ``ok=False`` as if no
+        text existed opened a second owner after the first decode and discarded
+        the answer floor the engine had explicitly preserved.
+
+        This is deliberately keyed to the engine's causal receipt rather than
+        to a failure string or the presence of arbitrary text.  A worker cannot
+        smuggle an uncertified partial response through this path.
+        """
+
+        if not isinstance(result, dict) or result.get("ok") is True:
+            return None
+        text = str(result.get("text") or "").strip()
+        receipt = result.get("receipt")
+        if not text or not isinstance(receipt, dict):
+            return None
+        raw_flags = receipt.get("honest_flags")
+        flags = {
+            str(flag or "").strip()
+            for flag in raw_flags
+            if str(flag or "").strip()
+        } if isinstance(raw_flags, list) else set()
+        if "fallback_reused_materialized_incumbent" not in flags:
+            return None
+        if "vanilla_incumbent_captured_before_adaptation" not in flags:
+            return None
+        if receipt.get("resident_owner_released") is not True:
+            return None
+        if receipt.get("resident_state_reusable") is not True:
+            return None
+        return text, dict(receipt)
+
+    @staticmethod
     def _generation_metadata_snapshot(router: Any) -> dict[str, Any]:
         getter = getattr(router, "get_last_generation_metadata", None)
         if not callable(getter):
@@ -1988,7 +2028,52 @@ class ResponseGenerationPhase(BasePhase):
                         )
                         state.response_modifiers.update(latent_trace)
                         latent_receipt = latent_trace["latent_cortex_receipt"]
-                        if self._latent_owner_exhausted(
+                        materialized_incumbent = self._materialized_latent_incumbent(
+                            latent_result
+                        )
+                        if materialized_incumbent is not None:
+                            response_text, latent_receipt = materialized_incumbent
+                            latent_trace.update(
+                                {
+                                    "latent_cortex_receipt": latent_receipt,
+                                    "latent_cortex_incumbent_fallback_served": True,
+                                    "response_path": (
+                                        "cognitive_engine_latent_incumbent_fallback"
+                                    ),
+                                }
+                            )
+                            state.response_modifiers.update(
+                                {
+                                    **latent_trace,
+                                    "model_retry_suppressed": True,
+                                    "generation_failure_class": failure_reason[:120],
+                                }
+                            )
+                            generation_metadata = {
+                                **latent_trace,
+                                "model_retry_suppressed": True,
+                                "generation_failure_class": failure_reason[:120],
+                                "surface_control_receipt": (
+                                    self._latent_cortex_surface_receipt(
+                                        latent_receipt,
+                                        controls_bound=live_mind_controls_bound,
+                                        generation_controls=(
+                                            live_mind_generation_controls
+                                        ),
+                                        token_budget=token_budget,
+                                        requested_output_contract=(
+                                            visible_output_contract_payload
+                                        ),
+                                    )
+                                ),
+                            }
+                            logger.warning(
+                                "Recursive Latent Cortex did not earn answer "
+                                "replacement (%s); serving its immutable ordinary "
+                                "incumbent without opening another resident decode.",
+                                failure_reason,
+                            )
+                        elif self._latent_owner_exhausted(
                             failure_reason,
                             latent_receipt,
                         ):
