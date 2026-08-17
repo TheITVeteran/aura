@@ -482,6 +482,27 @@ class BackupSystem:
                     logger.error("Cleanup failed for %s: %s", backup_file, e)
 
 
+@dataclass(frozen=True)
+class TurnTrust:
+    """What is known about this turn's inputs. Unknown is not trusted."""
+
+    state: str  # "trusted" | "untrusted" | "unknown"
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.state not in {"trusted", "untrusted", "unknown"}:
+            raise ValueError(f"unknown turn-trust state: {self.state!r}")
+
+
+def _owner_approved(fix: Any) -> bool:
+    """Whether the owner explicitly authorized this specific modification."""
+    return bool(
+        getattr(fix, "owner_approved", False)
+        or getattr(fix, "human_approved", False)
+        or getattr(fix, "explicit_owner_approval", False)
+    )
+
+
 class SafeSelfModification:
     """Orchestrates safe self-modification with multiple safety layers.
 
@@ -570,32 +591,63 @@ class SafeSelfModification:
         resolved = self._resolve_target_path(file_path)
         return resolved.relative_to(self.code_base.resolve()).as_posix()
 
-    def _untrusted_context_reason(self) -> str:
-        """Why this turn cannot be trusted to propose a self-modification, or "".
+    def _turn_trust_verdict(self) -> TurnTrust:
+        """Whether this turn can be trusted to propose a self-modification.
 
-        Fails OPEN with a recorded degradation: a provenance lookup that breaks
-        must not stop Aura repairing herself on a turn that read nothing, and
-        the degradation is how anyone learns the check stopped covering this
-        path. It is the loudest surface to fail open on, which is exactly why
-        the failure is recorded rather than passed over.
+        Three answers, not two. This returned "" for both "the turn read
+        nothing" and "the check itself broke", so a provenance lookup that
+        raised was indistinguishable from a clean turn and the patch went
+        through. The argument for that was real — a broken lookup must not
+        stop Aura repairing herself on a turn that read nothing — but it makes
+        a claim the code did not establish, on the one surface where being
+        wrong means she rewrites her own source at a stranger's suggestion.
+
+        Unknown is its own answer, and it defers rather than refuses: the
+        proposal keeps its evidence and can be applied on a turn where the
+        question can be answered, or with explicit owner approval.
         """
         try:
             from core.security.content_provenance import describe_untrusted_context
             from core.security.rule_of_two import get_rule_of_two_registry
 
-            handler = get_rule_of_two_registry().get("self_modification_apply")
-            if handler is None or not handler.violates_now():
-                return ""
-            return describe_untrusted_context() or "this turn read untrusted content"
+            registry = get_rule_of_two_registry()
+            handler = registry.get("self_modification_apply")
+            if handler is None:
+                # An empty registry is an uninstalled one, not an unknowable
+                # turn: the declarations are a static property of the source.
+                # Install them and ask again before calling this unknown.
+                from core.security.rule_of_two import install_known_handlers
+
+                install_known_handlers()
+                handler = registry.get("self_modification_apply")
+            if handler is None:
+                return TurnTrust(
+                    state="unknown",
+                    reason=(
+                        "rule-of-two declares no handler for "
+                        "self_modification_apply even after installation, so "
+                        "nothing checked whether this turn read untrusted content"
+                    ),
+                )
+            if not handler.violates_now():
+                return TurnTrust(state="trusted", reason="")
+            return TurnTrust(
+                state="untrusted",
+                reason=describe_untrusted_context() or "this turn read untrusted content",
+            )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "safe_modification",
                 exc,
                 severity="warning",
-                action="proceeded without the untrusted-context check; rule-of-two is not covering self-modification",
+                action=(
+                    "deferred the modification because the untrusted-context "
+                    "check could not run; rule-of-two is not covering "
+                    "self-modification on this turn"
+                ),
                 enforce_failure_policy=False,
             )
-            return ""
+            return TurnTrust(state="unknown", reason=f"provenance check failed: {exc}")
 
     def validate_proposal(self, fix) -> tuple[bool, str]:
         """Gate a modification proposal before it reaches apply_fix.
@@ -613,11 +665,11 @@ class SafeSelfModification:
         # stranger wrote". Untrusted input + executes + in-process is three of
         # three, and this is the surface where three legs means Aura rewrites
         # her own source at a stranger's suggestion.
-        untrusted = self._untrusted_context_reason()
-        if untrusted:
+        trust = self._turn_trust_verdict()
+        if trust.state == "untrusted":
             self.stats["blocked_by_policy"] += 1
             return False, (
-                f"Self-modification refused: {untrusted}. A patch proposed during "
+                f"Self-modification refused: {trust.reason}. A patch proposed during "
                 "a turn that ingested untrusted content is not a trusted proposal, "
                 "however well it tests."
             )
@@ -643,11 +695,19 @@ class SafeSelfModification:
                 f"and is constitutionally protected from autonomous modification."
             )
 
-        owner_approved = bool(
-            getattr(fix, "owner_approved", False)
-            or getattr(fix, "human_approved", False)
-            or getattr(fix, "explicit_owner_approval", False)
-        )
+        owner_approved = _owner_approved(fix)
+        if trust.state == "unknown" and not owner_approved:
+            # Deferred, not refused: the path is allowed and the patch keeps
+            # its evidence — what is missing is the answer to whether this
+            # turn read anything, and that can be true on the next one.
+            self.stats["deferred_unknown_trust"] = (
+                int(self.stats.get("deferred_unknown_trust", 0)) + 1
+            )
+            return False, (
+                f"Self-modification deferred: {trust.reason}. Unknown provenance is "
+                "not permission — this patch keeps its evidence and can be applied "
+                "on a turn whose inputs can be established, or with owner approval."
+            )
         if tier_decision.tier is MutationTier.PROPOSE_ONLY and not owner_approved:
             self.stats["blocked_by_policy"] += 1
             return False, (
@@ -876,7 +936,9 @@ class SafeSelfModification:
         evidence_ok, evidence_reason = self._validate_test_evidence(test_results)
         if not evidence_ok:
             self.stats["blocked_by_policy"] += 1
-            logger.warning("Modification blocked by validation evidence policy: %s", evidence_reason)
+            logger.warning(
+                "Modification blocked by validation evidence policy: %s", evidence_reason
+            )
             self._emit_proposal_event(fix, "BLOCKED", evidence_reason)
             return False, f"Blocked: {evidence_reason}"
 
@@ -928,9 +990,7 @@ class SafeSelfModification:
         # Create a collision-resistant quarantine staging file that preserves
         # the target's repo-relative path. Reusing only target_path.name can
         # cross-contaminate same-name modules from different packages.
-        stage_token = hashlib.sha256(
-            f"{target_rel}:{time.time_ns()}".encode()
-        ).hexdigest()[:16]
+        stage_token = hashlib.sha256(f"{target_rel}:{time.time_ns()}".encode()).hexdigest()[:16]
         staging_file = self.staging_dir / stage_token / target_rel
         staging_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target_path, staging_file)
@@ -1035,9 +1095,7 @@ class SafeSelfModification:
                 logger.error("✗ Ghost Boot FAILED in Quarantine: %s", ghost_msg)
 
         tests_passed = (
-            test_results.get("success", False)
-            and repository_parse_passed
-            and ghost_boot_passed
+            test_results.get("success", False) and repository_parse_passed and ghost_boot_passed
         )
 
         if not tests_passed:
