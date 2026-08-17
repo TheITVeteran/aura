@@ -630,6 +630,53 @@ async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypa
     system_routes._reset_health_probe_state_for_test()
 
 
+@pytest.mark.asyncio
+async def test_boot_health_does_not_start_full_probe_during_foreground_generation(
+    monkeypatch,
+):
+    from interface.routes import system as system_routes
+
+    system_routes._store_boot_health_cache(
+        {
+            "ready": True,
+            "system_ready": True,
+            "conversation_ready": True,
+            "required_probes": {"all_passed": True},
+            "blockers": [],
+        },
+        200,
+    )
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 0.0)
+    monkeypatch.setattr(system_routes, "_HEALTH_STALE_CACHE_TTL_S", 30.0)
+    monkeypatch.setattr(
+        system_routes,
+        "_collect_conversation_lane_status_resilient",
+        lambda: {
+            "state": "ready",
+            "conversation_ready": False,
+            "active_generations": 1,
+            "last_failure_reason": "active_generation_in_flight",
+        },
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "_start_or_join_health_probe",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("foreground generation must not launch a health sweep")
+        ),
+    )
+
+    payload, status_code = await system_routes._build_boot_health_payload_bounded(
+        is_gui_proxy=False
+    )
+
+    assert status_code == 200
+    assert payload["ready"] is True
+    assert payload["cache_status"] == "stale_while_revalidate"
+    assert payload["cache_reason"] == "foreground_generation_active"
+    assert payload["health_probe_runtime"]["total_timeouts"] == 0
+
+
 def test_boot_health_cache_is_partitioned_by_runtime_surface(monkeypatch):
     from interface.routes import system as system_routes
 

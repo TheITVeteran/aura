@@ -117,6 +117,9 @@ def test_shared_privacy_policy_is_valid_and_bundled_once():
     assert 'cp "${SCREEN_CAPTURE_POLICY_SOURCE}" "${SCREEN_CAPTURE_POLICY_RESOURCE}"' in bundle
     assert "kCGWindowOwnerName" in swift
     assert '"private_visible"' in swift
+    assert 'session["CGSSessionScreenIsLocked"]' in swift
+    assert "ownerApplication.activationPolicy == .regular" in swift
+    assert "return bridgeScreenCaptureRefusal(bridgeScreenCaptureAdmission())" in swift
 
 
 def test_resident_bridge_is_authoritative_and_receipt_does_not_leak_metadata(

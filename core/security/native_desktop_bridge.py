@@ -45,6 +45,14 @@ _EFFECT_DOMAINS = (
     "file_write",
     "self_modification",
 )
+_LONG_RESIDENT_COMMANDS = frozenset(
+    {
+        # ScreenCaptureKit performs an asynchronous shareable-content lookup
+        # before the actual window capture.  Its bounded cold path can exceed
+        # the three-second budget used by cheap metadata probes.
+        "observe_foreground_frame",
+    }
+)
 _Size = namedtuple("Size", "width height")
 _Point = namedtuple("Point", "x y")
 
@@ -392,11 +400,12 @@ def invoke_native_desktop_bridge(
                 "capture_admission": admission.to_receipt(),
                 "bridge_transport": "policy_refusal",
             }
-    resident_timeout = (
-        max(0.25, float(timeout))
-        if command_name.startswith("request_")
-        else min(max(0.25, float(timeout)), 3.0)
-    )
+    resident_timeout = max(0.25, float(timeout))
+    if not (
+        command_name.startswith("request_")
+        or command_name in _LONG_RESIDENT_COMMANDS
+    ):
+        resident_timeout = min(resident_timeout, 3.0)
     resident = None if prefer_one_shot else _invoke_resident_bridge(command, timeout=resident_timeout, **payload)
     if resident is not None:
         resident.setdefault("bridge_transport", "resident_ipc")

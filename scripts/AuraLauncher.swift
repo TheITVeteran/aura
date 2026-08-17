@@ -147,7 +147,20 @@ private func nextBridgeFrameSequence() -> UInt64 {
     return bridgeFrameSequence
 }
 
+private func bridgeScreenSessionLocked() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any],
+          let locked = session["CGSSessionScreenIsLocked"] as? NSNumber else {
+        // Missing session evidence cannot authorize pixels from whatever may
+        // be behind loginwindow or a fast-user-switch boundary.
+        return true
+    }
+    return locked.boolValue
+}
+
 private func bridgeForegroundWindowContext() -> BridgeForegroundWindowContext? {
+    guard !bridgeScreenSessionLocked() else {
+        return nil
+    }
     guard let application = NSWorkspace.shared.frontmostApplication else {
         return nil
     }
@@ -160,34 +173,55 @@ private func bridgeForegroundWindowContext() -> BridgeForegroundWindowContext? {
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
         as? [[String: Any]] ?? []
-    var title = ""
-    var windowID: CGWindowID = 0
-    var bounds = CGRect.zero
-    for window in windows {
+    func visibleWindow(
+        ownedBy requestedPID: pid_t? = nil
+    ) -> (appName: String, processIdentifier: pid_t, title: String, windowID: CGWindowID, bounds: CGRect)? {
+        for window in windows {
         let ownerPID = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
         let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
-        if ownerPID == application.processIdentifier && layer == 0 {
-            title = (window[kCGWindowName as String] as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
-            if let rawBounds = window[kCGWindowBounds as String] as? [String: Any],
-               let parsedBounds = CGRect(
-                   dictionaryRepresentation: rawBounds as CFDictionary
-               ) {
-                bounds = parsedBounds
+            guard layer == 0, ownerPID > 0 else { continue }
+            if let requestedPID, ownerPID != requestedPID { continue }
+            if requestedPID == nil {
+                guard let ownerApplication = NSRunningApplication(
+                    processIdentifier: ownerPID
+                ), ownerApplication.activationPolicy == .regular else {
+                    continue
+                }
             }
-            break
+            let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+            guard windowID != 0,
+                  let rawBounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(
+                      dictionaryRepresentation: rawBounds as CFDictionary
+                  ), bounds.width > 1, bounds.height > 1 else {
+                continue
+            }
+            let title = (window[kCGWindowName as String] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let ownerName = (window[kCGWindowOwnerName as String] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = NSRunningApplication(processIdentifier: ownerPID)?
+                .localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? ownerName
+            guard !resolvedName.isEmpty else { continue }
+            return (resolvedName, ownerPID, title, windowID, bounds)
         }
+        return nil
     }
-    guard windowID != 0, bounds.width > 0, bounds.height > 0 else {
+
+    // NSWorkspace can transiently report a menu-only or system process as
+    // frontmost. In that case the front-to-back CoreGraphics order supplies
+    // the actual topmost regular application window.
+    guard let selected = visibleWindow(ownedBy: application.processIdentifier)
+        ?? visibleWindow() else {
         return nil
     }
     return BridgeForegroundWindowContext(
-        appName: appName,
-        processIdentifier: application.processIdentifier,
-        title: title,
-        windowID: windowID,
-        bounds: bounds,
+        appName: selected.appName.isEmpty ? appName : selected.appName,
+        processIdentifier: selected.processIdentifier,
+        title: selected.title,
+        windowID: selected.windowID,
+        bounds: selected.bounds,
         windows: windows
     )
 }
@@ -361,7 +395,7 @@ private func bridgeCaptureWindowImage(windowID: CGWindowID) -> CGImage? {
 
 private func bridgeObserveForegroundFrame() -> ([String: Any], Int32) {
     guard let before = bridgeForegroundWindowContext() else {
-        return (["ok": false, "error": "foreground_unknown"], 2)
+        return bridgeScreenCaptureRefusal(bridgeScreenCaptureAdmission())
     }
     let admission = bridgeScreenCaptureAdmission(context: before)
     guard admission.allowed else {
@@ -502,7 +536,7 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
         ], 0)
     case "frontmost_window_context":
         guard let context = bridgeForegroundWindowContext() else {
-            return (["ok": false, "error": "foreground_unknown"], 2)
+            return bridgeScreenCaptureRefusal(bridgeScreenCaptureAdmission())
         }
         let admission = bridgeScreenCaptureAdmission(context: context)
         guard admission.allowed else {

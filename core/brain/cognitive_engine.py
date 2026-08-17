@@ -3910,6 +3910,12 @@ class CognitiveEngine:
             or context.get("grounded_runtime_status_contract", False)
         )
         self_condition_contract = bool(context.get("self_condition_contract", False))
+        self_condition_contract_covers_turn = bool(
+            context.get(
+                "self_condition_contract_covers_turn",
+                self_condition_contract,
+            )
+        )
         capability_inventory_contract = bool(context.get("capability_inventory_contract", False))
         identity_continuity_contract = bool(
             context.get("identity_continuity_contract", False)
@@ -3947,6 +3953,13 @@ class CognitiveEngine:
                 str(context.get("visible_user_message") or objective or "")
             )
         )
+        if self_condition_contract_covers_turn:
+            # A multi-clause condition check remains one bounded state report.
+            # The route has already proved that no planning, execution,
+            # retrieval, identity, or memory contract competes for coverage.
+            # Treating its evidence distinctions as independent long-form asks
+            # previously expanded a 256-token answer into a 1,024-token job.
+            shape_wants_room = False
         extended_full_mind_reply = bool(
             context.get("require_full_foreground_mind_reply", False) and shape_wants_room
         )
@@ -4713,6 +4726,9 @@ class CognitiveEngine:
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "grounded_runtime_status_contract": runtime_fact_status_contract,
                 "self_condition_contract": self_condition_contract,
+                "self_condition_contract_covers_turn": (
+                    self_condition_contract_covers_turn
+                ),
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": validation_prompt,

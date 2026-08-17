@@ -250,6 +250,27 @@ def test_native_bridge_permission_requests_do_not_use_short_probe_timeout(monkey
     assert observed == [("request_screen", 45.0)]
 
 
+def test_native_bridge_foreground_capture_keeps_its_bounded_cold_timeout(monkeypatch):
+    from core.security import native_desktop_bridge as bridge
+
+    observed: list[tuple[str, float]] = []
+
+    def _resident(command, *, timeout, **_payload):
+        observed.append((command, timeout))
+        return {"ok": True, "schema": "aura.perception.foreground_frame.v1"}
+
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
+
+    result = bridge.invoke_native_desktop_bridge(
+        "observe_foreground_frame",
+        read_only=True,
+        timeout=10.0,
+    )
+
+    assert result["ok"] is True
+    assert observed == [("observe_foreground_frame", 10.0)]
+
+
 def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
     from core.security import native_desktop_bridge as bridge
 

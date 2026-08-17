@@ -2034,6 +2034,8 @@ async def test_initiative_synthesis_uses_one_evidence_bound_canonical_admission(
         "initiative_synthesis": True,
         "winner_score": 0.91,
         "arbiter_rationale": "selected by test arbiter",
+        "action_executor_action_name": "initiative_synthesis.selected_winner",
+        "action_executor_source": "curiosity_engine",
     }
 
 

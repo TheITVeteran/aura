@@ -2001,7 +2001,11 @@ def _cached_boot_health_payload(
         cached["cache_age_s"] = round(cache_age_s, 3)
         return cached, status_code
     if (
-        reason in {"health_probe_in_flight", "health_probe_timeout"}
+        reason in {
+            "foreground_generation_active",
+            "health_probe_in_flight",
+            "health_probe_timeout",
+        }
         and isinstance(payload, dict)
         and "ready" in payload
         and cache_age_s <= _HEALTH_STALE_CACHE_TTL_S
@@ -2110,6 +2114,26 @@ async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dic
     fresh = _fresh_boot_health_payload(is_gui_proxy=is_gui_proxy)
     if fresh is not None:
         return _attach_health_probe_state(fresh)
+
+    # A foreground generation already owns the expensive model/runtime lane.
+    # Starting a full health sweep beside it cannot make the serving answer
+    # healthier; live evidence showed the sweep repeatedly exceeded its HTTP
+    # budget while the 32B was decoding. Serve the last bounded read model (or
+    # the runtime manifest when no cache exists) and let the next idle poll
+    # refresh it. The endpoint below independently overlays the current
+    # conversation-lane state, so callers still see WORKING rather than stale
+    # READY/FAILED semantics.
+    conversation_lane = _collect_conversation_lane_status_resilient()
+    if conversation_lane_is_busy(conversation_lane):
+        foreground_fallback = _cached_boot_health_payload(
+            "foreground_generation_active",
+            is_gui_proxy=is_gui_proxy,
+        )
+        if foreground_fallback[0].get("cache_status") in {
+            "manifest",
+            "stale_while_revalidate",
+        }:
+            return _attach_health_probe_state(foreground_fallback)
 
     future, generation, created = _start_or_join_health_probe(
         is_gui_proxy=is_gui_proxy,

@@ -511,14 +511,18 @@ async def test_cognitive_engine_desktop_quick_reply_carries_fresh_turn_sight(mon
     )
 
     assert thought.content.startswith("I looked just now")
-    user_prompt = captured["messages"][-1]["content"]
-    assert "[FRESH TURN SENSORY EVIDENCE]" in user_prompt
-    assert "status: observed" in user_prompt
-    assert "No other person is visible" in user_prompt
+    assert captured["messages"][-1]["content"] == (
+        "Is anyone else physically here with me?"
+    )
+    grounding_prompt = captured["messages"][-2]["content"]
+    assert "[FRESH TURN SENSORY EVIDENCE]" in grounding_prompt
+    assert "status: observed" in grounding_prompt
+    assert "No other person is visible" in grounding_prompt
     assert captured["user_surface_sensory_evidence"] == evidence
     from core.utils.injected_blocks import is_stamped_grounding
 
     assert is_stamped_grounding(captured["messages"][0])
+    assert is_stamped_grounding(captured["messages"][-2])
 
 
 @pytest.mark.asyncio
@@ -569,8 +573,11 @@ async def test_cognitive_engine_runtime_status_contract_propagates_to_worker_bou
     assert captured["runtime_fact_status_contract"] is True
     assert captured["grounded_runtime_status_contract"] is True
     assert captured["max_tokens"] == 256
-    assert len(captured["messages"]) == 2
-    assert "VERIFIED LIVE RUNTIME STATUS" in captured["messages"][-1]["content"]
+    assert len(captured["messages"]) == 3
+    assert "VERIFIED LIVE RUNTIME STATUS" in captured["messages"][-2]["content"]
+    assert captured["messages"][-1]["content"] == (
+        "What model lane is speaking right now?"
+    )
 
 
 @pytest.mark.asyncio
@@ -626,8 +633,12 @@ async def test_cognitive_engine_full_mind_planning_keeps_extended_live_budget(mo
 
     assert thought.content.startswith("I would authorize")
     assert captured["max_tokens"] == 1536
-    assert "[GOVERNED PLANNING OUTLINE]" in captured["messages"][-1]["content"]
-    assert "Do not use a numbered list" in captured["messages"][-1]["content"]
+    assert captured["messages"][-1]["content"] == (
+        "Give a practical multi-step desktop task you could attempt after authorization."
+    )
+    grounding_prompt = captured["messages"][-2]["content"]
+    assert "[GOVERNED PLANNING OUTLINE]" in grounding_prompt
+    assert "Do not use a numbered list" in grounding_prompt
 
 
 @pytest.mark.asyncio
@@ -848,11 +859,12 @@ async def test_cognitive_engine_desktop_memory_state_contract_uses_canonical_evi
     assert captured["clean_user_surface_contract"] is True
     assert captured["clean_user_surface_recurrent_loops"] == 1
     assert captured["clean_user_surface_steering_alpha"] <= 0.35
-    assert len(captured["messages"]) == 2
+    assert len(captured["messages"]) == 3
     assert "RECENT COMPLETED LIVE DESKTOP CONVERSATION" not in captured["messages"][0]["content"]
-    assert "CANONICAL MEMORY STATE EVIDENCE" in captured["messages"][-1]["content"]
-    assert "silver lantern" in captured["messages"][-1]["content"]
-    assert "stale pitch" not in captured["messages"][-1]["content"].lower()
+    assert "CANONICAL MEMORY STATE EVIDENCE" in captured["messages"][-2]["content"]
+    assert "silver lantern" in captured["messages"][-2]["content"]
+    assert "stale pitch" not in captured["messages"][-2]["content"].lower()
+    assert captured["messages"][-1]["content"].startswith("Remember this phrase")
 
 
 @pytest.mark.asyncio
@@ -905,9 +917,11 @@ async def test_cognitive_engine_desktop_quick_includes_live_mind_context_without
 
     assert thought.content.startswith("I am answering from the live mind path")
     assert captured["skip_runtime_payload"] is True
-    assert "LIVE MIND CONTEXT" in captured["messages"][0]["content"]
-    assert "must_answer_from_full_mind_path" in captured["messages"][0]["content"]
-    assert "Answer through the live mind context." in captured["messages"][0]["content"]
+    grounding_prompt = captured["messages"][-2]["content"]
+    assert "LIVE MIND CONTEXT" in grounding_prompt
+    assert "must_answer_from_full_mind_path" in grounding_prompt
+    assert "Answer through the live mind context." in grounding_prompt
+    assert captured["messages"][-1]["content"] == "You with me?"
 
 
 @pytest.mark.asyncio
@@ -954,8 +968,10 @@ async def test_cognitive_engine_desktop_quick_uses_compact_grounding_when_requir
     assert thought.content.startswith("I am answering")
     assert captured["skip_runtime_payload"] is True
     assert captured["allow_cloud_fallback"] is False
-    assert "LIVE SPEECH GROUNDING" in captured["messages"][0]["content"]
-    assert "not prose to repeat" in captured["messages"][0]["content"]
+    grounding_prompt = captured["messages"][-2]["content"]
+    assert "LIVE SPEECH GROUNDING" in grounding_prompt
+    assert "not prose to repeat" in grounding_prompt
+    assert captured["messages"][-1]["content"] == "Hey Aura, are you there?"
 
 
 @pytest.mark.asyncio
