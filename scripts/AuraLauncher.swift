@@ -2158,6 +2158,18 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             "AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256": try requiredProvenanceString("workspace_state_sha256"),
             "AURA_LAUNCH_BUNDLE_ID": bundleIdentifier,
         ]
+        let envPathFile = resourcesURL.appendingPathComponent("aura-env-path")
+        if let envPath = try? String(contentsOf: envPathFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !envPath.isEmpty {
+            let envURL = URL(fileURLWithPath: envPath).standardizedFileURL
+            guard fileManager.isReadableFile(atPath: envURL.path) else {
+                throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "Aura's signed runtime configuration is unavailable. Restore it or rebuild the installed app.",
+                ])
+            }
+            launchProvenanceEnvironment["AURA_ENV_FILE"] = envURL.path
+        }
 
         launchScript = auraRoot.appendingPathComponent("launch_aura.sh")
         auraMainScript = auraRoot.appendingPathComponent("aura_main.py")
@@ -2653,7 +2665,6 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate,
             ])
         }
         let candidate = URL(fileURLWithPath: runtimePath)
-            .resolvingSymlinksInPath()
             .standardizedFileURL
         guard fileManager.isExecutableFile(atPath: candidate.path) else {
             throw NSError(domain: "AuraLauncher", code: 5, userInfo: [

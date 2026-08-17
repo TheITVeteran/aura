@@ -86,6 +86,7 @@ EXECUTABLE_PATH="${MACOS_DIR}/${EXECUTABLE_NAME}"
 ICON_SOURCE="${ROOT_DIR}/aura_icon.icns"
 ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
 PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"
+ENV_PATH_FILE="${RESOURCES_DIR}/aura-env-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
 PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
@@ -163,6 +164,14 @@ mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
 printf '%s\n' "${ROOT_DIR}" > "${ROOT_PATH_FALLBACK}"
 printf '%s\n' "${PYTHON_RUNTIME}" > "${PYTHON_RUNTIME_FILE}"
+ENV_SOURCE=""
+for candidate in "${ROOT_DIR}/.env" "${PRIMARY_ROOT:+${PRIMARY_ROOT}/.env}"; do
+    if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
+        ENV_SOURCE="${candidate}"
+        break
+    fi
+done
+printf '%s\n' "${ENV_SOURCE}" > "${ENV_PATH_FILE}"
 cp "${SCREEN_CAPTURE_POLICY_SOURCE}" "${SCREEN_CAPTURE_POLICY_RESOURCE}"
 
 PYTHON_FOR_VERSION="${PYTHON_RUNTIME}"

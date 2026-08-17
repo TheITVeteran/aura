@@ -130,8 +130,13 @@ if sys.platform == "darwin":
 # Without this, pydantic's env_file loading happens too late.
 with contextlib.suppress(ImportError):
     from dotenv import load_dotenv as _load_dotenv
-    _env_path = Path(__file__).resolve().parent / ".env"
-    if _env_path.exists():
+    _env_override = str(os.environ.get("AURA_ENV_FILE", "") or "").strip()
+    _env_path = (
+        Path(_env_override).expanduser().absolute()
+        if _env_override
+        else Path(__file__).resolve().parent / ".env"
+    )
+    if _env_path.is_file():
         _load_dotenv(_env_path, override=False)
 
 # 1. Path Resolution & Environment Locking (Radical Fix)

@@ -254,18 +254,36 @@ def test_installed_launcher_binds_the_repository_python_across_worktrees():
     swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
 
     assert 'PYTHON_RUNTIME_FILE="${RESOURCES_DIR}/aura-python-path"' in bundle
+    assert 'ENV_PATH_FILE="${RESOURCES_DIR}/aura-env-path"' in bundle
     assert "git rev-parse --path-format=absolute --git-common-dir" in bundle
     assert '"${PRIMARY_ROOT}/.venv/bin/python3"' in bundle
     assert "import sys, httpx" in bundle
     assert 'printf \'%s\\n\' "${PYTHON_RUNTIME}" > "${PYTHON_RUNTIME_FILE}"' in bundle
+    assert '"${PRIMARY_ROOT:+${PRIMARY_ROOT}/.env}"' in bundle
     assert "resolvePythonExecutable(resourcesURL: resourcesURL)" in swift
     resolver = swift.split(
         "private func resolvePythonExecutable(resourcesURL: URL) throws -> URL {",
         1,
     )[1].split("private func baseAuraEnvironment()", 1)[0]
     assert 'appendingPathComponent("aura-python-path")' in resolver
+    assert ".resolvingSymlinksInPath()" not in resolver
     assert "/opt/homebrew/bin/python3.12" not in resolver
     assert "/usr/local/bin/python3.12" not in resolver
+    assert 'appendingPathComponent("aura-env-path")' in swift
+    assert 'launchProvenanceEnvironment["AURA_ENV_FILE"] = envURL.path' in swift
+
+
+def test_runtime_loads_the_signed_external_environment_before_module_boot():
+    main = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    early_loader = main.split("# Early .env loading", 1)[1].split(
+        "# 1. Path Resolution",
+        1,
+    )[0]
+
+    assert 'os.environ.get("AURA_ENV_FILE", "")' in early_loader
+    assert "Path(_env_override).expanduser().absolute()" in early_loader
+    assert "_env_path.is_file()" in early_loader
+    assert "_load_dotenv(_env_path, override=False)" in early_loader
 
 
 def test_launcher_cleanup_shim_exists_at_repo_root():
