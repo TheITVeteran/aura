@@ -87,6 +87,27 @@ class TestUngroundedPersonAddress:
         ):
             assert not _has_ungrounded_person_address("plan?", reply), reply
 
+    def test_technical_sentence_transitions_are_not_person_addresses(self):
+        reply = (
+            "The invariant is that every settled distance is final. "
+            "Initialize all distances to infinity. Otherwise, it would be "
+            "possible to prefer an undiscovered path. Continue, we next relax "
+            "each outgoing edge and update its predecessor."
+        )
+
+        assert not _has_ungrounded_person_address(
+            "Explain Dijkstra's shortest-path algorithm.",
+            reply,
+        )
+
+    def test_only_a_response_opening_vocative_is_classified(self):
+        reply = (
+            "The algorithm settles vertices in nondecreasing distance order. "
+            "Aaron, what would happen with a negative edge is a separate issue."
+        )
+
+        assert not _has_ungrounded_person_address("Explain the algorithm.", reply)
+
 
 class TestAssessmentIntegration:
     def test_confabulated_narrative_is_hard_and_retryable(self):

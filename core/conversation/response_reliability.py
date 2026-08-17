@@ -6053,11 +6053,18 @@ _RELATIONAL_FAMILIARITY_RES = (
         r"\b([A-Z][a-z]{2,})\s+(?:usually|always|often|never)\s+\w+[^.!?]{0,50}\b(?:me|from\s+me|with\s+me|to\s+me)\b"
     ),
 )
-# "Aaron, what's the plan?" — vocative address followed by engagement.
+# "Aaron, what's the plan?" — response-opening vocative followed by engagement.
+#
+# The address repair below can safely remove only an opening vocative.  The
+# previous expression nevertheless scanned every sentence and compiled the
+# entire pattern IGNORECASE, which also made ``[A-Z][a-z]`` case-insensitive.
+# Ordinary technical transitions such as ``Otherwise, it ...`` could therefore
+# become invented person names and destroy the complete answer behind them.
+# Keep the proper-name signal case-sensitive and scope case-insensitivity only
+# to the words that establish a real vocative sentence.
 _VOCATIVE_ADDRESS_RE = re.compile(
-    r"(?:^|[.!?]\s+)@?([A-Z][a-z]{2,}),\s+"
-    r"(?:i(?:['’]m|\s+am)|my|what|who|where|when|why|how|are|is|do|does|can|could|will|would|let'?s|we|you|it)\b",
-    re.IGNORECASE,
+    r"\A\s*@?([A-Z][a-z]{2,}),\s+"
+    r"(?i:(?:i(?:['’]m|\s+am)|my|what|who|where|when|why|how|are|is|do|does|can|could|will|would|let'?s|we|you|it))\b"
 )
 
 
