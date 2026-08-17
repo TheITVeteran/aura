@@ -3456,6 +3456,116 @@ def test_live_turn_contract_keeps_cognitive_authorship_for_receipted_runtime_evi
     assert payload["full_mind_path"] is True
 
 
+def test_live_turn_contract_accepts_receipted_self_condition_semantic_completion(
+    monkeypatch,
+):
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        trace["live_mind_surface_control_receipt"],
+        stage="chat.self_condition_epistemic_completion",
+        method="typed_evidence_semantic_merge",
+        reasons=["unanswered_question_part"],
+        before="I feel steady right now.",
+        after=(
+            "I feel steady right now. I know the live state sample is fresh; "
+            "I can only infer what that state means subjectively."
+        ),
+        deterministic=True,
+        authorship_effect="augmented_by_runtime",
+    )
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_self_condition_semantic_completion",
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine_self_condition_semantic_completion",
+        reply_source="cognitive_engine_self_condition_semantic_completion",
+        turn_trace=trace,
+    )
+
+    assert payload["authorship_augmentation_applied"] is True
+    assert payload["authorship_replacement_applied"] is False
+    assert payload["final_text_authorship"] == (
+        "cognitive_generation_with_runtime_evidence"
+    )
+    assert payload["authentic_cognitive_reply"] is True
+    assert payload["full_mind_path"] is True
+    assert payload["full_mind_missing_proofs"] == []
+
+
+def test_live_turn_contract_rejects_unknown_augmented_response_path(monkeypatch):
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        trace["live_mind_surface_control_receipt"],
+        stage="chat.unknown_augmentation",
+        method="unknown_semantic_merge",
+        reasons=["unanswered_question_part"],
+        before="Model draft.",
+        after="Model draft. Runtime text.",
+        deterministic=True,
+        authorship_effect="augmented_by_runtime",
+    )
+    trace.update(
+        {
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine_unknown_semantic_completion",
+        }
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={"conversation_ready": True, "state": "ready"},
+        response_confidence="high",
+        status="cognitive_engine_unknown_semantic_completion",
+        reply_source="cognitive_engine_unknown_semantic_completion",
+        turn_trace=trace,
+    )
+
+    assert payload["authentic_cognitive_reply"] is False
+    assert payload["full_mind_path"] is False
+    assert (
+        "response_path:cognitive_engine_unknown_semantic_completion"
+        in payload["full_mind_missing_proofs"]
+    )
+
+
 def test_live_turn_contract_rejects_receipted_runtime_replacement(monkeypatch):
     from core.brain.live_mind_contract import append_text_mutation
     from interface.routes import chat as chat_routes

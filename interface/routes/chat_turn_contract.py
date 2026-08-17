@@ -718,6 +718,7 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_self_process_grounding",
         "cognitive_engine_self_condition",
         "cognitive_engine_self_condition_grounding",
+        "cognitive_engine_self_condition_semantic_completion",
         "cognitive_engine_bounded_planning",
         "cognitive_engine_latent_cortex",
     }
