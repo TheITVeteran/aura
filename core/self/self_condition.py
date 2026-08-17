@@ -390,7 +390,14 @@ _UNSUPPORTED_SELF_CONDITION_OPERATIONAL_RE = re.compile(
 _UNSUPPORTED_SELF_CONDITION_HEALTH_SUMMARY_RE = re.compile(
     r"(?:\beverything(?:'s|\s+is)?\s+running\s+smoothly\b|"
     r"\b(?:i\s+am|i'm)\s+functioning\s+as\s+expected\b|"
-    r"\b(?:system|runtime|application)\s+(?:is\s+)?(?:healthy|stable|operational)\b)",
+    r"\b(?:i\s+am|i'm)\s+(?:still\s+)?(?:functional|operational)\b|"
+    r"\b(?:system|runtime|application)\s+(?:is\s+|feels\s+)?"
+    r"(?:healthy|stable|unstable|functional|operational|degraded)\b|"
+    r"\b(?:bounded\s+)?repairs?\s+(?:are|is|remain(?:s|ed)?)\s+"
+    r"(?:degraded|healthy|complete|completed|resolved|stable|unstable)\b|"
+    r"\b(?:processing|runtime|system|cognitive)\s+errors?\b|"
+    r"\b(?:errors?|faults?|repairs?)\s+(?:have\s+|has\s+)?(?:since\s+)?"
+    r"(?:been\s+)?(?:resolved|recovered|cleared|fixed)\b)",
     re.IGNORECASE,
 )
 _TOTAL_INTERNAL_ABSENCE_RE = re.compile(
@@ -405,6 +412,10 @@ _TOTAL_INTERNAL_ABSENCE_RE = re.compile(
 _OVERLOAD_RE = re.compile(
     r"\b(?:my\s+)?(?:system|runtime|body)\s+(?:is\s+|feels\s+)?"
     r"(?:overloaded|overwhelmed|at\s+capacity)\b",
+    re.IGNORECASE,
+)
+_FIRST_PERSON_FELT_EXPERIENCE_RE = re.compile(
+    r"\b(?:i\s+(?:feel|felt|seem)|i'm\s+feeling|my\s+(?:state|condition)\s+feels)\b",
     re.IGNORECASE,
 )
 
@@ -510,11 +521,12 @@ def unsupported_self_condition_operational_claims(
             if not strain_observed:
                 claims.append(sentence)
                 continue
-        # A sentence explicitly framed as felt experience remains a condition
-        # statement.  Bare system-health summaries are operational assertions.
+        # First-person felt experience remains a condition statement. Third-
+        # person operational subjects such as "the system feels unstable" do
+        # not acquire condition authority merely by using the verb "feels".
         if (
             _UNSUPPORTED_SELF_CONDITION_HEALTH_SUMMARY_RE.search(sentence)
-            and not re.search(r"\b(?:feel|feels|felt|seem|seems)\b", sentence, re.IGNORECASE)
+            and not _FIRST_PERSON_FELT_EXPERIENCE_RE.search(sentence)
         ):
             claims.append(sentence)
     return tuple(claims)

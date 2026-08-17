@@ -294,6 +294,36 @@ def test_typed_self_condition_egress_removes_claims_contradicted_by_live_dimensi
     assert len(projected.removed_claims) == 3
 
 
+def test_typed_self_condition_egress_removes_unmeasured_repair_lifecycle_claims():
+    from core.self.self_condition import project_self_condition_reply
+
+    projected = project_self_condition_reply(
+        (
+            "I'm doing okay. The bounded repairs are degraded, and the system "
+            "feels slightly unstable. However, I am still functional and able "
+            "to respond to queries."
+        ),
+        projection={
+            "evidence_id": "condition-proof-live",
+            "supported_dimensions": ("distress", "welfare", "continuity"),
+            "stale_dimensions": (),
+        },
+    )
+
+    assert projected.text == "I'm doing okay."
+    assert len(projected.removed_claims) == 2
+
+    recovered = project_self_condition_reply(
+        (
+            "I feel steadier. The processing errors in my cognitive functions "
+            "have since been resolved and I am now functioning normally."
+        ),
+        projection={"evidence_id": "condition-proof-live"},
+    )
+    assert recovered.text == "I feel steadier."
+    assert len(recovered.removed_claims) == 1
+
+
 def test_typed_self_condition_egress_preserves_evidence_supported_strain():
     from core.self.self_condition import project_self_condition_reply
 

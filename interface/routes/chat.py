@@ -5413,6 +5413,7 @@ async def _run_cognitive_engine_chat_turn(
                 "prompt_shape": dict(prompt_shape_payload),
             }
         )
+    trace_binding_finished_at = time.perf_counter()
     if require_engine:
         context.update(
             {
@@ -5451,12 +5452,21 @@ async def _run_cognitive_engine_chat_turn(
                 ),
             }
         )
+    contract_binding_finished_at = time.perf_counter()
+    expression_frame_ms = 0.0
     if compact_desktop_chat_contract:
         from core.brain.types import ThinkingMode
 
         mode = ThinkingMode.FAST
         existing_style_contract = str(context.get("response_style_contract") or "").strip()
         live_reply_token_budget = int(context.get("max_tokens") or 896)
+        expression_frame_started_at = time.perf_counter()
+        live_speech_grounding_frame = _chat_desktop_repair._build_aura_expression_frame(
+            visible
+        )
+        expression_frame_ms = (
+            time.perf_counter() - expression_frame_started_at
+        ) * 1000.0
         context.update(
             {
                 "desktop_quick_reply_contract": True,
@@ -5467,9 +5477,7 @@ async def _run_cognitive_engine_chat_turn(
                 "num_predict": live_reply_token_budget,
                 "skip_runtime_payload": True,
                 "live_runtime_payload_required": bool(require_engine),
-                "live_speech_grounding_frame": _chat_desktop_repair._build_aura_expression_frame(
-                    visible
-                ),
+                "live_speech_grounding_frame": live_speech_grounding_frame,
                 # The ordinary chat turn is the ONE lane that has to reuse KV:
                 # its prompt is the whole conversation, so re-prefilling from
                 # token zero is what makes turn latency climb until it crosses
@@ -5595,6 +5603,7 @@ async def _run_cognitive_engine_chat_turn(
                 + " If the user asks for invention with rules and an example, include explicit labels "
                 "'Rule 1', 'Rule 2', and 'Example', and end with a complete sentence."
             )
+    compact_binding_finished_at = time.perf_counter()
     if desktop_execution_contract:
         from core.brain.types import ThinkingMode
 
@@ -5629,6 +5638,7 @@ async def _run_cognitive_engine_chat_turn(
                 ),
             }
         )
+    desktop_binding_finished_at = time.perf_counter()
     engine_user_message = str(effective_user_message or "")
     if sensory_evidence_payload:
         try:
@@ -5706,6 +5716,7 @@ async def _run_cognitive_engine_chat_turn(
                 "tree; the reply may not be grounded in a real file"
             ),
         )
+    evidence_binding_finished_at = time.perf_counter()
 
     if require_engine:
         engine_directives: list[str] = []
@@ -5772,6 +5783,30 @@ async def _run_cognitive_engine_chat_turn(
                 + "\n[END LIVE DESKTOP FULL-MIND CONTRACT]"
             )
     preparation_finished_at = time.perf_counter()
+    final_binding_stages = {
+        "trace_ms": round((trace_binding_finished_at - context_bound_at) * 1000.0, 2),
+        "contracts_ms": round(
+            (contract_binding_finished_at - trace_binding_finished_at) * 1000.0,
+            2,
+        ),
+        "expression_frame_ms": round(expression_frame_ms, 2),
+        "compact_ms": round(
+            (compact_binding_finished_at - contract_binding_finished_at) * 1000.0,
+            2,
+        ),
+        "desktop_ms": round(
+            (desktop_binding_finished_at - compact_binding_finished_at) * 1000.0,
+            2,
+        ),
+        "evidence_ms": round(
+            (evidence_binding_finished_at - desktop_binding_finished_at) * 1000.0,
+            2,
+        ),
+        "directives_ms": round(
+            (preparation_finished_at - evidence_binding_finished_at) * 1000.0,
+            2,
+        ),
+    }
     preparation_timings = {
         "contracts_and_engine_ms": round(
             (engine_resolved_at - preparation_started_at) * 1000.0,
@@ -5792,6 +5827,7 @@ async def _run_cognitive_engine_chat_turn(
     }
     if turn_trace is not None:
         turn_trace["pre_engine_preparation"] = dict(preparation_timings)
+        turn_trace["pre_engine_final_binding_stages"] = dict(final_binding_stages)
     if preparation_timings["total_ms"] >= 250.0:
         logger.info(
             "Foreground chat preparation timing: total=%.1fms contracts=%.1fms "
@@ -5801,6 +5837,7 @@ async def _run_cognitive_engine_chat_turn(
             preparation_timings["context_binding_ms"],
             preparation_timings["final_binding_ms"],
         )
+        logger.info("Foreground final-binding stages: %s", final_binding_stages)
 
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
     engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(

@@ -18,7 +18,10 @@ _WORD_RE = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)\S", re.MULTILINE)
 _SENTENCE_END_RE = re.compile(r"[.!?](?:[\"')\]]+)?(?=\s|$)")
 _REQUEST_FACETS = {
-    "compare": re.compile(r"\b(?:compare|contrast|difference|versus|vs\.?)\b", re.I),
+    "compare": re.compile(
+        r"\b(?:compar(?:e|es|ed|ing)|contrast(?:s|ed|ing)?|difference|versus|vs\.?)\b",
+        re.I,
+    ),
     "select": re.compile(
         r"\b(?:choose|recommend|prefer|stronger|better|best\s+(?:design|option|architecture))\b",
         re.I,
@@ -45,11 +48,21 @@ _ANSWER_FACETS = {
         re.I,
     ),
     "explain": re.compile(
-        r"\b(?:because|therefore|thus|so\s+that|leads?\s+to|prevents?|causes?|ensures?)\b",
+        r"\b(?:because|therefore|thus|so\s+that|leads?\s+to|prevents?|"
+        r"caus(?:e|es|ed|ing)|ensures?)\b",
         re.I,
     ),
     "enumerate": re.compile(r"\b(?:first|second|third|finally|steps?)\b", re.I),
 }
+_TEMPORAL_CONTRAST_RE = re.compile(
+    r"\b(?:\d+|a|an|one|two|three|few|several)\s+"
+    r"(?:seconds?|minutes?|hours?|days?)\s+ago\b[\s\S]{0,360}?"
+    r"\b(?:now|currently|since|afterward|afterwards|at\s+present)\b|"
+    r"\b(?:now|currently|at\s+present)\b[\s\S]{0,360}?"
+    r"\b(?:\d+|a|an|one|two|three|few|several)\s+"
+    r"(?:seconds?|minutes?|hours?|days?)\s+ago\b",
+    re.I,
+)
 _STOPWORDS = {
     "about", "after", "again", "against", "also", "among", "answer", "because",
     "before", "being", "both", "could", "design", "does", "each", "every", "explain",
@@ -265,6 +278,10 @@ def evaluate_facet_coverage(text: Any, objective: Any) -> dict[str, Any]:
                         re.I,
                     )
                 )
+            if not matched:
+                # "A minute ago X. Now Y." performs a direct temporal
+                # comparison without requiring an essay connective.
+                matched = bool(_TEMPORAL_CONTRAST_RE.search(analysis_text))
         if name == "explain" and not matched and _COMPARATIVE_EXPLAIN_RE.search(objective_text):
             # "Explain the difference between A and B": explaining the
             # difference IS the comparison, so a covered comparison answers

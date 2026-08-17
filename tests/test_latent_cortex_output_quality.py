@@ -14,6 +14,7 @@ from pathlib import Path
 
 from core.brain.llm.latent_cortex.output_quality import (
     OUTPUT_QUALITY_SCHEMA,
+    evaluate_facet_coverage,
     evaluate_latent_output,
 )
 
@@ -98,6 +99,20 @@ def test_compound_request_demands_development():
     )
     good = _grade(developed, objective=objective)
     assert good["passed"] is True, good["reasons"]
+
+
+def test_temporal_contrast_satisfies_comparison_without_magic_connective():
+    evidence = evaluate_facet_coverage(
+        (
+            "A minute ago, the active fault was causing elevated latency. "
+            "It has since cleared, and the current measurement is back inside "
+            "the normal range."
+        ),
+        "Explain how that compares with a minute ago.",
+    )
+
+    assert evidence["requested"] == ["compare", "explain"]
+    assert evidence["satisfied"] == ["compare", "explain"]
 
 
 def test_listed_subjects_must_be_covered():
