@@ -7,7 +7,6 @@ import re
 import time
 from typing import Any
 
-from core.utils.injected_blocks import stamp_grounding
 from core.brain.generation_provenance import attributed_text, generation_metadata_of
 from core.brain.live_mind_contract import (
     append_text_mutation,
@@ -39,6 +38,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.flags import env_present
 from core.runtime.structured_input import answer_surface_token_floor
 from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
+from core.utils.injected_blocks import stamp_grounding
 
 from ..state.aura_state import AuraState, CognitiveMode
 from . import BasePhase
@@ -2244,6 +2244,7 @@ class ResponseGenerationPhase(BasePhase):
                         temperature=generation_temperature,
                         top_p=generation_top_p,
                         max_tokens=token_budget,
+                        user_surface_completion_floor=structural_answer_floor,
                         requested_output_contract=(
                             dict(visible_output_contract_payload)
                             if visible_output_contract_payload is not None
@@ -2386,6 +2387,7 @@ class ResponseGenerationPhase(BasePhase):
                         except (TypeError, ValueError, OverflowError):
                             critique_cap = token_budget
                         kw["max_tokens"] = min(token_budget, critique_cap)
+                        kw["user_surface_completion_floor"] = structural_answer_floor
                         kw["requested_output_contract"] = (
                             dict(visible_output_contract_payload)
                             if visible_output_contract_payload is not None
@@ -2886,6 +2888,7 @@ class ResponseGenerationPhase(BasePhase):
                     temperature=generation_temperature,
                     top_p=generation_top_p,
                     max_tokens=token_budget,
+                    user_surface_completion_floor=structural_answer_floor,
                     requested_output_contract=(
                         dict(visible_output_contract_payload)
                         if visible_output_contract_payload is not None

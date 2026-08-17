@@ -502,6 +502,116 @@ def test_an_ungrounded_live_voice_is_not_patched_into_looking_grounded():
     assert "ungrounded_live_voice" in validation.violations
 
 
+def test_empty_dialogue_retry_cannot_erase_a_substantive_partial_answer():
+    import asyncio
+
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(
+        is_user_facing=True,
+        requires_single_reply_coverage=True,
+        question_segments=("core invariant", "worked example", "complexity"),
+    )
+    draft = (
+        "The core invariant is that every settled vertex has its final shortest "
+        "distance. Numbered pseudocode begins by assigning zero to the source "
+        "and infinity to every other vertex."
+    )
+
+    async def empty_retry(_repair_block: str) -> str:
+        return ""
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            draft,
+            contract,
+            retry_generate=empty_retry,
+        )
+    )
+
+    assert retried is True
+    assert validation.ok is False
+    assert repaired == draft
+
+
+def test_thinner_dialogue_retry_cannot_replace_a_fuller_incumbent():
+    import asyncio
+
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(
+        is_user_facing=True,
+        requires_single_reply_coverage=True,
+        question_segments=("core invariant", "worked example", "time complexity"),
+    )
+    draft = (
+        "The core invariant says each settled distance is final. This preliminary "
+        "derivation explains why the minimum unsettled distance cannot later "
+        "decrease when every edge is nonnegative. It also distinguishes tentative "
+        "labels from settled labels, describes relaxation, and keeps the useful "
+        "reasoning available while the remaining requested sections are repaired."
+    )
+
+    async def thin_retry(_repair_block: str) -> str:
+        return (
+            "Core invariant: settled labels are final. Worked example: A reaches B. "
+            "Time complexity is quadratic."
+        )
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            draft,
+            contract,
+            retry_generate=thin_retry,
+        )
+    )
+
+    assert retried is True
+    assert validation.ok is False
+    assert repaired == draft
+
+
+def test_complete_dialogue_retry_can_replace_an_incomplete_incumbent():
+    import asyncio
+
+    from core.phases.dialogue_policy import enforce_dialogue_contract
+    from core.phases.response_contract import ResponseContract
+
+    contract = ResponseContract(
+        is_user_facing=True,
+        requires_single_reply_coverage=True,
+        question_segments=("core invariant", "worked example", "time complexity"),
+    )
+    draft = (
+        "The core invariant says each settled distance is final. This preliminary "
+        "derivation distinguishes tentative labels from settled labels and "
+        "describes relaxation, but it has not reached the remaining sections."
+    )
+    complete = (
+        "The core invariant says each settled distance is final. In a worked "
+        "example, edge A to B has cost two and edge B to C has cost three. "
+        "The time complexity is quadratic with an array and logarithmic per "
+        "priority-queue operation with a binary heap."
+    )
+
+    async def complete_retry(_repair_block: str) -> str:
+        return complete
+
+    repaired, validation, retried = asyncio.run(
+        enforce_dialogue_contract(
+            draft,
+            contract,
+            retry_generate=complete_retry,
+        )
+    )
+
+    assert retried is True
+    assert validation.ok is True
+    assert repaired == complete
+
+
 def test_no_synthesised_grounding_clause_is_ever_prepended():
     """The removed function by its signature, so it cannot come back quietly."""
     from pathlib import Path

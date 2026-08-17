@@ -1112,6 +1112,7 @@ async def test_response_generation_biases_cannot_erase_compound_answer_capacity(
 
     assert router.calls
     assert router.calls[0]["max_tokens"] >= 768
+    assert router.calls[0]["user_surface_completion_floor"] == 768
 
 
 @pytest.mark.asyncio
@@ -1514,6 +1515,7 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
     assert retry_call["clean_user_surface_steering_alpha"] == 0.34
     assert retry_call["temperature"] == 0.49
     assert retry_call["top_p"] == 0.81
+    assert retry_call["user_surface_completion_floor"] >= 256
     assert router.calls[0]["desktop_cognitive_engine_required"] is True
     assert router.calls[0]["allow_cloud_fallback"] is False
     mutations = result.response_modifiers["live_mind_surface_control_receipt"][

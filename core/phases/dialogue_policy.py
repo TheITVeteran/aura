@@ -797,12 +797,37 @@ async def enforce_dialogue_contract(
     retry_block = build_dialogue_repair_block(contract, validation, text)
     retried = str(await retry_generate(retry_block) or "").strip()
     retried_validation = validate_dialogue_response(retried, contract, state)
-    if retried_validation.ok:
+    question = " ".join(
+        str(part or "").strip()
+        for part in tuple(getattr(contract, "question_segments", ()) or ())
+        if str(part or "").strip()
+    )
+    incumbent = repaired or text
+    try:
+        from core.conversation.surface_disposition import repair_is_an_improvement
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        repair_is_an_improvement = None
+
+    def _improves_incumbent(candidate: str) -> bool:
+        if repair_is_an_improvement is not None:
+            return repair_is_an_improvement(
+                incumbent,
+                candidate,
+                question,
+                targeted=repaired_validation.violations,
+            )
+        return bool(candidate) and len(candidate.split()) >= len(
+            str(incumbent or "").split()
+        )
+
+    retry_improves_incumbent = _improves_incumbent(retried)
+    if retried_validation.ok and retry_improves_incumbent:
         return retried, retried_validation, True
 
     retried_repaired = repair_dialogue_surface(retried, contract)
     retried_repaired_validation = validate_dialogue_response(retried_repaired, contract, state)
-    if retried_repaired_validation.ok:
+    retry_repair_improves_incumbent = _improves_incumbent(retried_repaired)
+    if retried_repaired_validation.ok and retry_repair_improves_incumbent:
         return retried_repaired, retried_repaired_validation, True
 
     # A rejected draft must never become the user-facing fallback merely
@@ -817,14 +842,36 @@ async def enforce_dialogue_contract(
             if not grounded:
                 continue
             grounded_validation = validate_dialogue_response(grounded, contract, state)
-            if grounded_validation.ok:
+            from_retry = candidate == retried_repaired and candidate not in {
+                repaired,
+                text,
+            }
+            if grounded_validation.ok and (
+                not from_retry or _improves_incumbent(grounded)
+            ):
                 return grounded, grounded_validation, True
     except (ImportError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Self-claim surface repair unavailable: %s", exc)
 
-    # Returning an invalid draft would defeat the contract. Empty output is
-    # intentionally fail-closed so the caller's no-answer recovery path can
-    # retry through the canonical CognitiveEngine instead of shipping known
-    # incoherence or a false self-description.
+    # A retry is a candidate, not overwrite authority.  Preserve substantive
+    # authored work when the remaining issue is completeness/style; only
+    # positively identified false provenance, leakage, corruption, or an
+    # unsupported world/action claim may still suppress the incumbent.
     failed = retried_repaired or repaired or text
+    incumbent_validation = validate_dialogue_response(incumbent, contract, state)
+    destructive_violations = {
+        "action_claim_without_receipt",
+        "corrupted_language",
+        "prompt_artifact",
+        "self_claim_contradiction",
+        "ungrounded_live_voice",
+        "unsupported_biographical_claim",
+        "unsupported_embodiment_claim",
+        "unsupported_internal_jargon",
+    }
+    if (
+        str(incumbent or "").strip()
+        and not (set(incumbent_validation.violations) & destructive_violations)
+    ):
+        return str(incumbent).strip(), incumbent_validation, True
     return "", validate_dialogue_response(failed, contract, state), True

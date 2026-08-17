@@ -893,6 +893,7 @@ def _surface_generation_control_receipt(
         "surface_quality_gate_exemption",
         "surface_quality_gate_waived_reasons",
         "instruction_shape_repair_applied",
+        "sentinel_loop_prefix_preserved",
     ):
         if key in state:
             receipt[key] = state.get(key)
@@ -1063,6 +1064,29 @@ def _semantic_surface_stop_ready(
         )
         return False
     return not _surface_quality_failure_reasons(job, response_text)
+
+
+def _loop_abort_prefix_is_servable(
+    job: dict[str, Any],
+    response_text: Any,
+) -> bool:
+    """Whether a repetition abort left enough clean authored work to retain.
+
+    A late loop is a defect in the tail, not evidence that the prefix never
+    existed. Restarting a resident decode from token zero discarded hundreds
+    of clean tokens and routinely exhausted the owning request deadline before
+    the replacement caught up. Keep a substantial prefix when the integrity
+    gate finds no positively identified leak or corruption; ordinary
+    completion recovery can extend it without re-paying for the whole answer.
+    Tiny/unsafe prefixes still take the bounded clean-retry path.
+    """
+
+    if not bool(job.get("clean_user_surface_contract", False)):
+        return False
+    body = str(response_text or "").strip()
+    if len(body) < 160 or len(body.split()) < 30:
+        return False
+    return not _surface_quality_failure_reasons(job, body)
 
 
 def _semantic_completion_eos_ids(tokenizer: Any) -> tuple[int, ...]:
@@ -7307,7 +7331,20 @@ def _mlx_worker_loop(
                                         break
 
                                     if sentinel_loop_aborted:
-                                        if internal_attempt < max_internal_retries:
+                                        if _loop_abort_prefix_is_servable(
+                                            job,
+                                            response_text,
+                                        ):
+                                            logger.warning(
+                                                "🛡️ [WORKER] Preserving %d clean chars after "
+                                                "a late loop abort instead of restarting from token zero.",
+                                                len(str(response_text or "")),
+                                            )
+                                            surface_control_state[
+                                                "sentinel_loop_prefix_preserved"
+                                            ] = True
+                                            sentinel_loop_aborted = False
+                                        elif internal_attempt < max_internal_retries:
                                             logger.warning("⚠️ [WORKER] Retrying generation cleanly after loop abort (attempt %s)...", internal_attempt + 1)
                                             if prompt_cache_lru is not None:
                                                 prompt_cache_lru.clear()

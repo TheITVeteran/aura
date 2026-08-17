@@ -19,6 +19,7 @@ import time
 from core.brain.llm.mlx_worker import (
     _DELIVERABLE_RESIDUAL_SURFACE_REASONS,
     _SELF_CLAIM_BOUNDARY_SUFFIX,
+    _loop_abort_prefix_is_servable,
     _repair_live_user_surface_instruction_shape,
     _salvage_exhausted_user_surface,
     _surface_quality_failure_reasons,
@@ -137,6 +138,25 @@ def test_worker_repairs_compact_explicit_shape_before_retry_decode():
     )
 
     assert repaired == "Sample two."
+
+
+def test_late_loop_abort_preserves_a_substantive_clean_prefix():
+    prefix = (
+        "Dijkstra's invariant is that every settled vertex has its final "
+        "shortest-path distance. Initialize the source to zero and every other "
+        "distance to infinity. Repeatedly remove the unsettled vertex with the "
+        "smallest tentative distance, settle it, and relax each outgoing edge. "
+        "This clean prefix contains useful authored work before a repetitive tail."
+    )
+
+    assert _loop_abort_prefix_is_servable(_job_for("Explain Dijkstra."), prefix)
+
+
+def test_early_loop_abort_still_uses_the_clean_retry_path():
+    assert not _loop_abort_prefix_is_servable(
+        _job_for("Explain Dijkstra."),
+        "The graph does not contain an",
+    )
 
 
 def test_worker_admits_shared_history_only_with_bound_grounding_evidence():
