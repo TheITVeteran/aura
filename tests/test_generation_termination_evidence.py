@@ -111,6 +111,22 @@ def test_continuation_quality_evaluates_the_complete_authored_candidate():
     assert _surface_quality_candidate(job, tail) == partial + tail
 
 
+def test_continuation_state_preserves_structure_and_uses_the_exact_cutoff_tail():
+    from core.conversation.continuation import (
+        CONTINUATION_PROMPT_PREFIX_MAX_CHARS,
+        continuation_prompt_prefix,
+        continuation_state_text,
+    )
+
+    partial = "## Invariant\n" + ("step with formatting\n" * 2500) + "exact-cutoff"
+
+    assert continuation_state_text(partial) == partial
+    prefix = continuation_prompt_prefix(partial)
+    assert len(prefix) == CONTINUATION_PROMPT_PREFIX_MAX_CHARS
+    assert prefix == partial[-CONTINUATION_PROMPT_PREFIX_MAX_CHARS:]
+    assert prefix.endswith("exact-cutoff")
+
+
 def test_semantic_stop_waits_for_all_requested_epistemic_facets():
     prompt = (
         "How are you doing right now? Distinguish what you know from what "

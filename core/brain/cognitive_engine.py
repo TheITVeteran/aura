@@ -11,6 +11,10 @@ from collections import deque
 from typing import Any
 
 from core.consciousness.executive_authority import get_executive_authority
+from core.conversation.continuation import (
+    continuation_prompt_prefix,
+    continuation_state_text,
+)
 from core.goals.objective_lifecycle import (
     finalize_foreground_turn_state,
     is_foreground_objective_origin,
@@ -3934,10 +3938,10 @@ class CognitiveEngine:
         completion_retry_contract = bool(
             context.get("user_surface_completion_retry", False)
         )
-        continuation_partial = self._contract_safe(
-            context.get("user_surface_continuation_partial"),
-            6000,
+        continuation_partial = continuation_state_text(
+            context.get("user_surface_continuation_partial")
         )
+        continuation_prefix = continuation_prompt_prefix(continuation_partial)
         continuation_contract = bool(
             completion_retry_contract
             and context.get("user_surface_continuation_contract", False)
@@ -4396,16 +4400,6 @@ class CognitiveEngine:
 
         if style_contract and not capability_inventory_contract:
             turn_dynamic_contracts.append(style_contract)
-        if continuation_contract:
-            turn_dynamic_contracts.append(
-                "[USER-SURFACE CONTINUATION CONTRACT]\n"
-                "The assistant text immediately before the final continuation request is "
-                "your own valid partial answer to the current user turn. Continue from its "
-                "exact cutoff. Supply only the missing continuation, do not restart, summarize, "
-                "apologize, mention a retry, or repeat completed material. Finish every requested "
-                "part and end naturally.\n"
-                "[END USER-SURFACE CONTINUATION CONTRACT]"
-            )
         persona_contract = str(context.get("persona_system_prompt") or "").strip()
         if persona_contract:
             # CP126 ab3abbae: persona conditioning arrives as a structured
@@ -4729,7 +4723,7 @@ class CognitiveEngine:
             validation_prompt = visible_user_message or objective
             if continuation_contract:
                 messages.append(
-                    {"role": "assistant", "content": continuation_partial}
+                    {"role": "assistant", "content": continuation_prefix}
                 )
             router_kwargs = {
                 "messages": messages,

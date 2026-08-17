@@ -11808,13 +11808,13 @@ async def test_truncated_completion_replacement_cannot_become_authoritative(monk
     )
 
     assert reply is None
-    assert engine.calls == 2
-    assert trace["completion_retry_count"] == 1
-    assert trace["foreground_model_generation_count"] == 2
+    assert engine.calls == 3
+    assert trace["completion_retry_count"] == 2
+    assert trace["foreground_model_generation_count"] == 3
 
 
 @pytest.mark.asyncio
-async def test_incomplete_continuation_does_not_fan_out_into_more_generations(monkeypatch):
+async def test_progressive_continuation_accepts_complete_deadline_segment(monkeypatch):
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -11836,16 +11836,16 @@ async def test_incomplete_continuation_does_not_fan_out_into_more_generations(mo
     complete = _bound_live_mind_controls_metadata()
     complete.update(
         {
-            "reply_generation_incomplete": False,
-            "reply_generation_stop_reason": "eos_or_stop_sequence",
-            "reply_generation_failure_reasons": [],
+            "reply_generation_incomplete": True,
+            "reply_generation_stop_reason": "deadline_exceeded",
+            "reply_generation_failure_reasons": ["truncated_tail"],
         }
     )
     complete["live_mind_surface_control_receipt"].update(
         {
-            "surface_quality_gate_passed": True,
-            "surface_quality_gate_reasons": [],
-            "generation_stop_reason": "eos_or_stop_sequence",
+            "surface_quality_gate_passed": False,
+            "surface_quality_gate_reasons": ["truncated_tail"],
+            "generation_stop_reason": "deadline_exceeded",
         }
     )
 
@@ -11912,11 +11912,64 @@ async def test_incomplete_continuation_does_not_fan_out_into_more_generations(mo
         turn_trace=trace,
     )
 
-    assert reply is None
-    assert len(engine.calls) == 2
+    assert reply is not None
+    assert reply.endswith("positions tied for that peak.")
+    assert len(engine.calls) == 3
     assert engine.calls[1][1]["user_surface_continuation_partial"].endswith("from the")
-    assert trace["completion_retry_count"] == 1
-    assert trace["foreground_model_generation_count"] == 2
+    assert engine.calls[2][1]["user_surface_continuation_partial"].endswith("where the")
+    assert trace["completion_retry_count"] == 2
+    assert trace["foreground_model_generation_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_continuation_handoff_preserves_long_structured_partial(monkeypatch):
+    from core.brain import cognitive_engine as ce_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    calls = []
+
+    class _Router:
+        async def think(self, **kwargs):
+            calls.append(kwargs)
+            return " The remaining obligation is complete."
+
+        def get_last_generation_metadata(self):
+            return {}
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return _Router() if name == "llm_router" else default
+
+    monkeypatch.setattr(ce_module, "get_container", lambda: _Container)
+    partial = (
+        "## Core invariant\n"
+        + ("Dijkstra finalizes the nearest unsettled vertex.\n" * 150)
+        + "7. The exact cutoff remains here:"
+    )
+    assert len(partial) > 6000
+    context = {
+        "desktop_quick_reply_contract": True,
+        "user_surface_completion_retry": True,
+        "user_surface_continuation_contract": True,
+        "user_surface_continuation_partial": partial,
+        "visible_user_message": "Explain Dijkstra completely.",
+    }
+
+    thought = await CognitiveEngine()._direct_desktop_quick_reply(
+        "Explain Dijkstra completely.",
+        ThinkingMode.FAST,
+        "user",
+        context,
+        timeout_s=60.0,
+    )
+
+    assert thought is not None
+    call = calls[0]
+    assert call["messages"][-1] == {"role": "assistant", "content": partial}
+    assert call["user_surface_continuation_partial"] == partial
+    assert "USER-SURFACE CONTINUATION CONTRACT" not in call["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

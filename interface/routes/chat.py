@@ -45,6 +45,7 @@ from core.brain.live_mind_contract import (
 )
 from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 from core.container import ServiceContainer
+from core.conversation.continuation import continuation_state_text
 from core.conversation.persistence import ConversationRevisionConflictError
 from core.conversation.session_scope import (
     conversation_session_var as _CHAT_REQUEST_SESSION,  # noqa: N812
@@ -6148,7 +6149,9 @@ async def _run_cognitive_engine_chat_turn(
                     "skip_runtime_payload": True,
                     "visible_user_message": visible,
                     "user_surface_continuation_contract": True,
-                    "user_surface_continuation_partial": str(rejected_reply or "")[:6000],
+                    "user_surface_continuation_partial": continuation_state_text(
+                        rejected_reply
+                    ),
                 }
             )
 
@@ -6254,10 +6257,34 @@ async def _run_cognitive_engine_chat_turn(
             )
             if str(reason or "").strip()
         }
-        retry_still_incomplete = bool(
+        retry_recent_user_messages = await _gather_recent_user_messages_for_relevance(
+            visible
+        )
+        retry_assessment = assess_user_facing_reply(
+            visible,
+            retry_text,
+            recent_user_messages=retry_recent_user_messages,
+            generation_stop_reason=retry_stop_reason,
+        )
+        retry_requires_repair = _reply_assessment_requires_repair_with_memory_evidence(
+            retry_assessment,
+            visible,
+            retry_text,
+            canonical_memory_state_evidence=canonical_memory_state_evidence,
+        )
+        retry_metadata_incomplete = bool(
             retry_metadata.get("reply_generation_incomplete", False)
             or retry_stop_reason in {"max_tokens", "deadline_exceeded", "soft_cancelled"}
             or retry_failure_reasons & completion_retry_reasons
+        )
+        # Transport metadata describes how the final segment ended; it does not
+        # supersede the semantic state of the complete merged answer. A model
+        # can satisfy the final outstanding obligation on the same token that
+        # exhausts a deadline. Conversely, a clean EOS cannot rescue a merged
+        # answer that still omits a requested part.
+        retry_still_incomplete = bool(
+            retry_requires_repair
+            and (retry_metadata_incomplete or retry_assessment.blocking_reasons)
         )
         if completion_only_retry:
             if turn_trace is not None:
@@ -6344,18 +6371,7 @@ async def _run_cognitive_engine_chat_turn(
             return accepted_text
 
         if require_engine:
-            retry_recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
-            retry_assessment = assess_user_facing_reply(
-                visible,
-                retry_text,
-                recent_user_messages=retry_recent_user_messages,
-            )
-            if not _reply_assessment_requires_repair_with_memory_evidence(
-                retry_assessment,
-                visible,
-                retry_text,
-                canonical_memory_state_evidence=canonical_memory_state_evidence,
-            ):
+            if not retry_requires_repair:
                 logger.info(
                     "CognitiveEngine desktop chat repair retry produced a clean full-mind reply."
                 )

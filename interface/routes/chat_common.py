@@ -296,11 +296,11 @@ _TOPIC_STOPWORDS = frozenset(
     }
 )
 
-# A single continuation may finish the same resident decode. More attempts
-# become a regeneration cascade: each rereads a larger partial answer while
-# receiving less useful wall time. The initial capacity planner must carry the
-# request; this is only the bounded mechanical recovery.
-_MAX_USER_SURFACE_CONTINUATIONS = 1
+# Two continuation segments let one admitted answer finish across a model
+# output boundary without restarting from token zero. Each segment must extend
+# the same authored state, and the route's original deadline remains the hard
+# wall, so this cannot become an unbounded regeneration cascade.
+_MAX_USER_SURFACE_CONTINUATIONS = 2
 
 _ORGAN_ABSENCE_STREAKS: dict[str, int] = {}
 

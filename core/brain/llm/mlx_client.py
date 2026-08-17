@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from core.brain.lane_admission import ActiveLane
 
 from core.brain.llm.measured_admission import record_generation
+from core.conversation.continuation import continuation_state_text
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
@@ -13556,9 +13557,9 @@ class MLXLocalClient:
             "user_surface_continuation_contract": bool(
                 kwargs.get("user_surface_continuation_contract", False)
             ),
-            "user_surface_continuation_partial": str(
-                kwargs.get("user_surface_continuation_partial") or ""
-            )[:6000],
+            "user_surface_continuation_partial": continuation_state_text(
+                kwargs.get("user_surface_continuation_partial")
+            ),
             "semantic_completion_contract": bool(
                 kwargs.get("semantic_completion_contract", False)
             ),
