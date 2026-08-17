@@ -96,6 +96,69 @@ _MODEL_RUNTIME_ARTIFACT_RE = re.compile(
     r"|\bunder elevated load pressure,?\s+i(?:'m| am) channeling\b",
     re.IGNORECASE,
 )
+
+
+def repair_runtime_boilerplate(reply_text: Any) -> str:
+    """Remove only sentences that narrate a failed model/runtime lane.
+
+    A single trailing lane-status sentence used to condemn an otherwise
+    complete answer and force a full second decode. The detector is still
+    authoritative about those sentences; its verdict is no longer widened to
+    unrelated answer text. Sentence boundaries preserve lists, pseudocode and
+    paragraphs byte-for-byte outside the removed spans.
+    """
+    text = str(reply_text or "")
+    if not text:
+        return ""
+    matches = sorted(
+        [
+            match
+            for pattern in (_BROKEN_LANE_BOILERPLATE_RE, _MODEL_RUNTIME_ARTIFACT_RE)
+            for match in pattern.finditer(text)
+        ],
+        key=lambda match: match.start(),
+    )
+    if not matches:
+        return text.strip()
+
+    spans: list[tuple[int, int]] = []
+    for match in matches:
+        left_boundaries = [text.rfind(mark, 0, match.start()) for mark in (".", "!", "?", "\n")]
+        left = max(left_boundaries) + 1
+        right_candidates = [
+            index
+            for mark in (".", "!", "?", "\n")
+            if (index := text.find(mark, match.end())) >= 0
+        ]
+        right = min(right_candidates) + 1 if right_candidates else len(text)
+        while left > 0 and text[left - 1] in " \t":
+            left -= 1
+        while right < len(text) and text[right] in " \t":
+            right += 1
+        spans.append((left, right))
+
+    merged: list[list[int]] = []
+    for left, right in spans:
+        if merged and left <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], right)
+        else:
+            merged.append([left, right])
+    repaired = text
+    for left, right in reversed(merged):
+        prefix = repaired[:left]
+        suffix = repaired[right:]
+        separator = (
+            " "
+            if prefix
+            and suffix
+            and not prefix[-1].isspace()
+            and not suffix[0].isspace()
+            else ""
+        )
+        repaired = prefix + separator + suffix
+    repaired = re.sub(r"\n[ \t]+\n", "\n\n", repaired)
+    repaired = re.sub(r"\n{3,}", "\n\n", repaired)
+    return repaired.strip()
 _FRIENDLY_FAILURE_PLACEHOLDER_RE = re.compile(
     r"(give me a moment|give me a second|need a beat|"
     r"still with (?:you|your question)|(?:i'?m|i am)\s+still with\b|previous turn open|next clean reply|"

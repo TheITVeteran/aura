@@ -7730,6 +7730,55 @@ def _mlx_worker_loop(
                                                 response_text = telemetry_surface
                                                 rejection_reasons = []
                                         if rejection_reasons:
+                                            if "runtime_boilerplate" in rejection_reasons:
+                                                try:
+                                                    from core.conversation.response_reliability import (
+                                                        repair_runtime_boilerplate,
+                                                    )
+
+                                                    candidate = repair_runtime_boilerplate(
+                                                        response_text
+                                                    )
+                                                    candidate_reasons = (
+                                                        _surface_quality_failure_reasons(
+                                                            job,
+                                                            candidate,
+                                                        )
+                                                        if candidate
+                                                        else rejection_reasons
+                                                    )
+                                                    if (
+                                                        candidate
+                                                        and candidate != str(response_text or "").strip()
+                                                    ):
+                                                        logger.info(
+                                                            "🛡️ [WORKER] Removed a runtime-status sentence "
+                                                            "and revalidated the remaining authored answer."
+                                                        )
+                                                        append_text_mutation(
+                                                            surface_control_state,
+                                                            stage="mlx_worker.runtime_boilerplate",
+                                                            method="remove_matching_sentences_and_revalidate",
+                                                            reasons=["runtime_boilerplate"],
+                                                            before=response_text,
+                                                            after=candidate,
+                                                            deterministic=True,
+                                                            authorship_effect="preserved",
+                                                        )
+                                                        response_text = candidate
+                                                        rejection_reasons = candidate_reasons
+                                                except (
+                                                    ImportError,
+                                                    AttributeError,
+                                                    RuntimeError,
+                                                    TypeError,
+                                                    ValueError,
+                                                ) as repair_exc:
+                                                    logger.debug(
+                                                        "Runtime-boilerplate sentence repair skipped: %s",
+                                                        repair_exc,
+                                                    )
+                                        if rejection_reasons:
                                             surface_control_state["surface_quality_gate_passed"] = False
                                             surface_control_state["surface_quality_gate_reasons"] = rejection_reasons[:8]
                                             # Keep the draft. It is suppressed,
