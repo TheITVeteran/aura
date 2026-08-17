@@ -75,6 +75,7 @@ from core.ontogeny.resolution import OutcomeSweeper, ResolverRegistry, get_resol
 from core.ontogeny.state import DEFAULT_SEED, DEFAULT_UNITS, OntogeneticState, StateReading
 from core.ontogeny.trainer import Trainer, TrainingResult, design_names, design_width
 from core.runtime.errors import record_degradation
+from core.runtime.foreground_guard import foreground_activity_reason
 from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.sqlite_support import connecting
 
@@ -719,7 +720,12 @@ class OntogenyCore(AuthorityObservationMixin):
 
     # ── learning ─────────────────────────────────────────────────────────
 
-    def train(self, control_point: str | None = None) -> dict[str, TrainingResult]:
+    def train(
+        self,
+        control_point: str | None = None,
+        *,
+        yield_to_foreground: bool = False,
+    ) -> dict[str, TrainingResult]:
         """Refit heads from the corpus. Off the cognitive path, always."""
         with self._lock:
             targets = (
@@ -728,10 +734,23 @@ class OntogenyCore(AuthorityObservationMixin):
                 else list(self._control_points.values())
             )
         results: dict[str, TrainingResult] = {}
+        stop_callback = None
+        if yield_to_foreground:
+            stop_callback = (
+                lambda: foreground_activity_reason() == "foreground_chat_active"
+            )
         for cp in targets:
+            if yield_to_foreground and foreground_activity_reason():
+                break
             heads = cp.ensure_heads(self._units)
             try:
-                result = self._trainer.train(cp.name, cp.schema, heads, cp.actions)
+                result = self._trainer.train(
+                    cp.name,
+                    cp.schema,
+                    heads,
+                    cp.actions,
+                    should_stop=stop_callback,
+                )
             except (RuntimeError, ValueError, TypeError, MemoryError, np.linalg.LinAlgError) as exc:
                 record_degradation(
                     "ontogeny", exc, severity="warning",
@@ -739,6 +758,11 @@ class OntogenyCore(AuthorityObservationMixin):
                 )
                 continue
             results[cp.name] = result
+            if result.reason == "foreground_preempted":
+                logger.info(
+                    "ontogeny: training yielded to an active foreground chat turn"
+                )
+                break
             if result.fitted:
                 cp.evidence_at_last_fit = (
                     result.samples + result.temperature_samples + result.holdout_samples
@@ -750,7 +774,8 @@ class OntogenyCore(AuthorityObservationMixin):
                     head_version=self._head_version(cp),
                     provenance=OPERATIONAL_SHADOW,
                 )
-        self._last_train = time.time()
+        if not any(result.reason == "foreground_preempted" for result in results.values()):
+            self._last_train = time.time()
         return results
 
     def _new_evidence(self) -> int:
@@ -782,6 +807,8 @@ class OntogenyCore(AuthorityObservationMixin):
             now = time.time()
             cycles += 1
             try:
+                if foreground_activity_reason():
+                    continue
                 if self._state is not None and now - self._last_checkpoint >= CHECKPOINT_INTERVAL_S:
                     self._state.save()
                     self._last_checkpoint = now
@@ -794,7 +821,7 @@ class OntogenyCore(AuthorityObservationMixin):
                     # ledger, so incremental counting cannot drift unnoticed.
                     self.rehydrate_track_records()
                 if now - self._last_train >= TRAIN_INTERVAL_S and self._new_evidence() >= TRAIN_MIN_NEW_EVIDENCE:
-                    self.train()
+                    self.train(yield_to_foreground=True)
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 record_degradation(
                     "ontogeny", exc, severity="warning",

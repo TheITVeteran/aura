@@ -193,6 +193,75 @@ def test_trainer_uses_disjoint_temporal_cohorts_and_replaces_candidate_evidence(
     assert monitor.report("cp").samples == second.holdout_samples
 
 
+def test_trainer_preemption_does_not_publish_a_partial_head_generation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    schema = FeatureSchema("cp", ("signal",))
+    episodes: list[Episode] = []
+    actions = ("approved", "deferred")
+    for index in range(900):
+        action = actions[index % 2]
+        episode = Episode(
+            episode_id=f"preempt-{index}",
+            control_point="cp",
+            features={"signal": float(index % 11) / 11.0},
+            decision=action,
+            options=actions,
+            provenance=Provenance.TEST,
+            feature_schema=schema.schema_id,
+            decided_at=float(index + 1),
+            context={"runtime_revision": "trainer-preempt"},
+        )
+        episode.outcome = Outcome(
+            kind=(
+                OutcomeKind.SUCCESS
+                if index % 3
+                else OutcomeKind.FAILURE
+            ),
+            utility=1.0 if index % 3 else 0.0,
+            resolver="test",
+            resolved_at=2000.0 + index,
+        )
+        episodes.append(episode)
+
+    units = 4
+    monitor = CalibrationMonitor(provenance=CANDIDATE_VALIDATION)
+    authority = AuthorityLedger(tmp_path / "authority.json", calibration=monitor)
+    trainer = Trainer(_EpisodeSource(episodes), authority, monitor, units=units, seed=7)
+    heads = {
+        action: PredictionHead(
+            f"cp.{action}",
+            ("failure", "success"),
+            design_width(schema, units),
+        )
+        for action in actions
+    }
+    original_fit = PredictionHead.fit
+    completed_fits = 0
+
+    def _fit_then_signal(self, *args, **kwargs):
+        nonlocal completed_fits
+        evidence = original_fit(self, *args, **kwargs)
+        if evidence.get("fitted"):
+            completed_fits += 1
+        return evidence
+
+    monkeypatch.setattr(PredictionHead, "fit", _fit_then_signal)
+
+    result = trainer.train(
+        "cp",
+        schema,
+        heads,
+        actions,
+        should_stop=lambda: completed_fits >= 1,
+    )
+
+    assert result.reason == "foreground_preempted"
+    assert all(head.version == 0 for head in heads.values())
+    assert monitor.report("cp") is None
+
+
 def test_telemetry_reports_recovery_provenance_without_replaying_red_alarm(monkeypatch):
     writes: list[tuple[str, int | float]] = []
     events: list[tuple[str, dict]] = []

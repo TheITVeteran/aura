@@ -202,6 +202,7 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
         from core.memory.embedding_runtime import prewarm_shared_embedding_runtime
         from core.memory.profile_manager import ProfileManager
         from core.self.self_condition import build_self_condition_projection
+        from interface.chat_dependencies import materialize_foreground_chat_dependencies
 
         # The identity readers are independent and cheap once materialized.
         # Load them concurrently, while model-backed semantic memory starts in
@@ -210,12 +211,16 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
         embedding_task = asyncio.create_task(
             asyncio.to_thread(prewarm_shared_embedding_runtime)
         )
+        foreground_services_task = asyncio.create_task(
+            asyncio.to_thread(materialize_foreground_chat_dependencies)
+        )
         profile_task = asyncio.create_task(ProfileManager.get_instance())
         unified_self_task = asyncio.create_task(get_unified_self())
-        _, _, snapshot = await asyncio.gather(
+        _, _, snapshot, foreground_services = await asyncio.gather(
             profile_task,
             unified_self_task,
             embedding_task,
+            foreground_services_task,
         )
         projection = await asyncio.to_thread(build_self_condition_projection)
         if not getattr(projection, "evidence_id", ""):
@@ -236,10 +241,11 @@ async def _prewarm_chat_dependencies_after_cortex_ready(
         set_ready(True)
     logger.info(
         "Foreground chat dependencies prewarmed after Cortex readiness in %.2fs "
-        "(embedding_dimensions=%s, leases=%s, condition_evidence=%s).",
+        "(embedding_dimensions=%s, leases=%s, skills=%s, condition_evidence=%s).",
         time.perf_counter() - started,
         snapshot.get("vector_dimensions"),
         snapshot.get("lease_count"),
+        foreground_services.get("skill_count"),
         str(getattr(projection, "evidence_id", ""))[:16],
     )
 

@@ -123,6 +123,7 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
     import core.memory.embedding_runtime as embedding_runtime
     import core.memory.profile_manager as profile_manager_module
     import core.self.self_condition as self_condition_module
+    import interface.chat_dependencies as chat_dependencies_module
     from interface import server
 
     class _Gate:
@@ -172,6 +173,11 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
         "build_self_condition_projection",
         lambda: type("Projection", (), {"evidence_id": "condition-proof"})(),
     )
+    monkeypatch.setattr(
+        chat_dependencies_module,
+        "materialize_foreground_chat_dependencies",
+        lambda: calls.append("foreground_services") or {"skill_count": 87},
+    )
 
     asyncio.run(
         server._prewarm_chat_dependencies_after_cortex_ready(
@@ -180,7 +186,12 @@ def test_server_prewarm_waits_for_cortex_readiness(monkeypatch) -> None:
         )
     )
 
-    assert set(calls) == {"prewarmed", "profile", "unified_self"}
+    assert set(calls) == {
+        "prewarmed",
+        "profile",
+        "unified_self",
+        "foreground_services",
+    }
     assert gate.ready_events == [
         (False, "chat_dependencies_warming"),
         (True, ""),
@@ -192,6 +203,7 @@ def test_server_prewarm_binds_gate_that_registers_after_lifespan(monkeypatch) ->
     import core.memory.embedding_runtime as embedding_runtime
     import core.memory.profile_manager as profile_manager_module
     import core.self.self_condition as self_condition_module
+    import interface.chat_dependencies as chat_dependencies_module
     from interface import server
 
     class _LateGate:
@@ -234,6 +246,11 @@ def test_server_prewarm_binds_gate_that_registers_after_lifespan(monkeypatch) ->
         self_condition_module,
         "build_self_condition_projection",
         lambda: type("Projection", (), {"evidence_id": "condition-proof"})(),
+    )
+    monkeypatch.setattr(
+        chat_dependencies_module,
+        "materialize_foreground_chat_dependencies",
+        lambda: {"skill_count": 87},
     )
 
     asyncio.run(

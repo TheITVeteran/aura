@@ -212,6 +212,38 @@ class TestResolution:
         stored = spine.episodes("test.cp")[0]
         assert stored.outcome.kind is OutcomeKind.UNOBSERVED
 
+    def test_sweeper_yields_between_episodes_without_overcounting(
+        self,
+        spine: ExperienceSpine,
+    ):
+        registry = ResolverRegistry()
+        spine.record(
+            _episode(
+                episode_id="first",
+                horizon_s=0.0,
+                features={"a": 1.0, "b": 2.0},
+            )
+        )
+        spine.record(
+            _episode(
+                episode_id="second",
+                horizon_s=0.0,
+                features={"a": 2.0, "b": 2.0},
+            )
+        )
+        spine.flush()
+        probes = 0
+
+        def _foreground_arrived() -> bool:
+            nonlocal probes
+            probes += 1
+            return probes > 1
+
+        result = registry.sweep(spine, should_stop=_foreground_arrived)
+
+        assert result == {"swept": 1, "observed": 0, "unobserved": 1}
+        assert len(spine.open_episodes(older_than_horizon=False)) == 1
+
     def test_a_raising_resolver_leaves_the_episode_unobserved(self, spine: ExperienceSpine):
         registry = ResolverRegistry()
 
@@ -379,6 +411,21 @@ class TestHeads:
         head.fit(x, y)
         other = PredictionHead("cp", ("no", "yes"), 4)
         assert not other.load_state(head.state_dict())
+
+    def test_batch_fit_yields_to_foreground_work(self):
+        head = PredictionHead("cp", ("failure", "success"), 4)
+        x, y = self._rows(600)
+        probes = 0
+
+        def _foreground_arrived() -> bool:
+            nonlocal probes
+            probes += 1
+            return probes >= 3
+
+        evidence = head.fit(x, y, should_stop=_foreground_arrived)
+
+        assert evidence == {"fitted": False, "reason": "foreground_preempted"}
+        assert head.version == 0
 
 
 # ── L4: calibration and the track record ────────────────────────────────────

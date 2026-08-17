@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -202,6 +202,7 @@ class PredictionHead:
         weights: Sequence[float] | None = None,
         epochs: int = 12,
         seed: int = 7,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Batch-fit from the corpus. Returns the evidence, not just the model."""
         rows = np.asarray(rows, dtype=np.float64)
@@ -230,9 +231,17 @@ class PredictionHead:
         order = np.arange(len(y))
         losses: list[float] = []
         for _ in range(max(1, epochs)):
+            if should_stop is not None and should_stop():
+                return {"fitted": False, "reason": "foreground_preempted"}
             rng.shuffle(order)
             epoch_loss = 0.0
-            for i in order:
+            for offset, i in enumerate(order):
+                if (
+                    should_stop is not None
+                    and offset % 64 == 0
+                    and should_stop()
+                ):
+                    return {"fitted": False, "reason": "foreground_preempted"}
                 probs = _softmax(self.logits(rows[i]))
                 error = probs.copy()
                 error[y[i]] -= 1.0

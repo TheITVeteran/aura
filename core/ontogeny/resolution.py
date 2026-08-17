@@ -29,6 +29,7 @@ from typing import Protocol, runtime_checkable
 
 from core.ontogeny.experience import Episode, ExperienceSpine, Outcome, OutcomeKind
 from core.runtime.errors import record_degradation
+from core.runtime.foreground_guard import foreground_activity_reason
 from core.runtime.lockdep import LockRank, checked_lock
 
 logger = logging.getLogger("Aura.Ontogeny.Resolution")
@@ -115,7 +116,13 @@ class ResolverRegistry:
             return Outcome.unobserved("sweeper:not_observable")
         return outcome
 
-    def sweep(self, spine: ExperienceSpine, *, limit: int = _SWEEP_BATCH) -> dict[str, int]:
+    def sweep(
+        self,
+        spine: ExperienceSpine,
+        *,
+        limit: int = _SWEEP_BATCH,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict[str, int]:
         """Resolve every episode whose horizon has elapsed.
 
         Unresolvable episodes become UNOBSERVED, which closes them without
@@ -125,19 +132,23 @@ class ResolverRegistry:
         """
         due = spine.open_episodes(older_than_horizon=True, limit=limit)
         observed = unobserved = 0
+        processed = 0
         for episode in due:
+            if should_stop is not None and should_stop():
+                break
             outcome = self.resolve_episode(episode)
             spine.resolve(episode.episode_id, outcome)
+            processed += 1
             if outcome.kind is OutcomeKind.UNOBSERVED:
                 unobserved += 1
             else:
                 observed += 1
-        self._swept += len(due)
+        self._swept += processed
         self._observed += observed
         self._unobserved += unobserved
-        if due:
+        if processed:
             spine.flush()
-        return {"swept": len(due), "observed": observed, "unobserved": unobserved}
+        return {"swept": processed, "observed": observed, "unobserved": unobserved}
 
     def report(self) -> dict[str, object]:
         with self._lock:
@@ -177,7 +188,12 @@ class OutcomeSweeper:
     def _loop(self) -> None:
         while not self._stopped.wait(self._interval):
             try:
-                self._last_pass = self._registry.sweep(self._spine)
+                if foreground_activity_reason():
+                    continue
+                self._last_pass = self._registry.sweep(
+                    self._spine,
+                    should_stop=lambda: bool(foreground_activity_reason()),
+                )
                 self._last_at = time.time()
             except (RuntimeError, OSError, ValueError) as exc:
                 record_degradation(

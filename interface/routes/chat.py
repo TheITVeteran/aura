@@ -4891,6 +4891,7 @@ async def _run_cognitive_engine_chat_turn(
     - Health monitoring
     - Strict fail-closed support for CognitiveEngine-required callers
     """
+    preparation_started_at = time.perf_counter()
     visible = str(visible_user_message or effective_user_message or "")
     raw_visible = str(raw_user_message or visible)
     interlocutor_evidence = (
@@ -5323,6 +5324,7 @@ async def _run_cognitive_engine_chat_turn(
         return None
     if turn_trace is not None:
         turn_trace["cognitive_engine_available"] = True
+    engine_resolved_at = time.perf_counter()
     if runtime_fact_status_contract and not require_engine:
         logger.info(
             "Serving bounded desktop runtime-status contract without foreground model allocation."
@@ -5596,6 +5598,7 @@ async def _run_cognitive_engine_chat_turn(
     )
     if deep_memory_context:
         context["deep_memory_context"] = deep_memory_context[:3000]
+    context_bound_at = time.perf_counter()
     if turn_trace is not None:
         mind_snapshot_quality = dict(live_mind_context.get("mind_snapshot_quality") or {})
         turn_trace.update(
@@ -5990,6 +5993,37 @@ async def _run_cognitive_engine_chat_turn(
                 + "\n".join(f"- {directive}" for directive in engine_directives)
                 + "\n[END LIVE DESKTOP FULL-MIND CONTRACT]"
             )
+    preparation_finished_at = time.perf_counter()
+    preparation_timings = {
+        "contracts_and_engine_ms": round(
+            (engine_resolved_at - preparation_started_at) * 1000.0,
+            2,
+        ),
+        "context_binding_ms": round(
+            (context_bound_at - engine_resolved_at) * 1000.0,
+            2,
+        ),
+        "final_binding_ms": round(
+            (preparation_finished_at - context_bound_at) * 1000.0,
+            2,
+        ),
+        "total_ms": round(
+            (preparation_finished_at - preparation_started_at) * 1000.0,
+            2,
+        ),
+    }
+    if turn_trace is not None:
+        turn_trace["pre_engine_preparation"] = dict(preparation_timings)
+    if preparation_timings["total_ms"] >= 250.0:
+        logger.info(
+            "Foreground chat preparation timing: total=%.1fms contracts=%.1fms "
+            "context=%.1fms final=%.1fms",
+            preparation_timings["total_ms"],
+            preparation_timings["contracts_and_engine_ms"],
+            preparation_timings["context_binding_ms"],
+            preparation_timings["final_binding_ms"],
+        )
+
     timeout_s = max(2.0, float(timeout_s if timeout_s is not None else 120.0))
     engine_cycle_timeout_s = _inner_cognitive_cycle_timeout(
         timeout_s,
@@ -21729,4 +21763,3 @@ async def _api_chat_turn(body: ChatRequest, request: Request):
 #: The three inner values are bound conditionally, so the caller must be able
 #: to leave a name unbound exactly where the original code did — substituting a
 #: default would turn a path that raised into one that quietly proceeds.
-

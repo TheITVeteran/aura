@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -60,6 +60,10 @@ RECENCY_HALF_LIFE_S = 14 * 86400.0
 
 #: Reservoir steps discarded at the start of a replay.
 WASHOUT_STEPS = 50
+
+
+class TrainingPreempted(RuntimeError):
+    """A foreground turn interrupted optional ontogeny training."""
 
 
 @dataclass
@@ -106,6 +110,7 @@ def replay_design(
     units: int,
     seed: int,
     washout: int = WASHOUT_STEPS,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[np.ndarray, list[Episode], RunningMoments]:
     """Rebuild the exact [features, presence, hidden] rows the heads see.
 
@@ -121,6 +126,8 @@ def replay_design(
     rows: list[np.ndarray] = []
     kept: list[Episode] = []
     for i, episode in enumerate(episodes):
+        if should_stop is not None and i % 64 == 0 and should_stop():
+            raise TrainingPreempted("foreground_preempted")
         vector = schema.vector(episode.features)
         base = design_row(vector, moments, update=True)
         reading = replay_state.step(base, learn_distribution=True)
@@ -168,6 +175,7 @@ class Trainer:
         actions: Sequence[str],
         *,
         limit: int = 50_000,
+        should_stop: Callable[[], bool] | None = None,
     ) -> TrainingResult:
         """One training pass over every action's head.
 
@@ -175,6 +183,12 @@ class Trainer:
         the live organ exactly as it was, which is the only safe behaviour for
         something that may be holding a decision.
         """
+        if should_stop is not None and should_stop():
+            return TrainingResult(
+                control_point=control_point,
+                fitted=False,
+                reason="foreground_preempted",
+            )
         episodes = self._spine.episodes(
             control_point,
             evidence_only=True,
@@ -193,7 +207,21 @@ class Trainer:
             self._authority.evaluate(control_point, episodes, head_ready=False)
             return result
 
-        rows, kept, _ = replay_design(episodes, schema, units=self._units, seed=self._seed)
+        try:
+            rows, kept, _ = replay_design(
+                episodes,
+                schema,
+                units=self._units,
+                seed=self._seed,
+                should_stop=should_stop,
+            )
+        except TrainingPreempted:
+            return TrainingResult(
+                control_point=control_point,
+                fitted=False,
+                reason="foreground_preempted",
+                samples=len(episodes),
+            )
         if rows.shape[0] < MIN_FIT_SAMPLES:
             result = TrainingResult(
                 control_point=control_point, fitted=False,
@@ -213,9 +241,17 @@ class Trainer:
         weighted_accuracy = weighted_base = 0.0
         weighted_temperature = 0.0
         candidate_observations: list[CalibrationObservation] = []
+        candidate_updates: dict[str, PredictionHead] = {}
         candidate_generation = max((head.version for head in heads.values()), default=0) + 1
 
         for action in actions:
+            if should_stop is not None and should_stop():
+                return TrainingResult(
+                    control_point=control_point,
+                    fitted=False,
+                    reason="foreground_preempted",
+                    samples=len(kept),
+                )
             head = heads.get(action)
             if head is None:
                 continue
@@ -250,8 +286,20 @@ class Trainer:
             # generation forward so every successful refit creates a distinct
             # head cohort instead of repeatedly calling itself version one.
             candidate.version = candidate_generation - 1
-            evidence = candidate.fit(train_rows, train_labels, weights=weights)
+            evidence = candidate.fit(
+                train_rows,
+                train_labels,
+                weights=weights,
+                should_stop=should_stop,
+            )
             if not evidence.get("fitted"):
+                if evidence.get("reason") == "foreground_preempted":
+                    return TrainingResult(
+                        control_point=control_point,
+                        fitted=False,
+                        reason="foreground_preempted",
+                        samples=len(kept),
+                    )
                 per_action[action] = {"fitted": False, "reason": evidence.get("reason", "fit refused")}
                 continue
 
@@ -265,8 +313,7 @@ class Trainer:
             temperature = candidate.calibrate(temperature_rows, temperature_labels)
             accuracy, base_rate = _score(candidate, holdout_rows, holdout_labels)
 
-            head.load_state(candidate.state_dict())
-            head.input_names = candidate.input_names
+            candidate_updates[action] = candidate
             fitted_any = True
             total_train += len(train_idx)
             total_temperature += len(temperature_idx)
@@ -277,10 +324,10 @@ class Trainer:
                 weighted_base += base_rate * len(holdout_idx)
 
             for i in holdout_idx:
-                prediction = head.predict(rows[i])
+                prediction = candidate.predict(rows[i])
                 episode = kept[i]
                 candidate_observations.append(CalibrationObservation(
-                    episode_id=f"candidate:{head.version}:{episode.episode_id}",
+                    episode_id=f"candidate:{candidate.version}:{episode.episode_id}",
                     control_point=control_point,
                     confidence=prediction.confidence,
                     correct=prediction.choice == labels[i],
@@ -289,7 +336,7 @@ class Trainer:
                     runtime_revision=str(
                         (episode.context or {}).get("runtime_revision") or "training-corpus"
                     ),
-                    head_version=head.version,
+                    head_version=candidate.version,
                     action=action,
                     provenance=CANDIDATE_VALIDATION,
                 ))
@@ -302,7 +349,7 @@ class Trainer:
                 "holdout_base_rate": round(base_rate, 4) if base_rate is not None else None,
                 "temperature": round(temperature, 3),
                 "train_accuracy": evidence.get("train_accuracy"),
-                "version": head.version,
+                "version": candidate.version,
             }
 
         if not fitted_any:
@@ -314,6 +361,18 @@ class Trainer:
             self.last_result[control_point] = result
             self._authority.evaluate(control_point, kept, head_ready=False)
             return result
+
+        if should_stop is not None and should_stop():
+            return TrainingResult(
+                control_point=control_point,
+                fitted=False,
+                reason="foreground_preempted",
+                samples=len(kept),
+            )
+        for action, candidate in candidate_updates.items():
+            head = heads[action]
+            head.load_state(candidate.state_dict())
+            head.input_names = candidate.input_names
 
         # Candidate validation is a frozen evaluation plane. Replace it
         # atomically so a repeated fit cannot append duplicate observations or
