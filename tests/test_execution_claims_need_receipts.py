@@ -87,6 +87,24 @@ CASES: list[tuple[str, str, tuple, bool]] = [
         (),
         True,
     ),
+    (
+        "a concrete callable result is an execution claim",
+        "os.getpid() returned 23756 and os.cpu_count() returned 4.",
+        (),
+        True,
+    ),
+    (
+        "worked algorithm output is explanation, not a tool receipt",
+        "The algorithm returned 0 for A, 3 for B, 4 for C, and 5 for D.",
+        (),
+        False,
+    ),
+    (
+        "pseudocode return is explanation, not a tool receipt",
+        "After every vertex is finalized, return distances. The source returned 0.",
+        (),
+        False,
+    ),
 ]
 
 

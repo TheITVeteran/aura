@@ -5761,8 +5761,14 @@ _TOOL_EXECUTION_CLAIM_RE = re.compile(
     r"(?:code|script|command|program|query))\b"
     r"|\bthe\s+(?:output|result)\s+(?:was|is)\s*[:\-]?\s*\S(?=[^.!?]{0,80}?"
     r"\b(?:ran|run|executed|script|sandbox|interpreter|repl|command)\b)"
-    # A concrete value attributed to a call: "returned 23756", "returned '4'".
-    r"|\breturned\s+(?:[-+]?\d|['\"])"
+    # A concrete value attributed to a callable or an execution surface. Bare
+    # "returned 0" is ordinary algorithm narration (for example, a worked
+    # shortest-path result) and does not establish that Aura ran a tool. The
+    # live fabrication that motivated this check named the calls explicitly:
+    # "os.getpid() returned 23756" and "os.cpu_count() returned 4".
+    r"|(?:\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\([^\n)]{0,160}\)"
+    r"|\b(?:python|script|command|program|query|tool|shell|repl|interpreter|sandbox))"
+    r"\s+returned\s+(?:[-+]?\d|['\"])"
     # Attributing numbers or output to an executor.
     r"|\b(?:those|these)\s+(?:numbers|values|results)\s+are\s+from\b"
     r"|\b(?:from|in|via)\s+(?:the\s+)?(?:sandbox|repl|interpreter|shell)\b"
