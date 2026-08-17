@@ -47,11 +47,42 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 def _conversation_lane_is_standby(lane: dict[str, Any] | None) -> bool:
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").strip().lower()
-    return (
+    cold_standby = (
         not bool(lane.get("conversation_ready", False))
         and state in {"cold", "closed", ""}
         and not bool(lane.get("warmup_attempted", False))
         and not bool(lane.get("warmup_in_flight", False))
+    )
+    if cold_standby:
+        return True
+
+    blockers_raw = lane.get("readiness_blockers", [])
+    blockers_seq = blockers_raw if isinstance(blockers_raw, (list, tuple, set)) else [blockers_raw]
+    blockers = {
+        str(item or "").strip().lower()
+        for item in blockers_seq
+        if str(item or "").strip()
+    }
+    reason = str(
+        lane.get("last_failure_reason", "")
+        or lane.get("last_error", "")
+        or ""
+    ).strip()
+    # The model-load probe can prove an internally ready Cortex before any
+    # user-visible answer has completed. That state is intentionally not yet
+    # `conversation_ready`, but it is also not a failed conversation lane.
+    # Keep this classification narrow: a request, blocker, prior visible
+    # success, or failure reason all move the lane out of standby.
+    return bool(
+        not lane.get("conversation_ready", False)
+        and state == "ready"
+        and bool(lane.get("warmup_attempted", False))
+        and not bool(lane.get("warmup_in_flight", False))
+        and not bool(lane.get("has_generated_successfully", False))
+        and _safe_float(lane.get("active_generations", 0.0), 0.0) <= 0.0
+        and _safe_float(lane.get("current_request_started_at", 0.0), 0.0) <= 0.0
+        and not blockers
+        and not reason
     )
 
 

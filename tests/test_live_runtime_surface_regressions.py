@@ -771,6 +771,91 @@ def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(
     assert "❌ conversation_lane" not in pulse
 
 
+def test_health_pulse_reports_loaded_lane_awaiting_first_visible_turn_as_standby(monkeypatch):
+    from core.container import ServiceContainer
+    from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+
+    required_probes = {
+        group: {"ok": True, "components": {key: True for key in keys}}
+        for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "healthy": True,
+            "status": "healthy",
+            "required_probes": required_probes,
+            "failures": {"critical": [], "important": [], "optional": []},
+        },
+    )
+
+    class LoadedConversationGate:
+        @staticmethod
+        def get_conversation_status():
+            return {
+                "conversation_ready": False,
+                "state": "ready",
+                "warmup_attempted": True,
+                "warmup_in_flight": False,
+                "has_generated_successfully": False,
+                "active_generations": 0,
+                "current_request_started_at": 0.0,
+                "readiness_blockers": [],
+                "last_failure_reason": "",
+            }
+
+    ServiceContainer.register_instance("inference_gate", LoadedConversationGate())
+    try:
+        audit = SubsystemAudit()
+        for name in audit.SUBSYSTEMS:
+            audit.heartbeat(name)
+
+        pulse = audit.emit_pulse()
+    finally:
+        ServiceContainer.clear()
+
+    assert "Runtime: BOOTING" in pulse
+    assert "Required probes: PASS" in pulse
+    assert "Subsystem audit: PASS" in pulse
+    assert "Conversation: STANDBY" in pulse
+    assert "Runtime: DEGRADED" not in pulse
+    assert "Conversation: FAIL" not in pulse
+    assert "❌ conversation_lane" not in pulse
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("last_failure_reason", "foreground_lane_not_ready"),
+        ("readiness_blockers", ["runtime_failed"]),
+        ("active_generations", 1),
+        ("current_request_started_at", 100.0),
+        ("has_generated_successfully", True),
+    ],
+)
+def test_loaded_lane_standby_does_not_hide_non_standby_evidence(field, value):
+    from core.ops.subsystem_audit import _conversation_lane_is_standby
+
+    lane = {
+        "conversation_ready": False,
+        "state": "ready",
+        "warmup_attempted": True,
+        "warmup_in_flight": False,
+        "has_generated_successfully": False,
+        "active_generations": 0,
+        "current_request_started_at": 0.0,
+        "readiness_blockers": [],
+        "last_failure_reason": "",
+    }
+    lane[field] = value
+
+    assert _conversation_lane_is_standby(lane) is False
+
+
 def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypatch):
     from core.container import ServiceContainer
     from core.ops.subsystem_audit import SubsystemAudit
