@@ -18,6 +18,7 @@ from skills.train_self import TrainSelfSkill as LegacyTrainSelfSkill
 import interface.routes.chat_memory_state as _chat_memory_state
 from tests.chat_lane_support import patch_chat_lane
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
+import interface.routes.chat_protected_prompt as _chat_protected_prompt
 
 
 @pytest.mark.parametrize("skill_name", ["omni_log_error", "omni_log_critical"])
@@ -1728,7 +1729,7 @@ def test_protected_foreground_summary_message_filters_symbolic_scene_leak(monkey
     from interface.routes import chat as chat_module
 
     monkeypatch.setattr(
-        chat_module,
+        _chat_protected_prompt,
         "_resolve_protected_foreground_snapshot",
         lambda: {
             "rolling_summary": "The lab environment. The silence. The equipment hums when it's not humming. It's off.",

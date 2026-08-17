@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from tests.chat_lane_support import patch_chat_lane
 import interface.routes.chat_conversation_repair as _chat_conversation_repair
+import interface.routes.chat_protected_prompt as _chat_protected_prompt
 
 
 class GroundedAffectReadout:
@@ -333,10 +334,8 @@ def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
     monkeypatch.setattr(
         live_mind_snapshot, "get_runtime_service", RuntimeServices.get
     )
-    monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
-    monkeypatch.setattr(
-        _chat_conversation_repair,
-        "_resolve_live_voice_state",
+    patch_chat_lane(monkeypatch, "ServiceContainer", RuntimeServices)
+    patch_chat_lane(monkeypatch, "_resolve_live_voice_state",
         lambda *args, **kwargs: {
             "mood": "engaged",
             "dominant_action": "answer",
@@ -390,9 +389,9 @@ def test_live_desktop_context_payload_carries_recent_voice_perception(monkeypatc
         monkeypatch.setattr(
         live_mind_snapshot, "get_runtime_service", RuntimeServices.get
     )
-        monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
+        patch_chat_lane(monkeypatch, "ServiceContainer", RuntimeServices)
         monkeypatch.setattr(chat_routes.time, "time", lambda: 1030.0)
-        monkeypatch.setattr(_chat_conversation_repair, "_resolve_live_voice_state", lambda *args, **kwargs: {})
+        patch_chat_lane(monkeypatch, "_resolve_live_voice_state", lambda *args, **kwargs: {})
         for name in (
             "_runtime_kernel_available",
             "_runtime_cognitive_engine_available",
@@ -436,10 +435,10 @@ def test_protected_foreground_prompt_reports_voice_activity_without_transcript(m
 
     RuntimeServices.services["world_state"] = AcousticWorldState()
     try:
-        monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
+        patch_chat_lane(monkeypatch, "ServiceContainer", RuntimeServices)
         monkeypatch.setattr(chat_routes.time, "time", lambda: 2012.0)
-        monkeypatch.setattr(chat_routes, "_resolve_protected_foreground_snapshot", lambda: {})
-        monkeypatch.setattr(_chat_conversation_repair, "_resolve_live_voice_state", lambda *args, **kwargs: {})
+        monkeypatch.setattr(_chat_protected_prompt, "_resolve_protected_foreground_snapshot", lambda: {})
+        patch_chat_lane(monkeypatch, "_resolve_live_voice_state", lambda *args, **kwargs: {})
 
         prompt = chat_routes._build_protected_foreground_system_prompt(
             "What did I say out loud?",

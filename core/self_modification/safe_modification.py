@@ -25,6 +25,7 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .boot_validator import GhostBootValidator
+from .mutation_constitution import DEFER, PROPOSE, REFUSE, admit_mutation
 from .mutation_tiers import MutationTier, classify_mutation_path
 from .promotion_policy import (
     SAFE_AUTONOMOUS_REPAIR_ENV as _SAFE_AUTONOMOUS_REPAIR_ENV,
@@ -695,17 +696,24 @@ class SafeSelfModification:
             self.stats["blocked_by_policy"] += 1
             return False, f"Path '{normalized_target}' is not in the allowed modification list."
 
-        # 1b. Constitutional protected-path check
+        # 1b. The constitution — the same one `improve_function` asks. This
+        # branch used to hold its own copy of the tier logic, and the other
+        # source-changing path held a different rule entirely, so a sealed
+        # file was refused here and admitted there.
+        owner_approved = _owner_approved(fix)
+        admission = admit_mutation(
+            normalized_target,
+            owner_approved=owner_approved,
+            turn_trust=trust.state,
+        )
         tier_decision = classify_mutation_path(normalized_target)
-        if self.is_protected_path(normalized_target):
+        if self.is_protected_path(normalized_target) or admission.disposition == REFUSE:
             self.stats["blocked_by_policy"] += 1
             return False, (
                 f"Path '{normalized_target}' is {tier_decision.tier.label} "
                 f"and is constitutionally protected from autonomous modification."
             )
-
-        owner_approved = _owner_approved(fix)
-        if trust.state == "unknown" and not owner_approved:
+        if admission.disposition == DEFER:
             # Deferred, not refused: the path is allowed and the patch keeps
             # its evidence — what is missing is the answer to whether this
             # turn read anything, and that can be true on the next one.
@@ -713,11 +721,11 @@ class SafeSelfModification:
                 int(self.stats.get("deferred_unknown_trust", 0)) + 1
             )
             return False, (
-                f"Self-modification deferred: {trust.reason}. Unknown provenance is "
-                "not permission — this patch keeps its evidence and can be applied "
+                f"Self-modification deferred: {admission.reason}. Unknown provenance "
+                "is not permission — this patch keeps its evidence and can be applied "
                 "on a turn whose inputs can be established, or with owner approval."
             )
-        if tier_decision.tier is MutationTier.PROPOSE_ONLY and not owner_approved:
+        if admission.disposition == PROPOSE:
             self.stats["blocked_by_policy"] += 1
             return False, (
                 f"Path '{normalized_target}' is {tier_decision.tier.label}; "
@@ -907,7 +915,6 @@ class SafeSelfModification:
             )
         decision = source_promotion_decision(supervised=supervised)
         return decision.allowed, decision.reason
-
 
     async def apply_fix(
         self,

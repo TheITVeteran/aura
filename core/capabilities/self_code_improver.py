@@ -22,6 +22,7 @@ and verifies the restored function matches the ledger byte-for-byte. An
 improvement that cannot be undone with the same rigor it was applied with
 was never a governed improvement.
 """
+
 from __future__ import annotations
 
 import ast
@@ -48,6 +49,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_read_gateway import read_stable_bytes
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.skill_contract import ActionExpectation
+from core.self_modification.mutation_constitution import admit_mutation
 
 logger = logging.getLogger("Aura.SelfCodeImprover")
 
@@ -57,8 +59,15 @@ _ENACTMENT_LEDGER_DIR = Path("~/.aura/data/self_improvement/enactments").expandu
 # (AURA_SELF_CODE_ROOT, default the repository root) — never an arbitrary
 # filesystem path (f07316e4).
 _SENSITIVE_PATH_MARKERS = (
-    "/.git/", "/.env", "/.ssh/", "/.aura/trust", "id_rsa", "id_ed25519",
-    "credential", "secret", "/.netrc",
+    "/.git/",
+    "/.env",
+    "/.ssh/",
+    "/.aura/trust",
+    "id_rsa",
+    "id_ed25519",
+    "credential",
+    "secret",
+    "/.netrc",
 )
 _MAX_CHECKS = 200
 _MAX_ITERS = 10
@@ -68,9 +77,7 @@ _MAX_FUNCTION_SOURCE_BYTES = 192 * 1024
 _MAX_CHECKS_BYTES = 512 * 1024
 _MAX_GOAL_BYTES = 16 * 1024
 _ENACTMENT_KEY_BYTES = 32
-_RECORD_ID_RE = re.compile(
-    r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}-[0-9a-f]{8}$"
-)
+_RECORD_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}-[0-9a-f]{8}$")
 _HEX_32_RE = re.compile(r"^[0-9a-f]{32}$")
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -403,8 +410,19 @@ def latest_enactment_for(target_file: str) -> dict[str, Any] | None:
 # means the function already had it and this is not the place to litigate
 # that; newly added means a bug fix quietly grew the blast radius.
 _DANGEROUS_CALLS = (
-    "eval", "exec", "compile", "__import__", "system", "popen",
-    "spawn", "fork", "remove", "unlink", "rmtree", "chmod", "chown",
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "system",
+    "popen",
+    "spawn",
+    "fork",
+    "remove",
+    "unlink",
+    "rmtree",
+    "chmod",
+    "chown",
 )
 _DANGEROUS_MODULES = ("subprocess", "shutil", "ctypes", "socket", "pickle", "marshal")
 
@@ -422,9 +440,7 @@ def _import_aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             for alias in node.names:
-                aliases[alias.asname or alias.name] = (
-                    f"{module}.{alias.name}".strip(".")
-                )
+                aliases[alias.asname or alias.name] = f"{module}.{alias.name}".strip(".")
     return aliases
 
 
@@ -454,10 +470,7 @@ def _dangerous_capability_fingerprints(source: str) -> Counter[str]:
             if module:
                 imported.append(module)
             imported.extend(alias.name for alias in node.names)
-            if not any(
-                name.split(".")[0] in _DANGEROUS_MODULES
-                for name in imported
-            ):
+            if not any(name.split(".")[0] in _DANGEROUS_MODULES for name in imported):
                 continue
             qualified = ",".join(sorted(imported))
             category = "import"
@@ -465,8 +478,7 @@ def _dangerous_capability_fingerprints(source: str) -> Counter[str]:
             qualified = _qualified_name(node.func, aliases)
             parts = tuple(part for part in qualified.split(".") if part)
             if not parts or (
-                parts[0] not in _DANGEROUS_MODULES
-                and parts[-1] not in _DANGEROUS_CALLS
+                parts[0] not in _DANGEROUS_MODULES and parts[-1] not in _DANGEROUS_CALLS
             ):
                 continue
             category = "call"
@@ -477,8 +489,7 @@ def _dangerous_capability_fingerprints(source: str) -> Counter[str]:
             qualified = _qualified_name(node, aliases)
             parts = tuple(part for part in qualified.split(".") if part)
             if not parts or (
-                parts[0] not in _DANGEROUS_MODULES
-                and parts[-1] not in dangerous_names
+                parts[0] not in _DANGEROUS_MODULES and parts[-1] not in dangerous_names
             ):
                 continue
             category = "reference"
@@ -562,11 +573,13 @@ def _candidate_execution_blockers(
 
     before = _dangerous_capability_fingerprints(original_src)
     after = _dangerous_capability_fingerprints(candidate_src)
-    introduced = sorted({
-        _capability_label(fingerprint)
-        for fingerprint, count in after.items()
-        if count > before[fingerprint]
-    })
+    introduced = sorted(
+        {
+            _capability_label(fingerprint)
+            for fingerprint, count in after.items()
+            if count > before[fingerprint]
+        }
+    )
     if introduced:
         return ["introduces_dangerous_capability: " + ", ".join(introduced)]
     return []
@@ -617,9 +630,7 @@ async def rollback_enactment(
     try:
         path = _confine_target(record["target_file"])
         if target_file and path != _confine_target(target_file):
-            raise EnactmentRecordError(
-                "requested target does not match enactment record"
-            )
+            raise EnactmentRecordError("requested target does not match enactment record")
     except (ValueError, EnactmentRecordError) as exc:
         return {
             "ok": False,
@@ -657,12 +668,9 @@ async def rollback_enactment(
     extracted = _extract_function_source(final_text, str(record["func_name"]))
     # Exact, not stripped: whitespace is part of source, and calling a
     # stripped comparison "byte-for-byte" was the misreport.
-    function_exact = bool(
-        extracted and extracted[0] == str(record["original_function_source"])
-    )
+    function_exact = bool(extracted and extracted[0] == str(record["original_function_source"]))
     function_equivalent = function_exact or bool(
-        extracted
-        and extracted[0].strip() == str(record["original_function_source"]).strip()
+        extracted and extracted[0].strip() == str(record["original_function_source"]).strip()
     )
     file_exact = _sha(final_text) == str(record.get("file_sha_before") or "")
     restored_ok = function_exact
@@ -719,6 +727,9 @@ class ImproveResult:
     enactment_record: str = ""
     enactment_receipt_id: str = ""
     compensation: dict[str, Any] = field(default_factory=dict)
+    #: The constitution's answer for this target, kept whether or not the
+    #: change was enacted — a refusal is evidence too.
+    mutation_admission: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
@@ -764,7 +775,12 @@ def _extract_function_from_response(raw: str, func_name: str) -> str:
     rest = text[start:].splitlines()
     body = [rest[0]]
     for line in rest[1:]:
-        if line.strip() and not line.startswith(indent + " ") and not line.startswith(indent + "\t") and line.strip() != "":
+        if (
+            line.strip()
+            and not line.startswith(indent + " ")
+            and not line.startswith(indent + "\t")
+            and line.strip() != ""
+        ):
             if not line.startswith((" ", "\t")):
                 break
         body.append(line)
@@ -784,7 +800,9 @@ async def _verify(
         # Parse checks with json.loads at runtime — do NOT paste json.dumps output
         # as Python source: JSON null/true/false are not Python literals and would
         # raise NameError, silently zeroing the whole verification.
-        + "\n\n_out=[]\n_CHECKS=json.loads(" + repr(json.dumps(checks)) + ")\n"
+        + "\n\n_out=[]\n_CHECKS=json.loads("
+        + repr(json.dumps(checks))
+        + ")\n"
         + "for _c in _CHECKS:\n"
         + "    try:\n"
         + f"        _got={func_name}(*_c['args'])\n"
@@ -796,9 +814,7 @@ async def _verify(
     try:
         from core.agency.tool_orchestrator import get_tool_orchestrator
 
-        success, output = await get_tool_orchestrator().execute_syntax_checked_python(
-            runner
-        )
+        success, output = await get_tool_orchestrator().execute_syntax_checked_python(runner)
         if not success:
             return 0, [{"ok": False, "error": str(output)[:1000]}]
         out = str(output or "")[:_MAX_VERIFY_OUTPUT].strip().splitlines()
@@ -882,15 +898,61 @@ async def _retain(func_name: str, goal: str, outcome: str, lesson: str) -> str:
         from core.memory.memory_write_gateway import get_memory_write_gateway
         from core.runtime.gateways import MemoryWriteRequest
 
-        await get_memory_write_gateway().write(MemoryWriteRequest(
-            content=text,
-            metadata={"family": "learned_rsi_lesson", "source": "self_code_improver", "outcome": outcome},
-            cause="self_code_improver.retain",
-        ))
+        await get_memory_write_gateway().write(
+            MemoryWriteRequest(
+                content=text,
+                metadata={
+                    "family": "learned_rsi_lesson",
+                    "source": "self_code_improver",
+                    "outcome": outcome,
+                },
+                cause="self_code_improver.retain",
+            )
+        )
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
-        record_degradation("self_code_improver.retain", exc, severity="warning",
-                           action="kept the improvement after lesson retention failed")
+        record_degradation(
+            "self_code_improver.retain",
+            exc,
+            severity="warning",
+            action="kept the improvement after lesson retention failed",
+        )
     return text
+
+
+def _repo_relative(path: Path) -> str:
+    """The path as the tier patterns spell it.
+
+    `_confine_target` returns an absolute, symlink-resolved path. The tier
+    patterns are repo-relative globs — `core/self_modification/*` and the
+    rest — so handing them an absolute path matched none of them and every
+    target fell through to the default tier. A classifier that cannot
+    recognise a sealed path grades it as ordinary.
+    """
+    root = _self_code_root()
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        # Outside the source root; `_confine_target` already refuses those,
+        # and if one arrives here it is not an ordinary file.
+        return path.as_posix()
+
+
+def _turn_trust_state() -> str:
+    """This turn's trust verdict, from the one place that decides it."""
+    try:
+        from core.self_modification.safe_modification import SafeSelfModification
+
+        pipeline = SafeSelfModification.__new__(SafeSelfModification)
+        return pipeline._turn_trust_verdict().state
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "self_code_improver.turn_trust",
+            exc,
+            severity="warning",
+            action="treated this turn's inputs as unknown, which defers rather than enacts",
+            enforce_failure_policy=False,
+        )
+        return "unknown"
 
 
 async def improve_function(
@@ -901,6 +963,7 @@ async def improve_function(
     checks: list[dict[str, Any]],
     max_iters: int = 3,
     enact: bool = True,
+    owner_approved: bool = False,
 ) -> ImproveResult:
     """Improve one function in her own source, verified by behavioral checks."""
     try:
@@ -918,12 +981,44 @@ async def improve_function(
             raise ValueError(f"goal exceeds {_MAX_GOAL_BYTES} bytes")
     except ValueError as exc:
         return ImproveResult(
-            ok=False, target_file=str(target_file), func_name=func_name, goal=goal,
-            status="refused_invalid_input", error=str(exc),
+            ok=False,
+            target_file=str(target_file),
+            func_name=func_name,
+            goal=goal,
+            status="refused_invalid_input",
+            error=str(exc),
         )
     max_iters = max(1, min(_MAX_ITERS, int(max_iters) if isinstance(max_iters, int) else 3))
     result = ImproveResult(ok=False, target_file=str(path), func_name=func_name, goal=goal)
     result.total_checks = len(checks)
+
+    # Ask the constitution before spending a model call. A refusal is
+    # permanent — generating a patch for a sealed path only produces a
+    # rewrite of Aura's own governance that nothing may ever apply.
+    admission = admit_mutation(
+        _repo_relative(path),
+        owner_approved=bool(owner_approved),
+        turn_trust=_turn_trust_state(),
+    )
+    result.mutation_admission = dict(admission.receipt)
+    if not admission.may_propose:
+        result.status = f"mutation_{admission.disposition}"
+        result.error = admission.reason
+        return result
+    if enact and not admission.may_enact:
+        # The draft is worth having; applying it is not this turn's call.
+        record_degradation(
+            "self_code_improver.constitution",
+            RuntimeError(admission.reason),
+            severity="warning",
+            action=(
+                f"drafted but did not enact a change to {admission.normalized_path}: "
+                f"{admission.disposition}"
+            ),
+            enforce_failure_policy=False,
+        )
+        enact = False
+        result.status = f"mutation_{admission.disposition}"
     src = await asyncio.to_thread(path.read_text, encoding="utf-8")
     extracted = _extract_function_source(src, func_name)
     if not extracted:
@@ -945,7 +1040,9 @@ async def improve_function(
     improved_src = ""
     for attempt in range(1, max_iters + 1):
         result.iterations = attempt
-        prompt = _improve_prompt(func_name, original_src, goal, result.research_used, checks, failure)
+        prompt = _improve_prompt(
+            func_name, original_src, goal, result.research_used, checks, failure
+        )
         raw = await _generate(prompt)
         candidate = _extract_function_from_response(raw, func_name)
         if not candidate:
@@ -970,8 +1067,9 @@ async def improve_function(
     if not improved_src:
         result.status = "no_verified_improvement"
         result.error = f"could not produce a function passing all {len(checks)} checks in {result.iterations} iterations"
-        result.lesson_retained = await _retain(func_name, goal, "PARTIAL",
-                                               f"best {result.improved_passed}/{len(checks)}; {failure}")
+        result.lesson_retained = await _retain(
+            func_name, goal, "PARTIAL", f"best {result.improved_passed}/{len(checks)}; {failure}"
+        )
         return result
 
     result.improved_source = improved_src
@@ -1002,10 +1100,15 @@ async def improve_function(
             result.status = "promotion_blocked"
             result.error = "; ".join(blockers)
             result.lesson_retained = await _retain(
-                func_name, goal, "BLOCKED", result.error[:400],
+                func_name,
+                goal,
+                "BLOCKED",
+                result.error[:400],
             )
             logger.warning(
-                "Self-code promotion BLOCKED for %s: %s", func_name, result.error,
+                "Self-code promotion BLOCKED for %s: %s",
+                func_name,
+                result.error,
             )
             return result
         try:
@@ -1042,9 +1145,7 @@ async def improve_function(
                 action_id=f"self-code-enact:{result.enactment_record}",
                 rollback_target=result.enactment_record,
             )
-            result.enactment_receipt_id = str(
-                action.get("post_action_receipt_id") or ""
-            )
+            result.enactment_receipt_id = str(action.get("post_action_receipt_id") or "")
             if _self_code_write_completed(action):
                 result.enacted = True
                 result.ok = True
@@ -1065,9 +1166,7 @@ async def improve_function(
             else:
                 result.status = "verified_not_enacted"
                 result.error = str(
-                    action.get("error")
-                    or action.get("status")
-                    or "self-code action did not verify"
+                    action.get("error") or action.get("status") or "self-code action did not verify"
                 )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             result.ok = False
@@ -1077,7 +1176,7 @@ async def improve_function(
     retained_outcome = "SUCCESS" if result.ok else "BLOCKED"
     retained_detail = (
         f"the fix passed all {len(checks)} checks the original failed "
-        f"{len(checks)-original_passed} of; verified in isolation"
+        f"{len(checks) - original_passed} of; verified in isolation"
     )
     if enact:
         retained_detail += (
@@ -1121,7 +1220,9 @@ def _improve_prompt(
         parts.append("Reference knowledge:\n" + _fence("RESEARCH", "\n- ".join(research)))
     parts.append(
         "It must satisfy these input->output checks exactly:\n"
-        + "\n".join(f"  {func_name}({', '.join(map(repr, c['args']))}) == {c['expected']!r}" for c in checks)
+        + "\n".join(
+            f"  {func_name}({', '.join(map(repr, c['args']))}) == {c['expected']!r}" for c in checks
+        )
     )
     if failure:
         parts.append("Your previous attempt did not pass:\n" + _fence("VERIFIER_FEEDBACK", failure))
@@ -1142,9 +1243,13 @@ def _replace_function(source: str, func_name: str, new_func_src: str) -> str:
         shift = orig_indent
         rebased = []
         for ln in new_lines:
-            rebased.append(shift + ln[len(new_indent):] if ln.startswith(new_indent) else shift + ln.lstrip())
+            rebased.append(
+                shift + ln[len(new_indent) :] if ln.startswith(new_indent) else shift + ln.lstrip()
+            )
         new_lines = rebased
-    return "\n".join(lines[:start] + new_lines + lines[end:]) + ("\n" if source.endswith("\n") else "")
+    return "\n".join(lines[:start] + new_lines + lines[end:]) + (
+        "\n" if source.endswith("\n") else ""
+    )
 
 
 __all__ = ["ImproveResult", "improve_function"]

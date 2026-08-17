@@ -23,6 +23,7 @@ import interface.routes.chat_conversation_repair as _chat_conversation_repair
 import interface.routes.chat_capability_inventory as _chat_capability_inventory
 import interface.routes.chat_desktop_objective as _chat_desktop_objective
 import interface.routes.chat_runtime_proof as _chat_runtime_proof
+import interface.routes.chat_protected_prompt as _chat_protected_prompt
 
 
 def _force_full_mind_runtime(monkeypatch, chat_routes):
@@ -16040,7 +16041,7 @@ def test_protected_foreground_system_prompt_prefers_cached_state_snapshot(monkey
     from interface.routes import chat as chat_routes
 
     monkeypatch.setattr(
-        chat_routes,
+        _chat_protected_prompt,
         "_resolve_protected_foreground_snapshot",
         lambda: {
             "mood": "steady",
@@ -16072,7 +16073,7 @@ async def test_protected_foreground_messages_include_continuity_summary(monkeypa
     from interface.routes import chat as chat_routes
 
     monkeypatch.setattr(
-        chat_routes,
+        _chat_protected_prompt,
         "_resolve_protected_foreground_snapshot",
         lambda: {
             "rolling_summary": "Bryan and Aura were debugging autonomy spam and continuity drift.",
@@ -16080,7 +16081,7 @@ async def test_protected_foreground_messages_include_continuity_summary(monkeypa
         },
     )
     monkeypatch.setattr(
-        chat_routes,
+        _chat_protected_prompt,
         "_build_protected_foreground_history",
         AsyncCallFixture(return_value=[{"role": "assistant", "content": "I'm tracing the autonomy lane."}]),
     )

@@ -18,6 +18,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import interface.routes.chat as chat
+from tests.chat_lane_support import chat_lane_source
 
 
 class _Substrate:
@@ -75,10 +76,6 @@ def test_absent_values_do_not_render_a_line():
 
 def test_the_snapshot_prompt_asks_for_them():
     """The resolver is only half of it; the prompt has to render the lines."""
-    source = (
-        chat.__file__.replace(".pyc", ".py")
-    )
-    with open(source, encoding="utf-8") as handle:
-        text = handle.read()
+    text = chat_lane_source()
     assert '_compact_snapshot_line("Energy", voice_state.get("energy"))' in text
     assert '_compact_snapshot_line("Focus", voice_state.get("focus"))' in text
