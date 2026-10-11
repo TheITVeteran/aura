@@ -79,6 +79,11 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         who.stopped(mine, way, choosing.moves.things.values())
     if through is not None:
         through.stopped(float(mine.x), float(mine.y), way, (float(mine.w), float(mine.h)))
+        # What stopped her, seen: every cell drawn in its colour is a wall too.
+        others = [t for t in choosing.moves.things.values() if t.number != mine.number]
+        if through.a_wall_colour(getattr(run, "picture", None), choosing.moves.scale, float(mine.x), float(mine.y), way,
+                                 (float(mine.w), float(mine.h)), others):
+            through.walls_seen(run.picture, choosing.moves.scale, wide, tall)
         run.stuck = None
         return
     along = 0 if abs(way[0]) >= abs(way[1]) else 1

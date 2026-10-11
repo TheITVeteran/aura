@@ -90,6 +90,9 @@ KEEPS_WITH_SHARE = 0.8
 #: How long before a blow a thing that went may have been what the blow was for.
 WENT_WITHIN_S = 0.5
 
+#: How many times her own size a still thing never met must be to be taken for the place.
+BIGGER_THAN_HER = 4.0
+
 #: How many prizes a kind must have taken first to be a rival for sure, and how many losses of it must have cost her
 #: for it to be on her side for sure.
 TAKEN_FOR_SURE = 3
@@ -155,6 +158,7 @@ class WhoIsWho:
     coming: set[int] = field(default_factory=set)
     said: set[tuple[int, str]] = field(default_factory=set)
     at: float = 0.0
+    her_area: float = 256.0
 
     def begin_run(self) -> None:
         """A run of the same game begins: what each kind has shown is kept; the things themselves are numbered anew."""
@@ -179,6 +183,8 @@ class WhoIsWho:
         step = min(1.0, max(0.0, at - self.at)) if self.at else 0.0
         self.at = at
         size = max(float(mine.w), float(mine.h), 1.0) if mine is not None else 16.0
+        if mine is not None:
+            self.her_area = float(mine.w) * float(mine.h)
         here = {}
         moving = mine is not None and math.hypot(float(mine.vx), float(mine.vy)) > 1.0
         # How long things of each kind have been about her: the time any of them was on the screen.
@@ -365,7 +371,10 @@ class WhoIsWho:
         if kept.about_s >= NEGLIGIBLE_AFTER_S and not kept.near and not kept.got_past:
             if kept.moved:
                 return Designation(NEGLIGIBLE, True, "it has never come near me or done anything")
-            return Designation(PART_OF_THE_PLACE, True, "it has never moved or done anything")
+            # A small thing that stays put is something to pick up or keep off until met: not near her may only mean
+            # she has not got to it. One far bigger than she is, never met, is the place.
+            if float(thing.w) * float(thing.h) >= BIGGER_THAN_HER * self.her_area:
+                return Designation(PART_OF_THE_PLACE, True, "it has never moved or done anything")
         if self.at - self.first_seen.get(thing.number, self.at) < PENDING_S:
             return Designation(PENDING, False, "I've only just seen it")
         return Designation(UNKNOWN, False, "I don't know yet")

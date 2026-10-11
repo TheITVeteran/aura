@@ -80,7 +80,7 @@ from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
 from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, ways_carried
-from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEVER_SHOT
+from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT, PART_OF_THE_PLACE
 from core.perception.how_things_move_here import HowThingsMoveHere
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -311,6 +311,9 @@ class _Run:
     supply: Any = None
     #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
     pushing: Any = None
+    #: The latest picture, and when the walls drawn in it were last looked for (core/agency/a_way_through.py).
+    picture: Any = None
+    walls_seen_at: float = -math.inf
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -571,6 +574,12 @@ class _Choosing:
         ]
 
     def stance(self, thing: Any) -> str:
+        # What she has found to be in her way, part of the place or negligible is nothing to go and meet
+        # (core/agency/who_is_who.py): a wall she was stopped by is not worth a detour to touch again.
+        if self.who is not None:
+            found = self.who.of(thing)
+            if found.sure and found.name in (IN_HER_WAY, PART_OF_THE_PLACE, NEGLIGIBLE) and self.meeting.stance(thing.kind) == MEET:
+                return IGNORE
         # A kind that has cost her from a distance is kept clear of, whatever meeting it has done.
         if self.reach is not None and self.reach.reach(int(thing.kind)) is not None:
             return AVOID
@@ -1221,6 +1230,10 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
     choosing.caution *= math.sqrt(run.pressures.harder(at))
 
 
+#: How often the walls drawn in the picture are looked for again, once their colour is known.
+WALLS_LOOKED_FOR_S = 2.0
+
+
 def _what_meeting_did(meeting: WhatMeetingDoes, kind: int, kept: Any) -> str | None:
     """What meeting a kind has settled into: costly, worth getting, nothing, or not yet clear. By the meeting record's
     own rule, which weighs meeting it against letting it by; and by what touching it did on its own, since a thing that
@@ -1287,6 +1300,11 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     goes.saw_threats(at, [(thing.number, thing.kind) for thing in threats])
     run.supply.counted(at, meeting.readouts.current)
     run.pushing.saw(mine, things, choosing.ways.get(run.held) if run.held else None)
+    # The walls drawn in a colour she has been stopped by are walls wherever they are drawn (core/agency/a_way_through.py).
+    if run.way_through.wall_colours and run.way_through.cell and at - run.walls_seen_at >= WALLS_LOOKED_FOR_S:
+        tall, wide = moves.shape
+        run.way_through.walls_seen(run.picture, moves.scale, wide, tall)
+        run.walls_seen_at = at
     if len(goes.gains) > gains:
         run.pushing.counted(things)
     choosing.pushing = run.pushing
@@ -1299,6 +1317,8 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     for thing in things:
         if run.way_through.cell and who.of(thing).name == IN_HER_WAY:
             run.way_through.a_wall_at(thing.box())
+            if run.way_through.drawn_like(run.picture, moves.scale, thing):
+                run.walls_seen_at = -math.inf
     choosing.seconds_left = run.pressures.seconds_left()
     choosing.caution *= goes.care(at, choosing.seconds_left)
     choosing.plays_for, choosing.who = goes, who
@@ -1694,6 +1714,7 @@ async def _play_as_it_happens(
             run.picture_at = at
             run.pictures += 1
             happened = moves.see(picture, at)
+            run.picture = picture
             for sound in getattr(picture, "sounds", ()):
                 run.sounds.heard_sound(sound.at, sound.sig, hers.thing(moves))
             run.leading.saw(happened, at)
@@ -1719,6 +1740,7 @@ async def _play_as_it_happens(
                 run.covered.clear()
                 run.barred.clear()
                 run.way_through.new_screen()
+                run.walls_seen_at = -math.inf
             if hers.thing(moves) is not None:
                 mine = hers.thing(moves)
                 run.cell = run.cell or max(4.0, mine.w, mine.h)

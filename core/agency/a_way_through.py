@@ -16,6 +16,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = ["AWayThrough", "goes_every_way"]
 
@@ -33,6 +34,8 @@ class AWayThrough:
     floor: bool = False
     #: The distances from her cell to every cell, and what they were worked out for.
     _field: tuple | None = field(default=None, repr=False)
+    #: The colours she has been stopped by where no thing stood: the colours of the place's walls.
+    wall_colours: list[tuple[int, int, int]] = field(default_factory=list)
 
     def new_screen(self) -> None:
         self.walls.clear()
@@ -41,6 +44,62 @@ class AWayThrough:
         """Whether this is a floor seen from above: once her keys have taken her every way, it stays one."""
         self.floor = self.floor or goes_every_way(ways)
         return self.floor
+
+    def a_wall_colour(self, picture: Any, scale: float, x: float, y: float, way: tuple[float, float],
+                      size: tuple[float, float], things: Any = ()) -> bool:
+        """She was stopped going ``way`` from (x, y): the colour just ahead of her, where it is not the floor she stands
+        on and no thing stands there, is a colour the place draws its walls in. Whether a colour was learned.
+
+        Bumped into a cell at a time, a wall a room long takes a minute to find; seen, it is found at once. The one
+        bump says which colour stops her, and every cell drawn in it is a wall from then on."""
+        if picture is None or not scale or not any(way):
+            return False
+        far = math.hypot(*way)
+        ux, uy = way[0] / far, way[1] / far
+        reach = max(size) / 2 + max(2.0, (self.cell or max(size)) / 2)
+        ahead = (x + ux * reach, y + uy * reach)
+        behind = (x - ux * reach, y - uy * reach)
+        for thing in things:
+            if abs(float(thing.x) - ahead[0]) <= float(thing.w) / 2 and abs(float(thing.y) - ahead[1]) <= float(thing.h) / 2:
+                return False
+        wall, floor = _colour_at(picture, scale, *ahead), _colour_at(picture, scale, *behind)
+        if wall is None or floor is None or _apart(wall, floor) <= SAME_COLOUR * 2:
+            return False
+        if any(_apart(wall, known) <= SAME_COLOUR for known in self.wall_colours):
+            return False
+        self.wall_colours.append(wall)
+        return True
+
+    def drawn_like(self, picture: Any, scale: float, thing: Any) -> bool:
+        """A thing she has found in her way: the colour it is drawn in is a wall's, so every wall drawn like it is one,
+        thing or not. Whether a colour was learned."""
+        if picture is None or not scale:
+            return False
+        colour = _colour_at(picture, scale, float(thing.x), float(thing.y))
+        if colour is None or any(_apart(colour, known) <= SAME_COLOUR for known in self.wall_colours):
+            return False
+        self.wall_colours.append(colour)
+        return True
+
+    def walls_seen(self, picture: Any, scale: float, wide: float, tall: float) -> int:
+        """Every cell drawn mostly in a wall's colour, marked a wall: how many were."""
+        if picture is None or not scale or not self.cell or not self.wall_colours:
+            return 0
+        import numpy as np
+
+        image = np.asarray(picture)[..., :3].astype(np.int16)
+        near = np.zeros(image.shape[:2], dtype=bool)
+        for colour in self.wall_colours:
+            near |= np.abs(image - np.array(colour, dtype=np.int16)).max(axis=2) <= SAME_COLOUR
+        step = self.cell / scale
+        found = 0
+        for cx in range(int(wide // self.cell) + 1):
+            for cy in range(int(tall // self.cell) + 1):
+                block = near[int(cy * step):int((cy + 1) * step), int(cx * step):int((cx + 1) * step)]
+                if block.size and block.mean() >= MOSTLY and (cx, cy) not in self.walls:
+                    self.walls.add((cx, cy))
+                    found += 1
+        return found
 
     def a_wall_at(self, box: tuple[float, float, float, float]) -> None:
         """A thing she knows is in her way, standing over ``box`` (left, top, right, bottom): every cell it covers."""
@@ -189,6 +248,28 @@ class AWayThrough:
                     if (cx, cy) in self.walls:
                         return False
         return True
+
+
+#: How near, in each of red, green and blue, two colours must be to be one; what share of a cell must be in a wall's
+#: colour for the cell to be a wall.
+SAME_COLOUR = 24
+MOSTLY = 0.5
+
+
+def _colour_at(picture: Any, scale: float, x: float, y: float) -> tuple[int, int, int] | None:
+    """The middle colour round (x, y), a point in working pixels, in the picture they were shrunk from."""
+    import numpy as np
+
+    image = np.asarray(picture)
+    px, py = int(round(x / scale)), int(round(y / scale))
+    if not (0 <= px < image.shape[1] and 0 <= py < image.shape[0]):
+        return None
+    patch = image[max(0, py - 1):py + 2, max(0, px - 1):px + 2, :3].reshape(-1, 3)
+    return tuple(int(v) for v in np.median(patch, axis=0))
+
+
+def _apart(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+    return max(abs(int(p) - int(q)) for p, q in zip(a, b, strict=True))
 
 
 def goes_every_way(ways: dict[str, tuple[float, float]], least: float = 1.0) -> bool:
