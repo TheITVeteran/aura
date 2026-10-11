@@ -336,6 +336,14 @@ class Guide:
         said = " ".join(str(label or "").lower().split())
         return any(re.search(rf"\b{re.escape(c.split(' (')[0])}\b", said) for c in self.not_for_play) or said in _NOT_FOR_PLAY
 
+    def has_said(self, name: str) -> bool:
+        """Whether the place's words, or what was said of it, have ``name`` in them as a name of something in it: not
+        the place's own name, nor the last part of it (its title after the maker's)."""
+        key = " ".join(name.lower().split())
+        if not key or key in {" ".join(part.lower().split()) for part in (self.place, self.place.split(":")[-1])}:
+            return False
+        return any(key in sentence for sentence in self._read) or any(key == n.lower() for n in self.seen.cast)
+
     def is_to_read(self, label: str) -> bool:
         """Whether a label on the screen is information to read, not something to press."""
         said = " ".join(str(label or "").lower().split())

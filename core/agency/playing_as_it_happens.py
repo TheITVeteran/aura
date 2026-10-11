@@ -1284,7 +1284,10 @@ def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at:
     # Allow two complete experiments and their intervening wait before
     # declaring that no control answers. The run's own deadline still bounds it.
     experiment_time = 8 * len(run.keys) * TRY_A_KEY_S + RECHECK_CONTROLS_S if run.keys else 0.0
-    if at - run.began < NOTHING_ANSWERS_S + experiment_time or hers.kind is not None:
+    # A thing her eyes took for hers that nothing of hers has ever moved answers to nothing: LIVE 2026-10-11 the boy on
+    # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
+    answers = hers.kind is not None and (hers.follows_pointer or bool(hers.keys_that_move_her(run.keys)))
+    if at - run.began < NOTHING_ANSWERS_S + experiment_time or answers:
         return ""
     if meeting.verdicts:
         # What is counted keeps it going while it is not all going against her: LIVE 2026-10-09 a game's bar went down

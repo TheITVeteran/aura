@@ -281,7 +281,11 @@ def seen_in_play(run: Any, moves: Any, hers: Any, meeting: Any, picture: Any, at
     seeing.looking.look(picture, moves, at, mine=hers.number, met=list(meeting.evidence))
     _who_i_am_to_my_eyes(run, seeing, guide, moves, hers, meeting, picture, at, tell)
     for kind, sighting in seeing.looking.newly():
-        who = guide.seen.saw(kind, sighting.what, sighting.odd, getattr(sighting, "who", ""))
+        # A name her eyes give a thing is its name where the place's words have it: LIVE 2026-10-11 her eyes called
+        # things on a game's title "Big Shot Checkers", the game's own name, and "Littlest Pet Shop", which nothing
+        # there says.
+        named = getattr(sighting, "who", "")
+        who = guide.seen.saw(kind, sighting.what, sighting.odd, named if guide.has_said(named) else "")
         colour = colour_name(moves.kinds[kind].colour) if kind < len(moves.kinds) else ""
         if kind < len(moves.kinds):
             # How it looks to her play, so where it is can be found by other ways of looking (a send's).

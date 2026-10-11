@@ -115,3 +115,22 @@ def test_the_end_screen_a_stretch_begins_on_is_not_its_end_however_long_the_firs
     run = _Run(keys=["up"], began=0.0)
     run.words_read = [(2.5, "landings: 1"), (2.5, "try again"), (5.0, "try again")]
     assert not _said_it_is_over(run)
+
+
+def test_a_thing_her_eyes_took_for_hers_that_nothing_of_hers_moves_answers_to_nothing():
+    """LIVE 2026-10-11 the boy on a game's animated title was taken for her by her eyes, no key moved him, and she
+    played the title for a minute before its START: a thing taken for hers answers to her only once something of hers
+    moves it."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import _nothing_answers, _Run
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    run = _Run(keys=[], began=0)
+    meeting = SimpleNamespace(verdicts=[], evidence={})
+    hers = WhichIsHers()
+    hers.seen_to_be_her(SimpleNamespace(number=4, kind=2), 1.0, "child character")
+    assert hers.kind == 2
+    assert _nothing_answers(run, hers, meeting, 40) == "nothing here answers to me while it moves"
+    hers.follows_pointer = True
+    assert not _nothing_answers(run, hers, meeting, 40)

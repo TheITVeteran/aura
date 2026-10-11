@@ -356,3 +356,13 @@ def test_two_kinds_of_one_colour_are_not_said_both_ways():
         assert naming.a_stance_said(run, moves, 3, "avoid", 100.0) != ""
     finally:
         naming.named_for_its_part = original
+
+
+def test_a_name_her_eyes_give_is_taken_only_where_the_place_says_it():
+    """LIVE 2026-10-11 her eyes called things on a game's title "Big Shot Checkers", the game's own name, and "Littlest
+    Pet Shop", which nothing there says."""
+    guide = Guide(place="Foster's Home for Imaginary Friends: Big Shot Checkers")
+    guide.take_in(TOLD, ["Your Big Shot can swap places with any of your pieces next to it.", "Bloo is on your side."])
+    assert guide.has_said("Big Shot") and guide.has_said("Bloo")
+    assert not guide.has_said("Big Shot Checkers") and not guide.has_said("Littlest Pet Shop")
+    assert not guide.has_said("")
