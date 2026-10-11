@@ -55,7 +55,7 @@ from core.verify import invariant
 
 __all__ = ["ASKS_TO_CARRY", "KEEPS_THE_WORK", "SAYS_WHAT_IT_IS_FOR", "SKIPS_THE_TEACHING", "TRIES_IT", "Frame", "Rules",
            "EvidenceSnapshot", "StepAttempt", "StepReceipt",
-           "keeps_the_work", "read_the_rules_beside", "skips_the_teaching", "tries_what_was_made"]
+           "keeps_the_work", "read_the_rules_beside", "skips_the_teaching", "the_step_that_holds", "tries_what_was_made"]
 
 logger = logging.getLogger("Aura.ReadingTheRules")
 
@@ -551,19 +551,11 @@ class Rules:
                 return frame
             if reaching and frame is self.next_step():
                 return None
-            if self.holds(frame):
+            if holds(self, frame):
                 self.missing_on.setdefault(frame.key, set()).add(screen)
-                if self.holds(frame):
+                if holds(self, frame):
                     return None
         return None
-
-    def holds(self, frame: Frame) -> bool:
-        """Whether an unresolved requirement still holds the steps after it."""
-        return len(self.missing_on.get(frame.key, ())) < PASSED_OVER_AFTER
-
-    def the_step_that_holds(self) -> Frame | None:
-        """The earliest unresolved requirement that holds the steps after it."""
-        return next((f for f in self.steps() if not self.passed(f) and self.holds(f)), None)
 
     def begin(self, move: str, before: Any, *, step_key: str | None = None,
               effects: Sequence[SemanticPredicate | Mapping[str, Any]] = ()) -> StepAttempt | None:
@@ -717,6 +709,16 @@ def _procedure_evidence_invariant() -> tuple:
 
 
 # -- reading them, beside her work ------------------------------------------------------------------------------------
+
+def holds(procedure: Rules, frame: Frame) -> bool:
+    """Whether an unresolved requirement still holds the steps after it (Rules.the_step_to_do)."""
+    return len(procedure.missing_on.get(frame.key, ())) < PASSED_OVER_AFTER
+
+
+def the_step_that_holds(procedure: Rules) -> Frame | None:
+    """The earliest unresolved requirement that holds the steps after it."""
+    return next((f for f in procedure.steps() if not procedure.passed(f) and holds(procedure, f)), None)
+
 
 def read_the_rules_beside(guide: Any, ask: Callable[..., Awaitable[Any]] | None,
                           then: Callable[[list[Frame]], Any] | None = None) -> bool:
