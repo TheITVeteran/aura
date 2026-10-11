@@ -865,6 +865,9 @@ _A_FAULT_OF_HERS = (ImportError, IndexError, KeyError, ValueError, TypeError, At
 _KEYS_FOR_A_PIECE = ("left", "right", "up", "down", "space")
 
 
+#: How many times in one game a ground may be taken for a well, with no key of hers moving its piece, before it is
+#: not looked for there again.
+NO_WELL_AFTER = 2
 #: How long, in one run, a well she has played before is waited at for a piece to come down it before the screen is
 #: left to her other ways.
 WAITS_AT_A_WELL_S = 45.0
@@ -882,7 +885,8 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         play_a_well,
     )
 
-    if reflexes.no_well_here or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
+    if reflexes.no_well_here or int(reflexes.keep.get("no_well_found", 0)) >= NO_WELL_AFTER \
+            or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
     reflexes.keep["well_looked_for_at"] = now
     empty: list[Any] = []
@@ -926,8 +930,12 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         return False
     logger.info("a well played: %s", stretch)
     if stretch.get("ended") == NOTHING_MOVES_IT:
+        # Not a well this run; and taken for one twice in a game with no key moving its piece, not a well in this game.
         reflexes.no_well_here = True
+        reflexes.keep["no_well_found"] = int(reflexes.keep.get("no_well_found", 0)) + 1
+        reflexes.keep.pop("well_seen", None)
         return False
+    reflexes.keep["no_well_found"] = 0
     reflexes.waited_at_a_well = 0.0
     reflexes.stretches.append({"pictures": stretch.get("pieces", 0), "turns": stretch.get("pieces", 0),
                                "gains": int(stretch.get("cleared") or 0), "losses": 0,

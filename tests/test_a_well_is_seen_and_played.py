@@ -254,6 +254,35 @@ def test_a_picture_with_no_well_and_a_well_with_nothing_coming_are_not_this_game
     assert on_its_clock(still, a_well_with_a_piece_coming_down(still.look)) is None
 
 
+def test_a_thing_that_comes_down_and_answers_to_no_key_is_given_up_as_no_well(on_its_clock: Any) -> None:
+    # A well where nothing she has moves the piece: she says nothing of wells, and lets it go within seconds.
+    world = _WellWorld(tokens=True, seed=31, keys={"q": "left"})
+    well = on_its_clock(world, a_well_with_a_piece_coming_down(world.look))
+    said: list[str] = []
+    came = on_its_clock(world, play_a_well(world.look, world, well, seconds=120.0, say=said.append))
+    assert came["ended"] == playing.NOTHING_MOVES_IT and came["seconds"] <= 30.0, came
+    assert not said, said
+
+
+def test_a_field_with_several_things_moving_down_it_is_no_well(on_its_clock: Any) -> None:
+    # LIVE 2026-10-11 a field with creatures walking down it was taken for a well and said to be one.
+    world = _WellWorld(tokens=True, seed=29)
+    walkers = [[0, 0.0], [2, 3.0], [5, 6.0]]
+
+    async def a_field() -> tuple[np.ndarray, float]:
+        world.now += 0.03
+        image = world.scene.copy()
+        cell, left, top = world.cell, world.left, world.top
+        image[top:top + world.rows * cell, left:left + world.columns * cell] = _GROUND
+        for column, start in walkers:
+            row = int(start + world.now * 2.0) % world.rows
+            image[top + row * cell + 3:top + (row + 1) * cell - 3, left + column * cell + 3:left + (column + 1) * cell - 3] = (220, 40, 40)
+        return image, world.now
+
+    world.pass_time = lambda seconds: setattr(world, "now", world.now + seconds)  # type: ignore[method-assign]
+    assert on_its_clock(world, a_well_with_a_piece_coming_down(a_field)) is None
+
+
 def test_what_a_key_did_to_a_piece_is_known_and_gives_every_way_it_can_lie() -> None:
     trio = ((0, 0, 4), (0, 1, 5), (0, 2, 6))
     assert what_a_turn_did(trio, ((0, 0, 5), (0, 1, 6), (0, 2, 4))) == ("order", (1, 2, 0))
@@ -301,6 +330,8 @@ def test_tokens_that_go_with_one_another_are_found_and_the_well_kept_clear(on_it
     assert 1 <= len(named) <= 3, said
     assert len(known["well_clears"].goes_with.pairs(2)) == len(named)
     assert any("move the piece across" in line for line in said), said
+    # What it is is said once her keys have taken a piece across, and not before.
+    assert sum(line.startswith("This is a well") and "move each one across" in line for line in said) == 1
 
 
 def test_blocks_are_turned_and_rows_filled(on_its_clock: Any) -> None:

@@ -149,6 +149,11 @@ async def main(argv: list[str]) -> list[dict]:
     parser.add_argument("--trace", default="", help="a folder for each game's log of decisions and its last screen")
     args = parser.parse_args(argv)
     os.environ.setdefault("AURA_BROWSER_STEALTH", "0")
+    # What her live process refuses to load is refused here too: on 11 October her seeing of a well asked for OpenCV,
+    # every run of this tool passed, and live it ended every game she opened.
+    from core.media.safe_imports import install_main_process_cv2_guard
+
+    install_main_process_cv2_guard()
     numbers = sorted(ARCHIVED) if args.all else args.games
     results = []
     for number in numbers:

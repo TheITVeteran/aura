@@ -68,6 +68,10 @@ STUCK_S = 2.5
 OVER_AFTER_S, HIDDEN_AT_MOST_S = 6.0, 4.0
 #: How long ground that could be a well's is watched for something coming down in it, and how often it is looked at.
 WATCHED_S, LOOKS_APART_S = 3.0, 0.12
+#: How long she has, from first pressing at a piece, to find the two keys that take it across before it is no well.
+ACROSS_FOUND_WITHIN_S = 12.0
+#: How many looks may show something moving where the piece is not before the ground is no well: one may be a clear.
+MOVES_ELSEWHERE = 2
 #: How long a well cut into cells is watched: a piece that comes down a row a second, three rows tall, takes this
 #: long to be seen coming.
 WELL_WATCHED_S = 8.0
@@ -659,6 +663,11 @@ async def _tried(game: _Game, key: str, piece: Any) -> None:
     await _find_out(game, key, piece)
     game.plan = None
     if game.keys.said() != before:
+        if game.keys.left and game.keys.right:
+            # What it is is said once it has answered as such a thing does: a piece taken a column across by her keys.
+            # LIVE 2026-10-11 it was said on sight, of a field with creatures walking down it.
+            game.once("well", f"This is a well, {game.well.columns} across: pieces come down it and stack up, and I can "
+                              "move each one across. I'll put each where it does the most.")
         game.once(f"keys:{game.keys.said()}", f"I've found that {game.keys.said()}.")
 
 
@@ -762,8 +771,6 @@ async def play_a_well(look: Any, hands: Any, well: Any, words: str = "", *, seco
     game = _Game(well, hands, look, say or (lambda _line: None), tuple(offered))
     _recalled(game, known)
     game.clears.told(words)
-    game.once("well", f"This is a well, {well.columns} across: pieces come down and stack up. I'll see what my keys do "
-                      "to a piece, then put each one where it does the most.")
     nothing_since: float | None = None
     hidden_since: float | None = None
     ended = "out of time"
@@ -788,6 +795,9 @@ async def play_a_well(look: Any, hands: Any, well: Any, words: str = "", *, seco
                 continue
             if _what_stayed_put_is_taken_in(game, cells):
                 continue
+            if not (game.keys.left and game.keys.right) and _now() - began > 2.0 * ACROSS_FOUND_WITHIN_S:
+                ended = NOTHING_MOVES_IT
+                break
             if piece is None:
                 nothing_since = nothing_since or _now()
                 if _now() - nothing_since > OVER_AFTER_S:
@@ -822,6 +832,11 @@ async def play_a_well(look: Any, hands: Any, well: Any, words: str = "", *, seco
                 continue
             pressed = True
             if not await _one_piece_on(game, piece):
+                ended = NOTHING_MOVES_IT
+                break
+            if not (game.keys.left and game.keys.right) and _now() - began > ACROSS_FOUND_WITHIN_S:
+                # A well answers at once: a piece goes a column across at the first press of the right key. Where
+                # none has in this long, it is no well, whatever it looked like.
                 ended = NOTHING_MOVES_IT
                 break
     finally:
@@ -888,6 +903,9 @@ async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: li
     began = _now()
     well = None
     sightings: list[Any] = []
+    filled: set[Cell] | None = None
+    last: Any = None
+    elsewhere = 0
     while _now() - began < (WELL_WATCHED_S if well is not None else WATCHED_S):
         got = await look()
         if got is None:
@@ -901,7 +919,17 @@ async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: li
             continue
         if seen is not None and not seen:
             seen.append(well)
-        piece = the_piece_in(got[0], well, what_rests(what_stands_in(got[0], well), well))
+        cells = what_stands_in(got[0], well)
+        piece = the_piece_in(got[0], well, what_rests(cells, well))
+        # In a well the piece is the one thing that moves. Where cells fill and empty in columns the piece is not over,
+        # other things are about: a field with creatures in it, not a well. LIVE 2026-10-11 one was taken for a well.
+        over = {piece.column + dc for dc, _dr, _kind in piece.parts} if piece is not None else set()
+        over |= {last.column + dc for dc, _dr, _kind in last.parts} if last is not None else set()
+        if filled is not None and {column for column, _row in set(cells) ^ filled} - over:
+            elsewhere += 1
+            if elsewhere >= MOVES_ELSEWHERE:
+                return None
+        filled, last = set(cells), piece
         if piece is not None:
             # The same thing lower down than it was, as much of it in sight, over the same column; or more of it in
             # sight at the top than there was, which is a piece coming in.
