@@ -92,3 +92,18 @@ def test_a_screen_found_no_well_is_not_watched_again_while_it_stays_the_same_scr
     reflexes.said_now = "LEVEL 1 SCORE 0"                                         # another screen
     asyncio.run(pursuit._played_a_well(reflexes, 300.0))
     assert len(watched) == 2
+
+
+@pytest.mark.parametrize(("said", "in_time"), [
+    ("TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. DODGE FOOD BY PRESSING THE SPACE BAR.", True),
+    ("Move the mouse to control your boat. Click the mouse button to hit enemies with your yo-yo.", True),
+    ("Catch the falling eggs in your basket.", True),
+    ("Click on a piece, then click where you want it to go.", False),
+    ("Use your imagination to make the craziest scenes you can think of.", False),
+])
+def test_a_place_whose_words_put_her_in_a_situation_played_in_time_is_known_so_before_it_is_seen_to_move(said, in_time):
+    """Offline 2026-10-11 a food fight whose opponent rose from behind the tables now and then was watched still,
+    played with arrows a move at a time, and lost in thirty seconds."""
+    from core.skills.screen_pursuit_as_it_happens import _played_in_time
+
+    assert _played_in_time(said) is in_time

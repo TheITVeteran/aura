@@ -40,6 +40,20 @@ def _a_different_screen(said: str, before: str) -> bool:
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
+#: The situations a place's words may put her in that are played in time, as things happen, not a move at a time
+#: (core/agency/situations_she_knows.py).
+_IN_TIME = frozenset({"catching what falls", "keeping clear of what comes", "keeping something away from whoever is after it",
+                      "holding on until the end", "getting them all against a clock", "shooting what comes",
+                      "pressing at the right moment", "a fight at close quarters"})
+
+
+def _played_in_time(said: str) -> bool:
+    """Whether what a place has said puts her in a situation played in time."""
+    from core.agency.situations_she_knows import situations_in
+
+    return any(situation.name in _IN_TIME for situation in situations_in(said))
+
+
 async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bool:
     """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
     known = reflexes.still_screen
@@ -610,7 +624,10 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
-        if (now < self.quiet_until and not held.holding()) or now >= self.ends_at:
+        # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
+        # a game played without one (a food fight seen from behind the player's own eyes) goes.
+        in_time = _played_in_time(" ".join([*self.words[-6:], str(self.keep.get("counsel") or "")]))
+        if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
             _logged_leaving_alone(self, now)
             return
         # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
@@ -641,7 +658,11 @@ class PlayingAsItHappens:
         # Played as it happens where it moves on its own, and where it moves for as long as she holds a key. Whether a
         # screen moves on its own is watched once a screen, not before every move on it: LIVE-like 2026-10-11 a menu
         # whose figures bobbed in place was watched for three and a half seconds before each of her clicks.
-        if not self.under_her_hand and not await _it_moves_on_its_own(self, the_world_moves_on_its_own):
+        # And where the place's words put her in a situation played in time (dodging, catching, shooting what comes),
+        # the screen after its menus is played as it happens without first waiting to see it move: offline 2026-10-11
+        # a food fight whose opponent rose from behind the tables now and then was watched still, played with arrows by
+        # the slow pursuit, and lost in thirty seconds; LIVE 2026-10-10 a boat game the same.
+        if not self.under_her_hand and not in_time and not await _it_moves_on_its_own(self, the_world_moves_on_its_own):
             # A world that waits for her: words it asks for are typed; where it says to send something, by shots. Only
             # there: LIVE 2026-10-11 a still level select, in a game played as it happens, had three minutes of pulls
             # and holds let go at it, and nothing sent.
