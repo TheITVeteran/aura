@@ -15,6 +15,10 @@ from typing import Any
 
 logger = logging.getLogger("core.agency.which_one_answers_to_her")
 
+#: The least a body the pointer moves measures on its longer side, in the picture's working pixels: a thin paddle is
+#: long, a cursor's tip is small every way.
+A_BODY_PX = 6
+
 __all__ = ["FollowsThePointer"]
 
 
@@ -91,12 +95,17 @@ class FollowsThePointer:
         self._looked += 1
         if self._looked % 4:
             return
+        # Of the kinds that go with the pointer, the biggest: a speck sitting on it is the game's own cursor, and the
+        # body the pointer moves (a boat, a basket) is bigger. LIVE 2026-10-11 a 3x2 thing was taken for her in a boat
+        # game, and the boat was never steered.
+        following = []
         for kind, seen in self._followed.items():
-            if kind not in nearest or len(seen) < 20:
+            if kind not in nearest or len(seen) < 20 or max(nearest[kind].w, nearest[kind].h) < A_BODY_PX:
                 continue
             along = tuple(bool(v) for v in self._with_the_pointer(seen, _extent(moves)))
-            if not any(along):
-                continue
+            if any(along):
+                following.append((float(nearest[kind].w) * float(nearest[kind].h), kind, seen, along))
+        for _size, kind, seen, along in sorted(following, key=lambda one: -one[0])[:1]:
             # Once is a sighting; the same again on pictures taken since is a
             # finding. Tested every few pictures at a few delays, chance
             # agreement turns up now and then (offline 2026-10-04, the other
