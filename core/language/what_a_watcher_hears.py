@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from core.language.words_of_the_language import the_word
 
 __all__ = ["WhatAWatcherHears", "a_fresh_watcher", "done_watching", "forget_what_was_heard", "heard", "in_her_own_words",
+           "in_words_not_code",
            "legible_share", "shape_of", "the_watcher"]
 
 logger = logging.getLogger("Aura.WhatAWatcherHears")
@@ -62,6 +63,34 @@ _SHORT = frozenset("a i am an as at be by do go he hi if in is it me my no of oh
 
 #: A place on the screen given as shares of it ("the shape at 90% across, 40% down").
 _A_PLACE = re.compile(r"(the shape|the one that stands out) at (\d+)% across, (\d+)% down")
+
+
+#: A name out of a program, not a word: joined by underscores (ST_KILL, SCR_LEVEL01), a letter or two before a capital
+#: (nLevel, mState), capitals run into a number (CH1), a call, or a comparison.
+_CODE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b|\b[a-z]{1,2}[A-Z][A-Za-z0-9]+\b|\b[A-Z]{2,}[0-9]+\b"
+                   r"|\b\w+\(\)|==|!=|&&|\|\||<=|>=")
+
+
+def in_words_not_code(said: str) -> str:
+    """``said`` as words a person reads: what a program names things by, in brackets, left out; a sentence that still
+    rests on such names not said. "" where nothing is left. A reading of the screen is left as it was read. LIVE
+    2026-10-11 "What I'm after: level 3 boss (Boss 03) reaches ST_KILL ... character-select screen (CH1, CH2, or CH3),
+    then Level 1 (SCR_LEVEL01)" and "it's won when The code checks if nLevel == 3" were said to the person watching."""
+    if _IT_SAYS.match(said) or not _CODE.search(_QUOTED.sub(" ", said)):
+        return said
+    kept: list[str] = []
+    lead = ""
+    for sentence in re.split(r"(?<=[.;!?])\s+", said):
+        sentence = re.sub(r"\s*\(([^()]*)\)", lambda m: "" if _CODE.search(m.group(1)) else m.group(0), sentence)
+        if _CODE.search(_QUOTED.sub(" ", sentence)):
+            # What the line is ("From its code:") stays with what is left of it.
+            heading = re.match(r"^([^:;.]{1,30}:)\s", sentence)
+            lead = lead or (heading.group(1) if heading and not kept else "")
+            continue
+        if lead and not kept:
+            sentence = f"{lead} {sentence}"
+        kept.append(sentence)
+    return " ".join(" ".join(kept).split()).strip()
 
 
 def _plain(word: str) -> str:
@@ -217,6 +246,10 @@ class WhatAWatcherHears:
         names = frozenset(self.names)
         said = self._quoted_legibly(said, names)
         if said is None:
+            return None
+        said = in_words_not_code(said)
+        if not said:
+            logger.info("not said, it was the program's names, not words: %r", str(line)[:120])
             return None
         said = _the_move_once(said)
         shape = shape_of(said)

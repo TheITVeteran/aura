@@ -28,11 +28,12 @@ from __future__ import annotations
 import logging
 import math
 import statistics
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.agency.causal_identification import (
+    UNSEEN_AT_MOST_S,
     CausalIdentification,
     CausalWitness,
     within_observed_reach,
@@ -409,6 +410,75 @@ def _apart2(a: tuple[float, float], b: tuple[float, float]) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
+#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers: as
+#: long as a thing unseen can be found again where it was going.
+HIDDEN_A_MOMENT_S = UNSEEN_AT_MOST_S
+
+#: How far an edge must go to have moved, and how little to have stayed, in the picture's pixels; how far the end of a
+#: gauge that moves must have run over its changes, and how many changes it takes to tell; and how many outlines are
+#: kept of each thing.
+EDGE_MOVES_PX = 2.5
+EDGE_STAYS_PX = 1.0
+GAUGE_RUNS_PX = 8.0
+FILLS_AFTER = 3
+OUTLINES_KEPT = 40
+
+
+@dataclass
+class _HowOutlinesGo:
+    """For each thing, how its outline has gone from picture to picture: by one end while the other stayed where it
+    was (a bar filling or emptying), or all of it together (a thing going somewhere).
+
+    A body goes about whole, and where it stays about it moves within itself, its edges stirring on every side; a gauge
+    fills from one end that stays put, there and nowhere else, for as long as it is seen. LIVE 2026-10-11 a shooter's
+    super-shot bar filled while space was held and emptied as the shot went: it answered to space and x, and she took
+    it for herself ("I'm the white bar at the top left, moved by space and x") and steered a gauge.
+    """
+
+    boxes: dict[int, list[tuple[float, float, float, float]]] = field(default_factory=dict)
+    from_an_end: Counter = field(default_factory=Counter)
+    whole: Counter = field(default_factory=Counter)
+
+    def saw(self, thing: Any) -> None:
+        w, h = float(thing.w), float(thing.h)
+        box = (float(thing.x) - w / 2, float(thing.y) - h / 2, float(thing.x) + w / 2, float(thing.y) + h / 2)
+        kept = self.boxes.setdefault(thing.number, [])
+        before = kept[-1] if kept else None
+        kept.append(box)
+        del kept[:-OUTLINES_KEPT]
+        if before is None:
+            return
+        for low, high in ((0, 2), (1, 3)):
+            went_low, went_high = box[low] - before[low], box[high] - before[high]
+            if max(abs(went_low), abs(went_high)) < EDGE_MOVES_PX:
+                continue
+            if min(abs(went_low), abs(went_high)) <= EDGE_STAYS_PX:
+                self.from_an_end[thing.number] += 1
+            elif abs(went_low - went_high) <= 2 * EDGE_STAYS_PX:
+                self.whole[thing.number] += 1
+
+    def a_gauge(self, number: int | None) -> bool:
+        """Whether a thing fills and empties from one end that has stayed put for as long as it has been seen, and has
+        seldom gone whole: a gauge, not a body."""
+        if number is None or self.from_an_end[number] < FILLS_AFTER or self.whole[number] * 2 > self.from_an_end[number]:
+            return False
+        boxes = self.boxes.get(number) or []
+        if len(boxes) < 2:
+            return False
+        for low, high in ((0, 2), (1, 3)):
+            lows, highs = [box[low] for box in boxes], [box[high] for box in boxes]
+            low_runs, high_runs = max(lows) - min(lows), max(highs) - min(highs)
+            if min(low_runs, high_runs) <= EDGE_STAYS_PX and max(low_runs, high_runs) >= GAUGE_RUNS_PX:
+                return True
+        return False
+
+    def forget_all_but(self, numbers: Any) -> None:
+        for number in [n for n in {*self.boxes, *self.from_an_end, *self.whole} if n not in numbers]:
+            self.boxes.pop(number, None)
+            self.from_an_end.pop(number, None)
+            self.whole.pop(number, None)
+
+
 class WhichIsHers(FollowsThePointer, FoundAnotherWay):
     """Keeps, for each thing and each kind of thing, how it moved under each key."""
 
@@ -460,6 +530,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         #: was last looked at.
         self.carried = False
         self._carried_checked = -math.inf
+        self._outlines = _HowOutlinesGo()
 
     # -- what she did ------------------------------------------------------
 
@@ -614,6 +685,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self._births_seen.clear()
         for kept in (self._by_thing, self._followed, self.not_mine):
             kept.clear()
+        self._outlines = _HowOutlinesGo()
         self._since_believed, self._answered, self._answered_by = [], {}, None
 
     def _lost_sight(self, at: float) -> None:
@@ -678,21 +750,38 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         if any(h.get("what") == "new screen" for h in happened):
             self._new_screen_at = at
         if self.number is not None and self.number not in moves.things and not self.follows_pointer:
-            # A missing track cannot hand its old trial scores to a rival.
-            # Nearby visual continuity may retain the measured controls;
-            # otherwise a new independent experiment must establish them.
             nearby = self._one_of_her_kind(moves, at)
-            self.identification.reset("established track absent")
-            self._by_thing.clear()
-            self._by_kind.clear()
-            if nearby is None:
-                self._lost_sight(at)
+            if nearby is None and at - self.last_seen_at < HIDDEN_A_MOMENT_S:
+                # Hidden a moment, behind or across another thing, she is who she was, and is looked for again in the
+                # next picture: offline 2026-10-11 three flying girls crossing one another merged for a few pictures,
+                # and she was lost and found again as another thing every second, her keys learned afresh each time.
+                pass
             else:
-                logger.info("her thing %s goes on as %s", self.number, nearby)
-                self.number = nearby
+                # A missing track cannot hand its old trial scores to a rival.
+                # Nearby visual continuity may retain the measured controls;
+                # otherwise a new independent experiment must establish them.
+                self.identification.reset("established track absent")
+                self._by_thing.clear()
+                self._by_kind.clear()
+                if nearby is None:
+                    self._lost_sight(at)
+                else:
+                    logger.info("her thing %s goes on as %s", self.number, nearby)
+                    self.number = nearby
         # A renderer may answer immediately. Delaying the control label can
         # assign the first movement after a change to the previous key.
         # Use the delivered control and exclude its unsettled motion window.
+        for thing in moves.things.values():
+            if thing.seen == at:
+                self._outlines.saw(thing)
+        if len(self._outlines.boxes) > 4 * max(8, len(moves.things)):
+            self._outlines.forget_all_but(moves.things)
+        if self._outlines.a_gauge(self.number) and self.number not in self.not_mine:
+            logger.info("her thing %s fills and empties from one end: a gauge, not her", self.number)
+            self.not_mine.add(self.number)
+            self.identification.reset("her thing is a gauge")
+            self.number, self.kind, self.lost_at = None, None, at
+            self._hers, self._answered, self._answered_by, self._expecting = _Speeds(), {}, None, {}
         held = self._held_at(at)
         # A screen being drawn afresh moves everything at once, whatever she held.
         if held is not None and at - self._new_screen_at > 0.5:
@@ -711,14 +800,16 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                                    settled=press is not None, position=(thing.x, thing.y), at=at, when=at)
                     self._answering(thing, key, at - began, at)
         self._what_follows_the_pointer(moves, at)
-        if not self.follows_pointer:
+        # Hidden a moment, she is not chosen afresh: another thing's trials would hand it her controls.
+        hidden = self.number is not None and self.number not in moves.things
+        if not self.follows_pointer and not hidden:
             self._decide(moves, at)
         # However she was found (a trial of her keys, her presses moving her kind alike, set back after a loss), whether
         # she is carried by her own going is what her own pushes say, looked at again as they come in.
         if self.number is not None and not self.carried and at - self._carried_checked >= CARRIED_CHECKED_EVERY_S:
             self._carried_checked = at
             self.carried = self._hers.carried()
-        elif self.number not in moves.things:
+        elif self.number not in moves.things and not hidden:
             self.number = self._under_the_pointer(moves, at)
         self._remember_own_thing(moves, at)
         self._what_keys_make(moves, happened, at)
@@ -727,6 +818,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         witnesses = []
         for number, speeds in self._by_thing.items():
             if number not in moves.things or not moves.things[number].moved or number in self.not_mine:
+                continue
+            if self._outlines.a_gauge(number):
                 continue
             f, widest = speeds.ratio()
             trials: dict[str, int] = defaultdict(int)
@@ -1007,6 +1100,13 @@ def gone_the_ways_of_the_keys(hers: WhichIsHers, moves: Any) -> int | None:
     world = _how_the_world_went(hers)
     for number, speeds in hers._by_thing.items():
         if number not in moves.things or number in hers.not_mine:
+            continue
+        # What her keys move rests when she rests. A thing that goes on going between her presses (a ball, a falling
+        # thing, the other side's paddle) can go three keys' ways by chance and none against: measured offline
+        # 2026-10-10, in a Pong of the worked-on worlds she took the ball for herself in two runs of three.
+        resting = [math.hypot(vx, vy) for (key, _began), values in speeds.by_press.items() if key == ""
+                   for vx, vy in values]
+        if len(resting) < 2 or statistics.median(resting) >= REALLY_MOVES:
             continue
         went, against = set(), set()
         for (key, began), values in speeds.by_press.items():

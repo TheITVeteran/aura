@@ -85,7 +85,7 @@ def test_features_and_private_pixels_use_one_final_picture(monkeypatch):
     image = np.arange(72, dtype=np.uint8).reshape(4, 6, 3)
     observed = []
 
-    def shapes(picture, *, apart_from):
+    def shapes(picture, *, apart_from, read=None):
         assert picture is image
         observed.append(("shapes", picture.tobytes()))
         return [{"x": 0.0, "y": 0.0, "width": 0.2, "height": 0.2}]

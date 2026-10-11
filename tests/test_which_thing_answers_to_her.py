@@ -1,9 +1,11 @@
 """Her thing is the one whose movement depends on which key she holds, measured only while she tries keys."""
 from __future__ import annotations
 
+import math
+
 import pytest
 
-from core.agency.which_one_answers_to_her import WhichIsHers
+from core.agency.which_one_answers_to_her import HIDDEN_A_MOMENT_S, WhichIsHers
 
 pytestmark = pytest.mark.unit
 
@@ -163,11 +165,15 @@ def test_a_missing_identity_cannot_transfer_control_to_a_distant_lookalike():
         for _ in range(10):
             hers._by_thing[3].add(key, 0.0, -120.0 if key == "up" else 120.0, press=float(press))
     hers.saw(_Moves([rival]), [], 1.03)
+    # Hidden a moment, she is still who she was, and the lookalike's trials do not make it her.
+    assert hers.number == 1
+    gone = 1.0 + HIDDEN_A_MOMENT_S + 0.03
+    hers.saw(_Moves([rival]), [], gone)
     assert hers.number is None and hers.lost()
-    assert not hers._by_thing and hers.lost_at == 1.03
+    assert not hers._by_thing and hers.lost_at == gone
     # Looking like her, and seen for a while, is still not answering to her keys.
     for step in range(60):
-        rival.seen = at = 1.06 + step * 0.03
+        rival.seen = at = gone + 0.03 + step * 0.03
         hers.saw(_Moves([rival]), [], at)
     assert hers.number is None
 
@@ -406,3 +412,21 @@ def test_her_keys_handed_to_another_of_hers_by_a_key_leave_the_first_still_hers(
         mine.seen, mine.vy = at, 0.0
         hers.saw(moves, [], at)
     assert hers.number is None and 1 not in hers.not_mine and "tab" in hers.switches
+
+
+def test_of_two_things_that_go_with_the_pointer_the_body_is_hers_and_a_speck_is_the_cursor():
+    """LIVE 2026-10-11 a 3x2 thing was taken for her in a boat game, and the boat was never steered."""
+    from types import SimpleNamespace
+
+    hers = WhichIsHers()
+    at = 0.0
+    for step in range(80):
+        at = step * 0.05
+        x, y = 100.0 + 60.0 * math.sin(step / 6.0), 80.0 + 30.0 * math.cos(step / 7.0)
+        hers.pointed(x, y, at)
+        speck = SimpleNamespace(number=1, kind=1, x=x, y=y, w=3.0, h=2.0, vx=0.0, vy=0.0, seen=at, born=0.0,
+                                moved=True, size=6.0)
+        boat = SimpleNamespace(number=2, kind=2, x=x, y=y + 20.0, w=30.0, h=16.0, vx=0.0, vy=0.0, seen=at, born=0.0,
+                               moved=True, size=480.0)
+        hers._what_follows_the_pointer(SimpleNamespace(things={1: speck, 2: boat}, shape=(300, 400)), at)
+    assert hers.follows_pointer and hers.number == 2

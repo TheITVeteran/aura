@@ -133,3 +133,17 @@ def test_what_she_has_built_is_part_of_what_the_plan_is_made_from():
 
     asyncio.run(run())
     assert "What they have built so far: 1 part put in place" in asked[0]
+
+
+def test_what_a_plan_is_after_is_left_unsaid_where_it_is_a_programs_names():
+    """LIVE 2026-10-11 "What I'm after: level 3 boss (Boss 03) reaches ST_KILL ... Level 1 (SCR_LEVEL01)" was said to
+    the person watching: where the end or the start is read out of a program, it is left unsaid, and the plan said."""
+    guide, said = _guide(), []
+
+    async def run():
+        assert ask_for_a_plan(guide, _asker({**PLAN, "end": "the boss reaches ST_KILL", "start": "Level 1 (SCR_LEVEL01)"},
+                                            []), on_screen=ON_SCREEN, tell=said.append)
+        await guide.planning
+
+    asyncio.run(run())
+    assert said and said[0].startswith("My plan: using DEVICE LIBRARY"), said

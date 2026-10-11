@@ -101,3 +101,21 @@ def test_what_she_reads_out_is_not_judged_as_her_own_prose():
     collapsed = "Introspection signal conformance vector substrate coherence telemetry pipeline aggregation drift resonance lattice manifold"
     assert _has_function_word_starvation(collapsed)
     assert _has_function_word_starvation(f'{collapsed} "and the board says this"')
+
+
+@pytest.mark.parametrize("line, heard", [
+    ("What I'm after: level 3 boss (Boss 03) reaches ST_KILL, triggering the WIN sequence. It starts from main menu, "
+     "then character-select screen (CH1, CH2, or CH3), then Level 1 (SCR_LEVEL01).",
+     "What I'm after: It starts from main menu, then character-select screen, then Level 1."),
+    ("From its code: it's won when The code checks if nLevel == 3 and the boss's mState == ST_KILL; it's lost when "
+     "health hits 0.", "From its code: it's lost when health hits 0."),
+    ("From its code: it's won when nLevel == 3.", None),
+    ("Going left — to see what it does", "Going left — to see what it does"),
+    ("I'm the pink girl at the left, moved by the arrows.", "I'm the pink girl at the left, moved by the arrows."),
+])
+def test_what_a_program_names_things_by_is_not_said_to_the_person_watching(line, heard):
+    """LIVE 2026-10-11 "level 3 boss (Boss 03) reaches ST_KILL ... (CH1, CH2, or CH3) ... (SCR_LEVEL01)" and "it's won
+    when The code checks if nLevel == 3" were said to the person watching: names out of a program are not words."""
+    from core.language.what_a_watcher_hears import WhatAWatcherHears
+
+    assert WhatAWatcherHears().heard(line, now=1.0) == heard

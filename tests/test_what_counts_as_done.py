@@ -109,7 +109,7 @@ def _played_through(monkeypatch: pytest.MonkeyPatch, runs: list[_Run], goal: str
     monkeypatch.setattr(drawing, "_one_run", _one_run)
     monkeypatch.setattr(drawing, "_from_the_top", _from_the_top)
     monkeypatch.setattr(drawing, "_tell", said.append)
-    monkeypatch.setattr("core.skills.screen_pursuit_as_it_happens.begin_run", lambda keep: None)
+    monkeypatch.setattr("core.skills.screen_pursuit_as_it_happens.begin_run", lambda keep, game="": None)
     played = asyncio.run(drawing._played(SimpleNamespace(), (0, 0, 1, 1), goal, "https://a.example/thing", {}))
     return played, said
 

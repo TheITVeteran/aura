@@ -214,3 +214,11 @@ async def test_controls_for_the_game_itself_or_for_moving_are_not_used_on_things
         assert hands.done == []
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_control_for_her_own_going_is_not_used_on_what_is_beside_her():
+    """LIVE 2026-10-11 "There's a grey bar next to me. Right is to increases forward speed, so I'm pressing right." """
+    from core.agency.using_a_control_on_a_thing import _the_controls_with_a_use
+
+    guide = _guide("Right increases forward speed.", "Up to boost.", "Press SPACE to open doors.")
+    assert [c.key for c in _the_controls_with_a_use(guide)] == ["space"]

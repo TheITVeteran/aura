@@ -188,6 +188,9 @@ THINKS_S = 1.2
 HIDDEN_AT_MOST_S = 4.0
 #: How long the other side's answer to her move is waited for before the turn is taken to be hers again.
 ANSWER_AT_MOST_S = 15.0
+#: The time between the clicks of a move, and how many times a move is made before the game is taken not to allow it.
+CLICKS_APART_S = 0.35
+TRIES_OF_A_MOVE = 2
 
 
 def a_square_named(position: Position, square: tuple[int, int]) -> str:
@@ -236,6 +239,7 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
     rules: Draughts | None = None
     mine = ""
     refused: set[tuple[str, Move]] = set()
+    tries: dict[tuple[str, Move], int] = {}
     made = 0
     tally = _Tally()
     believed: Position | None = None
@@ -299,18 +303,32 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
         if move is None or (said, move) in refused:
             options = [m for m in rules.moves(position) if (said, m) not in refused]
             move = options[0] if options else None
-        if move is None:
+        if move is None and not rules.moves(position):
             return tally.came_of(made, "no move is left to her", board=said)
-        tell(a_move_told(position, move, found))
+        if move is None:
+            # Every move the rules give was not taken: the game is not ready for one yet (a word put up over play), and
+            # they are tried again in a moment. Offline 2026-10-11 her one jump was not taken while "YOUR OPPONENT
+            # CAPTURES 1 PIECE" was up, and she gave the game up with no move left to her.
+            refused = {one for one in refused if one[0] != said}
+            last_seen = ""
+            await asyncio.sleep(MOVE_SHOWS_S)
+            continue
+        tried = tries.get((said, move), 0)
+        if not tried:
+            tell(a_move_told(position, move, found))
         for square in (move[:2] if len(move) == 3 and move[2] == move[0] else move):
             x, y = board.centre(*square)
             await hands.click(x / picture.shape[1], y / picture.shape[0])
-            await asyncio.sleep(0.35)
+            # Slower each time the move was not taken: a game may want a moment between a piece taken up and set down.
+            await asyncio.sleep(CLICKS_APART_S * (1 + 2 * tried))
         expected = rules.after(position, move)
         if not await _shown(look, sides, expected, mine, move, known):
-            # The game would not take it: the rules she holds allowed a move it does not.
-            refused.add((said, move))
-            tell("The game wouldn't take that move; I'll go by what it takes.")
+            tries[(said, move)] = tried + 1
+            if tried + 1 >= TRIES_OF_A_MOVE:
+                # The game would not take it: the rules she holds allowed a move it does not.
+                refused.add((said, move))
+                tell("The game wouldn't take that move; I'll go by what it takes.")
+            last_seen = ""
             continue
         believed, answer_awaited = expected, time.monotonic()
         made += 1

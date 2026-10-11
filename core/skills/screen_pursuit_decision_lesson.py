@@ -100,6 +100,13 @@ def _the_lesson_first(valued: dict[str, float], leads: Any = None, can_do: Any =
     turn = a_turn_wanted(can_do, guide, list(out)) if can_do is not None else ""
     if turn:
         out[turn] = max(out[turn], best * NEXT_STEP * 1.1)
+    # Where a test found the join that broke, that part is selected to be mended before anything new is added
+    # (core/agency/mending_what_broke.py); once selected, the turn above is for it.
+    from core.agency.mending_what_broke import a_click_to_mend
+
+    mend = a_click_to_mend(guide, list(out))
+    if mend and mend != str(getattr(can_do, "last_tried", "") or "") and not turn:
+        out[mend] = max(out[mend], best * NEXT_STEP * 1.1)
     return out
 
 

@@ -43,17 +43,26 @@ APART_BY = 40.0
 APART_TIMES = 2.0
 ALIKE_AT_LEAST = 3
 
+#: Where the bottom right corner begins, as shares of the picture across and down.
+CORNER_FROM = (0.85, 0.8)
+#: How strong a colour is to be a button's own, as its saturation.
+STRONG_COLOUR = 0.55
+
 #: What the one that stands apart is called, before where it is.
 STANDS_OUT = "the one that stands out at"
 
 
-def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MOST) -> list[dict[str, Any]]:
+def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MOST,
+                     read: Any = None) -> list[dict[str, Any]]:
     """The pressable-looking shapes of ``picture`` as regions (shares of the picture), named by where they are.
 
     A shape under writing in ``apart_from`` (regions of the same picture) is
     left out: the writing already names it, and is clicked by its words. The
     one that stands apart from its alike shapes is kept whatever is written on
-    it, and comes first.
+    it, and comes first. Given ``read`` (a reader of writing), the writing on
+    each shape no reading of the whole picture made out is read from the shape
+    itself, enlarged: a shape with words on it is named by them, and comes
+    first (core/perception/reading_closer.py).
     """
     pixels = np.asarray(picture, dtype=np.float32)
     if pixels.ndim == 2:
@@ -64,7 +73,7 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
     small = pixels[::step, ::step, :3]
     high, wide = small.shape[:2]
     found: dict[tuple[int, int, int, int], tuple[float, np.ndarray]] = {}
-    for mask in (_standing_out(small), _outlined(small)):
+    for mask in (_standing_out(small), _outlined(small), _strongly_coloured(small)):
         for box, filled, colour in _button_like(mask, small):
             if not any(_same_place(box, other) for other in found):
                 found[box] = (filled, colour)
@@ -80,7 +89,9 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
         if under and (not stands or any(re.search(r"[A-Za-z]{2,}", str(region.get("text") or "")) for region in under)):
             continue
         name = STANDS_OUT if stands else "the shape at"
-        shapes.append((filled + (1.0 if stands else 0.0), {
+        # Where a page of a story puts its way to the next one, the bottom right corner, is offered among the first.
+        corner = 0.5 if cx >= CORNER_FROM[0] and cy >= CORNER_FROM[1] else 0.0
+        shapes.append((filled + (1.0 if stands else 0.0) + corner, {
             "text": f"{name} {int(round(cx * 20)) * 5}% across, {int(round(cy * 20)) * 5}% down",
             "x": round(left / wide, 5), "y": round(top / high, 5),
             "width": round(w / wide, 5), "height": round(h / high, 5),
@@ -88,10 +99,34 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
             "shape": True, **({"stands_apart": True} if stands else {}),
         }))
     shapes.sort(key=lambda pair: -pair[0])
+    if read is not None:
+        shapes = _named_by_their_writing(pixels, shapes, read)
     named: dict[str, dict[str, Any]] = {}
     for _share, region in shapes:
         named.setdefault(region["text"], region)
     return list(named.values())[:at_most]
+
+
+#: The most shapes whose writing is read from the shape itself, in one look; and the most words a button bears.
+READ_ON_AT_MOST = 6
+BUTTON_WORDS = 2
+
+
+def _named_by_their_writing(pixels: np.ndarray, shapes: list[tuple[float, dict[str, Any]]],
+                            read: Any) -> list[tuple[float, dict[str, Any]]]:
+    """Shapes with the words written on them as their names, those with words first."""
+    from core.perception.reading_closer import written_on
+
+    worded = []
+    for share, region in shapes[:READ_ON_AT_MOST]:
+        words = written_on(pixels, region, read)
+        if words:
+            region = {**region, "text": words, "written_on_it": True}
+            # A button bears a word or two; a shape with more on it is a title or a panel, the button inside it is the
+            # one to press (offline 2026-10-11 a title read as "Coco's Scrambler PLAY" came before its PLAY button).
+            share += 2.0 if len(words.split()) <= BUTTON_WORDS else 0.5
+        worded.append((share, region))
+    return sorted([*worded, *shapes[READ_ON_AT_MOST:]], key=lambda pair: -pair[0])
 
 
 def _standing_out(small: np.ndarray) -> np.ndarray:
@@ -102,6 +137,16 @@ def _standing_out(small: np.ndarray) -> np.ndarray:
     around = ndimage.median_filter(gray, size=max(9, small.shape[1] // 12))
     mask = ndimage.binary_closing(np.abs(gray - around) > 28.0, iterations=2)
     return ndimage.binary_fill_holes(mask)
+
+
+def _strongly_coloured(small: np.ndarray) -> np.ndarray:
+    """What is of a strong, bright colour, as a mask: a button is often a patch of one strong colour, where neither its
+    brightness nor its outline stands out of a busy drawing round it (LIVE 2026-10-11 a comic's magenta arrow)."""
+    from scipy import ndimage
+
+    brightest, darkest = small.max(axis=2), small.min(axis=2)
+    strong = ((brightest - darkest) / np.maximum(brightest, 1.0) > STRONG_COLOUR) & (brightest > 150)
+    return ndimage.binary_fill_holes(ndimage.binary_closing(ndimage.binary_opening(strong, iterations=1), iterations=1))
 
 
 def _outlined(small: np.ndarray) -> np.ndarray:

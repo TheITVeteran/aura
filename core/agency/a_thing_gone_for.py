@@ -10,7 +10,7 @@ A thing gone for is let go, and another chosen, for one of these reasons only:
 
 - it is got, or gone (it is no longer on the screen);
 - it is no longer one to go for (what meeting it does turned out otherwise, or it went out of reach);
-- she is not getting nearer it: its time to reach has not come down for a while;
+- she is not getting nearer it: its time to reach has not come down for a while, and there is another to go for;
 - another can be had plainly sooner: sooner by more than a margin of what this one takes.
 
 The margin is learned in each game from what changing did: a change after which she got the new thing within a
@@ -78,13 +78,16 @@ class GoneFor:
             if held[0] < self.least * (1.0 - NEARER_BY):
                 self.least, self.least_at = held[0], at
             margin = self.margin * (1.0 - 0.5 * min(1.0, max(0.0, urgency)))
-            if at - self.least_at > NOT_NEARER_FOR_S:
+            rest = [c for c in candidates if c is not held]
+            if at - self.least_at > NOT_NEARER_FOR_S and rest:
                 self.passed_over[self.number] = at + PASSED_OVER_S
                 self._let_go("not getting nearer", at)
-                rest = [c for c in candidates if c is not held]
-                if not rest:
-                    return None
                 best = min(rest, key=lambda candidate: candidate[0])
+            elif at - self.least_at > NOT_NEARER_FOR_S:
+                # Nothing else to go for: passing it over would only stand her still.
+                self.least_at = at
+                self.kept += 1
+                return held
             elif best is held or best[0] >= held[0] * (1.0 - margin):
                 self.kept += 1
                 return held

@@ -38,7 +38,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.cognition.locks_she_met import Locks
+from core.cognition.locks_she_met import Locks, locks_as_memory, locks_from_memory
 from core.cognition.reading_a_places_progress import (  # noqa: F401 (the existing readout patterns)
     _A_READOUT,
     _A_STAGE,
@@ -198,6 +198,12 @@ class Guide:
     #: The place's sentences as she read them: what each asks, and its lesson as a procedure
     #: (core/cognition/reading_the_rules.py).
     rules: Rules = field(default_factory=Rules)
+    #: Where a test of what she built stopped: the middle of the part placed there and its size, the join to mend
+    #: (core/agency/mending_what_broke.py).
+    broke_at: tuple[float, float, float] | None = None
+    #: The board game she settled the place is, where it is one: its family, the variation of it, and which side is hers
+    #: (core/agency/playing_a_board.py).
+    board: dict[str, Any] = field(default_factory=dict)
 
     # -- taking things in ---------------------------------------------------------------------------------------
 
@@ -310,6 +316,8 @@ class Guide:
         the pointer only aiming: LIVE 2026-10-09 the reticle that followed the mouse was taken for her, and the body
         her keys moved was never found."""
         pointer = self.controls.get("the pointer")
+        if self.pointer.get("moves"):
+            return True
         if self.pointer_aims():
             return False
         if pointer is not None:
@@ -318,9 +326,10 @@ class Guide:
         return not worded and any(use in ("steers", "aims", "drags") for use in self.pointer)
 
     def pointer_aims(self) -> bool:
-        """Whether keys move her and the pointer only aims or shoots: her body is found by the keys, not the pointer."""
+        """Whether keys move her and the pointer only aims or shoots: her body is found by the keys, not the pointer.
+        Not where the place's words say the pointer moves her."""
         pointer = self.controls.get("the pointer")
-        return (pointer is not None and pointer.act in _AIMS
+        return (pointer is not None and pointer.act in _AIMS and not self.pointer.get("moves")
                 and any(key in _MOVING for key in self.keys_for_play()))
 
     def in_play(self, name: str) -> bool:
@@ -494,6 +503,12 @@ class Guide:
                 if known is None or _TRUST.get(source, 0) >= _TRUST.get(known.source, 0):
                     self.controls["the pointer"] = Control("the pointer", act or (known.act if known else ""), source, at,
                                                            on=on or (known.on if known else ""))
+                # What the pointer moves is kept apart from what a click does: LIVE 2026-10-11 "USE THE MOUSE TO MOVE
+                # MAC. THEN CLICK TO THROW THE BALL" kept only the throw, the pointer was taken to aim, and Mac was
+                # never moved while the eggs fell.
+                moved = moved_by_the_pointer(sentence)
+                if moved and source != PROGRAM:
+                    self.pointer["moves"] = moved
 
     def _errands_from(self, sentences: list[str]) -> list[str]:
         """What the place's people ask of her: kept, the thing wanted made a thing to get, and each said once."""
@@ -656,6 +671,8 @@ class Guide:
     # -- kept between sittings ------------------------------------------------------------------------------------
 
     def as_memory(self) -> dict[str, Any]:
+        from core.cognition.a_plan_to_an_end import plan_as_memory
+
         return {"place": self.place,
                 "controls": {k: [c.act, c.source, c.on] for k, c in self.controls.items()},
                 "pointer": dict(self.pointer),
@@ -666,10 +683,16 @@ class Guide:
                 "strategy": self.strategy[:6], "stage": self.stage, "sources": sorted(self.sources),
                 "names": {part: names[:6] for part, names in self.names.items()},
                 "notes": self.notes.as_memory() if self.notes is not None else {},
-                "reading": self.reading.as_memory()}
+                "reading": self.reading.as_memory(),
+                # What the place's own words said to do, her plan, and the ways that would not open: known on the next
+                # visit before anything is read again.
+                "rules_heard": self.rules.heard[-40:], "plan": plan_as_memory(self.plan),
+                "locks": locks_as_memory(self.locks), "board": dict(self.board)}
 
     @classmethod
     def from_memory(cls, held: Any, place: str = "") -> Guide:
+        from core.cognition.a_plan_to_an_end import plan_from_memory
+
         guide = cls(place=place)
         if not isinstance(held, dict):
             return guide
@@ -687,6 +710,10 @@ class Guide:
         guide.names = {part: list(names) for part, names in (held.get("names") or {}).items()}
         guide.notes = Notebook.from_memory(held.get("notes"))
         guide.reading = WhatThisPlaceIs.from_memory(held.get("reading"))
+        guide.rules.hear([str(p) for p in held.get("rules_heard") or []])
+        guide.plan = plan_from_memory(held.get("plan"))
+        guide.locks = locks_from_memory(held.get("locks"))
+        guide.board = dict(held.get("board") or {})
         return guide
 
 
@@ -695,7 +722,10 @@ class Guide:
 _A_NOUN = r"((?:[A-Za-z]+'s\s+)?(?:the\s+|your\s+|a\s+|an\s+)?[A-Za-z][A-Za-z -]{1,32}?)"
 _ENDS = (r"(?=\s+(?:onto|to|into|through|around|across|safely|slowly|and|with|by|using|past|so|while|before|without|from|"
          r"back|forth|about|along|over|up|down|left|right|"
-         r"in|on|at|as|escape|find|get|reach|save|stop|enjoy|catch|collect|win|land|fly|jump|run)\b|[.,!;:)]|$)")
+         r"in|on|at|as|escape|find|get|reach|save|stop|enjoy|catch|collect|win|land|fly|jump|run|"
+         # The control that does it, as the next words: "Control the girls press [1] to switch" (LIVE 2026-10-11 "That's
+         # me: the girls press at the top").
+         r"press|presses|click|clicks|hold|tap|use|uses|type|switch)\b|[.,!;:)]|$)")
 _NAMING = (
     ("me", re.compile(r"\b(?:guide|control|steer|drive|park|ride|fly|pilot|move|help|lead|play as|playing as:?|you are|you're|you play)\s+"
                       + _A_NOUN + _ENDS, re.I)),
@@ -719,12 +749,16 @@ _NOT_A_NAME = frozenset("""the a an your you it its them they this that these th
     in on at of to by for from with into onto out off over under again more most less""".split())
 
 
+#: Words that join two verbs of one thing ("avoid or shoot the obstacles"): what follows them is no name.
+_JOINING = frozenset({"or", "and", "nor", "then"})
+
+
 def _a_name(said: str) -> str:
     """A thing's name as a place says it, kept to its last few words and lowered: "Tommy's Lunar Lander" is the lunar
     lander; "" where it is no name ("the arrow keys", "it")."""
     words = re.sub(r"^[A-Za-z]+'s\s+", "", str(said or "").strip()).split()
     words = [w for w in words if w.lower() not in ("the", "your", "a", "an")]
-    if (not words or len(words) > 4 or words[-1].lower() in _NOT_A_NAME or len(words[-1]) < 3
+    if (not words or words[0].lower() in _JOINING or len(words) > 4 or words[-1].lower() in _NOT_A_NAME or len(words[-1]) < 3
             or not any(w.lower() not in _NOT_A_NAME for w in words) or any(w.lower() in _OF_AN_ACT for w in words)):
         return ""
     return " ".join(w.lower() for w in words[-3:])
@@ -868,7 +902,10 @@ def _things_spoken_of(sentence: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for found in _SPOKEN_OF.finditer(sentence or ""):
         words = (found.group(1) or found.group(3) or "").strip().lower().split()
-        if not words or len(words) > 3 or words[0] in _NOT_THINGS or words[-1] in _NOT_THINGS or words[-1].endswith("ing"):
+        # "Avoid or shoot obstacles" is two verbs of one thing, each read where it stands, not a thing called "or shoot
+        # obstacles" (LIVE 2026-10-11 "I'll keep clear of the or shoot obstacles").
+        if not words or words[0] in _JOINING or len(words) > 3 or words[0] in _NOT_THINGS or words[-1] in _NOT_THINGS \
+                or words[-1].endswith("ing"):
             continue
         out.append((found.group(2) or "", " ".join(words)))
     return out
@@ -879,6 +916,30 @@ _A_BODY_ACT = ("jump", "flap", "hop", "dash", "boost", "duck", "slide", "flip", 
                "swing", "strike", "flap your wings", "fly up", "rise", "thrust")
 #: The name of the mouse button pressed as a key (core/skills/screen_pursuit_as_it_happens.py presses it so).
 MOUSE_BUTTON = "mouse"
+
+
+#: The pointer said to move a body, and the body: "use the mouse to move Mac", "move the mouse to control your boat",
+#: "Mouse moves Frankie", "steer the boat with the mouse"; not "mouse to aim".
+_POINTER_THEN_MOVES = re.compile(
+    r"\b(?:mouse|pointer|cursor)\s+(?:to\s+)?(?:move|moves|control|controls|steer|steers|guide|guides|drive|drives|fly|"
+    r"flies)\b(?:\s+(?:the\s+|your\s+)?(?P<what>[a-z][\w'-]*))?", re.I)
+_MOVES_WITH_THE_POINTER = re.compile(
+    r"\b(?:move|steer|control|guide|drive|fly)\s+(?:the\s+|your\s+)?(?P<what>[a-z][\w'-]*)\s+(?:with|using|by)\s+"
+    r"(?:the\s+|your\s+)?(?:mouse|pointer|cursor)\b", re.I)
+#: Words after a verb of moving that are no body: where it is moved, or the sentence going on.
+_NO_BODY = frozenset("and then to or with around about left right up down across along so while".split())
+
+
+def moved_by_the_pointer(sentence: str) -> str:
+    """What a sentence says the pointer moves: a body ("mac", "boat"), "you" where it names none, "" where the pointer
+    is not said to move anything. Things moved many at a time ("move the pieces with the mouse") are dragged, not a
+    body."""
+    found = _POINTER_THEN_MOVES.search(sentence or "") or _MOVES_WITH_THE_POINTER.search(sentence or "")
+    if found is None:
+        return ""
+    what = (found.group("what") or "").lower()
+    moved = "you" if not what or what in _NO_BODY else what
+    return "" if moved.endswith("s") and not moved.endswith("ss") else moved
 
 
 def pointer_acts(guide: Any) -> str:

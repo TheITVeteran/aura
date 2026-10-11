@@ -320,8 +320,10 @@ def _reading_to_send(picture: Any, reading: dict[str, Any], *, window: Any,
         from core.perception.how_a_place_looks import look_of
         from core.perception.keys_drawn_on_screen import keys_drawn
         from core.perception.shapes_that_look_pressable import pressable_shapes
+        from core.perception.what_the_pixels_show import recognize_text
 
-        public["shapes"] = pressable_shapes(picture, apart_from=public.get("layout") or ())
+        # The picture is as the reading of the whole screen had it, so the writing on a shape is read the same way.
+        public["shapes"] = pressable_shapes(picture, apart_from=public.get("layout") or (), read=recognize_text)
         public["objects"] = drawn_objects(picture, writing=public.get("layout") or (),
                                           capture_epoch=str(public.get("_capture_epoch") or ""))
         for region in public["shapes"]:

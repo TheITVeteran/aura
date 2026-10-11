@@ -54,6 +54,12 @@ PRESSED_FOR_S = 0.15
 #: Acts that move her, not done to a thing beside her: the way she is moved is learned and played elsewhere.
 _MOVING_ACTS = frozenset({"move", "steer", "go", "walk", "run", "guide", "control", "drive", "fly", "jump", "turn",
                           "aim", "dodge", "avoid", "navigate", "travel", "roll", "skate", "ride"})
+#: Acts a control does to her own going, not to a thing beside her: LIVE 2026-10-11 a tunnel racer's "Right
+#: increases forward speed" and "Up to boost" had her saying "There's a grey bar next to me. Right is to increases
+#: forward speed, so I'm pressing right", at every thing that came beside her.
+_ON_HER_OWN_GOING = frozenset({"boost", "speed", "accelerate", "increase", "increases", "decrease", "decreases", "brake",
+                               "slow", "dash", "sprint", "glide", "hover", "duck", "crouch", "charge", "switch",
+                               "change", "swap", "thrust", "float", "sink", "rise", "hold"})
 #: Acts done to the game, not to a thing in it: pausing it, starting it, turning its sound off.
 _GAME_ACTS = frozenset({"pause", "unpause", "start", "begin", "restart", "continue", "resume", "mute", "unmute", "skip",
                         "quit", "exit", "play", "select", "choose", "confirm", "toggle", "reset", "retry", "save", "load",
@@ -337,7 +343,7 @@ def _beside(mine: Any, spot: Any, missed: int = 0) -> bool:
 
 def _the_controls_with_a_use(guide: Any) -> list[Any]:
     return [c for c in getattr(guide, "controls", {}).values()
-            if c.act and c.act.split()[0].lower() not in _MOVING_ACTS | _FROM_AFAR | _GAME_ACTS
+            if c.act and c.act.split()[0].lower() not in _MOVING_ACTS | _ON_HER_OWN_GOING | _FROM_AFAR | _GAME_ACTS
             and (c.on or c.key != "the pointer")]
 
 

@@ -251,6 +251,16 @@ def _step_state(attempt: StepAttempt, after: EvidenceSnapshot, changed: bool | N
             return PredicateState.UNKNOWN, "a required effect could not be measured"
         return PredicateState.SATISFIED, "the required effects were observed"
     if attempt.expected:
+        # An end that is a relation between two things is measured on where they are, not looked for in the screen's
+        # words, which never say it (core/perception/relations_between_things.py).
+        from core.perception.relations_between_things import a_relation_in, measured
+
+        if a_relation_in(attempt.expected) is not None:
+            verdict = measured(attempt.expected, after_data.get("regions") or [])
+            if verdict is None:
+                return PredicateState.UNKNOWN, "the things the expected relation names could not both be found"
+            return ((PredicateState.SATISFIED, "the expected relation was measured to hold") if verdict else
+                    (PredicateState.UNSATISFIED, "the expected relation was measured not to hold"))
         if not _TOKEN.findall(attempt.expected):
             return PredicateState.UNKNOWN, "the expected effect has no observable phrase"
         if not after.text:

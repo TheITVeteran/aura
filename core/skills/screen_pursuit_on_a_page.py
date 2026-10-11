@@ -325,6 +325,8 @@ def _what_the_stream_shows(seen: dict[str, Any], watching: Any) -> None:
         when, _act = watching.acts[-1]
         seen["answered"] = watching.answered(when)
         seen["answer_window"] = watching.answer_window()
+        # Where what her last act set going came to rest: where a machine she built stopped when tested.
+        seen["came_to_rest_at"] = watching.where_it_came_to_rest(when)
 
 
 def it_was_answered(changed: bool | None, observation: dict[str, Any]) -> bool | None:

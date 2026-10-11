@@ -10,17 +10,20 @@ import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from core.agency.a_choice_and_its_reasons import how_soon_she_reaches, reachable_arrivals
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S
 from core.agency.what_meeting_things_does import AVOID, CLICK, IGNORE, MEET, SHOOT, WhatMeetingDoes
 from core.agency.what_she_has_left import CAREFUL_BELOW
 from core.agency.whether_it_goes_by_itself import goes_somewhere
 from core.agency.which_one_answers_to_her import WhichIsHers, ways_carried
-from core.agency.who_is_who import NEVER_SHOT
+from core.agency.who_is_who import IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
+from core.perception.watching_someone_play import stance_watched
 from core.perception.what_moves_in_the_picture import WhatMoves
 
 #: How far ahead she looks for anything she might walk into.
 DANGER_AHEAD_S = (0.08, 0.16, 0.28, 0.42, 0.6)
+
 
 def _times_to(lasts: float) -> tuple[float, ...]:
     """The moments a press's path is looked at: the near ones, then a tenth of a second apart to its end."""
@@ -32,10 +35,10 @@ def _times_to(lasts: float) -> tuple[float, ...]:
     return (*DANGER_AHEAD_S, *later)
 
 
-
 #: How much less a press's path must meet than holding her course does, for the press to be made: half, so a press
 #: is made for what it clears and not for a near tie.
 CLEARER = 0.5
+
 
 #: Whether she imagines the moment ahead to choose what to hold where things that matter are moving
 #: (core/agency/imagining_ahead.py).
@@ -50,7 +53,10 @@ POINTER_SPEED = 2000.0
 #: How far ahead, in seconds, she weighs each key for a thing of hers carried on by its own going; and, carried onto a
 #: still thing, the share of her going she comes onto it at where how fast is too fast is not yet known.
 CARRIED_AHEAD_S = 0.6
+
+
 GENTLE_SHARE = 0.25
+
 
 def _ahead(thing: Any, after: float, low: float, high: float, axis: int) -> float:
     """Where a thing will be along ``axis`` after ``after`` seconds, bouncing between low and high."""
@@ -123,6 +129,11 @@ class _Choosing:
     at: float | None = None
     #: The situations the place's words put her in (core/agency/situations_she_knows.py).
     situations: tuple[Any, ...] = ()
+    #: What a recording of someone playing it showed (core/perception/watching_someone_play.py).
+    watched: Any = None
+    #: How long her presses take to show, and the arrival she goes to meet (when, where, how soon she can be there).
+    response_s: float = 0.0
+    arrival: Any = None
     #: Whether her thing goes where the pointer goes; the plan she imagined best, the key she holds as it was made, and
     #: the path a press of a key takes her on (core/agency/imagining_ahead.py).
     pointing: bool = False
@@ -161,6 +172,8 @@ class _Choosing:
     #: What comes for her allies, and her allies on the screen (core/agency/keeping_allies.py).
     allies: Any = None
     allies_here: tuple = ()
+    #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
+    pushing: Any = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -183,6 +196,8 @@ class _Choosing:
             self.ahead_s = CARRIED_AHEAD_S
             self.ways, self.rest = ways_carried(hers, keys, self.mine, self.ahead_s)
         self.reach = reach
+        #: When the thing she goes to meet arrives, where, and how soon she can be there (None where her speed is not known).
+        self.arrival: tuple[float, float, float | None] | None = None
         # A key that lifts her and lets her fall is pressed for what its press does, not held as a way to go.
         self.lifts = (presses.lifts(self.mine.kind, max(float(self.mine.w), float(self.mine.h)), self.mine.number)
                       if presses is not None and self.mine is not None else [])
@@ -219,6 +234,13 @@ class _Choosing:
         ]
 
     def stance(self, thing: Any) -> str:
+        # What she has found to be in her way, or negligible, is nothing to go and meet
+        # (core/agency/who_is_who.py): a wall she was stopped by is not worth a detour to touch again.
+        if self.who is not None:
+            found = self.who.of(thing)
+            # Not what is only taken for the place, never met: a door is big and still, and is what she is to go to.
+            if found.sure and found.name in (IN_HER_WAY, NEGLIGIBLE) and self.meeting.stance(thing.kind) == MEET:
+                return IGNORE
         # A kind that has cost her from a distance is kept clear of, whatever meeting it has done.
         if self.reach is not None and self.reach.reach(int(thing.kind)) is not None:
             return AVOID
@@ -229,6 +251,12 @@ class _Choosing:
             return AVOID
         # A kind not yet met nor told of is what her situation says such a thing is, by how it moves: what falls is to be
         # caught or kept clear of, what heads for her kept clear of or shot (core/agency/situations_she_knows.py).
+        # What a recording of someone playing it showed the player do with such a thing, first
+        # (core/perception/watching_someone_play.py).
+        if self.watched and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
+            seen = stance_watched(self.watched, self.moves, thing.kind)
+            if seen:
+                return seen
         if self.situations and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
             from core.agency.situations_she_knows import prior_stance
 
@@ -273,11 +301,12 @@ class _Choosing:
             imagined = self.physics.when_it_reaches(thing, line, contact) if self.physics is not None else None
             if imagined is not None:
                 when, there = imagined
-            # The next arrival is urgent even when she cannot get there in
-            # time. A distant, reachable arrival must not pull her away from it.
             candidates.append((when, there, thing))
-        best = self._kept_to(candidates)
+        # Of what arrives, what she can get to in time; a catcher lets go of what cannot be reached, and keeps to the
+        # one gone for among the rest (core/agency/a_choice_and_its_reasons.py).
+        best = self._kept_to(reachable_arrivals(self, candidates, free, her_free) or candidates)
         if best is not None:
+            self.arrival = (best[0], best[1], how_soon_she_reaches(self, best, free, her_free))
             goal = [None, None]
             goal[free] = best[1]
             return (goal[0], goal[1]), "meet", best[2]
@@ -344,6 +373,14 @@ class _Choosing:
     def _target_anywhere(self) -> tuple[tuple[float | None, float | None], str, Any]:
         mine = self.mine
         speed = max(self.speed(0), self.speed(1))
+        # Where walls are known on a floor, a still thing is as far as the way round them to it
+        # (core/agency/a_way_through.py), not as far as a straight line through them.
+        through = self.way_through if self.way_through is not None and self.way_through.floor and self.way_through.walls \
+            else None
+        # A thing she pushes, whose place is on the screen, is got there from behind (core/agency/pushing_a_thing.py).
+        pushed = self._a_thing_to_push()
+        if pushed is not None:
+            return pushed
         candidates = []
         for thing in self.others():
             stance = self.stance(thing)
@@ -351,6 +388,11 @@ class _Choosing:
             if stance not in (MEET, CLICK) or self._out_of_reach(thing) or not thing.moved and _boxes_meet(mine.box(), thing.box()):
                 continue
             when = math.hypot(thing.x - mine.x, thing.y - mine.y) / speed
+            if through is not None and not thing.moved:
+                tall, wide = self.moves.shape
+                when = through.way_length(float(mine.x), float(mine.y), float(thing.x), float(thing.y), wide, tall) / speed
+                if math.isinf(when):
+                    continue
             for _ in range(3):
                 px, py = thing.where_at(when)
                 when = math.hypot(px - mine.x, py - mine.y) / speed
@@ -373,6 +415,23 @@ class _Choosing:
         if ground is not None:
             return ground, "cover", None
         return (None, None), "wait", None
+
+    def _a_thing_to_push(self) -> tuple[tuple[float | None, float | None], str, Any] | None:
+        """Where to go to push a thing she pushes onto its place, where both are on the screen."""
+        if self.pushing is None or not self.pushing.places:
+            return None
+        others = list(self.others())
+        for thing in others:
+            if not self.pushing.pushable(thing.kind):
+                continue
+            places = [p for p in others if p.kind in self.pushing.places.get(thing.kind, ()) and p is not thing]
+            if not places:
+                continue
+            place = min(places, key=lambda p: math.hypot(p.x - thing.x, p.y - thing.y))
+            goal = self.pushing.where_to_go(self.mine, thing, place)
+            if goal is not None:
+                return goal, "meet", thing
+        return None
 
     def _detour(self, thing: Any) -> float:
         """How far out of her way a thing not yet known is worth going, as a multiple of the time to it."""
@@ -479,17 +538,34 @@ class _Choosing:
                 best = (risk, key)
         return best[1] if best is not None else None
 
+    def _warned_along(self, path: Callable[[float], tuple[float, float]]) -> float:
+        """What the spots a warning marks cost along ``path``: where she will be when each one's blow is due, by how
+        deep inside its reach that is, so that every step further out is a step better
+        (core/agency/what_a_sound_comes_with.py)."""
+        if not self.warned_spots or self.mine is None:
+            return 0.0
+        tall, wide = self.moves.shape
+        total = 0.0
+        for sx, sy, near, start, end in self.warned_spots:
+            due = (start + end) / 2
+            dx, dy = path(due)
+            x = min(max(self.mine.x + dx, 0.0), float(wide))
+            y = min(max(self.mine.y + dy, 0.0), float(tall))
+            total += max(0.0, 1.0 - math.hypot(x - sx, y - sy) / max(near, 1e-6)) / (due + 0.1)
+        return total
+
     def danger_along(self, path: Callable[[float], tuple[float, float]], times: Sequence[float] = DANGER_AHEAD_S) -> float:
         """How soon and how often her thing, taken along ``path`` (seconds to displacement), meets what to keep clear of,
         looked at ``times`` seconds ahead."""
         mine = self.mine
+        warned = self._warned_along(path)
         threats = [(t, 0.0) for t in self.others()
                    if (self.stance(t) in (AVOID,) or self.stance(t) == SHOOT) and not self._struck_first(t)]
         # What to keep clear of that went out of sight is still where its going was taking it (what_moves_in_the_picture).
         threats += [(t, self.at - when) for t, when in getattr(self.moves, "out_of_sight", {}).values()
                     if self.at is not None and self.meeting.stance(t.kind) == AVOID]
-        if not threats and not self.warned_spots:
-            return 0.0
+        if not threats:
+            return warned
         tall, wide = self.moves.shape
         low_x, high_x = mine.w / 2, wide - mine.w / 2
         low_y, high_y = mine.h / 2, tall - mine.h / 2
@@ -499,10 +575,6 @@ class _Choosing:
             x = min(max(mine.x + dx, low_x), high_x) if high_x >= low_x else mine.x
             y = min(max(mine.y + dy, low_y), high_y) if high_y >= low_y else mine.y
             box = _moved_box(mine.box(), x - mine.x, y - mine.y, 2.0)
-            # A spot a warning marks costs as a thing would, while its blow is due.
-            for sx, sy, near, start, end in self.warned_spots:
-                if start <= after <= end and math.hypot(x - sx, y - sy) <= near:
-                    total += 1.0 / (after + 0.1)
             for thing, away in threats:
                 # What comes for her is where she will be, not where its line was taking it.
                 if self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h))):
@@ -512,7 +584,7 @@ class _Choosing:
                 if (_boxes_meet(box, _moved_box(thing.box(), tx - thing.x, ty - thing.y, 2.0))
                         or (self.reach is not None and self.reach.within(thing, x, y, (tx, ty)))):
                     total += 1.0 / (after + 0.1)
-        return total
+        return total + warned
 
     def _struck_first(self, thing: Any) -> bool:
         """Whether a thing coming at her comes on slowly enough for her blow to reach it before it reaches her.

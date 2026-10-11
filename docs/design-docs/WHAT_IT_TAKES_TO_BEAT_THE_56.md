@@ -22,8 +22,8 @@ reached one in the time. That is the bar what follows is measured against.
 | Aimed clicks | A click aimed at a moving thing, led by the lead that has taken things; a shot sent toward the pointer, pointed first at what it is for | `core/agency/leading_a_click.py` | built; to measure |
 | Sending | Pull or hold and let go, how hard and which way found from where each went | `core/agency/playing_by_shots.py` | built; read as told since 10 Oct |
 | A press in time | Press when a moving thing is where presses have paid | `core/agency/when_a_press_pays.py` | built |
-| A board seen and searched | A wordless board's squares and pieces seen, its family known, its rules as its words change them, every move searched | `core/agency/playing_a_board.py` | built 11 Oct for draughts; other families to add |
-| Pieces placed | Every column and orientation of a falling piece tried and scored | `core/agency/where_a_piece_goes.py` | built by another session; not yet joined to play |
+| A board seen and searched | A wordless board's squares and pieces seen, its family known, its rules as its words change them, every move searched; the board held to its squares through a game, each piece's standing kept by its history, her turn taken when the other side has answered, an end believed on a second look | `core/agency/playing_a_board.py` | built 11 Oct for draughts and placing games (three, four dropped, five in a row); played live on Big Shot Checkers the same day: about fifty moves over two games, searched six to nine ahead; a misread board then read as a win led to the board being held to its squares |
+| A well of falling pieces | A well known for what it is by what it shows (a tall plain ground cut into cells, a piece coming down by itself, things resting), whatever its pieces are drawn as; her keys known by what each does to a piece; every landing tried and scored; what clears held as rival rules, with one learned outright for kinds that clear when they touch; where pieces come in kept clear | `core/agency/playing_a_well.py`, `core/perception/a_well_seen.py`, `core/agency/where_a_piece_goes.py` | built and joined to play 11 Oct; shown in two wells of its own (tokens that clear in unlike pairs, blocks that turn and fill rows); on the archived Link 'N Smash, offline, 850 and 2,080 in its first two games, against 90 and 40 before |
 | A build from parts | Parts carried to places, a chain put on from where the last that worked went, each step held to what it shows | `core/agency/putting_things_in_place.py`, `core/cognition/a_plan_to_an_end.py` | partial |
 | An errand | A thing taken and used on another; doors and rooms gone through | `core/agency/taking_and_using.py`, `core/agency/where_things_lead.py` | partial |
 | Done again | What was shown, done again in order; keys shown, pressed while lit | `core/agency/doing_again_what_was_shown.py`, `core/agency/pressing_what_is_shown.py` | built |
@@ -86,7 +86,13 @@ reached one in the time. That is the bar what follows is measured against.
 | 21 | Foster's: Door to Door | "Click on the doors" before the time is out. |
 | 44 | Regular Show: All-Nighter | Click in time; keep awake. |
 | 46 | Annoying Orange: Escape | "Click on a balloon", "click to jump, then cut the rope". |
-| 54 | Sonic Boom: Link 'N Smash | Move the tile block left and right; link to smash. |
+
+
+### A well of falling pieces
+
+| # | Game | To beat it |
+|---|---|---|
+| 54 | Sonic Boom: Link 'N Smash | Left and right move the block of three tiles, down drops it, up changes their order; a character tile touching its own item tile clears both. Game over when a drop is blocked, or when the time is out. |
 
 ### A board in turns (a board seen and searched)
 

@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.agency.a_choice_and_its_reasons import chose_in_play
 from core.agency.building_up import builds_up
 from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decision API)
     CARRIED_AHEAD_S,
@@ -129,8 +130,14 @@ NEW_SCREEN_STILL_S = 1.5
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
 
-#: Spoken lines are at least this far apart, so each can be read.
+#: How long a thing must have been on the screen to be taken for her by how her presses move it: offline 2026-10-11 in a
+#: flying shooter things on the screen a second or two (an enemy, a shot) were taken for her and lost a second later,
+#: a dozen times in a minute.
+THERE_BEFORE_S = 3.0
+
+#: Spoken lines are at least this far apart, so each can be read; and what kinds of things are to her, one at a time.
 SAY_EVERY_S = 5.0
+STANCE_EVERY_S = 2.5
 
 #: The least time between two clicks, and how far ahead of a moving thing a
 #: click is aimed: the click's trip through the browser and the next frame.
@@ -156,6 +163,9 @@ class _Run:
     held_trying: bool = False
     trying: int = 0
     tried_at: float = 0.0
+    #: How many holds and rests have gone to the key that points against a going, and which key that was.
+    countered: int = 0
+    countering: str = ""
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
     last_moving: float = 0.0
@@ -180,6 +190,8 @@ class _Run:
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
     legend: tuple[Any, ...] = ()
     said_at: float = -math.inf
+    #: When what a kind of thing is to her was last said: one at a time, the rest when their turn comes.
+    stance_said_at: float = -math.inf
     said: set[str] = field(default_factory=set)
     lines: list[str] = field(default_factory=list)
     reading: asyncio.Task | None = None
@@ -274,6 +286,8 @@ class _Run:
     reach: Any = None
     #: The tells of each kind of thing, learned from what followed each change in it (core/agency/warning_signs.py).
     signs: Any = None
+    #: Each choice she makes, with its reason, craft, what it counts on and what it came to (a_choice_and_its_reasons.py).
+    choices: Any = None
     #: What the place does to her whatever she does (core/agency/what_the_place_does_to_her.py), and the thing she is
     #: going for, kept to until there is a reason to let it go (core/agency/a_thing_gone_for.py).
     pressures: Any = None
@@ -293,8 +307,15 @@ class _Run:
     #: it has been told of.
     sounds: Any = None
     presses_told: int = 0
-    #: What comes for her allies (core/agency/keeping_allies.py).
+    #: What comes for her allies (core/agency/keeping_allies.py), and which key spends which counter and on what
+    #: (core/agency/spending_a_supply.py).
     allies: Any = None
+    supply: Any = None
+    #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
+    pushing: Any = None
+    #: The latest picture, and when the walls drawn in it were last looked for (core/agency/a_way_through.py).
+    picture: Any = None
+    walls_seen_at: float = -math.inf
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -434,13 +455,25 @@ async def _hold(hands: Any, run: _Run, hers: WhichIsHers, key: str, at: float, *
     hers.holding(key, delivered, trying=trying)
 
 
-async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float) -> None:
-    """Hold each key in turn, with a rest between, to see what answers."""
+async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float, moves: Any = None) -> None:
+    """Hold each key in turn, with a rest between, to see what answers. The key that points against the way the
+    biggest moving thing is going is held first, and again after one rest (core/agency/the_key_against_its_going.py):
+    LIVE 2026-10-11 a lander down in five seconds was never found to be hers in ten goes of four seconds a round."""
+    from core.agency.the_key_against_its_going import FIRST, against_its_going
+
     if at - run.tried_at < TRY_A_KEY_S:
         return
-    turn = run.trying % (2 * len(run.keys))
-    run.trying += 1
-    key = run.keys[turn // 2] if turn % 2 == 0 else ""
+    against = against_its_going(run.keys, getattr(moves, "things", {}).values(), 2.0 * TOLD_FROM_STANDING_PX) \
+        if run.countered < FIRST else ""
+    if against or 0 < run.countered < FIRST:
+        run.countering = against or run.countering
+        key = run.countering if run.countered % 2 == 0 else ""
+        run.countered += 1
+    else:
+        run.countered = FIRST
+        turn = run.trying % (2 * len(run.keys))
+        run.trying += 1
+        key = run.keys[turn // 2] if turn % 2 == 0 else ""
     await _hold(hands, run, hers, key, at, trying=True)
     run.tried_at = run.held_since
 
@@ -593,6 +626,10 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
     choosing.caution *= math.sqrt(run.pressures.harder(at))
 
 
+#: How often the walls drawn in the picture are looked for again, once their colour is known.
+WALLS_LOOKED_FOR_S = 2.0
+
+
 def _what_meeting_did(meeting: WhatMeetingDoes, kind: int, kept: Any) -> str | None:
     """What meeting a kind has settled into: costly, worth getting, nothing, or not yet clear. By the meeting record's
     own rule, which weighs meeting it against letting it by; and by what touching it did on its own, since a thing that
@@ -619,7 +656,8 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     # What she sends out is hers as much as what goes with her.
     sent = {shot.kind for shot in hers.makes.values()}
     size = max(float(mine.w), float(mine.h)) if mine is not None else 16.0
-    prizes = {kind for kind, kept in who.kinds.items() if kept.gains}
+    # What is taken from her is a prize shown to be one, not a kind that once came with a count going up.
+    prizes = {kind for kind, kept in who.kinds.items() if kept.gains and who.prize_shown(kind)}
     who.saw(at, things, mine, prizes=prizes, comes_for_her=lambda thing: run.comes.comes_for_her(thing, size),
             with_her=lambda thing: goes_with(thing, mine) or thing.kind in sent, shape=moves.shape)
     for kind, kept in meeting.evidence.items():
@@ -656,6 +694,16 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
         _say(run, say, line, at, once=line)
     threats = [thing for thing, _found in who.threats(things)]
     goes.saw_threats(at, [(thing.number, thing.kind) for thing in threats])
+    run.supply.counted(at, meeting.readouts.current)
+    run.pushing.saw(mine, things, choosing.ways.get(run.held) if run.held else None)
+    # The walls drawn in a colour she has been stopped by are walls wherever they are drawn (core/agency/a_way_through.py).
+    if run.way_through.wall_colours and run.way_through.cell and at - run.walls_seen_at >= WALLS_LOOKED_FOR_S:
+        tall, wide = moves.shape
+        run.way_through.walls_seen(run.picture, moves.scale, wide, tall)
+        run.walls_seen_at = at
+    if len(goes.gains) > gains:
+        run.pushing.counted(things)
+    choosing.pushing = run.pushing
     allies = tuple(thing for thing in things if (mine is None or thing.number != mine.number)
                    and who.of(thing).name == FRIENDLY)
     run.allies.saw(threats, allies)
@@ -665,15 +713,20 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     for thing in things:
         if run.way_through.cell and who.of(thing).name == IN_HER_WAY:
             run.way_through.a_wall_at(thing.box())
+            if run.way_through.drawn_like(run.picture, moves.scale, thing):
+                run.walls_seen_at = -math.inf
     choosing.seconds_left = run.pressures.seconds_left()
     choosing.caution *= goes.care(at, choosing.seconds_left)
     choosing.plays_for, choosing.who = goes, who
     spent = goes.what_to_say(at)
     if spent:
         _say(run, say, spent, at, once="spent")
-    for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
-                           lambda thing: _named(moves, thing.kind, thing)):
-        _say(run, say, line, at, once=line)
+    # What each kind is to her, one at a time: the rest are said in their turn (core/agency/who_is_who.py).
+    if at - run.stance_said_at >= STANCE_EVERY_S:
+        for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
+                               lambda thing: _named(moves, thing.kind, thing)):
+            _say(run, say, line, at, once=line)
+            run.stance_said_at = at
 
 
 def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float) -> str:
@@ -802,6 +855,7 @@ def _counters_without_reading(run: _Run, moves: WhatMoves, hers: WhichIsHers, me
 
 #: How long between two accounts of what kind of game this is.
 SITUATION_EVERY_S = 30.0
+ACCOUNTS_A_GAME = 2
 
 #: Where a thing stands, as where_on_screen names it, inside an account of the game.
 _WHERE_IT_STANDS = re.compile(r" at the (?:(?:top|bottom) )?(?:left|right)\b| at the (?:top|bottom|middle)\b")
@@ -813,6 +867,10 @@ def _what_kind_of_game(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers,
     from core.agency.what_kind_of_game_this_is import in_a_sentence
 
     if "me" not in run.said or at - run.situation_at < SITUATION_EVERY_S:
+        return
+    # An account of the game a few times a game, not whenever a kind does something new: LIVE 2026-10-11 a flying
+    # shooter had one every thirty seconds, each of things that had bounced or turned back off her.
+    if sum(1 for once in run.said if once.startswith("situation ")) >= ACCOUNTS_A_GAME:
         return
     sentence = in_a_sentence(moves, hers, meeting, physics, run.keys, me=run.hers_description)
     if not sentence or ";" not in sentence:
@@ -848,6 +906,10 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
     for key in hers.makes:
         _say(run, say, f"{key.capitalize()} fires.", at, once=f"fires {key}")
     for kind in list(meeting.evidence):
+        # What things are to her is said one at a time: LIVE 2026-10-11 one loss had seven kinds said to be threats in
+        # a fifth of a second. The others are said in their turn, if what she makes of them still holds by then.
+        if at - run.stance_said_at < STANCE_EVERY_S:
+            break
         if not meeting.known(kind) or not any(t.kind == kind for t in moves.things.values()):
             continue
         stance = meeting.stance(kind)
@@ -856,6 +918,8 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
             line = a_stance_said(run, moves, kind, stance, at, met=kept is not None and (kept.touched > 0 or kept.shot > 0))
             if line:
                 _say(run, say, line, at, once=f"{kind} {stance}")
+                if f"{kind} {stance}" in run.said:
+                    run.stance_said_at = at
     # How it stands, said when it changes: the score, what is left to win, what is left to lose.
     standing = run.contest.says()
     if standing and run.contest_first is None:
@@ -991,6 +1055,9 @@ async def _play_as_it_happens(
     from core.agency.warning_signs import WarningSigns, read_the_signs
 
     run.signs = keep.get("signs") or WarningSigns()
+    from core.agency.a_choice_and_its_reasons import ChoicesMade
+
+    run.choices = keep.get("choices") or ChoicesMade()
     from core.agency.a_thing_gone_for import GoneFor
     from core.agency.what_the_place_does_to_her import Pressures
 
@@ -1018,6 +1085,12 @@ async def _play_as_it_happens(
     from core.agency.keeping_allies import KeepingAllies
 
     run.allies = keep.get("allies") or KeepingAllies()
+    from core.agency.spending_a_supply import SpendingASupply
+
+    run.supply = keep.get("supply") or SpendingASupply()
+    from core.agency.pushing_a_thing import Pushing
+
+    run.pushing = keep.get("pushing") or Pushing()
     run.presses_told = sum(run.input_key_downs.values()) + run.taps
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
@@ -1040,6 +1113,7 @@ async def _play_as_it_happens(
             run.picture_at = at
             run.pictures += 1
             happened = moves.see(picture, at)
+            run.picture = picture
             for sound in getattr(picture, "sounds", ()):
                 run.sounds.heard_sound(sound.at, sound.sig, hers.thing(moves))
             run.leading.saw(happened, at)
@@ -1065,6 +1139,7 @@ async def _play_as_it_happens(
                 run.covered.clear()
                 run.barred.clear()
                 run.way_through.new_screen()
+                run.walls_seen_at = -math.inf
             if hers.thing(moves) is not None:
                 mine = hers.thing(moves)
                 run.cell = run.cell or max(4.0, mine.w, mine.h)
@@ -1077,6 +1152,7 @@ async def _play_as_it_happens(
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
             choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
+            choosing.watched = keep.get("watched")
             choosing.caution *= caution_of(situations)
             _what_the_place_does(run, choosing, moves, hers, meeting, at)
             _what_she_plays_for(run, choosing, moves, hers, meeting, at, say)
@@ -1093,6 +1169,9 @@ async def _play_as_it_happens(
             meeting.saw(moves, hers, happened, at, choosing.line() if choosing.mine is not None else None)
             read_the_signs(run.signs, moves, choosing.mine, meeting.verdicts, at,
                            lambda line, at=at: _say(run, say, line, at, once=line))
+            run.choices.settle(at, met=meeting._met, gains=run.gains, losses=run.losses,
+                               mine_at=(choosing.mine.x, choosing.mine.y) if choosing.mine is not None else None,
+                               say=lambda line, at=at: _say(run, say, line, at, once=line))
             noticed(run, moves, meeting, at, say, _named)
             seen_in_play(run, moves, hers, meeting, picture, at, lambda line, once, at=at: _say(run, say, line, at, once=once))
             measured_in_play(run, moves, hers, meeting, at)
@@ -1110,7 +1189,8 @@ async def _play_as_it_happens(
             context.check()
             await use_controls_on_things(hands, run, moves, hers, happened, at,
                                          lambda line, once, at=at: _say(run, say, line, at, once=once), picture)
-            _out_of_her_reach(run, choosing, at)
+            for line in _out_of_her_reach(run, choosing, at):
+                _say(run, say, line, at, once=line)
             if goes_over:
                 if waits_for_her and choosing.mine is not None and choosing.ways and choosing.target()[1] == "cover":
                     _say(run, say, "Nothing's coming at me, so I'm looking around the place.", at, once="looking around")
@@ -1131,10 +1211,11 @@ async def _play_as_it_happens(
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
-                 "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
+                 "said_once": run.said, "leading": run.leading, "choices": run.choices, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
-                 "sounds_heard": run.sounds, "allies": run.allies})
+                 "sounds_heard": run.sounds, "allies": run.allies,
+                 "supply": run.supply, "pushing": run.pushing})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
@@ -1177,7 +1258,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     if choosing.mine is None and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
     if not trying_the_pointer and run.trying < 2 * len(run.keys) and not hers.keys_known(run.keys) and not hers.follows_pointer:
-        await _try_the_keys(hands, run, hers, at)
+        await _try_the_keys(hands, run, hers, at, moves)
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):
         return
@@ -1239,7 +1320,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
             if run.last_click == at:
                 return
         if run.trying < 4 * len(run.keys):
-            await _try_the_keys(hands, run, hers, at)
+            await _try_the_keys(hands, run, hers, at, moves)
             return
         await _hold(hands, run, hers, "", at)
         if pointer_trial:
@@ -1265,6 +1346,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     shift = part * ((choosing.mine.h if choosing.line() == 0 else choosing.mine.w) / 2 if choosing.mine is not None else 0.0)
     offset = (0.0, shift) if choosing.line() == 0 else (shift, 0.0) if choosing.line() == 1 else (0.0, 0.0)
     key, why, aim = choosing.key(run.held, offset=offset)
+    chose_in_play(run.choices, choosing, key, why, aim, at, lambda line, once: _say(run, say, line, at, once=once))
     before = choosing.ways.get(run.held, (0.0, 0.0))
     after = choosing.ways.get(key, (0.0, 0.0))
     if key != run.held:
@@ -1300,7 +1382,12 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
     if hers.number is not None or hers.follows_pointer or not run.presses.curves:
         return
     kinds = run.presses.kinds_it_moves(TOLD_FROM_STANDING_PX * 2)
-    candidates = [thing for thing in moves.things.values() if thing.kind in kinds]
+    # What her presses bring out (a shot) goes the same way at every press, and is not her: offline 2026-10-11 each
+    # shot of a flying shooter was taken for her as it was fired, nine of them in sixteen seconds. She is a thing that
+    # was there before the press.
+    made = {makes.kind for makes in hers.makes.values()}
+    candidates = [thing for thing in moves.things.values() if thing.kind in kinds and thing.kind not in made
+                  and at - float(getattr(thing, "born", at)) >= THERE_BEFORE_S]
     if len(candidates) == 1:
         hers.moved_by_her_presses(candidates[0], at)
 
@@ -1366,7 +1453,8 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
         if choosing.pointing and rules.a_click_is_a_shot:
             fire = "mouse"
         else:
-            fire = next((key for key in rules.fire_keys if key not in WAYS), None)
+            # Not a key held to charge: tapped, it never builds up, and charging is held and let go of its own accord.
+            fire = next((key for key in rules.fire_keys if key not in WAYS and key not in rules.charge_keys), None)
     window = None if discovering else hers.emission_window(choosing.shot.key, choosing.shot.kind)
     if discovering:
         next_trigger = run.last_click + CLICK_THE_PICTURE_S
@@ -1376,6 +1464,14 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
         next_trigger = max(run.last_click + CLICK_EVERY_S, run.last_trigger_began + window + RESPONSE_S)
     if not fire or fire == run.held or at < next_trigger:
         return
+    # A key that spends a counter of hers spends it where the shot is worth it (core/agency/spending_a_supply.py).
+    if fire != "mouse" and run.supply is not None and not discovering and aim is not None:
+        label = run.supply.spends(fire)
+        if label is not None and not run.supply.spend(at, _worth_of_a_shot(choosing, aim, at),
+                                                      run.supply.last.get(label, 0.0),
+                                                      seconds_left=choosing.seconds_left,
+                                                      refill=run.supply.refills_a_second(label, at)):
+            return
     if fire == "mouse":
         if not hasattr(hands, "click"):
             return
@@ -1397,9 +1493,22 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
     if fire == "mouse" and choosing.pointing:
         hers.pointed(run.pointer[0] * wide, run.pointer[1] * tall, delivered)
     hers.tapped(fire, delivered, began=dispatched)
+    if run.supply is not None and fire != "mouse":
+        run.supply.pressed(fire, at)
     run.last_trigger_began = dispatched
     run.last_click = delivered
     run.taps += 1
+
+
+def _worth_of_a_shot(choosing: _Choosing, aim: Any, at: float) -> float:
+    """What a shot at ``aim`` is worth, in seconds of play: what taking it out is worth (core/agency/what_she_plays_for.py),
+    one where nothing prices it."""
+    goes = choosing.plays_for
+    if goes is None or choosing.mine is None:
+        return 1.0
+    size = max(float(choosing.mine.w), float(choosing.mine.h))
+    comes = choosing.comes is not None and choosing.comes.comes_for_her(aim, size)
+    return goes.worth_taking_out_s(aim.kind, comes_for_her=comes, at=at, seconds_left=choosing.seconds_left)
 
 
 def _aimed_with_the_pointer(choosing: _Choosing, aim: Any, run: _Run) -> tuple[int, float] | None:
@@ -1478,6 +1587,8 @@ def _what_is_known_of(meeting: WhatMeetingDoes, thing: Any) -> str:
 #: How often she fires while still finding which thing is hers, by a key the words named for it or a click that throws.
 FIRE_WHILE_FINDING_S = 0.35
 THROW_WHILE_FINDING_S = 0.6
+#: How often at most the key for getting out of the way is pressed at something coming at her.
+GOT_OUT_OF_THE_WAY_EVERY_S = 0.5
 
 
 async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, moves: WhatMoves,
@@ -1489,24 +1600,36 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     shooter holding one arrow at a time to see what moved, and never fired. A press of the fire key moves nothing, so
     the finding goes on as before, and what each press brings out beside her is how she learns it fires.
     """
+    from core.agency.thrown_at_what_shows import comes_at_her, what_the_shot_goes_at
+
     if rules is None:
         return
-    fire = next((key for key in rules.fire_keys if key not in WAYS and key != run.held), None)
+    # A key the words give to getting out of the way is not one to fire with, whatever else a run-on line made of it:
+    # LIVE 2026-10-11 "...FIVE TIMES WINS DODGE FOOD BY PRESSING THE SPACE BAR" gave space to hitting as well, she
+    # tapped it three times a second as her shot, and in a food fight lost in fourteen seconds she threw nothing.
+    away = [key for key in rules.dodge_keys if key not in WAYS]
+    fire = next((key for key in rules.fire_keys if key not in WAYS and key != run.held and key not in away), None)
     if fire is not None and at - run.last_trigger_began >= FIRE_WHILE_FINDING_S:
         began = time.monotonic()
         await hands.tap(fire)
         hers.tapped(fire, time.monotonic(), began=began)
         run.last_trigger_began, run.taps = began, run.taps + 1
         return
+    if away and at - run.last_trigger_began >= GOT_OUT_OF_THE_WAY_EVERY_S and comes_at_her(moves.things.values()):
+        # With no body of hers in the place, what comes at her grows; the key for getting out of the way is pressed.
+        run.last_trigger_began = time.monotonic()
+        await hands.tap(away[0])
+        run.taps += 1
     if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < THROW_WHILE_FINDING_S:
         return
-    going = [t for t in moves.things.values() if math.hypot(t.vx, t.vy) > 8.0 and t.number != hers.number
-             and t.kind not in {made.kind for made in hers.makes.values()}]
-    if not going:
+    # At whoever has just shown, before whatever is going across (core/agency/thrown_at_what_shows.py).
+    target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
+                                   not_kinds={made.kind for made in hers.makes.values()})
+    if target is None:
         return
-    target = max(going, key=lambda t: t.size)
     tall, wide = moves.shape
-    await hands.click(min(1.0, max(0.0, target.x / max(1, wide))), min(1.0, max(0.0, target.y / max(1, tall))))
+    x, y = target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
+    await hands.click(min(1.0, max(0.0, x / max(1, wide))), min(1.0, max(0.0, y / max(1, tall))))
     run.last_click = at
 
 
@@ -1692,4 +1815,5 @@ def _what_it_came_to(run: _Run, moves: WhatMoves, hers: WhichIsHers, meeting: Wh
         "stalled": run.contest.stalled(time.monotonic()),
         "said": list(run.lines),
         "words_seen": sorted(_the_words_of_play(run, ended)),
+        "choices": run.choices.summary() if run.choices is not None else {},
     }

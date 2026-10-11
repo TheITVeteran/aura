@@ -227,11 +227,15 @@ LLMs now write behaviour trees that a failure interpreter edits when a step fail
 6. Things kept through occlusion in her fast loop: `what_moves_in_the_picture.py` (`out_of_sight`).
 7. A placed part turned toward where the chain must go: `core/agency/aiming_what_was_placed.py`.
 
-## Still to build
+## Built since, and still to build
 
-1. A chain held as parts and joints, where it ends now, and a failed test that edits the joint that broke.
-2. A step's end written as a relation between things on the screen and checked by measurement.
-3. Locks seen rather than said: a gap too wide, a ledge too high.
-4. Reading a level's layout as its lesson.
-5. A construal step: what cannot change the route left out before planning.
-6. A thing out of sight still counted as a danger near where it was going.
+1. Built: a test of what she made is watched as it plays out, and the part placed nearest where it came to rest is
+   the join to mend, given to her plan and selected and turned first (core/agency/mending_what_broke.py).
+2. Partly built: a step's end is held to measured effects (the procedure receipts), and a part placed is held to
+   where it was measured to land; an end written as a relation between two named things is not yet measured.
+3. Built: a place she made for and got no nearer to is a lock seen, and a gain reopens it
+   (core/cognition/locks_she_met.py, core/agency/what_she_cannot_reach.py).
+4. Still to build: reading a level's layout as its lesson.
+5. Built: construal in her planner; what cannot come within her reach in the time imagined is left out, the rest
+   ranked by how soon it could (core/agency/imagining_ahead.py).
+6. Built: a thing out of sight is still counted as a danger near where it was going.

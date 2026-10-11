@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-__all__ = ["RULES", "Well", "WhichRule", "best_place", "dropped", "rule_from_words", "settled"]
+__all__ = ["RULES", "Well", "WhichRule", "best_place", "dropped", "ready", "rule_from_words", "score", "settled"]
 
 Cell = tuple[int, int]  # column, row; row 0 at the top
 
@@ -130,6 +130,12 @@ def settled(well: Well, rule: Callable[[Well], set[Cell]]) -> tuple[Well, int, i
         cleared += len(gone)
         for cell in gone:
             well.cells.pop(cell, None)
+        if rule is _full_rows:
+            # Rows above a cleared row come down as they are, gaps and all: nothing falls into a gap under it.
+            emptied = sorted({row for _col, row in gone})
+            well.cells = {(col, row + sum(1 for below in emptied if below > row)): colour
+                          for (col, row), colour in well.cells.items()}
+            continue
         for col in range(well.columns):
             kept = [well.cells.pop((col, row)) for row in range(well.rows - 1, -1, -1) if (col, row) in well.cells]
             for i, colour in enumerate(kept):
@@ -169,7 +175,7 @@ def _holes(well: Well) -> int:
     return holes
 
 
-def _ready(well: Well) -> int:
+def ready(well: Well) -> int:
     """How many pairs of touching cells share a colour: what is lined up to clear next."""
     return sum(1 for (col, row), colour in well.cells.items() for near in ((col + 1, row), (col, row + 1))
                if well.cells.get(near, None) == colour)
@@ -181,11 +187,27 @@ def _rough(well: Well) -> int:
     return sum(abs(a - b) for a, b in itertools.pairwise(tops))
 
 
+def _shafts(well: Well) -> int:
+    """How deep the well's shafts are, counted as such evaluations count them: a column lower than both its neighbours
+    (a wall is a neighbour as high as the well) is a shaft as deep as the lower neighbour stands above it, and a shaft
+    of depth d counts 1 + 2 + ... + d, since only one shape fills a deep one and the wait for it is what loses."""
+    tops = [next((well.rows - row for row in range(well.rows) if (col, row) in well.cells), 0)
+            for col in range(well.columns)]
+    deep = 0
+    for col, top in enumerate(tops):
+        left = tops[col - 1] if col > 0 else well.rows
+        right = tops[col + 1] if col + 1 < well.columns else well.rows
+        depth = min(left, right) - top
+        if depth > 0:
+            deep += depth * (depth + 1) // 2
+    return deep
+
+
 def score(well: Well, cleared: int, chain: int) -> float:
     """How good a well is to have left: what cleared and the chain it made, what is ready to clear next, less how
-    high, holed and rough it is, each in the proportions such evaluations give them."""
-    return (10.0 * cleared + 6.0 * max(0, chain - 1) + 1.0 * _ready(well)
-            - 1.5 * well.height() - 4.0 * _holes(well) - 0.6 * _rough(well))
+    high, holed, rough and shafted it is, each in the proportions such evaluations give them."""
+    return (10.0 * cleared + 6.0 * max(0, chain - 1) + 1.0 * ready(well)
+            - 1.5 * well.height() - 4.0 * _holes(well) - 0.6 * _rough(well) - 1.0 * _shafts(well))
 
 
 def best_place(well: Well, orientations: Sequence[Piece], rule: Callable[[Well], set[Cell]]) -> tuple[int, int] | None:

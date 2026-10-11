@@ -22,14 +22,14 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 18 |
 | Values across them | 107 |
 | Kinds of place they make, multiplied out | 26,754,416,640,000 |
-| Values with an answer | 103 |
+| Values with an answer | 106 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
-| Values a game needs | 0 to 53, 23.4 on average |
-| Games with an answer for every value they need | 32 |
+| Values a game needs | 0 to 53, 23.3 on average |
+| Games with an answer for every value they need | 43 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 4 values with none answers every value the
+place of their own. Answering the 1 value with none answers every value the
 56 need, where the dimensions are independent.
 
 Eight values were answered on 11 October, each by a module shown working in a
@@ -38,7 +38,12 @@ faster and urgency (`core/agency/what_the_place_does_to_her.py`), a thing gone
 for (`core/agency/a_thing_gone_for.py`), meeting by what she is now
 (`core/agency/meeting_by_what_she_is.py`), what comes for her
 (`core/agency/what_comes_for_her.py`) and keys that turn her
-(`core/agency/which_way_she_faces.py`). A way through
+(`core/agency/which_way_she_faces.py`). Where a falling piece goes was answered the same day (`core/agency/playing_a_well.py`): a well known by what it
+shows, her keys known by what each does to a piece, every landing tried, and what clears learned from what goes.
+In a well of its own with tokens that clear in unlike pairs she kept it clear for four minutes where the well left
+alone filled in four pieces; in one of blocks that turn she cleared 36 rows in four minutes where left alone it
+filled in 20; on the archived Link 'N Smash, offline, she scored 850 and 2,080 against 90 and 40 before.
+A way through
 (`core/agency/a_way_through.py`) finds its way in its own world and is joined
 to her play, but in whole play on a world of rooms she has not yet got through
 a gap, so it stays on the list below.
@@ -59,7 +64,10 @@ on as it sounded is weighed as danger, as a thing coming at her is; where the
 blow found her wherever she went, the spot is let go. In a world heard and not
 seen, a siren a second before a strike on her spot, heeding it cut the strikes
 after the first minute from 54 to 11 over ten runs, and every sound's meaning
-was learned in all ten.
+was learned in all ten. In whole play, in a browser world whose siren is heard
+and not seen, she learned what each sound meant in every run, and heeding the
+siren cost her 23 lives over three runs of two and a half minutes against 39
+when deaf to it.
 
 ## Allies to keep
 
@@ -71,6 +79,29 @@ taking out by what losing the ally would cost her, by how soon it gets there.
 In a world where threats came for her and for an ally walking to and fro,
 played for herself she lost the ally about twenty times in two minutes; keeping
 it, not once, and she was hit no more.
+
+## Spending a supply
+
+Which counter a key spends is found by the counter falling just after the key
+is pressed, press after press; then each press must clear a bar
+(`core/agency/spending_a_supply.py`). The bar is the old answer to spending a
+budget on chances that come over time: of the chances still to come in the time
+left, as often as they have come, only as many as there is supply for, counting
+what refills, are taken, and the bar is the worth that share of them reach. A
+shot's worth is what taking its target out is worth. Ten units over a minute of
+chances took 1,396 spent above the bar against 727 spent on whatever came first;
+where the supply refilled faster than chances came, the two did the same.
+
+## Pushing a thing to its place
+
+What she pushes is a thing she was touching, holding a way, that went that way
+with her, press after press; where it goes is the still thing it was on when a
+count went up (`core/agency/pushing_a_thing.py`). To get it there she lines up
+behind it, on the side away from its place, along the way it has furthest to
+go, and pushes; to get behind it she steps back clear of it, or goes out to a
+lane beside it and along the lane, never touching it on the way. In a world of
+a crate and a pad, set afresh each time it was got home, she got it home 80
+times in six minutes; making straight for the crate, not once.
 
 ## What she plays for, and who is who
 
@@ -149,9 +180,6 @@ seams are kept to one owner each, so that the answers compose:
 | Games | Dimension: value | What answers it |
 |---|---|---|
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
-| 9 | meeting: pushed to a place | a thing she runs into moves; got to its place by pushing it from its far side |
-| 6 | logistics: spend a supply | a meter spent where it does most, and saved where it does least |
-| 5 | searching: where a piece goes | each place a falling piece could land, judged by what it would clear and leave |
 
 Each is built as a module of its own, shown working in a world of its own
 before it is joined to her play, and listed in the registry with its test.

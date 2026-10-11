@@ -7,6 +7,7 @@ things that are writing are for reading, not for touching.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -83,6 +84,11 @@ def _read_the_words(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers,
     meeting.writing = _what_is_writing(moves, regions)
 
 
+#: The words that name a count of points; and those that name a control a bar is for ("SPACE TO STOMP", "HOLD X").
+_A_SCORE = re.compile(r"\b(?:score|points?|pts|hi-?score|high score)\b", re.I)
+_A_CONTROLS = re.compile(r"\b(?:space|spacebar|press|hold|click|tap)\b.*\bto\b|\b(?:press|hold)\s+\w+\b", re.I)
+
+
 def _read_the_bars(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers, moves: WhatMoves, picture: Any, at: float,
                    say: Any) -> None:
     """Every bar's rise or fall, as a gain or a loss as its words say; and how much she has left, for how careful to be.
@@ -107,6 +113,11 @@ def _read_the_bars(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers, moves
     answering = (getattr(hers, "kind", None) is not None or getattr(hers, "follows_pointer", False)
                  or (run.presses is not None and run.presses.moves_anything(4.0)))
     for verdict in bars_read(run.bars, picture, at, run.regions_read, place):
+        # A bar named as a score is a count, not what she has left, and a score read as falling was misread: LIVE
+        # 2026-10-11 "The SCORE bar goes down: it's what I have left." A bar named by a control ("SPACE TO STOMP") fills
+        # for that control and empties as it is used: it is no loss either.
+        if _A_SCORE.search(str(verdict.get("counter") or "")) or _A_CONTROLS.search(str(verdict.get("counter") or "")):
+            continue
         meeting._verdict(verdict)
         if verdict["what"] == "gain":
             run.gains += 1

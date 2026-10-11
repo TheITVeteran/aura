@@ -16,6 +16,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = ["AWayThrough", "goes_every_way"]
 
@@ -31,6 +32,13 @@ class AWayThrough:
     #: Whether she has been seen to go every way on the screen: a floor seen from above, for the rest of the game, though
     #: a key may be judged afresh for a moment.
     floor: bool = False
+    #: The distances from her cell to every cell, and what they were worked out for.
+    _field: tuple | None = field(default=None, repr=False)
+    #: The colours she has been stopped by where no thing stood: the colours of the place's walls.
+    wall_colours: list[tuple[int, int, int]] = field(default_factory=list)
+    #: The way she is keeping to, cell by cell to where she is going, and how many walls were known when it was taken.
+    _path: list = field(default_factory=list, repr=False)
+    _path_walls: int = -1
 
     def new_screen(self) -> None:
         self.walls.clear()
@@ -39,6 +47,62 @@ class AWayThrough:
         """Whether this is a floor seen from above: once her keys have taken her every way, it stays one."""
         self.floor = self.floor or goes_every_way(ways)
         return self.floor
+
+    def a_wall_colour(self, picture: Any, scale: float, x: float, y: float, way: tuple[float, float],
+                      size: tuple[float, float], things: Any = ()) -> bool:
+        """She was stopped going ``way`` from (x, y): the colour just ahead of her, where it is not the floor she stands
+        on and no thing stands there, is a colour the place draws its walls in. Whether a colour was learned.
+
+        Bumped into a cell at a time, a wall a room long takes a minute to find; seen, it is found at once. The one
+        bump says which colour stops her, and every cell drawn in it is a wall from then on."""
+        if picture is None or not scale or not any(way):
+            return False
+        far = math.hypot(*way)
+        ux, uy = way[0] / far, way[1] / far
+        reach = max(size) / 2 + max(2.0, (self.cell or max(size)) / 2)
+        ahead = (x + ux * reach, y + uy * reach)
+        behind = (x - ux * reach, y - uy * reach)
+        for thing in things:
+            if abs(float(thing.x) - ahead[0]) <= float(thing.w) / 2 and abs(float(thing.y) - ahead[1]) <= float(thing.h) / 2:
+                return False
+        wall, floor = _colour_at(picture, scale, *ahead), _colour_at(picture, scale, *behind)
+        if wall is None or floor is None or _apart(wall, floor) <= SAME_COLOUR * 2:
+            return False
+        if any(_apart(wall, known) <= SAME_COLOUR for known in self.wall_colours):
+            return False
+        self.wall_colours.append(wall)
+        return True
+
+    def drawn_like(self, picture: Any, scale: float, thing: Any) -> bool:
+        """A thing she has found in her way: the colour it is drawn in is a wall's, so every wall drawn like it is one,
+        thing or not. Whether a colour was learned."""
+        if picture is None or not scale:
+            return False
+        colour = _colour_at(picture, scale, float(thing.x), float(thing.y))
+        if colour is None or any(_apart(colour, known) <= SAME_COLOUR for known in self.wall_colours):
+            return False
+        self.wall_colours.append(colour)
+        return True
+
+    def walls_seen(self, picture: Any, scale: float, wide: float, tall: float) -> int:
+        """Every cell drawn mostly in a wall's colour, marked a wall: how many were."""
+        if picture is None or not scale or not self.cell or not self.wall_colours:
+            return 0
+        import numpy as np
+
+        image = np.asarray(picture)[..., :3].astype(np.int16)
+        near = np.zeros(image.shape[:2], dtype=bool)
+        for colour in self.wall_colours:
+            near |= np.abs(image - np.array(colour, dtype=np.int16)).max(axis=2) <= SAME_COLOUR
+        step = self.cell / scale
+        found = 0
+        for cx in range(int(wide // self.cell) + 1):
+            for cy in range(int(tall // self.cell) + 1):
+                block = near[int(cy * step):int((cy + 1) * step), int(cx * step):int((cx + 1) * step)]
+                if block.size and block.mean() >= MOSTLY and (cx, cy) not in self.walls:
+                    self.walls.add((cx, cy))
+                    found += 1
+        return found
 
     def a_wall_at(self, box: tuple[float, float, float, float]) -> None:
         """A thing she knows is in her way, standing over ``box`` (left, top, right, bottom): every cell it covers."""
@@ -86,7 +150,7 @@ class AWayThrough:
         if start == goal:
             return None
         columns, rows = max(1, int(wide // self.cell) + 1), max(1, int(tall // self.cell) + 1)
-        path = self._shortest(start, goal, columns, rows)
+        path = self._kept_or_new(start, goal, self._shortest(start, goal, columns, rows))
         if not path:
             return None
         furthest = path[0]
@@ -102,18 +166,59 @@ class AWayThrough:
 
     def way_length(self, x: float, y: float, to_x: float, to_y: float, wide: float, tall: float) -> float:
         """How far, in pixels, the shortest way round the walls found is from (x, y) to (to_x, to_y): the straight
-        distance where no wall is known, and infinite where the walls found leave no way."""
+        distance where no wall is known, and infinite where the walls found leave no way. Read off the distances from
+        her cell to every cell, worked out once each time she comes to a new cell or a wall is found."""
         if not self.walls or not self.cell:
             return math.hypot(to_x - x, to_y - y)
         start, goal = self._at(x, y), self._at(to_x, to_y)
         if start == goal:
             return math.hypot(to_x - x, to_y - y)
         columns, rows = max(1, int(wide // self.cell) + 1), max(1, int(tall // self.cell) + 1)
-        path = self._shortest(start, goal, columns, rows)
-        if not path:
-            return math.inf
-        cells = [start, *path]
-        return self.cell * sum(math.dist(a, b) for a, b in zip(cells, cells[1:], strict=False))
+        far = self._distances(start, columns, rows).get(goal)
+        return math.inf if far is None else far * self.cell
+
+    def _distances(self, start: Cell, columns: int, rows: int) -> dict[Cell, float]:
+        """How far every cell is from ``start``, eight ways round the walls, a corner not cut between two walls."""
+        key = (start, len(self.walls), columns, rows)
+        if self._field is not None and self._field[0] == key:
+            return self._field[1]
+        far: dict[Cell, float] = {start: 0.0}
+        frontier = [(0.0, start)]
+        while frontier:
+            cost, here = heapq.heappop(frontier)
+            if cost > far.get(here, math.inf):
+                continue
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if not dx and not dy:
+                        continue
+                    there = (here[0] + dx, here[1] + dy)
+                    if not (0 <= there[0] < columns and 0 <= there[1] < rows) or there in self.walls:
+                        continue
+                    if dx and dy and ((here[0] + dx, here[1]) in self.walls or (here[0], here[1] + dy) in self.walls):
+                        continue
+                    step = cost + (math.sqrt(2) if dx and dy else 1.0)
+                    if step < far.get(there, math.inf):
+                        far[there] = step
+                        heapq.heappush(frontier, (step, there))
+        self._field = (key, far)
+        return far
+
+    def _kept_or_new(self, start: Cell, goal: Cell, new: list[Cell]) -> list[Cell]:
+        """The way she is keeping to, while no wall has been found since it was taken, it leads on from where she is,
+        and it is not plainly longer than the shortest. Two ways of about one length, chosen afresh each picture, turn
+        her back and forth between them and she goes neither (offline 2026-10-11, up and down at the foot of a wall).
+        A wall found anywhere, by being stopped or by seeing it, and the way is chosen again."""
+        if self._path and new and self._path[-1] == goal and self._path_walls == len(self.walls):
+            near = [i for i, cell in enumerate(self._path) if max(abs(cell[0] - start[0]), abs(cell[1] - start[1])) <= 1]
+            if near:
+                rest = self._path[near[0]:]
+                rest = rest[1:] if rest[0] == start and len(rest) > 1 else rest
+                if _length([start, *rest]) <= KEEP_TO_A_WAY * _length([start, *new]):
+                    self._path = rest
+                    return rest
+        self._path, self._path_walls = new, len(self.walls)
+        return new
 
     def _at(self, x: float, y: float) -> Cell:
         return int(x // self.cell), int(y // self.cell)
@@ -162,6 +267,36 @@ class AWayThrough:
                     if (cx, cy) in self.walls:
                         return False
         return True
+
+
+#: How much longer than the shortest the way she keeps to may be before she takes the shorter.
+KEEP_TO_A_WAY = 1.1
+
+
+def _length(cells: list[Cell]) -> float:
+    return sum(math.dist(a, b) for a, b in zip(cells, cells[1:], strict=False))
+
+
+#: How near, in each of red, green and blue, two colours must be to be one; what share of a cell must be in a wall's
+#: colour for the cell to be a wall.
+SAME_COLOUR = 24
+MOSTLY = 0.5
+
+
+def _colour_at(picture: Any, scale: float, x: float, y: float) -> tuple[int, int, int] | None:
+    """The middle colour round (x, y), a point in working pixels, in the picture they were shrunk from."""
+    import numpy as np
+
+    image = np.asarray(picture)
+    px, py = int(round(x / scale)), int(round(y / scale))
+    if not (0 <= px < image.shape[1] and 0 <= py < image.shape[0]):
+        return None
+    patch = image[max(0, py - 1):py + 2, max(0, px - 1):px + 2, :3].reshape(-1, 3)
+    return tuple(int(v) for v in np.median(patch, axis=0))
+
+
+def _apart(a: tuple[int, int, int], b: tuple[int, int, int]) -> int:
+    return max(abs(int(p) - int(q)) for p, q in zip(a, b, strict=True))
 
 
 def goes_every_way(ways: dict[str, tuple[float, float]], least: float = 1.0) -> bool:

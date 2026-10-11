@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from core.agency.a_way_through import AWayThrough
@@ -24,7 +25,17 @@ def _blocked(x: float, y: float) -> bool:
 KEYS = {"left": (-SPEED, 0.0), "right": (SPEED, 0.0), "up": (0.0, -SPEED), "down": (0.0, SPEED)}
 
 
-def _went(planner: AWayThrough | None, seconds: float = 20.0, *, by_keys: bool = False) -> tuple[bool, float]:
+def _drawn() -> np.ndarray:
+    """The world as a picture: a dark floor, the walls drawn in grey."""
+    picture = np.zeros((320, 480, 3), dtype=np.uint8)
+    picture[:] = (32, 48, 40)
+    for left, top, right, bottom in WALLS:
+        picture[top:bottom, left:right] = (108, 111, 90)
+    return picture
+
+
+def _went(planner: AWayThrough | None, seconds: float = 20.0, *, by_keys: bool = False,
+          seeing: bool = False) -> tuple[bool, float]:
     x, y, goal = 100.0, 60.0, (100.0, 290.0)
     at, still_since, last = 0.0, 0.0, (x, y)
     while at < seconds:
@@ -45,8 +56,10 @@ def _went(planner: AWayThrough | None, seconds: float = 20.0, *, by_keys: bool =
         if math.dist((x, y), last) > SIZE / 4:
             still_since, last = at, (x, y)
         elif at - still_since > 0.3 and planner is not None:
-            # Stopped under the way held: what is just ahead is a wall.
+            # Stopped under the way held: what is just ahead is a wall; seeing, so is all drawn in its colour.
             planner.stopped(x, y, way, (SIZE, SIZE))
+            if seeing and planner.a_wall_colour(PICTURE, 1.0, x, y, way, (SIZE, SIZE)):
+                planner.walls_seen(PICTURE, 1.0, 480, 320)
             still_since, last = at, (x, y)
         if math.dist((x, y), goal) < 10:
             return True, at
@@ -67,6 +80,22 @@ def test_a_way_through_is_found_round_the_walls_met():
 def test_a_way_through_is_found_steering_by_one_key_at_a_time():
     got, took = _went(AWayThrough(), 30.0, by_keys=True)
     assert got, took
+
+
+PICTURE = _drawn()
+
+
+def test_one_wall_met_shows_every_wall_drawn_like_it_and_the_way_is_found_at_once():
+    _got, bumping = _went(AWayThrough(), 30.0, by_keys=True)
+    got, seeing = _went(AWayThrough(), 30.0, by_keys=True, seeing=True)
+    assert got and seeing < 0.5 * bumping, (bumping, seeing)
+
+
+def test_the_floor_is_not_taken_for_a_wall():
+    planner = AWayThrough()
+    planner.stopped(100.0, 60.0, (120.0, 0.0), (SIZE, SIZE))
+    assert not planner.a_wall_colour(PICTURE, 1.0, 100.0, 60.0, (120.0, 0.0), (SIZE, SIZE))
+    assert not planner.wall_colours
 
 
 def test_with_no_wall_met_the_way_is_straight_and_with_none_there_is_none():

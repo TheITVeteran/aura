@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["read_closer"]
+__all__ = ["read_closer", "written_on"]
 
 #: The most pieces read again in one look.
 CLOSER_AT_MOST = 4
@@ -95,3 +95,29 @@ def read_closer(picture: Any, layout: Sequence[dict[str, Any]],
         if _remembered[seen]:
             region["text"], region["read_closer_from"] = _remembered[seen], text
     return out
+
+
+def written_on(picture: Any, region: dict[str, Any], recognize: Callable[[Any], list[dict[str, Any]]]) -> str:
+    """The words written on a shape, read from the shape alone, enlarged; "" where none are words. LIVE-like
+    2026-10-11 a title's PLAY, small red letters in a red frame, was not read from the whole screen, and the shape it
+    stood in was offered as "the shape at 85% across, 90% down" after five others, none of them it."""
+    pixels = np.asarray(picture)
+    if pixels.ndim != 3 or pixels.size == 0:
+        return ""
+    tall, wide = pixels.shape[:2]
+    try:
+        left, top = max(0, int(float(region["x"]) * wide)), max(0, int(float(region["y"]) * tall))
+        right = min(wide, int((float(region["x"]) + float(region["width"])) * wide) + 1)
+        bottom = min(tall, int((float(region["y"]) + float(region["height"])) * tall) + 1)
+    except (KeyError, TypeError, ValueError):
+        return ""
+    if right - left < 8 or bottom - top < 6:
+        return ""
+    patch = pixels[top:bottom, left:right, :3]
+    seen = ("", np.ascontiguousarray(patch[::4, ::4]).tobytes())
+    if seen not in _remembered:
+        pieces = [" ".join(str(piece.get("text") or "").split()) for piece in recognize(_enlarged(patch))]
+        _remembered[seen] = " ".join(piece for piece in pieces if len(re.sub(r"[^A-Za-z]", "", piece)) >= 2 and _words(piece))
+        while len(_remembered) > REMEMBERED:
+            _remembered.popitem(last=False)
+    return _remembered[seen]
