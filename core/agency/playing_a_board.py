@@ -1,0 +1,261 @@
+"""Playing a board game: knowing its family from the board and its words, reading what it changes, and searching moves.
+
+A board she sees (core/perception/a_board_seen.py) is a position, and a
+family of rules (core/agency/rules_of_a_board.py) makes it a game she can
+search: every move she could make, every answer to it, as deep as the time a
+move is worth allows, each line judged at its end by how it stands. That is how
+a finite game is played well: not argued, searched. What the game says it
+changes is read off its own words and set as the family's variations; where a
+move she makes is one the game will not take, the rules she holds were wrong
+there, and are changed.
+
+Which family it is comes from the board and the words together: pieces of two
+sides on one colour of square, facing each other from their own ends, is
+draughts, whether or not it says so; "plays like checkers" says so outright.
+Nothing here knows a game.
+"""
+from __future__ import annotations
+
+import math
+import re
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from core.agency.rules_of_a_board import Draughts, Move, Position
+
+__all__ = ["Searched", "draughts_said", "is_draughts", "position_of", "search"]
+
+#: What a game's words say of its draughts, each a variation of the family, said where a word begins.
+_SAYS = {
+    "men_forward_only": (re.compile(r"\b(?:regular |ordinary |normal )?(?:pieces|men|checkers) (?:can |may )?(?:only )?"
+                                    r"move (?:only )?forward\b", re.I), True),
+    "must_take": (re.compile(r"\b(?:jump|capture|take)\b.{0,80}\b(?:you(?:'ve| have)? got to|you must|have to|must) "
+                             r"(?:do it|jump|capture|take)", re.I), True),
+    "crowned": (re.compile(r"\b(?:becomes? a king|kinged|crowned|king row)\b", re.I), True),
+    "special_swaps": (re.compile(r"\bswap(?:s)? places? with\b|\bchange places with\b", re.I), True),
+    "special_wins_at_far_row": (re.compile(r"\b(?:get|bring|move) (?:your |the )?\w+(?: \w+)? to (?:the )?(?:king|far|"
+                                           r"last|end) row\b", re.I), True),
+}
+#: Words that name the family outright.
+_NAMED = re.compile(r"\b(?:checkers|draughts|dama)\b", re.I)
+
+
+def draughts_said(words: str, up: str, down: str) -> Draughts:
+    """Draughts as a game's words say it is played: the family's usual rules, changed where its words change them."""
+    rules = Draughts(up=up, down=down)
+    changes = {name: value for name, (said, value) in _SAYS.items() if said.search(words or "")}
+    # Where nothing says men keep to forward, the family's usual way holds; and a special piece moves either way.
+    return rules.with_changes(**changes) if changes else rules
+
+
+def is_draughts(board: Any, words: str = "") -> bool:
+    """Whether a board seen is draughts: its words say so, or two sides stand on one colour of square, each from its own
+    end of a board of six squares a side or more."""
+    if board is None or board.rows < 6 or board.columns < 6:
+        return False
+    sides = [s for s in board.sides]
+    if len(sides) < 2:
+        return False
+    if _NAMED.search(words or ""):
+        return True
+    places = [(r, c) for r in range(board.rows) for c in range(board.columns) if board.cells[r][c]]
+    one_colour = len({(r + c) % 2 for r, c in places}) == 1
+    rows_of = {side: [r for r, c in places if board.cells[r][c].rstrip("+") == side] for side in sides[:2]}
+    apart = all(rows_of[s] for s in sides[:2]) and (
+        max(rows_of[sides[0]]) < min(rows_of[sides[1]]) or max(rows_of[sides[1]]) < min(rows_of[sides[0]]))
+    return one_colour and apart
+
+
+def position_of(board: Any, turn: str) -> tuple[Position, str, str]:
+    """A board seen as a position, and which side moves up the board and which down (by where each side stands)."""
+    rows = [[cell for cell in row] for row in board.cells]
+    sides = list(board.sides)[:2]
+    middle = {s: sum(r for r in range(board.rows) for c in range(board.columns) if rows[r][c].rstrip("+") == s)
+              / max(1, sum(1 for r in range(board.rows) for c in range(board.columns) if rows[r][c].rstrip("+") == s))
+              for s in sides}
+    up = max(sides, key=lambda s: middle[s])
+    down = next(s for s in sides if s != up)
+    return Position.from_rows(rows, turn), up, down
+
+
+@dataclass
+class Searched:
+    move: Move | None
+    worth: float
+    depth: int
+    looked_at: int
+
+
+def search(rules: Draughts, position: Position, *, seconds: float = 1.0, deepest: int = 12) -> Searched:
+    """The best move for the side whose turn it is, searched as deep as ``seconds`` allows (alpha-beta, deepening one
+    move at a time, the best line of the last depth tried first)."""
+    side = position.turn
+    ends_at = time.monotonic() + seconds
+    best = Searched(None, -math.inf, 0, 0)
+    moves = rules.moves(position)
+    if not moves:
+        return best
+    if len(moves) == 1:
+        return Searched(moves[0], 0.0, 0, 1)
+    looked = [0]
+    ordered = list(moves)
+    for depth in range(1, deepest + 1):
+        alpha, chosen, chosen_worth = -math.inf, None, -math.inf
+        try:
+            for move in ordered:
+                worth = -_negamax(rules, rules.after(position, move), depth - 1, -math.inf, -alpha, side, ends_at, looked)
+                if worth > chosen_worth:
+                    chosen, chosen_worth = move, worth
+                alpha = max(alpha, worth)
+        except TimeoutError:
+            break
+        best = Searched(chosen, chosen_worth, depth, looked[0])
+        ordered = [chosen, *(m for m in ordered if m != chosen)]
+        if abs(chosen_worth) >= _WON:
+            break
+    return best
+
+
+_WON = 1000.0
+
+
+def _negamax(rules: Draughts, position: Position, depth: int, alpha: float, beta: float, root: str, ends_at: float,
+             looked: list[int]) -> float:
+    looked[0] += 1
+    if looked[0] % 256 == 0 and time.monotonic() > ends_at:
+        raise TimeoutError
+    winner = rules.winner(position)
+    if winner:
+        return (_WON + depth) if winner == position.turn else -(_WON + depth)
+    if depth <= 0:
+        return rules.worth(position, position.turn)
+    best = -math.inf
+    for move in rules.moves(position):
+        worth = -_negamax(rules, rules.after(position, move), depth - 1, -beta, -alpha, root, ends_at, looked)
+        if worth > best:
+            best = worth
+        alpha = max(alpha, worth)
+        if alpha >= beta:
+            break
+    return best
+
+
+#: How long the board must stand still before a turn is taken to have ended, and the longest a move is waited on.
+STILL_S = 0.8
+MOVE_SHOWS_S = 2.5
+#: How long a move is searched for.
+THINKS_S = 1.2
+
+
+def a_square_named(position: Position, square: tuple[int, int]) -> str:
+    """A square as a board's players name it: a column letter from the left, a row number from the bottom ("c3")."""
+    row, column = square
+    return f"{'abcdefghijklmnopqrstuvwxyz'[column]}{position.rows - row}"
+
+
+def a_move_said(position: Position, move: Move) -> str:
+    """A move as a watcher reads it: "c3 to d4", "c3 takes on e5", "swaps c1 with d2"."""
+    if len(move) == 3 and move[2] == move[0]:
+        return f"swapping {a_square_named(position, move[0])} with {a_square_named(position, move[1])}"
+    names = [a_square_named(position, square) for square in move]
+    if abs(move[1][0] - move[0][0]) == 2:
+        return f"{names[0]} takes, to " + ", then ".join(names[1:])
+    return f"{names[0]} to {names[-1]}"
+
+
+async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say: Any = None) -> dict[str, Any]:
+    """Play the board in front of her for ``seconds``: wait for her turn, search the move, make it by clicking its
+    squares, see it made, and wait for the answer. ``look`` gives a picture and its time; ``hands.click(x, y)`` clicks
+    at shares of it. What came of it, for whoever handed the game over."""
+    import asyncio
+
+    from core.perception.a_board_seen import a_board_in
+
+    began = time.monotonic()
+    tell = say or (lambda _line: None)
+    sides: dict[str, Any] | None = None
+    rules: Draughts | None = None
+    mine = ""
+    refused: set[Move] = set()
+    made = 0
+    last_seen, still_since = "", time.monotonic()
+    while time.monotonic() - began < seconds:
+        seen = await look()
+        if seen is None:
+            return {"moves": made, "ended": "the picture could not be taken"}
+        picture = seen[0]
+        board = a_board_in(picture, sides)
+        if board is None or not is_draughts(board, words):
+            return {"moves": made, "ended": "no board is in front of her"}
+        sides = sides or board.sides
+        said = board.says()
+        if said != last_seen:
+            last_seen, still_since = said, time.monotonic()
+            await asyncio.sleep(0.1)
+            continue
+        if time.monotonic() - still_since < STILL_S:
+            await asyncio.sleep(0.1)
+            continue
+        position, up, down = position_of(board, turn="")
+        if rules is None:
+            mine = up
+            rules = draughts_said(words, up, down)
+            tell(_the_rules_said(rules))
+        position = Position(position.cells, mine)
+        winner = rules.winner(position)
+        if winner:
+            return {"moves": made, "ended": "won" if winner == mine else "lost", "board": said}
+        found = search(rules, position, seconds=THINKS_S)
+        move = found.move
+        if move is None or move in refused:
+            options = [m for m in rules.moves(position) if m not in refused]
+            move = options[0] if options else None
+        if move is None:
+            return {"moves": made, "ended": "no move is left to her", "board": said}
+        tell(f"Moving {a_move_said(position, move)}" + (f", {found.depth} moves ahead." if found.depth > 1 else "."))
+        for square in (move[:2] if len(move) == 3 and move[2] == move[0] else move):
+            x, y = board.centre(*square)
+            await hands.click(x / picture.shape[1], y / picture.shape[0])
+            await asyncio.sleep(0.35)
+        expected = rules.after(position, move)
+        if not await _shown(look, sides, expected, mine):
+            # The game would not take it: the rules she holds allowed a move it does not.
+            refused.add(move)
+            tell("The game wouldn't take that move; I'll go by what it takes.")
+            continue
+        made += 1
+        last_seen, still_since = "", time.monotonic()
+    return {"moves": made, "ended": "out of time"}
+
+
+async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
+    """Whether the board comes to show the move she made: her pieces where the move leaves them."""
+    import asyncio
+
+    from core.perception.a_board_seen import a_board_in
+
+    wanted = {square for square in expected.pieces(mine)}
+    ends_at = time.monotonic() + MOVE_SHOWS_S
+    while time.monotonic() < ends_at:
+        seen = await look()
+        if seen is None:
+            return False
+        board = a_board_in(seen[0], sides)
+        if board is not None:
+            here = {(r, c) for r in range(board.rows) for c in range(board.columns) if board.cells[r][c].rstrip("+") == mine}
+            if here == wanted:
+                return True
+        await asyncio.sleep(0.15)
+    return False
+
+
+def _the_rules_said(rules: Draughts) -> str:
+    parts = ["men go forward only" if rules.men_forward_only else "men go either way"]
+    if rules.must_take:
+        parts.append("a jump has to be made")
+    if rules.special_swaps:
+        parts.append("the special piece can swap with one of its own beside it")
+    if rules.special_wins_at_far_row:
+        parts.append("bringing it to the far row wins")
+    return "It's draughts, played as its words say: " + "; ".join(parts) + ". I'll search my moves."

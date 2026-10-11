@@ -72,6 +72,9 @@ LEAVE_A_MOVING_MENU_S = 20.0
 #: The longest one stretch of play runs before the pursuit gets a look.
 STRETCH_S = 300.0
 
+#: How often what the page draws is looked at for a board of two sides in turns, in seconds.
+BOARD_LOOKED_FOR_EVERY_S = 3.0
+
 #: How long a showing is watched for places lit in turn, and how often one screen's showing is followed.
 WATCH_A_SHOWING_S = 6.0
 
@@ -531,6 +534,9 @@ class PlayingAsItHappens:
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
         if not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
+        # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py).
+        if await _played_a_board(self, now):
+            return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
         said = " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")])
@@ -758,6 +764,32 @@ def _without_labels(said: str, labels: set) -> str:
     for label in sorted(labels, key=len, reverse=True):
         said = re.sub(rf"(?<!\w){re.escape(label)}(?!\w)", "\n", said)
     return said
+
+
+async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
+    """Where what the page draws is a board of two sides in turns, it is played by search, its rules read from what the
+    place has said (core/agency/playing_a_board.py); whether it was. Looked for every few seconds, not every look."""
+    from core.agency.playing_a_board import is_draughts, play_a_board
+    from core.perception.a_board_seen import a_board_in
+
+    if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
+        return False
+    reflexes.keep["board_looked_for_at"] = now
+    seen = await reflexes.look()
+    words = " ".join([*reflexes.words, str(reflexes.keep.get("counsel") or "")])
+    board = a_board_in(seen[0]) if seen is not None else None
+    if board is None or not is_draughts(board, words):
+        return False
+    logger.info("a board of two sides in turns: playing it by search")
+    stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
+                                 say=_said_while_playing)
+    logger.info("a board played: %s", stretch)
+    reflexes.stretches.append({"pictures": stretch.get("moves", 0), "gains": int(stretch.get("ended") == "won"),
+                               "losses": int(stretch.get("ended") == "lost"), "seconds": time.monotonic() - now,
+                               "ended": stretch.get("ended"), "settled": stretch.get("ended")})
+    if stretch.get("ended") in ("won", "lost"):
+        reflexes.over_because = f"the board game ended: {stretch['ended']}"
+    return True
 
 
 def _lines_of(regions: list[dict[str, Any]]) -> list[str]:

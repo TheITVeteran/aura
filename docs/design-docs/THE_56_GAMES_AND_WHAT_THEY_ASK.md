@@ -42,6 +42,7 @@ if any of them is not called from her live play or has no test.
 | what a press lights | which place each control lights when pressed, learned from her own presses and turned round to do again a thing shown there | `core/agency/what_a_press_lights.py` |
 | remember what was shown | remember what each place showed when turned over, and turn together two that showed alike | `core/agency/things_that_go_together.py` |
 | a board in turns | a board, moves in turns, someone on the other side | `core/skills/screen_pursuit.py` with `core/agency/looking_ahead.py` |
+| a board seen and searched | a board drawn with no writing on it: its squares and pieces seen, its family known from the board and its words, its rules as its words change them, every move searched | `core/agency/playing_a_board.py` with `core/perception/a_board_seen.py` and `core/agency/rules_of_a_board.py` |
 | a grid's rule | a grid whose rule is found by moving in it | `core/skills/screen_pursuit.py` (her rule of the world) |
 | type | type what a screen asks for: an answer, a name, a question | `core/agency/typing_what_is_asked.py` |
 | make | make something and say what | `core/skills/sovereign_browser_drawing.py` (MADE) |
