@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Launch</title></head><body>
+<script src="world.js"></script>
+<script>
+// A hamster swings back and forth on a rope. A click lets go of it at that moment: let go as it lines up with the pillow
+// it flies far, let go elsewhere and it flops short. In the air a held press glides, slowing its fall while the glide
+// meter lasts; the meter fills again slowly when the press is let go. How far it went is the score of the throw; five
+// throws make a game. As KND: Flight of the Hamsters ("When the hamster lines up with the pillow, click again to launch
+// the hamster. While flying, click and hold your mouse button to use Glide Power! The Glide Meter refills slowly").
+const PILLOW = 0.15, THROWS = 5;
+const game = {
+  title: "LAUNCH", lives: 1,
+  rules: ["When the hamster lines up with the pillow, click to launch it.", "While it flies, click and hold to glide.",
+          "The glide meter refills slowly.", "Five throws: fly as far as you can."],
+  reset(world) { this.throws = 0; this.best = 0; world.distances = []; this.ready(); },
+  ready() { this.state = "swing"; this.t = 0; this.x = 0; this.meter = 1; this.flown = 0; },
+  click() { if (this.state === "swing") this.letGo(); },
+  letGo() {
+    const angle = Math.sin(this.t * 2.4), off = Math.abs(angle - PILLOW);
+    const power = Math.max(0.15, 1 - off * 2.2);
+    this.state = "fly"; this.vx = 140 + 260 * power; this.vy = -(120 + 220 * power); this.y = 150; this.x = 120;
+  },
+  step(dt, world) {
+    if (this.state === "swing") { this.t += dt; return; }
+    if (this.state === "landed") { this.wait -= dt; if (this.wait <= 0) { this.throws += 1; if (this.throws >= THROWS) world.over("throws done"); else this.ready(); } return; }
+    const gliding = world.held.has("Mouse") && this.meter > 0 && this.vy > 0;
+    this.meter = gliding ? Math.max(0, this.meter - 0.5 * dt) : Math.min(1, this.meter + 0.08 * dt);
+    this.vy += (gliding ? 60 : 300) * dt;
+    if (gliding) this.vy = Math.min(this.vy, 50);
+    this.x += this.vx * dt; this.y += this.vy * dt; this.flown += this.vx * dt;
+    if (this.y >= 280) {
+      this.state = "landed"; this.wait = 1.0;
+      const metres = Math.round(this.flown / 10); world.distances.push(metres); world.score += metres;
+    }
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#8fd0ff"; ctx.fillRect(0, 0, 480, 320); ctx.fillStyle = "#6bb04a"; ctx.fillRect(0, 290, 480, 30);
+  },
+  draw(ctx) {
+    if (this.state === "swing") {
+      const angle = Math.sin(this.t * 2.4), hx = 120 + Math.sin(angle) * 90, hy = 60 + Math.cos(angle) * 90;
+      ctx.strokeStyle = "#5a3a1a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(120, 60); ctx.lineTo(hx, hy); ctx.stroke();
+      const px = 120 + Math.sin(PILLOW) * 90, py = 60 + Math.cos(PILLOW) * 90;
+      ctx.fillStyle = "#f5f0ff"; ctx.fillRect(px - 16, py + 12, 32, 10);
+      ctx.fillStyle = "#c98a3a"; ctx.beginPath(); ctx.arc(hx, hy, 9, 0, 6.3); ctx.fill();
+    } else {
+      const sx = Math.min(this.x, 200);
+      ctx.fillStyle = "#c98a3a"; ctx.beginPath(); ctx.arc(sx, this.y, 9, 0, 6.3); ctx.fill();
+      ctx.fillStyle = "#4a6a2a"; for (let m = -((this.x - sx) % 60); m < 480; m += 60) ctx.fillRect(m, 286, 3, 8);
+    }
+    ctx.fillStyle = "#333"; ctx.fillRect(340, 30, 120, 10); ctx.fillStyle = "#3cc4f0"; ctx.fillRect(340, 30, 120 * this.meter, 10);
+  },
+  readouts(ctx, world) {
+    world.text("DISTANCE " + world.score, 12, 24, 16, "#123", "left");
+    world.text("THROW " + Math.min(THROWS, this.throws + 1) + " OF " + THROWS, 240, 24, 16, "#123");
+  },
+};
+playWorld(game);
+</script></body></html>

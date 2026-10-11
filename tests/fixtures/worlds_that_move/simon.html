@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Simon</title></head><body>
+<script src="world.js"></script>
+<script>
+// A book shows arrows one at a time, then waits. Pressing the same arrow keys in the same order is a point, and the next
+// spell is one arrow longer; a wrong key costs a life and the spell is shown again. Nothing moves while it waits: the
+// world is a turn taken, not a race. As Billy & Mandy: Zap to It! (the arrows in the book) and Regular Show: Dance of Doom.
+const ARROWS = ["ArrowUp", "ArrowRight", "ArrowDown", "ArrowLeft"], SHOWN_S = 0.6, GAP_S = 0.25;
+const game = {
+  title: "SPELLS", lives: 3,
+  rules: ["Watch the arrows in the book.", "Then press the same arrow keys in the same order."],
+  reset(world) { this.spell = []; this.grow(world); world.copied = 0; },
+  grow(world) { this.spell.push(Math.floor(world.rand() * 4)); this.show(); },
+  show() { this.showing = 0; this.clock = -0.6; this.done = []; this.lit = -1; this.flash = 0; },
+  pressed(key, world) {
+    if (this.showing !== null || world.state !== "play") return;
+    const at = ARROWS.indexOf(key);
+    if (at < 0) return;
+    this.lit = at; this.flash = 0.25;
+    if (at === this.spell[this.done.length]) {
+      this.done.push(at);
+      if (this.done.length === this.spell.length) { world.score += 1; world.copied += 1; this.grow(world); }
+    } else { world.lose(); if (world.state === "play") this.show(); }
+  },
+  step(dt, world) {
+    this.flash -= dt;
+    if (this.showing === null) return;
+    this.clock += dt;
+    const slot = SHOWN_S + GAP_S;
+    if (this.clock < 0) { this.lit = -1; return; }
+    const i = Math.floor(this.clock / slot);
+    if (i >= this.spell.length) { this.showing = null; this.lit = -1; return; }
+    this.lit = this.clock - i * slot < SHOWN_S ? this.spell[i] : -1;
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#2b1d3a"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#e9dcc0"; ctx.fillRect(120, 60, 240, 200); ctx.fillStyle = "#7a5a3a"; ctx.fillRect(238, 60, 4, 200);
+  },
+  draw(ctx) {
+    const at = { 0: [240, 100], 1: [300, 160], 2: [240, 220], 3: [180, 160] };
+    for (let i = 0; i < 4; i++) {
+      const on = this.lit === i && (this.showing !== null || this.flash > 0);
+      ctx.fillStyle = on ? "#ff3b3b" : "#cbbd9e";
+      ctx.save(); ctx.translate(at[i][0], at[i][1]); ctx.rotate((i * Math.PI) / 2);
+      ctx.beginPath(); ctx.moveTo(0, -24); ctx.lineTo(20, 4); ctx.lineTo(7, 4); ctx.lineTo(7, 22); ctx.lineTo(-7, 22); ctx.lineTo(-7, 4); ctx.lineTo(-20, 4);
+      ctx.fill(); ctx.restore();
+    }
+  },
+  readouts(ctx, world) {
+    world.text("SPELLS " + world.score, 12, 22, 16, "#fff", "left");
+    world.text(this.showing === null ? "YOUR TURN" : "WATCH", 240, 300, 16, "#ffd84a");
+    world.text("LIVES " + world.lives, 468, 22, 16, "#fff", "right");
+  },
+};
+addEventListener("keydown", (e) => { if (!e.repeat) game.pressed({ w: "ArrowUp", s: "ArrowDown", a: "ArrowLeft", d: "ArrowRight" }[e.key] || e.key, __world); });
+playWorld(game);
+</script></body></html>

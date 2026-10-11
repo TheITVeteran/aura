@@ -1,0 +1,70 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Bump</title></head><body>
+<script src="world.js"></script>
+<script>
+// A car that turns and drives: up goes forward the way it faces, down backs up, left and right turn it. It does not
+// slide sideways. Two coloured cars stand about; bumped, they roll the way they were pushed and slow down. A car that
+// stops in the space of its own colour is parked, a point, and another comes. Thirty bumps or the time running out ends
+// it. As Cow and Chicken: Ballet Parking ("Forward Reverse Turn left Turn right. Bump into the cars ... until they reach
+// the parking spot that matches their color. Both the time and the number of hits are limited!").
+const R = 12, COLOURS = ["#e84a4a", "#3d8ff0"];
+const game = {
+  title: "BUMP",
+  rules: ["Up drives forward, down backs up, left and right turn.", "Bump the cars into the space that matches their color.",
+          "The time and the number of bumps are limited!"],
+  reset(world) {
+    this.me = { x: 240, y: 280, a: -Math.PI / 2, v: 0 };
+    this.spots = [{ x: 30, y: 50, w: 54, h: 54, c: 0 }, { x: 396, y: 50, w: 54, h: 54, c: 1 }];
+    this.cars = [0, 1].map((c) => this.car(world, c));
+    this.left = 120; this.bumps = 0; world.bumps = 0; world.parked = 0;
+  },
+  car(world, c) { return { x: 150 + world.rand() * 180, y: 140 + world.rand() * 100, vx: 0, vy: 0, c, touching: false }; },
+  step(dt, world) {
+    this.left -= dt;
+    if (this.left <= 0) { world.over("time"); return; }
+    const me = this.me;
+    if (world.held.has("ArrowLeft")) me.a -= 2.8 * dt;
+    if (world.held.has("ArrowRight")) me.a += 2.8 * dt;
+    if (world.held.has("ArrowUp")) me.v = Math.min(150, me.v + 260 * dt);
+    else if (world.held.has("ArrowDown")) me.v = Math.max(-90, me.v - 260 * dt);
+    else me.v *= Math.exp(-3 * dt);
+    me.x += Math.cos(me.a) * me.v * dt; me.y += Math.sin(me.a) * me.v * dt;
+    me.x = Math.max(R, Math.min(world.W - R, me.x)); me.y = Math.max(36 + R, Math.min(world.H - R, me.y));
+    for (const car of this.cars) {
+      const dx = car.x - me.x, dy = car.y - me.y, d = Math.hypot(dx, dy);
+      if (d < 2 * R && d > 0) {
+        const nx = dx / d, ny = dy / d, along = Math.cos(me.a) * me.v * nx + Math.sin(me.a) * me.v * ny;
+        car.vx += nx * Math.max(60, along * 1.6); car.vy += ny * Math.max(60, along * 1.6);
+        car.x = me.x + nx * 2 * R; car.y = me.y + ny * 2 * R; me.v *= 0.3;
+        if (!car.touching) { this.bumps += 1; world.bumps = this.bumps; car.touching = true; }
+      } else if (d > 2 * R + 4) car.touching = false;
+      car.x += car.vx * dt; car.y += car.vy * dt;
+      const slow = Math.exp(-1.6 * dt); car.vx *= slow; car.vy *= slow;
+      if (car.x < R || car.x > world.W - R) { car.vx = -car.vx * 0.6; car.x = Math.max(R, Math.min(world.W - R, car.x)); }
+      if (car.y < 36 + R || car.y > world.H - R) { car.vy = -car.vy * 0.6; car.y = Math.max(36 + R, Math.min(world.H - R, car.y)); }
+      const spot = this.spots[car.c];
+      if (car.x > spot.x && car.x < spot.x + spot.w && car.y > spot.y && car.y < spot.y + spot.h && Math.hypot(car.vx, car.vy) < 25) {
+        world.score += 1; world.parked += 1; Object.assign(car, this.car(world, car.c));
+      }
+    }
+    if (this.bumps >= 30 && world.state === "play") world.over("no bumps left");
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#555b60"; ctx.fillRect(0, 0, 480, 320);
+    if (!this.spots) return;
+    for (const s of this.spots) { ctx.strokeStyle = COLOURS[s.c]; ctx.lineWidth = 4; ctx.strokeRect(s.x, s.y, s.w, s.h); }
+  },
+  draw(ctx) {
+    for (const car of this.cars) { ctx.fillStyle = COLOURS[car.c]; ctx.beginPath(); ctx.arc(car.x, car.y, R, 0, 6.3); ctx.fill(); }
+    const me = this.me;
+    ctx.save(); ctx.translate(me.x, me.y); ctx.rotate(me.a);
+    ctx.fillStyle = "#f0e04a"; ctx.fillRect(-R, -R + 3, 2 * R, 2 * R - 6); ctx.fillStyle = "#222"; ctx.fillRect(R - 6, -4, 6, 8);
+    ctx.restore();
+  },
+  readouts(ctx, world) {
+    world.text("PARKED " + world.score, 12, 24, 16, "#fff", "left");
+    world.text("BUMPS LEFT " + (30 - this.bumps), 240, 24, 16, "#fff");
+    world.text("TIME " + Math.ceil(this.left), 468, 24, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

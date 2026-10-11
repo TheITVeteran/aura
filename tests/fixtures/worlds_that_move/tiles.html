@@ -1,0 +1,70 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Tiles</title></head><body>
+<script src="world.js"></script>
+<script>
+// A well of squares. A block of two coloured tiles, one over the other, comes down from the top. Left and right move it,
+// down held drops it faster, up swaps its two tiles. Where it lands, three or more of one colour in a line, across, down
+// or slanting, clear, each a point, and what was above falls into the gap, which can clear more. A block that cannot come
+// in at the top ends the game. As Sonic Boom: Link 'N Smash ("Use the Left and Right Arrow Key to move the Tile Block.
+// Press and hold the Down Arrow Key to drop the Tile Block faster. Press the Up Arrow Key to change the order of the
+// Tiles in the Tile Block." ... "GAME OVER - BLOCKED DROP").
+const COLS = 6, ROWS = 12, S = 22, X0 = 174, Y0 = 34, COLOURS = ["#e84a4a", "#3d8ff0", "#f0c93d", "#3cc45a"];
+const game = {
+  title: "TILES", lives: 1,
+  rules: ["Use the Left and Right arrow keys to move the tile block.", "Hold the Down arrow key to drop it faster.",
+          "Press the Up arrow key to change the order of the tiles.", "Line up three tiles of one color to clear them."],
+  reset(world) { this.well = Array.from({ length: ROWS }, () => Array(COLS).fill(-1)); this.fall = 0; world.cleared = 0; this.spawn(world); },
+  spawn(world) {
+    this.block = { c: 2, r: 0, top: Math.floor(world.rand() * 4), bottom: Math.floor(world.rand() * 4) };
+    if (this.well[0][2] >= 0 || this.well[1][2] >= 0) world.over("blocked drop");
+  },
+  free(c, r) { return c >= 0 && c < COLS && r + 1 < ROWS && this.well[r][c] < 0 && this.well[r + 1][c] < 0; },
+  key(k) {
+    const b = this.block;
+    if (!b || __world.state !== "play") return;
+    if (k === "ArrowLeft" && this.free(b.c - 1, b.r)) b.c -= 1;
+    if (k === "ArrowRight" && this.free(b.c + 1, b.r)) b.c += 1;
+    if (k === "ArrowUp") [b.top, b.bottom] = [b.bottom, b.top];
+  },
+  step(dt, world) {
+    this.fall += dt * (world.held.has("ArrowDown") ? 12 : 1.6);
+    while (this.fall >= 1 && world.state === "play") {
+      this.fall -= 1;
+      const b = this.block;
+      if (this.free(b.c, b.r + 1)) { b.r += 1; continue; }
+      this.well[b.r][b.c] = b.top; this.well[b.r + 1][b.c] = b.bottom;
+      this.settle(world); this.spawn(world);
+    }
+  },
+  settle(world) {
+    for (;;) {
+      const gone = new Set();
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+        const v = this.well[r][c];
+        if (v < 0) continue;
+        for (const [dr, dc] of [[0, 1], [1, 0], [1, 1], [1, -1]]) {
+          const run = [[r, c]];
+          while (true) { const [lr, lc] = run[run.length - 1], nr = lr + dr, nc = lc + dc;
+            if (nr < ROWS && nc >= 0 && nc < COLS && this.well[nr][nc] === v) run.push([nr, nc]); else break; }
+          if (run.length >= 3) for (const [a, b] of run) gone.add(a * COLS + b);
+        }
+      }
+      if (!gone.size) return;
+      for (const k of gone) this.well[Math.floor(k / COLS)][k % COLS] = -1;
+      world.score += gone.size; world.cleared += gone.size;
+      for (let c = 0; c < COLS; c++) {
+        const kept = []; for (let r = ROWS - 1; r >= 0; r--) if (this.well[r][c] >= 0) kept.push(this.well[r][c]);
+        for (let r = ROWS - 1, i = 0; r >= 0; r--, i++) this.well[r][c] = i < kept.length ? kept[i] : -1;
+      }
+    }
+  },
+  backdrop(ctx) { ctx.fillStyle = "#10182a"; ctx.fillRect(0, 0, 480, 320); ctx.fillStyle = "#26324a"; ctx.fillRect(X0, Y0, COLS * S, ROWS * S); },
+  draw(ctx) {
+    const tile = (c, r, v) => { ctx.fillStyle = COLOURS[v]; ctx.fillRect(X0 + c * S + 1, Y0 + r * S + 1, S - 2, S - 2); };
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (this.well[r][c] >= 0) tile(c, r, this.well[r][c]);
+    if (this.block) { tile(this.block.c, this.block.r, this.block.top); tile(this.block.c, this.block.r + 1, this.block.bottom); }
+  },
+  readouts(ctx, world) { world.text("SCORE " + world.score, 12, 24, 16, "#fff", "left"); },
+};
+addEventListener("keydown", (e) => game.key({ w: "ArrowUp", a: "ArrowLeft", d: "ArrowRight" }[e.key] || e.key));
+playWorld(game);
+</script></body></html>

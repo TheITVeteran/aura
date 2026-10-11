@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Pairs</title></head><body>
+<script src="world.js"></script>
+<script>
+// Sixteen cards face down. A click turns one over; a second click turns another. Two alike stay up and are a point;
+// two unlike turn back over after a moment. All eight pairs found is a win. Nothing moves until she clicks.
+const SHAPES = ["#e84a4a", "#3d8ff0", "#f0c93d", "#3cc45a", "#b05ad6", "#f08a3d", "#20c0c0", "#f060a8"];
+const game = {
+  title: "PAIRS", lives: 1,
+  rules: ["Click a card to turn it over.", "Find the two cards that match.", "Find all the pairs to win."],
+  reset(world) {
+    const deck = [];
+    for (let i = 0; i < 8; i++) deck.push(i, i);
+    for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(world.rand() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    this.cards = deck.map((kind, i) => ({ kind, up: false, kept: false, x: 96 + (i % 4) * 76, y: 40 + Math.floor(i / 4) * 68 }));
+    this.open = []; this.back = 0; world.turns = 0;
+  },
+  click(x, y) {
+    if (this.back > 0 || this.open.length >= 2) return;
+    for (const c of this.cards) {
+      if (!c.up && !c.kept && x >= c.x && x <= c.x + 60 && y >= c.y && y <= c.y + 56) {
+        c.up = true; this.open.push(c);
+        if (this.open.length === 2) {
+          __world.turns += 1;
+          const [a, b] = this.open;
+          if (a.kind === b.kind) { a.kept = b.kept = true; this.open = []; __world.score += 1; }
+          else this.back = 0.9;
+        }
+        return;
+      }
+    }
+  },
+  step(dt, world) {
+    if (this.back > 0) { this.back -= dt; if (this.back <= 0) { for (const c of this.open) c.up = false; this.open = []; } }
+    if (world.score >= 8 && world.state === "play") world.over("won");
+  },
+  backdrop(ctx) { ctx.fillStyle = "#16324a"; ctx.fillRect(0, 0, 480, 320); },
+  draw(ctx) {
+    for (const c of this.cards) {
+      ctx.fillStyle = c.up || c.kept ? "#f4f4f4" : "#3a6fa0"; ctx.fillRect(c.x, c.y, 60, 56);
+      if (c.up || c.kept) { ctx.fillStyle = SHAPES[c.kind]; ctx.beginPath(); ctx.arc(c.x + 30, c.y + 28, 16, 0, 6.3); ctx.fill(); }
+    }
+  },
+  readouts(ctx, world) {
+    world.text("PAIRS " + world.score, 12, 22, 16, "#fff", "left");
+    world.text("TURNS " + world.turns, 468, 22, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

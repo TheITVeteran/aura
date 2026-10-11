@@ -1,0 +1,80 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Putt</title></head><body>
+<script src="world.js"></script>
+<script>
+// A ball, a hole and a green with walls round it. A press, dragged the way the ball should go and let go, sends it:
+// the farther the drag, the harder. It rolls, slows on the grass and comes off the walls. Over the hole slowly enough
+// it drops; too fast, it rolls over. Six strokes a hole; a hole not sunk in six costs a life.
+// As Cartoon Cove Mini Golf, Wilt's Wash N' Swoosh ("click and hold the mouse button to aim, then release to shoot")
+// and Clone-A Doodle Doo ("drag the mouse in the direction you would like your fence to go; release to launch").
+const R = 6, CUP = 9, MOST = 6, FRICTION = 1.1, ROLLS_UNDER = 7;
+const game = {
+  title: "PUTT", lives: 3,
+  rules: ["Press on the ball, drag the way you want it to go, and let go to putt.", "The farther you drag, the harder you hit.",
+          "Sink the ball in the hole. Six strokes a hole."],
+  reset(world) { this.number = 0; world.strokes = 0; world.sunk = 0; this.next(world); },
+  next(world) {
+    this.number += 1; this.strokes = 0; this.pressed = null; this.moving = false;
+    const left = world.rand() < 0.5;
+    this.ball = { x: left ? 70 : 410, y: 80 + world.rand() * 180, vx: 0, vy: 0 };
+    this.hole = { x: left ? 330 + world.rand() * 100 : 50 + world.rand() * 100, y: 70 + world.rand() * 200 };
+    // From the second hole on, a block stands between the ball and the hole.
+    this.block = this.number > 1 ? { x: 215, y: 60 + world.rand() * 120, w: 50, h: 90 } : null;
+  },
+  click(x, y) { if (!this.moving) this.pressed = { x, y }; },
+  step(dt, world) {
+    if (this.pressed && !world.held.has("Mouse")) {
+      const dx = world.pointer.x - this.pressed.x, dy = world.pointer.y - this.pressed.y;
+      this.pressed = null;
+      if (Math.hypot(dx, dy) < 4) return;
+      const speed = Math.min(560, Math.hypot(dx, dy) * 3.2), d = Math.hypot(dx, dy);
+      this.ball.vx = (dx / d) * speed; this.ball.vy = (dy / d) * speed;
+      this.moving = true; this.strokes += 1; world.strokes += 1;
+    }
+    if (!this.moving) return;
+    const b = this.ball;
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    const slow = Math.exp(-FRICTION * dt);
+    b.vx *= slow; b.vy *= slow;
+    const s = Math.hypot(b.vx, b.vy);
+    if (s > 0) { const less = Math.max(0, s - 30 * dt) / s; b.vx *= less; b.vy *= less; }
+    if (b.x < 20 + R) { b.x = 20 + R; b.vx = Math.abs(b.vx) * 0.8; }
+    if (b.x > world.W - 20 - R) { b.x = world.W - 20 - R; b.vx = -Math.abs(b.vx) * 0.8; }
+    if (b.y < 44 + R) { b.y = 44 + R; b.vy = Math.abs(b.vy) * 0.8; }
+    if (b.y > world.H - 20 - R) { b.y = world.H - 20 - R; b.vy = -Math.abs(b.vy) * 0.8; }
+    const k = this.block;
+    if (k && b.x > k.x - R && b.x < k.x + k.w + R && b.y > k.y - R && b.y < k.y + k.h + R) {
+      const fromSide = Math.min(Math.abs(b.x - (k.x - R)), Math.abs(b.x - (k.x + k.w + R)));
+      const fromEnd = Math.min(Math.abs(b.y - (k.y - R)), Math.abs(b.y - (k.y + k.h + R)));
+      if (fromSide < fromEnd) { b.x = b.x < k.x + k.w / 2 ? k.x - R : k.x + k.w + R; b.vx = -b.vx * 0.8; }
+      else { b.y = b.y < k.y + k.h / 2 ? k.y - R : k.y + k.h + R; b.vy = -b.vy * 0.8; }
+    }
+    if (Math.hypot(b.x - this.hole.x, b.y - this.hole.y) < CUP && Math.hypot(b.vx, b.vy) < 260) {
+      world.score += 1; world.sunk += 1; this.next(world); return;
+    }
+    if (Math.hypot(b.vx, b.vy) < ROLLS_UNDER) {
+      b.vx = 0; b.vy = 0; this.moving = false;
+      if (this.strokes >= MOST) { world.lose(); if (world.state === "play") this.next(world); }
+    }
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#6b4a2a"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#3f9b45"; ctx.fillRect(20, 44, 440, 256);
+  },
+  draw(ctx, world) {
+    if (this.block) { ctx.fillStyle = "#8a6a44"; ctx.fillRect(this.block.x, this.block.y, this.block.w, this.block.h); }
+    ctx.fillStyle = "#0d1a0d"; ctx.beginPath(); ctx.arc(this.hole.x, this.hole.y, CUP, 0, 6.3); ctx.fill();
+    ctx.fillStyle = "#d33"; ctx.fillRect(this.hole.x - 1, this.hole.y - 30, 2, 30); ctx.fillRect(this.hole.x, this.hole.y - 30, 12, 8);
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(this.ball.x, this.ball.y, R, 0, 6.3); ctx.fill();
+    if (this.pressed) {
+      ctx.strokeStyle = "#ffef7a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(this.ball.x, this.ball.y);
+      ctx.lineTo(this.ball.x + (world.pointer.x - this.pressed.x), this.ball.y + (world.pointer.y - this.pressed.y)); ctx.stroke();
+    }
+  },
+  readouts(ctx, world) {
+    world.text("HOLE " + this.number, 12, 28, 16, "#fff", "left");
+    world.text("STROKES " + this.strokes, 240, 28, 16, "#fff");
+    world.text("LIVES " + world.lives, 468, 28, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

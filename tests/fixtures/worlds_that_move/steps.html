@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Steps</title></head><body>
+<script src="world.js"></script>
+<script>
+// Seen from the side: a walker, two boxes, a wall too high to jump, and a flag behind it. The walker jumps less than the
+// wall is high. Down beside a box picks it up and carries it overhead; down again puts it down in front, where it falls
+// onto the ground or onto another box. A box put by the wall is a step: from on top of it the wall can be jumped. The
+// flag reached is a point and the next wall is higher, so it wants two boxes, one on the other. As Gumball: Blind Fooled
+// ("Stand next to a box and press [S] to pick it up. Press [S] again to drop the box. Move boxes here to make steps").
+const G = 760, JUMP = 280, BOX = 24, FLOOR = 290;
+const game = {
+  title: "STEPS",
+  rules: ["Arrow keys to walk, up to jump.", "Stand next to a box and press DOWN to pick it up.", "Press DOWN again to put it down.",
+          "Move boxes next to the wall to make steps, then get to the flag."],
+  reset(world) { this.level = 0; world.flags = 0; this.next(world); },
+  next(world) {
+    this.level += 1; this.left = 120;
+    this.wallH = this.level === 1 ? 60 : 84;
+    this.wall = { x: 340, w: 26 };
+    this.me = { x: 40, y: FLOOR - 26, w: 16, h: 26, vy: 0, on: true, carrying: null, facing: 1 };
+    this.boxes = [{ x: 120 + world.rand() * 40, y: FLOOR - BOX }, { x: 220 + world.rand() * 50, y: FLOOR - BOX }];
+    this.downWas = false;
+  },
+  standing(x, w, without) {
+    // The highest top under a span: the ground, the wall's top or a box's top, leaving out the box being put down.
+    let top = FLOOR;
+    for (const b of this.boxes) if (b !== this.me.carrying && b !== without && x + w > b.x && x < b.x + BOX) top = Math.min(top, b.y);
+    if (x + w > this.wall.x && x < this.wall.x + this.wall.w) top = Math.min(top, FLOOR - this.wallH);
+    return top;
+  },
+  step(dt, world) {
+    this.left -= dt;
+    if (this.left <= 0) { world.over("time"); return; }
+    const me = this.me;
+    let dx = 0;
+    if (world.held.has("ArrowLeft")) { dx -= 130 * dt; me.facing = -1; }
+    if (world.held.has("ArrowRight")) { dx += 130 * dt; me.facing = 1; }
+    const nx = Math.max(0, Math.min(world.W - me.w, me.x + dx));
+    // Walking into something taller than her feet stops her.
+    if (this.standing(nx, me.w) >= me.y + me.h - 2) me.x = nx;
+    if (world.held.has("ArrowUp") && me.on) { me.vy = -JUMP; me.on = false; }
+    me.vy += G * dt; me.y += me.vy * dt;
+    const under = this.standing(me.x, me.w);
+    if (me.y + me.h >= under && me.vy >= 0) { me.y = under - me.h; me.vy = 0; me.on = true; } else me.on = false;
+    const down = world.held.has("ArrowDown");
+    if (down && !this.downWas && me.on) {
+      if (me.carrying) {
+        const b = me.carrying, x = me.facing > 0 ? me.x + me.w + 2 : me.x - BOX - 2;
+        if (x >= 0 && x + BOX <= world.W && !(x + BOX > this.wall.x && x < this.wall.x + this.wall.w)) {
+          b.x = x; me.carrying = null; b.y = this.standing(b.x, BOX, b) - BOX;
+        }
+      } else {
+        for (const b of this.boxes) {
+          const beside = Math.abs(b.y + BOX - (me.y + me.h)) < 4 && (Math.abs(b.x - (me.x + me.w)) < 8 || Math.abs(b.x + BOX - me.x) < 8);
+          const onTop = this.boxes.some((o) => o !== b && o.y < b.y && Math.abs(o.x - b.x) < BOX);
+          if (beside && !onTop) { me.carrying = b; break; }
+        }
+      }
+    }
+    this.downWas = down;
+    if (me.carrying) { me.carrying.x = me.x - 4; me.carrying.y = me.y - BOX - 2; }
+    if (me.x > 420) { world.score += 1; world.flags += 1; this.next(world); }
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#9fd4f4"; ctx.fillRect(0, 0, 480, 320); ctx.fillStyle = "#6a5034"; ctx.fillRect(0, FLOOR, 480, 30);
+    if (!this.wall) return;
+    ctx.fillStyle = "#7a7a86"; ctx.fillRect(this.wall.x, FLOOR - this.wallH, this.wall.w, this.wallH);
+    ctx.fillStyle = "#e33"; ctx.fillRect(440, FLOOR - 60, 3, 60); ctx.fillRect(443, FLOOR - 60, 18, 12);
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#c08a3a"; for (const b of this.boxes) { ctx.fillRect(b.x, b.y, BOX, BOX); ctx.strokeStyle = "#7a5a20"; ctx.strokeRect(b.x, b.y, BOX, BOX); }
+    ctx.fillStyle = "#f07ac0"; ctx.fillRect(this.me.x, this.me.y, this.me.w, this.me.h);
+  },
+  readouts(ctx, world) {
+    world.text("FLAGS " + world.score, 12, 24, 16, "#123", "left");
+    world.text("TIME " + Math.ceil(this.left), 468, 24, 16, "#123", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

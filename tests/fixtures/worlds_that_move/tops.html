@@ -1,0 +1,50 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Tops</title></head><body>
+<script src="world.js"></script>
+<script>
+// A round stadium with three tops spinning about in it, drifting. Hers waits at the bottom edge. The mouse aims it and a
+// click lets it go toward the pointer; it slows as it goes. A top it knocks out over the stadium's edge is a point; hers
+// going out over the edge costs a life. Each let-go is one shot, watched until everything stops. As Ed, Edd n Eddy: Spin
+// Stadium ("Move your mouse to aim, then click to release your top. Earn points by knocking other tops out of the stadium.").
+const C = { x: 240, y: 180, r: 128 }, R = 11;
+const game = {
+  title: "TOPS", lives: 3,
+  rules: ["Move your mouse to aim, then click to release your top.", "Knock the other tops out of the stadium."],
+  reset(world) { this.others = []; for (let i = 0; i < 3; i++) this.others.push(this.another(world)); this.home(); world.knocked = 0; world.shots = 0; },
+  another(world) { const a = world.rand() * 6.3, d = world.rand() * 70; return { x: C.x + Math.cos(a) * d, y: C.y + Math.sin(a) * d, vx: (world.rand() - 0.5) * 30, vy: (world.rand() - 0.5) * 30 }; },
+  home() { this.me = { x: C.x, y: C.y + C.r - R - 2, vx: 0, vy: 0 }; this.going = false; },
+  click(x, y) {
+    if (this.going) return;
+    const dx = x - this.me.x, dy = y - this.me.y, d = Math.hypot(dx, dy) || 1;
+    this.me.vx = (dx / d) * 330; this.me.vy = (dy / d) * 330; this.going = true; __world.shots += 1;
+  },
+  step(dt, world) {
+    const all = [this.me, ...this.others];
+    for (const t of all) { t.x += t.vx * dt; t.y += t.vy * dt; const s = Math.exp(-0.9 * dt); t.vx *= s; t.vy *= s; }
+    for (const o of this.others) { o.vx += (world.rand() - 0.5) * 40 * dt; o.vy += (world.rand() - 0.5) * 40 * dt; }
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      const a = all[i], b = all[j], dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      if (d < 2 * R && d > 0) {
+        const nx = dx / d, ny = dy / d, p = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+        if (p > 0) { a.vx -= p * nx; a.vy -= p * ny; b.vx += p * nx * 1.1; b.vy += p * ny * 1.1; }
+        b.x = a.x + nx * 2 * R; b.y = a.y + ny * 2 * R;
+      }
+    }
+    for (const o of this.others) if (Math.hypot(o.x - C.x, o.y - C.y) > C.r + R) { world.score += 1; world.knocked += 1; Object.assign(o, this.another(world)); }
+    if (Math.hypot(this.me.x - C.x, this.me.y - C.y) > C.r + R) { world.lose(); this.home(); return; }
+    if (this.going && Math.hypot(this.me.vx, this.me.vy) < 12) this.home();
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#2a2340"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#d9c79a"; ctx.beginPath(); ctx.arc(C.x, C.y, C.r, 0, 6.3); ctx.fill();
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#4a8a3a"; for (const o of this.others) { ctx.beginPath(); ctx.arc(o.x, o.y, R, 0, 6.3); ctx.fill(); }
+    ctx.fillStyle = "#e0562a"; ctx.beginPath(); ctx.arc(this.me.x, this.me.y, R, 0, 6.3); ctx.fill();
+  },
+  readouts(ctx, world) {
+    world.text("OUT " + world.score, 12, 24, 16, "#fff", "left");
+    world.text("LIVES " + world.lives, 468, 24, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

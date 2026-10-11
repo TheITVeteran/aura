@@ -105,7 +105,8 @@
       } else if (world.state === "title") {
         screen(game.title, game.rules, "PLAY");
       } else {
-        screen("GAME OVER", ["Score " + world.score], "PLAY AGAIN");
+        const won = world.ended.length && world.ended[world.ended.length - 1].why === "won";
+        screen(won ? "YOU WIN!" : "GAME OVER", ["Score " + world.score], "PLAY AGAIN");
       }
       requestAnimationFrame(frame);
     }

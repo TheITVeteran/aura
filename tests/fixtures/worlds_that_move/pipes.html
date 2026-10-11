@@ -1,0 +1,84 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Pipes</title></head><body>
+<script src="world.js"></script>
+<script>
+// A board of squares with a chute on its left edge and a bucket on its right, rocks on some squares between. Arrows are
+// dragged from the box on the right onto empty squares; an arrow sends the ball on to the square it points at, and a
+// click on a placed arrow turns it a quarter round. TEST lets the ball go from the chute: it follows the arrows, and
+// reaching the bucket is a point and a new board; an empty square, a rock or the edge drops it and costs a life, and the
+// arrows stay to be changed. As Tom's Trap-O-Matic ("click and drag a device from the Library, place the device at the
+// end of ANOTHER DEVICE'S arrow to make a connection, use the controls to rotate ... until you are ready to test the trap")
+// and Ed, Edd n Eddy's Candy Machine (tubes from where the jawbreaker drops to the bucket).
+const CELL = 46, COLS = 7, ROWS = 5, X0 = 12, Y0 = 46, WAYS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const LIB = { x: 352, y: 60, w: 110, h: 110 }, TEST = { x: 352, y: 220, w: 110, h: 40 };
+const game = {
+  title: "PIPES", lives: 3,
+  rules: ["Drag an arrow from the box onto a square.", "Click an arrow on the board to turn it.",
+          "Join the chute to the bucket with arrows, then click TEST."],
+  reset(world) { world.solved = 0; world.tests = 0; this.board(world); },
+  board(world) {
+    this.from = Math.floor(world.rand() * ROWS); this.to = Math.floor(world.rand() * ROWS);
+    this.cells = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    for (let i = 0; i < 3 + Math.floor(world.rand() * 3); i++) {
+      const c = 1 + Math.floor(world.rand() * (COLS - 2)), r = Math.floor(world.rand() * ROWS);
+      if (r !== this.from && r !== this.to) this.cells[r][c] = "rock";
+    }
+    this.carrying = false; this.ball = null;
+  },
+  cellAt(x, y) { const c = Math.floor((x - X0) / CELL), r = Math.floor((y - Y0) / CELL); return c >= 0 && c < COLS && r >= 0 && r < ROWS ? [c, r] : null; },
+  click(x, y) {
+    if (this.ball) return;
+    if (x >= LIB.x && x <= LIB.x + LIB.w && y >= LIB.y && y <= LIB.y + LIB.h) { this.carrying = true; return; }
+    if (x >= TEST.x && x <= TEST.x + TEST.w && y >= TEST.y && y <= TEST.y + TEST.h) {
+      __world.tests += 1; this.ball = { c: -1, r: this.from, way: 0, t: 0 }; return;
+    }
+    const at = this.cellAt(x, y);
+    if (at && typeof this.cells[at[1]][at[0]] === "number") this.cells[at[1]][at[0]] = (this.cells[at[1]][at[0]] + 1) % 4;
+  },
+  dropped() {
+    if (!this.carrying) return;
+    this.carrying = false;
+    const at = this.cellAt(__world.pointer.x, __world.pointer.y);
+    if (at && this.cells[at[1]][at[0]] === null) this.cells[at[1]][at[0]] = 0;
+  },
+  step(dt, world) {
+    const b = this.ball;
+    if (!b) return;
+    b.t += dt;
+    if (b.t < 0.22) return;
+    b.t = 0;
+    const [dc, dr] = WAYS[b.way], c = b.c + dc, r = b.r + dr;
+    if (c === COLS && r === this.to) { world.score += 1; world.solved += 1; this.board(world); return; }
+    const here = c >= 0 && c < COLS && r >= 0 && r < ROWS ? this.cells[r][c] : "edge";
+    if (typeof here !== "number") { this.ball = null; world.lose(); return; }
+    b.c = c; b.r = r; b.way = here;
+  },
+  backdrop(ctx) { ctx.fillStyle = "#2c3a2c"; ctx.fillRect(0, 0, 480, 320); },
+  draw(ctx, world) {
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const x = X0 + c * CELL, y = Y0 + r * CELL, v = this.cells[r][c];
+      ctx.fillStyle = v === "rock" ? "#6a6a6a" : "#d8d0b0"; ctx.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+      if (typeof v === "number") this.arrow(ctx, x + CELL / 2, y + CELL / 2, v, "#2a5ad0");
+    }
+    ctx.fillStyle = "#e0a020"; ctx.fillRect(0, Y0 + this.from * CELL + 14, X0, 18);
+    ctx.fillStyle = "#c03030"; ctx.fillRect(X0 + COLS * CELL, Y0 + this.to * CELL + 8, 12, 30);
+    ctx.fillStyle = "#e9e0c8"; ctx.fillRect(LIB.x, LIB.y, LIB.w, LIB.h); this.arrow(ctx, LIB.x + 55, LIB.y + 55, 0, "#2a5ad0");
+    ctx.fillStyle = "#3a7bd5"; ctx.fillRect(TEST.x, TEST.y, TEST.w, TEST.h); world.text("TEST", TEST.x + 55, TEST.y + 27, 18, "#fff");
+    if (this.carrying) this.arrow(ctx, world.pointer.x, world.pointer.y, 0, "#5a8af0");
+    if (this.ball) {
+      const x = this.ball.c < 0 ? 6 : X0 + this.ball.c * CELL + CELL / 2, y = Y0 + this.ball.r * CELL + CELL / 2;
+      ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.3); ctx.fill();
+    }
+  },
+  arrow(ctx, x, y, way, colour) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate((way * Math.PI) / 2); ctx.fillStyle = colour;
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(2, -12); ctx.lineTo(2, -5); ctx.lineTo(-14, -5); ctx.lineTo(-14, 5); ctx.lineTo(2, 5); ctx.lineTo(2, 12);
+    ctx.fill(); ctx.restore();
+  },
+  readouts(ctx, world) {
+    world.text("TRAPS " + world.score, 12, 28, 16, "#fff", "left");
+    world.text("LIVES " + world.lives, 468, 28, 16, "#fff", "right");
+  },
+};
+addEventListener("mouseup", () => game.dropped());
+playWorld(game);
+</script></body></html>

@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Tower</title></head><body>
+<script src="world.js"></script>
+<script>
+// A base at the bottom goes where the mouse goes. Crystals of three colours fall. One that lands on top of the tower
+// stacks there if it is the colour of the top one (an empty base takes any), and the tower grows; one of another colour
+// blows the tower apart and costs a life. A click fuses the tower: the more crystals in it, the more it pays, so a tower
+// held longer pays more and risks more. As Pokemon: Towering Legends: "Move your mouse to stack crystals of the same
+// color into a tower. Click the mouse button to create a tower fusion. The more crystals you stack at one time, the more
+// points you'll get. Don't let your tower run into crystals of a different color, or your tower will get blown apart!"
+const COLOURS = ["#e84a4a", "#3d8ff0", "#f0c93d"], SIZE = 18;
+const game = {
+  title: "TOWER", lives: 3,
+  rules: ["Move your mouse to stack crystals of the same color into a tower.", "Click the mouse button to create a tower fusion.",
+          "The more crystals you stack at one time, the more points you get.",
+          "Don't let your tower run into crystals of a different color!"],
+  reset(world) { this.x = 220; this.tower = []; this.falling = []; this.next = 0.3; this.left = 90; world.fused = 0; world.blown = 0; },
+  click() {
+    if (!this.tower.length) return;
+    const n = this.tower.length; __world.score += (n * (n + 1)) / 2; __world.fused += 1; this.tower = [];
+  },
+  step(dt, world) {
+    this.left -= dt;
+    if (this.left <= 0) { world.over("time"); return; }
+    this.x = Math.max(0, Math.min(world.W - SIZE - 8, world.pointer.x - (SIZE + 8) / 2));
+    this.next -= dt;
+    if (this.next <= 0) {
+      this.falling.push({ x: 10 + world.rand() * 450, y: 34, c: Math.floor(world.rand() * 3), vy: 70 + world.rand() * 50 });
+      this.next = 0.5 + world.rand() * 0.5;
+    }
+    const topY = world.H - 16 - this.tower.length * SIZE;
+    for (const f of this.falling) {
+      f.y += f.vy * dt;
+      const over = f.x + SIZE > this.x && f.x < this.x + SIZE + 8;
+      if (over && f.y + SIZE >= topY && f.y + SIZE <= topY + 14) {
+        f.gone = true;
+        const top = this.tower.length ? this.tower[this.tower.length - 1] : f.c;
+        if (top === f.c) this.tower.push(f.c);
+        else { this.tower = []; world.blown += 1; world.lose(); }
+      }
+      if (f.y > world.H) f.gone = true;
+    }
+    this.falling = this.falling.filter((f) => !f.gone);
+  },
+  backdrop(ctx) {
+    const g = ctx.createLinearGradient(0, 0, 0, 320); g.addColorStop(0, "#241a4a"); g.addColorStop(1, "#5a3f8a");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 480, 320);
+  },
+  draw(ctx, world) {
+    ctx.fillStyle = "#9a9aa8"; ctx.fillRect(this.x, world.H - 16, SIZE + 8, 16);
+    this.tower.forEach((c, i) => { ctx.fillStyle = COLOURS[c]; ctx.fillRect(this.x + 4, world.H - 16 - (i + 1) * SIZE, SIZE, SIZE - 2); });
+    for (const f of this.falling) {
+      ctx.fillStyle = COLOURS[f.c]; ctx.beginPath();
+      ctx.moveTo(f.x + SIZE / 2, f.y); ctx.lineTo(f.x + SIZE, f.y + SIZE / 2); ctx.lineTo(f.x + SIZE / 2, f.y + SIZE); ctx.lineTo(f.x, f.y + SIZE / 2);
+      ctx.fill();
+    }
+  },
+  readouts(ctx, world) {
+    world.text("SCORE " + world.score, 12, 22, 16, "#fff", "left");
+    world.text("TIME " + Math.ceil(this.left), 240, 22, 16, "#fff");
+    world.text("LIVES " + world.lives, 468, 22, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Ask</title></head><body>
+<script src="world.js"></script>
+<script>
+// A fortune teller and a box to type in. What is typed shows in the box; clicking ASK (or pressing Enter) asks it. A
+// question a yes or a no answers ("Will it rain?", "Is it ...?") gets an answer and is a point; anything else is sent
+// back. Three answers is a win. Nothing moves: the world waits for words. As Scooby-Doo: Ask Swami Shaggy ("Try to type
+// only Yes or No questions. Don't forget to click Ask.") and Batman: The Riddler's Secret Identity Inventor.
+const ASK = { x: 330, y: 230, w: 100, h: 36 }, YESNO = /^(is|are|am|was|were|will|would|can|could|do|does|did|should|shall|have|has|may|might)\b.*\?\s*$/i;
+const game = {
+  title: "ASK THE SWAMI", lives: 1,
+  rules: ["Type a yes or no question in the box.", "Then click ASK.", "Three answers wins."],
+  reset(world) { this.typed = ""; this.said = "Ask me anything..."; world.answered = 0; world.asked = 0; },
+  click(x, y) { if (x >= ASK.x && x <= ASK.x + ASK.w && y >= ASK.y && y <= ASK.y + ASK.h) this.ask(); },
+  ask() {
+    const q = this.typed.trim();
+    if (!q) return;
+    __world.asked += 1;
+    if (YESNO.test(q)) {
+      this.said = __world.rand() < 0.5 ? "The Swami says: YES!" : "The Swami says: NO!";
+      __world.score += 1; __world.answered += 1;
+      if (__world.answered >= 3) __world.over("won");
+    } else this.said = "Only yes or no questions, please.";
+    this.typed = "";
+  },
+  key(e) {
+    if (__world.state !== "play") return;
+    if (e.key === "Enter") { this.ask(); return; }
+    if (e.key === "Backspace") { this.typed = this.typed.slice(0, -1); return; }
+    if (e.key.length === 1 && this.typed.length < 40) this.typed += e.key;
+  },
+  step() {},
+  backdrop(ctx) { ctx.fillStyle = "#3a1650"; ctx.fillRect(0, 0, 480, 320); ctx.fillStyle = "#c9a0f0"; ctx.beginPath(); ctx.arc(240, 100, 46, 0, 6.3); ctx.fill(); },
+  draw(ctx, world) {
+    world.text(this.said, 240, 180, 16, "#ffe08a");
+    ctx.fillStyle = "#fff"; ctx.fillRect(40, 230, 280, 36);
+    world.text(this.typed + "|", 48, 254, 15, "#222", "left");
+    ctx.fillStyle = "#3a7bd5"; ctx.fillRect(ASK.x, ASK.y, ASK.w, ASK.h); world.text("ASK", ASK.x + 50, ASK.y + 24, 18, "#fff");
+  },
+  readouts(ctx, world) { world.text("ANSWERS " + world.score, 12, 24, 16, "#fff", "left"); },
+};
+addEventListener("keydown", (e) => game.key(e));
+playWorld(game);
+</script></body></html>

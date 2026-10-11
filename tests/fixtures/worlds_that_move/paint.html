@@ -1,0 +1,57 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Paint</title></head><body>
+<script src="world.js"></script>
+<script>
+// A floor of bare squares. Where the painter walks, the floor is painted. Bugs wander over it and cost a life when they
+// touch the painter. Most of the floor painted is a win; the score is how much is painted. Nothing comes to be met: the
+// end is a state of the whole floor, not a thing caught. As Camp Lazlo: Paintcan Panic (covering ground, keeping clear).
+const CELL = 20, COLS = 24, ROWS = 14, TOP = 40, WIN_AT = 0.85;
+const game = {
+  title: "PAINT", lives: 3,
+  rules: ["Arrow keys to walk.", "Paint the floor as you walk on it.", "Paint most of the floor to win.", "Keep away from the bugs."],
+  reset(world) {
+    this.me = { x: 232, y: TOP + 130, w: 16, h: 16 };
+    this.painted = new Uint8Array(COLS * ROWS); this.count = 0; this.left = 150;
+    this.bugs = [0, 1].map((i) => ({ x: i ? 40 : 420, y: i ? TOP + 20 : TOP + 230, w: 14, h: 14, a: world.rand() * 6.3, turn: 1 }));
+    world.painted = 0;
+  },
+  step(dt, world) {
+    this.left -= dt;
+    if (this.left <= 0) { world.over("time"); return; }
+    const me = this.me, v = 150 * dt;
+    if (world.held.has("ArrowLeft")) me.x -= v;
+    if (world.held.has("ArrowRight")) me.x += v;
+    if (world.held.has("ArrowUp")) me.y -= v;
+    if (world.held.has("ArrowDown")) me.y += v;
+    me.x = Math.max(0, Math.min(world.W - me.w, me.x)); me.y = Math.max(TOP, Math.min(world.H - me.h, me.y));
+    const c = Math.floor((me.x + 8) / CELL), r = Math.floor((me.y + 8 - TOP) / CELL);
+    if (c >= 0 && c < COLS && r >= 0 && r < ROWS && !this.painted[r * COLS + c]) { this.painted[r * COLS + c] = 1; this.count += 1; }
+    world.painted = this.count / (COLS * ROWS); world.score = Math.floor(world.painted * 100);
+    for (const b of this.bugs) {
+      b.turn -= dt;
+      if (b.turn <= 0) { b.a += (world.rand() - 0.5) * 2.4; b.turn = 0.6 + world.rand(); }
+      b.x += Math.cos(b.a) * 80 * dt; b.y += Math.sin(b.a) * 80 * dt;
+      if (b.x < 0 || b.x > world.W - b.w) { b.a = Math.PI - b.a; b.x = Math.max(0, Math.min(world.W - b.w, b.x)); }
+      if (b.y < TOP || b.y > world.H - b.h) { b.a = -b.a; b.y = Math.max(TOP, Math.min(world.H - b.h, b.y)); }
+      if (hits(b, me)) { world.lose(); b.x = me.x < 240 ? 440 : 20; b.y = me.y < 180 ? TOP + 240 : TOP + 10; }
+    }
+    if (world.painted >= WIN_AT && world.state === "play") world.over("won");
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#3a2a1a"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#c9b48a"; ctx.fillRect(0, TOP, 480, 280);
+    if (!this.painted) return;
+    ctx.fillStyle = "#2f7fd1";
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (this.painted[r * COLS + c]) ctx.fillRect(c * CELL, TOP + r * CELL, CELL, CELL);
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#f2f2f2"; ctx.fillRect(this.me.x, this.me.y, 16, 16);
+    ctx.fillStyle = "#2a9a2a"; for (const b of this.bugs) { ctx.beginPath(); ctx.arc(b.x + 7, b.y + 7, 7, 0, 6.3); ctx.fill(); }
+  },
+  readouts(ctx, world) {
+    world.text("PAINTED " + world.score + "%", 12, 26, 16, "#fff", "left");
+    world.text("TIME " + Math.ceil(this.left), 240, 26, 16, "#fff");
+    world.text("LIVES " + world.lives, 468, 26, 16, "#fff", "right");
+  },
+};
+playWorld(game);
+</script></body></html>

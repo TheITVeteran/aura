@@ -8,6 +8,7 @@ game's own tally (``window.__world``) is read only to say how it went.
 
     python tools/measure_playing_as_it_happens.py paddle catch --seconds 60
     python tools/measure_playing_as_it_happens.py --held-out --seeds 1 2 3
+    python tools/measure_playing_as_it_happens.py --from-the-games --seconds 90
 
 Worlds are split in two. Work on the play stack is done against the first
 set; the second is run only once the code is fixed, and a change made for a
@@ -29,6 +30,13 @@ sys.path.insert(0, str(ROOT))
 WORLDS = ROOT / "tests" / "fixtures" / "worlds_that_move"
 WORKED_ON = ["paddle", "catch"]
 HELD_OUT = ["dodge", "shooter", "collect", "gallery"]
+#: Worlds made from the 56 games' own words (docs/design-docs/THE_56_GAMES_AND_WHAT_THEY_ASK.md), a mechanic each that
+#: no world above had: shots aimed and sent, throws led at a walker, a tower of one colour, a spell of arrows, cards, a
+#: floor covered, two of hers switched between, a car steered by its heading, a launch timed with a meter, tops let go,
+#: boxes carried to make steps, arrows joined chute to bucket, words typed, a well of falling tiles. The second set is
+#: run only after a change made for the first, as above.
+FROM_THE_GAMES = ["putt", "foodfight", "tower", "simon", "pairs", "paint", "switch", "steps", "pipes", "ask"]
+FROM_THE_GAMES_HELD_OUT = ["tops", "launch", "bump", "tiles"]
 TOLD_KEYS = ["up", "down", "left", "right", "space"]
 _KEY = {"up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight", "space": "Space"}
 
@@ -173,13 +181,17 @@ async def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("worlds", nargs="*")
     parser.add_argument("--held-out", action="store_true")
+    parser.add_argument("--from-the-games", action="store_true", help="the worlds made from the 56 games' words")
     parser.add_argument("--seeds", nargs="*", type=int, default=[1])
     parser.add_argument("--seconds", type=float, default=60.0)
     parser.add_argument("--players", nargs="*", default=["her", "random"])
     parser.add_argument("--out", default="")
     parser.add_argument("--observations", choices=["pixels", "drawing"], default="pixels")
     args = parser.parse_args(argv)
-    worlds = args.worlds or (HELD_OUT if args.held_out else WORKED_ON)
+    if args.from_the_games:
+        worlds = args.worlds or (FROM_THE_GAMES_HELD_OUT if args.held_out else FROM_THE_GAMES)
+    else:
+        worlds = args.worlds or (HELD_OUT if args.held_out else WORKED_ON)
     results = []
     async with async_playwright() as playwright:
         from core.capabilities.phantom_browser import _chromium_graphics_arguments

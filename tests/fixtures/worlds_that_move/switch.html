@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Switch</title></head><body>
+<script src="world.js"></script>
+<script>
+// Two of hers, a red one and a blue one, on two floors a wall keeps apart. The arrows move only the one that is lit;
+// X lights the other. Coins of each colour come up on that one's floor and go after a while; each is picked up only by
+// the one of its colour. So a coin is got by switching to the one who can reach it. As Powerpuff Girls: Attack of the
+// Puppybots ("press X to switch out the girls"), Gumball: Water Sons ("space bar to switch characters") and Battle
+// Bowlers (number keys).
+const game = {
+  title: "SWITCH",
+  rules: ["The arrow keys move the one that is lit.", "Press X to switch to the other one.",
+          "Each one picks up coins of its own color."],
+  reset(world) {
+    this.two = [{ x: 60, y: 120, w: 18, h: 18, c: "#e84a4a" }, { x: 60, y: 250, w: 18, h: 18, c: "#3d8ff0" }];
+    this.lit = 0; this.coins = []; this.next = 0.4; this.left = 75; world.switched = 0;
+  },
+  step(dt, world) {
+    this.left -= dt;
+    if (this.left <= 0) { world.over("time"); return; }
+    const me = this.two[this.lit], v = 170 * dt, top = this.lit ? 186 : 40, bottom = this.lit ? 302 : 156;
+    if (world.held.has("ArrowLeft")) me.x -= v;
+    if (world.held.has("ArrowRight")) me.x += v;
+    if (world.held.has("ArrowUp")) me.y -= v;
+    if (world.held.has("ArrowDown")) me.y += v;
+    me.x = Math.max(0, Math.min(world.W - me.w, me.x)); me.y = Math.max(top, Math.min(bottom - me.h, me.y));
+    this.next -= dt;
+    if (this.next <= 0) {
+      const which = world.rand() < 0.5 ? 0 : 1;
+      this.coins.push({ x: 20 + world.rand() * 440, y: which ? 196 + world.rand() * 90 : 50 + world.rand() * 90, w: 12, h: 12,
+                        which, life: 6 });
+      this.next = 1.0 + world.rand() * 0.8;
+    }
+    for (const coin of this.coins) {
+      coin.life -= dt;
+      if (coin.life <= 0) coin.gone = true;
+      else if (hits(coin, this.two[coin.which])) { coin.gone = true; world.score += 1; }
+    }
+    this.coins = this.coins.filter((coin) => !coin.gone);
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#1e1e28"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#3a2e2e"; ctx.fillRect(0, 40, 480, 116); ctx.fillStyle = "#2e2e3a"; ctx.fillRect(0, 186, 480, 116);
+    ctx.fillStyle = "#777"; ctx.fillRect(0, 160, 480, 22);
+  },
+  draw(ctx) {
+    this.two.forEach((one, i) => {
+      if (i === this.lit) { ctx.fillStyle = "#fff6a0"; ctx.fillRect(one.x - 3, one.y - 3, one.w + 6, one.h + 6); }
+      ctx.fillStyle = one.c; ctx.fillRect(one.x, one.y, one.w, one.h);
+    });
+    for (const coin of this.coins) { ctx.fillStyle = coin.which ? "#3d8ff0" : "#e84a4a"; ctx.beginPath(); ctx.arc(coin.x + 6, coin.y + 6, 6, 0, 6.3); ctx.fill(); }
+  },
+  readouts(ctx, world) {
+    world.text("COINS " + world.score, 12, 26, 16, "#fff", "left");
+    world.text("TIME " + Math.ceil(this.left), 468, 26, 16, "#fff", "right");
+  },
+};
+addEventListener("keydown", (e) => {
+  if ((e.key === "x" || e.key === "X") && !e.repeat && __world.state === "play") { game.lit = 1 - game.lit; __world.switched += 1; }
+});
+playWorld(game);
+</script></body></html>

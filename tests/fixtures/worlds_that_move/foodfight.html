@@ -1,0 +1,70 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Food Fight</title></head><body>
+<script src="world.js"></script>
+<script>
+// Two sides of a table. Hers is at the bottom and stays where it is; the other side's thrower walks back and forth at
+// the top and throws food down at her. A click throws at where it was made, and what is thrown takes time to get there,
+// so a walker is hit by a throw made where it is going. Space ducks under what comes, for a moment. The first to be
+// splatted five times loses. As Cartoon Network's Food Bash: "Take aim with your mouse and click to throw. Dodge food by
+// pressing the space bar. The first to splat the other five times wins!"
+const SPEED = 240, THEIRS = 150, DUCK_S = 0.55;
+const game = {
+  title: "FOOD FIGHT", lives: 5,
+  rules: ["Take aim with your mouse and click to throw.", "Dodge food by pressing the space bar.",
+          "The first to splat the other five times wins!"],
+  reset(world) {
+    this.me = { x: 222, y: 270, w: 36, h: 36 }; this.them = { x: 220, y: 52, w: 36, h: 36, vx: 90 };
+    this.mine = []; this.theirs = []; this.reload = 0; this.throwIn = 1.6; this.ducked = 0; this.duckWait = 0;
+    world.mine = 0; world.theirs = 0;
+  },
+  click(x, y) {
+    if (this.reload > 0) return;
+    const fromX = this.me.x + 18, fromY = this.me.y, d = Math.hypot(x - fromX, y - fromY) || 1;
+    this.mine.push({ x: fromX, y: fromY, vx: ((x - fromX) / d) * SPEED, vy: ((y - fromY) / d) * SPEED });
+    this.reload = 0.35;
+  },
+  step(dt, world) {
+    this.reload -= dt; this.ducked -= dt; this.duckWait -= dt;
+    if (world.held.has(" ") && this.duckWait <= 0) { this.ducked = DUCK_S; this.duckWait = DUCK_S + 0.25; }
+    const t = this.them;
+    t.x += t.vx * dt;
+    if (t.x < 30 || t.x > world.W - 66 || world.rand() < 0.4 * dt) t.vx = -t.vx;
+    t.x = Math.max(30, Math.min(world.W - 66, t.x));
+    this.throwIn -= dt;
+    if (this.throwIn <= 0) {
+      const toX = this.me.x + 18 + (world.rand() - 0.5) * 30, fromX = t.x + 18, fromY = t.y + 36;
+      const d = Math.hypot(toX - fromX, 288 - fromY);
+      this.theirs.push({ x: fromX, y: fromY, vx: ((toX - fromX) / d) * THEIRS, vy: ((288 - fromY) / d) * THEIRS });
+      this.throwIn = 1.3 + world.rand() * 1.2;
+    }
+    for (const f of this.mine) {
+      f.x += f.vx * dt; f.y += f.vy * dt;
+      if (hits({ x: f.x - 6, y: f.y - 6, w: 12, h: 12 }, t)) { f.gone = true; world.score += 1; world.mine += 1; }
+      if (f.y < 0 || f.x < 0 || f.x > world.W || f.y > world.H) f.gone = true;
+    }
+    const me = this.ducked > 0 ? { x: this.me.x, y: this.me.y + 22, w: 36, h: 14 } : this.me;
+    for (const f of this.theirs) {
+      f.x += f.vx * dt; f.y += f.vy * dt;
+      if (hits({ x: f.x - 7, y: f.y - 7, w: 14, h: 14 }, me)) { f.gone = true; world.theirs += 1; world.lose(); }
+      if (f.y > world.H) f.gone = true;
+    }
+    this.mine = this.mine.filter((f) => !f.gone); this.theirs = this.theirs.filter((f) => !f.gone);
+    if (world.mine >= 5 && world.state === "play") world.over("won");
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#f3e2c0"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#b5823c"; ctx.fillRect(0, 150, 480, 24);
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#3b6fd6"; const me = this.ducked > 0 ? [this.me.x, this.me.y + 22, 36, 14] : [this.me.x, this.me.y, 36, 36];
+    ctx.fillRect(...me);
+    ctx.fillStyle = "#d6453b"; ctx.fillRect(this.them.x, this.them.y, 36, 36);
+    ctx.fillStyle = "#e8b520"; for (const f of this.mine) { ctx.beginPath(); ctx.arc(f.x, f.y, 6, 0, 6.3); ctx.fill(); }
+    ctx.fillStyle = "#6d3b12"; for (const f of this.theirs) { ctx.beginPath(); ctx.arc(f.x, f.y, 7, 0, 6.3); ctx.fill(); }
+  },
+  readouts(ctx, world) {
+    world.text("SPLATS " + world.mine, 12, 22, 16, "#333", "left");
+    world.text("LIVES " + world.lives, 468, 22, 16, "#333", "right");
+  },
+};
+playWorld(game);
+</script></body></html>
