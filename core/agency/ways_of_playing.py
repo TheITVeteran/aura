@@ -173,4 +173,10 @@ WAYS: tuple[Way, ...] = (
         "must go, by her eyes on where its output ends and where the goal is",
         "core.agency.aiming_what_was_placed:a_turn_wanted", "core.skills.screen_pursuit_decision",
         "tests/test_a_part_put_down_is_turned_toward_where_the_chain_goes.py"),
+    Way("the situation", "know the situation a place's words put her in (things to catch or dodge, something to keep away "
+        "until help comes, a toss to whoever takes it, a clock to beat or outlast) and play it as it asks before anything "
+        "has touched her: what she supposes of a thing not yet met by how it moves, how wide she keeps, which ways she "
+        "plays by, and whether holding on is the task",
+        "core.agency.situations_she_knows:prior_stance", "core.agency.playing_as_it_happens",
+        "tests/test_the_situations_she_knows.py"),
 )

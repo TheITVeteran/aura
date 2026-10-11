@@ -335,6 +335,11 @@ def _lower(text: str) -> str:
     return as_said_inside(text)
 
 
+def reflex_ways(ways: Any) -> list[str]:
+    """Ways of playing (core/agency/ways_of_playing.py) as the ways her reflexes play, each once; the others left out."""
+    return list(dict.fromkeys(_REFLEX[way] for way in ways if way in _REFLEX))
+
+
 def ways_it_is_played_by(guide: Any) -> list[str]:
     """The ways her reflexes play that the reading of the place says it is done by, most likely first
     (core/agency/the_way_it_is_played.py)."""

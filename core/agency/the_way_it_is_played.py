@@ -87,7 +87,12 @@ def ways_asked(read: str, last_screen: str = "") -> list[str]:
 
     guide = THE_GUIDE.get()
     looks = ways_it_is_played_by(guide) if guide is not None else []
-    return asked + [way for way in looks if way not in asked and way != TYPE]
+    # And the ways the situations its words put her in are played by (core/agency/situations_she_knows.py).
+    from core.agency.situations_she_knows import situations_in, ways_of
+    from core.cognition.what_this_place_is import reflex_ways
+
+    looks += reflex_ways(ways_of(situations_in(read)))
+    return asked + [way for way in dict.fromkeys(looks) if way not in asked and way != TYPE]
 
 
 def held_her_own(stretch: dict[str, Any]) -> bool:
@@ -125,9 +130,16 @@ def progress(stretch: dict[str, Any], before: dict[str, Any] | None = None, task
         return "won"
     if _got_further(stretch, before):
         return "got further"
-    if task and _LASTING_IS_THE_TASK.search(task) and held_her_own(stretch):
+    if task and held_her_own(stretch) and (_LASTING_IS_THE_TASK.search(task) or _a_lasting_situation(task)):
         return "lasted"
     return ""
+
+
+def _a_lasting_situation(task: str) -> bool:
+    """Whether a situation its words put her in makes holding on the task (core/agency/situations_she_knows.py)."""
+    from core.agency.situations_she_knows import lasting_is_the_task, situations_in
+
+    return lasting_is_the_task(situations_in(task))
 
 
 def _the_task(read: str) -> str:

@@ -425,6 +425,8 @@ class _Choosing:
     #: The tells she has learned and the time of the picture it is choosing on (core/agency/warning_signs.py).
     signs: Any = None
     at: float | None = None
+    #: The situations the place's words put her in (core/agency/situations_she_knows.py).
+    situations: tuple[Any, ...] = ()
 
     #: How much wider a berth what costs her is given than usual: more as what she has left runs low.
     caution: float = 1.0
@@ -500,6 +502,14 @@ class _Choosing:
                 not self.meeting.known(thing.kind)
                 and self.signs.closing_in(thing, self.mine, max(2 * self.response_s, 3 * self.next_picture_s)))):
             return AVOID
+        # A kind not yet met nor told of is what her situation says such a thing is, by how it moves: what falls is to be
+        # caught or kept clear of, what heads for her kept clear of or shot (core/agency/situations_she_knows.py).
+        if self.situations and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
+            from core.agency.situations_she_knows import prior_stance
+
+            supposed = prior_stance(self.situations, thing, self.mine)
+            if supposed:
+                return supposed
         # What only moves in place (a flag waving, stars twinkling, a figure idling) is judged as what stands still is:
         # touched and found to count for nothing, it is decoration, left alone.
         return self.meeting.stance(thing.kind, fixture=not thing.moved or not goes_somewhere(thing))
@@ -1354,6 +1364,9 @@ async def _play_as_it_happens(
     moves = WhatMoves(kinds=keep.get("kinds"))
     physics: HowThingsMoveHere = keep.get("physics") or HowThingsMoveHere()
     rules = WhatTheRulesSaid.read(told) if told else None
+    from core.agency.situations_she_knows import caution_of, situations_in
+
+    situations = situations_in(told) if told else ()
     hers: WhichIsHers = keep.get("hers") or WhichIsHers()
     meeting: WhatMeetingDoes = keep.get("meeting") or WhatMeetingDoes()
     for kept in (physics, hers, meeting):
@@ -1448,7 +1461,8 @@ async def _play_as_it_happens(
                                  covered=(run.covered | run.barred, run.cell) if goes_over and run.cell else None,
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
-            choosing.signs, choosing.at = run.signs, at
+            choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
+            choosing.caution *= caution_of(situations)
             if rules is not None:
                 choosing.strikes = run.blows.stands_ground(run.blows.keys(rules.fire_keys, hers.makes))
             choosing.going_to = a_place_to_go(run, moves, hers, at, lambda line, once, at=at: _say(run, say, line, at, once=once))

@@ -67,6 +67,7 @@ if any of them is not called from her live play or has no test.
 | reach what a step needs | where what a step uses is not on the screen, take the act found to bring it up, or the one leading toward where it was | `core/agency/where_things_lead.py` |
 | read the signs | learn what each kind does just before it hurts her and get clear when she sees it; keep clear of what she does not know closing faster than she can answer | `core/agency/warning_signs.py` |
 | turn what was placed | turn a part put into a chain until what it sends out points on toward where the chain must go | `core/agency/aiming_what_was_placed.py` |
+| the situation | know the situation the place's words put her in and play it as it asks before anything has touched her: what she supposes of a thing not yet met by how it moves, how wide she keeps, which ways she plays by, whether holding on is the task | `core/agency/situations_she_knows.py` |
 
 ## The games
 
