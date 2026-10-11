@@ -22,14 +22,14 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 18 |
 | Values across them | 107 |
 | Kinds of place they make, multiplied out | 26,754,416,640,000 |
-| Values with an answer | 104 |
+| Values with an answer | 105 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
 | Values a game needs | 0 to 53, 23.4 on average |
-| Games with an answer for every value they need | 36 |
+| Games with an answer for every value they need | 40 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 3 values with none answers every value the
+place of their own. Answering the 2 values with none answers every value the
 56 need, where the dimensions are independent.
 
 Eight values were answered on 11 October, each by a module shown working in a
@@ -86,6 +86,17 @@ what refills, are taken, and the bar is the worth that share of them reach. A
 shot's worth is what taking its target out is worth. Ten units over a minute of
 chances took 1,396 spent above the bar against 727 spent on whatever came first;
 where the supply refilled faster than chances came, the two did the same.
+
+## Pushing a thing to its place
+
+What she pushes is a thing she was touching, holding a way, that went that way
+with her, press after press; where it goes is the still thing it was on when a
+count went up (`core/agency/pushing_a_thing.py`). To get it there she lines up
+behind it, on the side away from its place, along the way it has furthest to
+go, and pushes; to get behind it she steps back clear of it, or goes out to a
+lane beside it and along the lane, never touching it on the way. In a world of
+a crate and a pad, set afresh each time it was got home, she got it home 80
+times in six minutes; making straight for the crate, not once.
 
 ## What she plays for, and who is who
 
@@ -164,7 +175,6 @@ seams are kept to one owner each, so that the answers compose:
 | Games | Dimension: value | What answers it |
 |---|---|---|
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
-| 9 | meeting: pushed to a place | a thing she runs into moves; got to its place by pushing it from its far side |
 | 5 | searching: where a piece goes | each place a falling piece could land, judged by what it would clear and leave |
 
 Each is built as a module of its own, shown working in a world of its own

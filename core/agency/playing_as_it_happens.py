@@ -309,6 +309,8 @@ class _Run:
     #: (core/agency/spending_a_supply.py).
     allies: Any = None
     supply: Any = None
+    #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
+    pushing: Any = None
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -509,6 +511,8 @@ class _Choosing:
     #: What comes for her allies, and her allies on the screen (core/agency/keeping_allies.py).
     allies: Any = None
     allies_here: tuple = ()
+    #: What she pushes and where each goes (core/agency/pushing_a_thing.py).
+    pushing: Any = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -696,6 +700,10 @@ class _Choosing:
         # (core/agency/a_way_through.py), not as far as a straight line through them.
         through = self.way_through if self.way_through is not None and self.way_through.floor and self.way_through.walls \
             else None
+        # A thing she pushes, whose place is on the screen, is got there from behind (core/agency/pushing_a_thing.py).
+        pushed = self._a_thing_to_push()
+        if pushed is not None:
+            return pushed
         candidates = []
         for thing in self.others():
             stance = self.stance(thing)
@@ -730,6 +738,23 @@ class _Choosing:
         if ground is not None:
             return ground, "cover", None
         return (None, None), "wait", None
+
+    def _a_thing_to_push(self) -> tuple[tuple[float | None, float | None], str, Any] | None:
+        """Where to go to push a thing she pushes onto its place, where both are on the screen."""
+        if self.pushing is None or not self.pushing.places:
+            return None
+        others = list(self.others())
+        for thing in others:
+            if not self.pushing.pushable(thing.kind):
+                continue
+            places = [p for p in others if p.kind in self.pushing.places.get(thing.kind, ()) and p is not thing]
+            if not places:
+                continue
+            place = min(places, key=lambda p: math.hypot(p.x - thing.x, p.y - thing.y))
+            goal = self.pushing.where_to_go(self.mine, thing, place)
+            if goal is not None:
+                return goal, "meet", thing
+        return None
 
     def _detour(self, thing: Any) -> float:
         """How far out of her way a thing not yet known is worth going, as a multiple of the time to it."""
@@ -1261,6 +1286,10 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     threats = [thing for thing, _found in who.threats(things)]
     goes.saw_threats(at, [(thing.number, thing.kind) for thing in threats])
     run.supply.counted(at, meeting.readouts.current)
+    run.pushing.saw(mine, things, choosing.ways.get(run.held) if run.held else None)
+    if len(goes.gains) > gains:
+        run.pushing.counted(things)
+    choosing.pushing = run.pushing
     allies = tuple(thing for thing in things if (mine is None or thing.number != mine.number)
                    and who.of(thing).name == FRIENDLY)
     run.allies.saw(threats, allies)
@@ -1635,6 +1664,9 @@ async def _play_as_it_happens(
     from core.agency.spending_a_supply import SpendingASupply
 
     run.supply = keep.get("supply") or SpendingASupply()
+    from core.agency.pushing_a_thing import Pushing
+
+    run.pushing = keep.get("pushing") or Pushing()
     run.presses_told = sum(run.input_key_downs.values()) + run.taps
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
@@ -1752,7 +1784,7 @@ async def _play_as_it_happens(
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
                  "sounds_heard": run.sounds, "allies": run.allies,
-                 "supply": run.supply})
+                 "supply": run.supply, "pushing": run.pushing})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
