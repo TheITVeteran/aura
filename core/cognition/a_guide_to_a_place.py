@@ -724,7 +724,10 @@ class Guide:
 _A_NOUN = r"((?:[A-Za-z]+'s\s+)?(?:the\s+|your\s+|a\s+|an\s+)?[A-Za-z][A-Za-z -]{1,32}?)"
 _ENDS = (r"(?=\s+(?:onto|to|into|through|around|across|safely|slowly|and|with|by|using|past|so|while|before|without|from|"
          r"back|forth|about|along|over|up|down|left|right|"
-         r"in|on|at|as|escape|find|get|reach|save|stop|enjoy|catch|collect|win|land|fly|jump|run)\b|[.,!;:)]|$)")
+         r"in|on|at|as|escape|find|get|reach|save|stop|enjoy|catch|collect|win|land|fly|jump|run|"
+         # The control that does it, as the next words: "Control the girls press [1] to switch" (LIVE 2026-10-11 "That's
+         # me: the girls press at the top").
+         r"press|presses|click|clicks|hold|tap|use|uses|type|switch)\b|[.,!;:)]|$)")
 _NAMING = (
     ("me", re.compile(r"\b(?:guide|control|steer|drive|park|ride|fly|pilot|move|help|lead|play as|playing as:?|you are|you're|you play)\s+"
                       + _A_NOUN + _ENDS, re.I)),

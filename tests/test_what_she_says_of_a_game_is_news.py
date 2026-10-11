@@ -33,3 +33,16 @@ def test_a_change_is_said_as_code_so_its_signs_are_not_formatting():
     assert Edit(7, 25, "Math.max(a, b)").says(source) == "changed `Math.max(a, b) * 0` to `Math.max(a, b)`"
     assert Edit(0, 0, "if (y < 0) {\n  y = 0;\n}\n").says(source) == "added `if (y < 0) {\\n  y = 0;\\n}\\n`"
     assert Edit(0, 7, "").says(source) == "removed `step = `"
+
+
+def test_one_way_known_and_the_other_untried_is_not_a_line():
+    """LIVE 2026-10-11 a girl flying every way, only "up" yet learned, had a gauge called "the other side"."""
+    from types import SimpleNamespace
+
+    from core.agency.what_kind_of_game_this_is import held_to_one_line
+
+    tried = {"up": 6, "down": 6, "left": 0, "right": 1}
+    flying = SimpleNamespace(axes=lambda keys: (False, True), tried=lambda key: tried.get(key, 0))
+    assert held_to_one_line(flying, ["up", "down", "left", "right"]) == (False, False)
+    tried.update(left=6, right=6)
+    assert held_to_one_line(flying, ["up", "down", "left", "right"]) == (False, True)

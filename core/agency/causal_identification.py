@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Hashable
 from dataclasses import dataclass
-from typing import Hashable
 
 from core.verify import invariant
+
 
 @dataclass(frozen=True)
 class CausalWitness:
@@ -58,6 +59,10 @@ class CausalIdentification:
         return best.identity
 
 
+#: The longest a thing may go unseen and still be found again by where it was and how it went.
+UNSEEN_AT_MOST_S = 1.0
+
+
 def within_observed_reach(previous: tuple[float, float], position: tuple[float, float], *,
                           extent: tuple[float, float], velocity: tuple[float, float], gap: float) -> bool:
     """A continuing identity must lie within its measured motion and visible extent."""
@@ -65,8 +70,10 @@ def within_observed_reach(previous: tuple[float, float], position: tuple[float, 
     if not all(math.isfinite(v) for v in values) or gap < 0 or min(extent) <= 0:
         return False
     # Tracking uncertainty is the visible object's extent plus a working
-    # pixel margin. A long unseen interval supplies no spatial attribution.
-    if gap > 0.5:
+    # pixel margin. A long unseen interval supplies no spatial attribution; a
+    # moment hidden behind or across another thing does (offline 2026-10-11
+    # flying figures crossing one another were hidden for most of a second).
+    if gap > UNSEEN_AT_MOST_S:
         return False
     return all(abs(now - before) < 6.0 + size + 1.5 * abs(speed) * gap
                for before, now, size, speed in zip(previous, position, extent, velocity, strict=True))

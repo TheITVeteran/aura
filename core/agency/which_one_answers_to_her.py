@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.agency.causal_identification import (
+    UNSEEN_AT_MOST_S,
     CausalIdentification,
     CausalWitness,
     within_observed_reach,
@@ -409,8 +410,9 @@ def _apart2(a: tuple[float, float], b: tuple[float, float]) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
-#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers.
-HIDDEN_A_MOMENT_S = 1.0
+#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers: as
+#: long as a thing unseen can be found again where it was going.
+HIDDEN_A_MOMENT_S = UNSEEN_AT_MOST_S
 
 #: How far an edge must go to have moved, and how little to have stayed, in the picture's pixels; how far the end of a
 #: gauge that moves must have run over its changes, and how many changes it takes to tell; and how many outlines are
@@ -461,6 +463,8 @@ class _HowOutlinesGo:
         if number is None or self.from_an_end[number] < FILLS_AFTER or self.whole[number] * 2 > self.from_an_end[number]:
             return False
         boxes = self.boxes.get(number) or []
+        if len(boxes) < 2:
+            return False
         for low, high in ((0, 2), (1, 3)):
             lows, highs = [box[low] for box in boxes], [box[high] for box in boxes]
             low_runs, high_runs = max(lows) - min(lows), max(highs) - min(highs)
@@ -469,8 +473,10 @@ class _HowOutlinesGo:
         return False
 
     def forget_all_but(self, numbers: Any) -> None:
-        for number in [n for n in self.boxes if n not in numbers]:
+        for number in [n for n in {*self.boxes, *self.from_an_end, *self.whole} if n not in numbers]:
             self.boxes.pop(number, None)
+            self.from_an_end.pop(number, None)
+            self.whole.pop(number, None)
 
 
 class WhichIsHers(FollowsThePointer, FoundAnotherWay):

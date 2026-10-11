@@ -97,9 +97,9 @@ BIGGER_THAN_HER = 4.0
 #: for it to be on her side for sure.
 TAKEN_FOR_SURE = 3
 #: How many times a kind must have done a thing (cost her, counted, stopped her, done nothing) for that to be shown.
-SHOWN_AFTER = 2
+SHOWN_AFTER = 3
 #: The most kinds whose part is said in one game: LIVE 2026-10-11 a flying shooter had over twenty said in two minutes.
-MOST_SAID = 5
+MOST_SAID = 3
 #: How many meetings that did nothing a cost, and a gain, stand against: past that many, it came with the meeting by
 #: chance. A cost stands against more, since a second is dear.
 NOTHINGS_TO_A_COST = 4
@@ -225,9 +225,9 @@ class WhoIsWho:
                 self._who_took(box, here, mine, _at_the_edge(box, shape))
 
     def prize_shown(self, kind: int) -> bool:
-        """Whether a kind has been shown to be a prize: counted twice, and at least as often as it did nothing."""
+        """Whether a kind has been shown to be a prize: counted SHOWN_AFTER times, twice as often as it did nothing."""
         kept = self.kinds.get(kind)
-        return kept is not None and kept.gains >= SHOWN_AFTER and kept.gains >= kept.nothings
+        return kept is not None and kept.gains >= SHOWN_AFTER and kept.gains >= 2 * kept.nothings
 
     def _who_took(self, box: tuple[float, float, float, float], here: dict[int, Any], mine: Any,
                   at_the_edge: bool = False) -> None:
@@ -342,7 +342,7 @@ class WhoIsWho:
         if kept.lost_with >= LOST_WITH_FOR_SURE:
             return Designation(FRIENDLY, True, "losing it cost me")
         if kept.gains and kept.gains * NOTHINGS_TO_A_GAIN >= kept.nothings:
-            shown = kept.gains >= SHOWN_AFTER and kept.gains >= kept.nothings
+            shown = kept.gains >= SHOWN_AFTER and kept.gains >= 2 * kept.nothings
             return Designation(PRIZE, shown, "getting it counted" if shown else "getting it seemed to count")
         if kept.took >= TAKEN_FOR_SURE:
             return Designation(RIVAL, True, "it takes what I'm after, and meeting it costs me nothing")

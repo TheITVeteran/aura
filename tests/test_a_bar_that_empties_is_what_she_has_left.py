@@ -193,3 +193,19 @@ def test_a_body_hovering_where_it_is_is_no_gauge():
         top, bottom = 50.0 + rng.choice((0.0, -3.0)), 90.0 + rng.choice((0.0, 3.0))
         outlines.saw(SimpleNamespace(number=7, x=(left + right) / 2, y=(top + bottom) / 2, w=right - left, h=bottom - top))
     assert outlines.from_an_end[7] >= 3 and not outlines.a_gauge(7)
+
+
+def test_a_thing_whose_outlines_were_forgotten_is_no_gauge_and_no_fault():
+    """Offline 2026-10-11 a thing's outlines were forgotten with its counts kept, and asking whether it was a gauge
+    ended the game with "max() iterable argument is empty"."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import _HowOutlinesGo
+
+    outlines = _HowOutlinesGo()
+    for step in range(6):
+        outlines.saw(SimpleNamespace(number=4, x=10.0 + 3.0 * step, y=5.0, w=6.0 * step + 20.0, h=4.0))
+    outlines.from_an_end[9] = 5                              # counts of a thing whose outlines are gone
+    assert outlines.a_gauge(9) is False
+    outlines.forget_all_but({})
+    assert outlines.a_gauge(4) is False and not outlines.from_an_end
