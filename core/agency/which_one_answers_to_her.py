@@ -463,6 +463,8 @@ class _HowOutlinesGo:
         if number is None or self.from_an_end[number] < FILLS_AFTER or self.whole[number] * 2 > self.from_an_end[number]:
             return False
         boxes = self.boxes.get(number) or []
+        if len(boxes) < 2:
+            return False
         for low, high in ((0, 2), (1, 3)):
             lows, highs = [box[low] for box in boxes], [box[high] for box in boxes]
             low_runs, high_runs = max(lows) - min(lows), max(highs) - min(highs)
@@ -471,8 +473,10 @@ class _HowOutlinesGo:
         return False
 
     def forget_all_but(self, numbers: Any) -> None:
-        for number in [n for n in self.boxes if n not in numbers]:
+        for number in [n for n in {*self.boxes, *self.from_an_end, *self.whole} if n not in numbers]:
             self.boxes.pop(number, None)
+            self.from_an_end.pop(number, None)
+            self.whole.pop(number, None)
 
 
 class WhichIsHers(FollowsThePointer, FoundAnotherWay):
