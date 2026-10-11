@@ -187,8 +187,13 @@ class Plan(Rules):
         uses = self.as_uses()
         if not uses:
             return ""
+        from core.language.what_a_watcher_hears import in_words_not_code
+
+        # What it is after and where it starts are said where they are words; read out of a program they are its names
+        # ("reaches ST_KILL", "Level 1 (SCR_LEVEL01)"), and are left unsaid rather than said half.
         lead = " ".join(p for p in (f"What I'm after: {_lower(self.end)}." if self.end else "",
-                                     f"It starts from {_lower(self.start)}." if self.start else "") if p)
+                                     f"It starts from {_lower(self.start)}." if self.start else "")
+                        if p and in_words_not_code(p) == p)
         return (f"{lead} " if lead else "") + "My plan: " + "; then ".join(uses[:4]) + ("; and so on." if len(uses) > 4
                                                                                         else ".")
 
