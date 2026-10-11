@@ -242,10 +242,12 @@ class _DraughtsGame:
 
     SQUARE, MARGIN = 40, 10
 
-    def __init__(self, think_s: float = 1.4):
+    def __init__(self, think_s: float = 1.4, wants_between_s: float = 0.0):
         import time as _time
 
         self.time = _time
+        # A piece set down sooner than this after it was taken up is not set down.
+        self.wants_between_s, self.picked_at = wants_between_s, 0.0
         self.rules = Draughts(up="b", down="a", must_take=True)
         rows = [".a.a.a.a", "a.a.a.a.", ".a.a.a.a", "........", "........", "b.b.b.b.", ".b.b.b.b", "b.b.b.b."]
         self.position = Position.from_rows([["" if c == "." else c for c in row] for row in rows], "b")
@@ -281,7 +283,10 @@ class _DraughtsGame:
             return
         size = 8 * self.SQUARE + 2 * self.MARGIN
         square = (int((y * size - self.MARGIN) // self.SQUARE), int((x * size - self.MARGIN) // self.SQUARE))
+        if self.picked and self.time.monotonic() - self.picked_at < self.wants_between_s:
+            return
         self.picked.append(square)
+        self.picked_at = self.time.monotonic()
         moves = [m for m in self.rules.moves(self.position) if m[:len(self.picked)] == tuple(self.picked)]
         if not moves:
             self.picked = [square] if any(m[0] == square for m in self.rules.moves(self.position)) else []
@@ -328,3 +333,19 @@ def test_a_swap_is_seen_made_only_where_the_special_piece_now_stands(monkeypatch
 
     assert not asyncio.run(playing._shown(look, known.sides, expected, up, swap, known))
     assert asyncio.run(playing._shown(look, known.sides, Position(position.cells, up), up, (), known))
+
+
+def test_a_move_not_taken_is_made_again_slower_before_it_is_given_up(monkeypatch):
+    """A game that wants a moment between a piece taken up and set down takes her move the second time, slower;
+    and a move not taken is never the end of the game while the rules give one."""
+    import asyncio
+
+    from core.agency import playing_a_board as playing
+    from core.agency.playing_a_board import play_a_board
+
+    monkeypatch.setattr(playing, "STILL_S", 0.3)
+    monkeypatch.setattr(playing, "THINKS_S", 0.2)
+    game, said = _DraughtsGame(think_s=0.6, wants_between_s=0.6), []
+    result = asyncio.run(play_a_board(game.look, game, "Checkers.", seconds=14.0, say=said.append))
+    assert game.made >= 2 and result["ended"] == "out of time", (result, game.made, said)
+    assert not any("wouldn't take" in line for line in said), said
