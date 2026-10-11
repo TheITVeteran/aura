@@ -12,6 +12,11 @@ pursuit would think in words are decided without them.
     python tools/measure_on_archived_games.py --games 16 2 9 --minutes 6
     python tools/measure_on_archived_games.py --all --minutes 4 --out report.json
     python tools/measure_on_archived_games.py --games 6 --minutes 5 --trace /tmp/traces
+    python tools/measure_on_archived_games.py --bundle ~/.aura/flash-campaign/offline-bundle --all --trace /tmp/traces
+
+With ``--bundle`` the games are the offline bundle's (tools/prepare_offline_flash_bundle.py): each original program,
+kept with its hash, played by the pinned emulator from a server on this machine, so no game's copy can change or go
+missing between runs. With ``--trace`` her play is also pictured every few seconds, to be watched afterwards.
 
 Each game's report says how many runs she played, whether she won, how each
 ended in the game's own words, and what she said while playing.
@@ -82,7 +87,48 @@ ARCHIVED = {
 }
 
 
-async def _one(number: int, address: str, minutes: float, visible: bool, trace: Path | None = None) -> dict:
+#: What she is asked of each game: the demo's own words for a thing that may be won, scored or made.
+GOAL = ("Play this game. If it can be won, keep playing it until you win. If it only keeps a score, play it three times "
+        "and tell me your best. If it has neither, like a character maker, do it once and tell me what you made and why.")
+#: How often her play is pictured for watching, in seconds.
+PICTURED_EVERY_S = 20.0
+
+
+async def _pictured(browser: object, trace: Path, number: int, began: float) -> None:
+    """Her screen, every few seconds while she plays, for watching afterwards."""
+    while True:
+        await asyncio.sleep(PICTURED_EVERY_S)
+        page = getattr(browser, "page", None)
+        if page is None:
+            continue
+        try:
+            await page.screenshot(path=str(trace / f"game{number}_{int(time.monotonic() - began):04d}s.png"))
+        except Exception:  # noqa: BLE001 - a picture missed is one fewer to watch
+            continue
+
+
+def _served(bundle: Path) -> dict[int, str]:
+    """The offline bundle served on a loopback port for the rest of this run; where each of its games is played."""
+    import functools
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from tools.serve_offline_flash_bundle import BundleHandler, check_bundle
+
+    directory = bundle.expanduser().resolve()
+    check_bundle(directory)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(BundleHandler, directory=str(directory)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    origin = f"http://127.0.0.1:{server.server_port}"
+    os.environ["AURA_BROWSER_ALLOW_LOOPBACK"] = "1"
+    os.environ["AURA_BROWSER_LOOPBACK_ORIGINS"] = origin
+    os.environ["AURA_WEB_FETCH_ALLOW_HTTP"] = "1"
+    manifest = json.loads((directory / "manifest.json").read_text())
+    return {case["id"]: f"{origin}/{case['url']}" for case in manifest["cases"] if case.get("status") == "asset_verified"}
+
+
+async def _one(number: int, address: str, minutes: float, visible: bool, trace: Path | None = None,
+               goal: str = GOAL) -> dict:
     from core.capabilities.phantom_browser import PhantomBrowser
     from core.skills import sovereign_browser_drawing as drawing
 
@@ -114,7 +160,12 @@ async def _one(number: int, address: str, minutes: float, visible: bool, trace: 
             return {"game": number, "error": "browser did not start"}
         await browser.page.goto(address, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(6)
-        played = await drawing.played_on_the_drawing(browser, "Play this game and win.", {"url": address})
+        watching = asyncio.ensure_future(_pictured(browser, trace, number, began)) if trace is not None else None
+        try:
+            played = await drawing.played_on_the_drawing(browser, goal, {"url": address})
+        finally:
+            if watching is not None:
+                watching.cancel()
     except Exception as why:  # noqa: BLE001 - one game failing is a result, not a stop
         played = {"error": f"{type(why).__name__}: {why}"}
     finally:
@@ -135,7 +186,8 @@ async def _one(number: int, address: str, minutes: float, visible: bool, trace: 
         "won": played.get("won"),
         "error": played.get("error"),
         "last_seen": str(played.get("last_seen") or "")[:200],
-        "said": said[:30],
+        "said": said[:200],
+        "stopped_because": str(played.get("stopped_because") or ""),
     }
 
 
@@ -147,6 +199,7 @@ async def main(argv: list[str]) -> list[dict]:
     parser.add_argument("--visible", action="store_true")
     parser.add_argument("--out", default="")
     parser.add_argument("--trace", default="", help="a folder for each game's log of decisions and its last screen")
+    parser.add_argument("--bundle", default="", help="the offline bundle to play the games from, instead of their archived copies")
     args = parser.parse_args(argv)
     os.environ.setdefault("AURA_BROWSER_STEALTH", "0")
     # What her live process refuses to load is refused here too: on 11 October her seeing of a well asked for OpenCV,
@@ -154,13 +207,16 @@ async def main(argv: list[str]) -> list[dict]:
     from core.media.safe_imports import install_main_process_cv2_guard
 
     install_main_process_cv2_guard()
-    numbers = sorted(ARCHIVED) if args.all else args.games
+    places = dict(ARCHIVED)
+    if args.bundle:
+        places = _served(Path(args.bundle))
+    numbers = sorted(places) if args.all else args.games
     results = []
     for number in numbers:
-        if number not in ARCHIVED:
-            print(json.dumps({"game": number, "error": "no archived copy that plays here"}), flush=True)
+        if number not in places:
+            print(json.dumps({"game": number, "error": "no copy that plays here"}), flush=True)
             continue
-        result = await _one(number, ARCHIVED[number], args.minutes, args.visible, Path(args.trace) if args.trace else None)
+        result = await _one(number, places[number], args.minutes, args.visible, Path(args.trace) if args.trace else None)
         results.append(result)
         print(json.dumps({k: result[k] for k in ("game", "minutes", "runs", "won", "error", "last_seen")}), flush=True)
     return results

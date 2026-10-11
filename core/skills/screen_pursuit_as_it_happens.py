@@ -40,6 +40,12 @@ def _a_different_screen(said: str, before: str) -> bool:
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
+def _the_same_screen(before: Any, said: Any) -> bool:
+    """Whether a screen read now is one read before, a reading a little differently made being the same screen."""
+    return (isinstance(before, str) and isinstance(said, str)
+            and (before == said or bool(before and said) and not _a_different_screen(said, before)))
+
+
 def begin_run(keep: dict[str, Any], game: str = "") -> None:
     """A new attempt keeps world knowledge and measures its own state. ``game`` is the name the game is kept under
     (`_this_game`): where it is the game the last attempt was at, unchanged, what she is in it and what her keys do
@@ -80,6 +86,9 @@ def begin_run(keep: dict[str, Any], game: str = "") -> None:
 #: How many times one screen that offers a way on is left to be gone on from before what moves on it is played: a
 #: way on may take a second look to be known for a control, and a second click to take.
 WAYS_ON_TRIED = 4
+
+#: How long a screen found not to move on its own is taken to stay so while its words do not change, in seconds.
+STILL_SCREEN_KEPT_S = 12.0
 
 #: How long the reflexes leave a moving screen alone after finding nothing on
 #: it that answers to her: a title screen that animates is not a game yet.
@@ -165,6 +174,8 @@ class PlayingAsItHappens:
     #: The words of the screen she was left quiet on, and of the screen as last looked at: quiet is for that screen.
     quiet_on: str = ""
     said_now: str = ""
+    #: The words of the screen last watched and found not to move on its own, and when.
+    still_screen: tuple[str, float] | None = None
     over_because: str = ""
     recalled: bool = False
     #: The words of the screen that ended the run, for whoever asks how it ended.
@@ -604,8 +615,10 @@ class PlayingAsItHappens:
         if way == SEND and not self._no_place_for_shots():
             await self._by_shots(now)
             return
-        # Played as it happens where it moves on its own, and where it moves for as long as she holds a key.
-        if not self.under_her_hand and not await the_world_moves_on_its_own(self.look):
+        # Played as it happens where it moves on its own, and where it moves for as long as she holds a key. Whether a
+        # screen moves on its own is watched once a screen, not before every move on it: LIVE-like 2026-10-11 a menu
+        # whose figures bobbed in place was watched for three and a half seconds before each of her clicks.
+        if not self.under_her_hand and not await self._it_moves_on_its_own(the_world_moves_on_its_own):
             # A world that waits for her: words it asks for are typed; where it says to send something, by shots. Only
             # there: LIVE 2026-10-11 a still level select, in a game played as it happens, had three minutes of pulls
             # and holds let go at it, and nothing sent.
@@ -701,6 +714,15 @@ class PlayingAsItHappens:
         if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
             self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
             self.under_her_hand = False
+
+    async def _it_moves_on_its_own(self, watched: Any) -> bool:
+        """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
+        known = self.still_screen
+        if known is not None and _the_same_screen(known[0], self.said_now) and time.monotonic() - known[1] < STILL_SCREEN_KEPT_S:
+            return False
+        moves = await watched(self.look)
+        self.still_screen = None if moves else (self.said_now, time.monotonic())
+        return moves
 
     async def _did_again_what_it_showed(self) -> bool:
         """Where the place's words ask for what it shows to be done again: each showing watched and done again, round
@@ -854,6 +876,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
 
     if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
+    # A screen looked over and found no board is not looked over again while it stays the same screen.
+    if _the_same_screen(reflexes.keep.get("no_board_on"), getattr(reflexes, "said_now", None)):
+        return False
     reflexes.keep["board_looked_for_at"] = now
     seen = await reflexes.look()
     # What the place said of its rules is kept from one stretch of play to the next: LIVE 2026-10-11 a second stretch
@@ -864,6 +889,7 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
     board = a_board_in(seen[0]) if seen is not None else None
     if board is None or not a_board_game(board, words):
+        reflexes.keep["no_board_on"] = getattr(reflexes, "said_now", None)
         return False
     logger.info("a board of two sides in turns (%s): playing it by search", a_board_game(board, words))
     stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
@@ -913,6 +939,12 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
     if reflexes.no_well_here or int(reflexes.keep.get("no_well_found", 0)) >= NO_WELL_AFTER \
             or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
+    # A screen watched and found no well with a piece coming down it is not watched again while it stays the same
+    # screen: LIVE-like 2026-10-11 a scrapbook's page, its ground like a well's, was watched for eight seconds before
+    # every one of her clicks on it.
+    if _the_same_screen(reflexes.keep.get("no_well_on"), getattr(reflexes, "said_now", None)) \
+            and not reflexes.keep.get("well_keys"):
+        return False
     reflexes.keep["well_looked_for_at"] = now
     empty: list[Any] = []
     try:
@@ -931,6 +963,7 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
             reflexes.waited_at_a_well += waited
             reflexes.keep["well_looked_for_at"] = -1e9
             return True
+        reflexes.keep["no_well_on"] = getattr(reflexes, "said_now", None)
         return False
     reflexes.keep["well_seen"] = well
     logger.info("a well %d across and %d down with a piece coming down it: playing it by where each piece lands best",

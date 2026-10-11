@@ -102,13 +102,18 @@ def install_ruffle(destination: Path) -> dict:
             "integrity": dist["integrity"], "files": files}
 
 
+#: The page each game is played on. It names the game as a page that hosts one does, in its title and over the game:
+#: a game played from a page that called itself "Offline program" was looked up by that name (offline 2026-10-11).
 PLAYER = """<!doctype html><html><head><meta charset="utf-8"><title>Offline program</title>
-<style>body{margin:0;background:#111;color:#eee}#stage{width:100vw;height:100vh}
-ruffle-player{width:100%;height:100%}</style></head><body><div id="stage"></div>
+<style>body{margin:0;background:#111;color:#eee;font:15px sans-serif}h1{margin:0;padding:6px 12px;font-size:16px;height:20px}
+#stage{width:100vw;height:calc(100vh - 32px)}ruffle-player{width:100%;height:100%}</style></head><body>
+<h1 id="title"></h1><div id="stage"></div>
 <script>window.RufflePlayer={config:{autoplay:'auto',splashScreen:true,allowScriptAccess:false,
 openUrlMode:'deny',logLevel:'info'}};</script><script src="ruffle/ruffle.js"></script>
 <script>const number=new URLSearchParams(location.search).get('case');
 if(!/^\\d+$/.test(number)) throw Error('a numeric case is required');
+fetch('manifest.json').then(r=>r.json()).then(m=>{const c=m.cases.find(c=>String(c.id)===number);
+if(c){document.title=c.title;document.getElementById('title').textContent=c.title;}});
 const player=window.RufflePlayer.newest().createPlayer();
 document.getElementById('stage').appendChild(player);
 player.ruffle().load({url:'programs/'+number+'.swf'}).catch(error=>{
