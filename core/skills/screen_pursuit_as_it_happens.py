@@ -65,6 +65,10 @@ def begin_run(keep: dict[str, Any]) -> None:
         if kept is not None:
             kept.begin_run()
 
+#: How many times one screen that offers a way on is left to be gone on from before what moves on it is played: a
+#: way on may take a second look to be known for a control, and a second click to take.
+WAYS_ON_TRIED = 4
+
 #: How long the reflexes leave a moving screen alone after finding nothing on
 #: it that answers to her: a title screen that animates is not a game yet.
 LEAVE_A_MOVING_MENU_S = 20.0
@@ -377,7 +381,7 @@ class PlayingAsItHappens:
 
         A screen not yet read is read first; a screen whose words offer a way on (Start, Play, Next) is a menu,
         whatever moves on it, and is clicked through first: LIVE 2026-10-08 a title's fireflies were played for
-        fifty-three seconds with START under them. Twice at most for one screen, in case its way on does nothing.
+        fifty-three seconds with START under them. A few times at most for one screen, in case its way on does nothing.
         """
         from core.language.a_way_on import offers_a_way_on
 
@@ -388,7 +392,7 @@ class PlayingAsItHappens:
             return False
         key = said[:80]
         self.held_for_a_way_on[key] = self.held_for_a_way_on.get(key, 0) + 1
-        return self.held_for_a_way_on[key] <= 2
+        return self.held_for_a_way_on[key] <= WAYS_ON_TRIED
 
     def _a_screen_not_seen_before(self, said: str) -> None:
         """Count a screen the game has not shown her before: getting to one is getting somewhere, scored or not.
@@ -436,6 +440,16 @@ class PlayingAsItHappens:
             # The game itself stopped: LIVE-like 2026-10-11 a second game of falling pieces ended on the screen the
             # first had ended on, its PLAY AGAIN no longer new, and she played the end screen for a minute and a half.
             appeared = set(offered)
+        said_over = self._newly_says_the_game_is_over(observation, during)
+        if said_over and not appeared:
+            # The screen says the game is over in words it did not show while she played, whatever way on it offers:
+            # LIVE 2026-10-11 a two-minute game ended on "Your final score" over the Play its title had shown, she
+            # played on into the next game, and each of her three runs was ended by her own clock part-way through one.
+            self.over_because = f"the screen says the game is over ({said_over})"
+            self.ending_words = " ".join(str(observation.get("text") or "").split())
+            self.ending_parts = _lines_of(observation.get("layout") or [])
+            logger.info("the run is over: %s", self.over_because)
+            return True
         if offered and not appeared:
             logger.info("a way to start again is on screen (%s), but it was there while she played", ", ".join(sorted(offered)))
         if appeared:
@@ -445,6 +459,16 @@ class PlayingAsItHappens:
             logger.info("the run is over: %s", self.over_because)
             return True
         return False
+
+    @staticmethod
+    def _newly_says_the_game_is_over(observation: dict[str, Any], during: set[str]) -> str:
+        """The words by which the screen says the game is over, where nothing read while she played had them in it."""
+        from core.language.how_a_game_ended import what_says_the_game_is_over
+
+        ending = what_says_the_game_is_over(str(observation.get("text") or ""))
+        if not ending or any(ending in " ".join(str(said).lower().split()) for said in during):
+            return ""
+        return ending
 
     def _no_place_for_shots(self) -> bool:
         """Whether the screen is one to be gone on from, not sent into: a way on shown, words that teach the rules, or

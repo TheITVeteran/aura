@@ -17,7 +17,7 @@ import unicodedata
 from typing import Any, Final
 
 __all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over",
-           "the_score_in", "what_it_asks_of_a_player"]
+           "the_score_in", "what_it_asks_of_a_player", "what_says_the_game_is_over"]
 
 _WINNING: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeated|champion)\b")
 _THE_PLAYER: Final = frozenset({"you", "player", "player 1", "p1", "your", "yours"})
@@ -104,6 +104,19 @@ _ROUND_OVER: Final = re.compile(
 def says_a_round_is_over(words: str) -> bool:
     """Whether writing says a round is over, the way an end screen says it: "GAME OVER", "TRY AGAIN", "Level Complete"."""
     return bool(_ROUND_OVER.search(_plain(words)))
+
+
+#: What a screen says when the whole game is over, not a level of it: its last count, or that it is lost or won.
+_THE_GAME_OVER: Final = re.compile(
+    r"\b(game over|(?:your )?final score|you scored|your score (?:is|was)|out of (?:lives|time)|time'?s up|"
+    r"you (?:lose|lost|died|crashed|win|won)|try again|play again)\b")
+
+
+def what_says_the_game_is_over(words: str) -> str:
+    """The words of a screen that say the game is over ("game over", "final score"), in small letters; "" where none
+    do. A level finished is not the game over, and is not told here."""
+    found = _THE_GAME_OVER.search(_plain(words))
+    return found.group(1) if found else ""
 
 
 def how_it_ended(words: str) -> str:

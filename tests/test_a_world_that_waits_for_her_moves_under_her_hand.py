@@ -63,6 +63,18 @@ def _sways(world, at):
     world.x = 200.0 + 3.0 * math.sin(at * 12.0)
 
 
+def _snows(world, at):
+    # Something on its way down the picture the whole time, whatever she presses: snow behind a menu.
+    world.y = 40.0 + (at * 120.0) % 240.0
+
+
+def test_what_was_already_on_its_way_is_not_going_because_of_the_key():
+    # LIVE 2026-10-11 snow fell behind a title's PLAY button; it went on falling while she held up, the title was
+    # taken for a world that moves under her hand, and she steered about in it for fifty-three seconds.
+    world = _World(_snows)
+    assert not asyncio.run(it_goes_while_held(world.look, world, "up"))
+
+
 def test_what_she_steers_goes_on_going_while_the_key_is_held():
     world = _World(_walks)
     assert asyncio.run(it_goes_while_held(world.look, world, "right"))
