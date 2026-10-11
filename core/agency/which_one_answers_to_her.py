@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.agency.causal_identification import (
+    UNSEEN_AT_MOST_S,
     CausalIdentification,
     CausalWitness,
     within_observed_reach,
@@ -409,8 +410,9 @@ def _apart2(a: tuple[float, float], b: tuple[float, float]) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
-#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers.
-HIDDEN_A_MOMENT_S = 1.0
+#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers: as
+#: long as a thing unseen can be found again where it was going.
+HIDDEN_A_MOMENT_S = UNSEEN_AT_MOST_S
 
 #: How far an edge must go to have moved, and how little to have stayed, in the picture's pixels; how far the end of a
 #: gauge that moves must have run over its changes, and how many changes it takes to tell; and how many outlines are
