@@ -225,6 +225,22 @@ def test_what_rests_and_what_comes_down_are_told_apart() -> None:
     assert piece is not None and piece.column == world.at[0]
 
 
+def test_a_well_is_seen_where_no_picture_library_can_be_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Her main process refuses to load one (core/media/safe_imports.py). LIVE 2026-10-11 her seeing of a well asked
+    # for one, and the refusal ended every game she opened, well in it or not.
+    import sys
+
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    world = _WellWorld(tokens=True, seed=5)
+    world.pass_time(12.0)
+    while world.clears_at is not None or world.at[1] < 1 or (world.at[0], world.at[1] + 4) in world.cells:
+        world.pass_time(0.1)
+    well = a_well_in(world.picture())
+    resting = what_rests(what_stands_in(world.picture(), well), well)
+    assert set(resting) == set(world.cells)
+    assert the_piece_in(world.picture(), well, resting) is not None
+
+
 def test_a_picture_with_no_well_and_a_well_with_nothing_coming_are_not_this_game(on_its_clock: Any) -> None:
     world = _WellWorld(tokens=True, seed=7)
     assert a_well_in(world.scene) is None

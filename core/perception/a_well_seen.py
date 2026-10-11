@@ -243,13 +243,24 @@ def _cut_into_cells(image: np.ndarray, ground: tuple[int, int, int], box: tuple[
 
 
 def _the_look(image: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
-    """A small picture of the middle of a box: what it is known again by."""
-    import cv2
-
+    """A small picture of the middle of a box: what it is known again by. Each of its pixels is the mean of the part
+    of the middle it stands for, worked here in plain arithmetic: her main process does not load a picture library
+    (core/media/safe_imports.py), and LIVE 2026-10-11 asking for one here ended every game she opened."""
     left, top, right, bottom = box
     inset_x, inset_y = (right - left) // 6, (bottom - top) // 6
     middle = image[top + inset_y:bottom - inset_y, left + inset_x:right - inset_x].astype(np.float32)
-    return cv2.resize(middle, (LOOK_PX, LOOK_PX), interpolation=cv2.INTER_AREA)
+    tall, wide = middle.shape[:2]
+    if tall < 1 or wide < 1:
+        return np.zeros((LOOK_PX, LOOK_PX, 3), dtype=np.float32)
+    rows = np.minimum(np.linspace(0, tall, LOOK_PX + 1).astype(int), tall)
+    columns = np.minimum(np.linspace(0, wide, LOOK_PX + 1).astype(int), wide)
+    small = np.zeros((LOOK_PX, LOOK_PX, 3), dtype=np.float32)
+    for row in range(LOOK_PX):
+        for column in range(LOOK_PX):
+            part = middle[rows[row]:max(rows[row] + 1, rows[row + 1]), columns[column]:max(columns[column] + 1, columns[column + 1])]
+            if part.size:
+                small[row, column] = part.reshape(-1, 3).mean(axis=0)
+    return small
 
 
 def _kind_of(look: np.ndarray, well: WellSeen) -> int:

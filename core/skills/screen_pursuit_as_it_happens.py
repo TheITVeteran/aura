@@ -858,6 +858,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     return True
 
 
+#: What a fault in her own seeing or playing of a well can raise: any of these leaves the screen to her other ways.
+_A_FAULT_OF_HERS = (ImportError, IndexError, KeyError, ValueError, TypeError, AttributeError, ArithmeticError, RuntimeError,
+                    OSError)
 #: The keys a piece coming down a well is tried with, beside any the place has named.
 _KEYS_FOR_A_PIECE = ("left", "right", "up", "down", "space")
 
@@ -883,7 +886,16 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         return False
     reflexes.keep["well_looked_for_at"] = now
     empty: list[Any] = []
-    well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"), empty)
+    try:
+        well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"), empty)
+    except _A_FAULT_OF_HERS as why:
+        # Looking for a well is never what ends a game: LIVE 2026-10-11 a fault in it ended every game she opened.
+        from core.runtime.errors import record_degradation
+
+        logger.exception("looking for a well failed")
+        record_degradation("playing_a_well", why, action="no well is looked for again this run")
+        reflexes.no_well_here = True
+        return False
     if well is None:
         waited = time.monotonic() - now
         if empty and reflexes.keep.get("well_keys") and reflexes.waited_at_a_well + waited < WAITS_AT_A_WELL_S:
@@ -903,7 +915,7 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         stretch = await play_a_well(reflexes.look, reflexes, well, words,
                                     seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
                                     say=_said_while_playing, offered=keys, known=reflexes.keep)
-    except (IndexError, KeyError, ValueError, TypeError, AttributeError, ArithmeticError) as why:
+    except _A_FAULT_OF_HERS as why:
         # A fault in playing the well is hers to hear of and not the game's to lose by: the screen goes to her other
         # ways for the rest of the run. Offline 2026-10-11 one such fault ended a whole run two minutes in.
         from core.runtime.errors import record_degradation
