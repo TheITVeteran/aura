@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.agency.a_choice_and_its_reasons import chose_in_play
 from core.agency.building_up import builds_up
 from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decision API)
     CARRIED_AHEAD_S,
@@ -283,6 +284,8 @@ class _Run:
     reach: Any = None
     #: The tells of each kind of thing, learned from what followed each change in it (core/agency/warning_signs.py).
     signs: Any = None
+    #: Each choice she makes, with its reason, craft, what it counts on and what it came to (a_choice_and_its_reasons.py).
+    choices: Any = None
     #: What the place does to her whatever she does (core/agency/what_the_place_does_to_her.py), and the thing she is
     #: going for, kept to until there is a reason to let it go (core/agency/a_thing_gone_for.py).
     pressures: Any = None
@@ -1051,6 +1054,9 @@ async def _play_as_it_happens(
     from core.agency.warning_signs import WarningSigns, read_the_signs
 
     run.signs = keep.get("signs") or WarningSigns()
+    from core.agency.a_choice_and_its_reasons import ChoicesMade
+
+    run.choices = keep.get("choices") or ChoicesMade()
     from core.agency.a_thing_gone_for import GoneFor
     from core.agency.what_the_place_does_to_her import Pressures
 
@@ -1145,6 +1151,7 @@ async def _play_as_it_happens(
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
             choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
+            choosing.watched = keep.get("watched")
             choosing.caution *= caution_of(situations)
             _what_the_place_does(run, choosing, moves, hers, meeting, at)
             _what_she_plays_for(run, choosing, moves, hers, meeting, at, say)
@@ -1161,6 +1168,9 @@ async def _play_as_it_happens(
             meeting.saw(moves, hers, happened, at, choosing.line() if choosing.mine is not None else None)
             read_the_signs(run.signs, moves, choosing.mine, meeting.verdicts, at,
                            lambda line, at=at: _say(run, say, line, at, once=line))
+            run.choices.settle(at, met=meeting._met, gains=run.gains, losses=run.losses,
+                               mine_at=(choosing.mine.x, choosing.mine.y) if choosing.mine is not None else None,
+                               say=lambda line, at=at: _say(run, say, line, at, once=line))
             noticed(run, moves, meeting, at, say, _named)
             seen_in_play(run, moves, hers, meeting, picture, at, lambda line, once, at=at: _say(run, say, line, at, once=once))
             measured_in_play(run, moves, hers, meeting, at)
@@ -1178,7 +1188,8 @@ async def _play_as_it_happens(
             context.check()
             await use_controls_on_things(hands, run, moves, hers, happened, at,
                                          lambda line, once, at=at: _say(run, say, line, at, once=once), picture)
-            _out_of_her_reach(run, choosing, at)
+            for line in _out_of_her_reach(run, choosing, at):
+                _say(run, say, line, at, once=line)
             if goes_over:
                 if waits_for_her and choosing.mine is not None and choosing.ways and choosing.target()[1] == "cover":
                     _say(run, say, "Nothing's coming at me, so I'm looking around the place.", at, once="looking around")
@@ -1199,7 +1210,7 @@ async def _play_as_it_happens(
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
-                 "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
+                 "said_once": run.said, "leading": run.leading, "choices": run.choices, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
                  "sounds_heard": run.sounds, "allies": run.allies,
@@ -1334,6 +1345,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     shift = part * ((choosing.mine.h if choosing.line() == 0 else choosing.mine.w) / 2 if choosing.mine is not None else 0.0)
     offset = (0.0, shift) if choosing.line() == 0 else (shift, 0.0) if choosing.line() == 1 else (0.0, 0.0)
     key, why, aim = choosing.key(run.held, offset=offset)
+    chose_in_play(run.choices, choosing, key, why, aim, at, lambda line, once: _say(run, say, line, at, once=once))
     before = choosing.ways.get(run.held, (0.0, 0.0))
     after = choosing.ways.get(key, (0.0, 0.0))
     if key != run.held:
@@ -1802,4 +1814,5 @@ def _what_it_came_to(run: _Run, moves: WhatMoves, hers: WhichIsHers, meeting: Wh
         "stalled": run.contest.stalled(time.monotonic()),
         "said": list(run.lines),
         "words_seen": sorted(_the_words_of_play(run, ended)),
+        "choices": run.choices.summary() if run.choices is not None else {},
     }

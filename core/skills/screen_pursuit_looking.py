@@ -940,6 +940,9 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     if hasattr(can_do, "observe_placements"):
         can_do.observe_placements(observation)
     _what_she_has_built(can_do)
+    from core.agency.mending_what_broke import heard_the_test
+
+    heard_the_test(guide, can_do, observation, str(getattr(can_do, "last_tried", "") or ""), _tell if narrate else None)
     clickable = _as_the_guide_reads_it(clickable, says, paced, narrate,
                                        found=leads.what_things_do() if leads is not None else (),
                                        last_act=str(getattr(can_do, "last_tried", "") or ""))

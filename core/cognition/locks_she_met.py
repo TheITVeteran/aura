@@ -26,7 +26,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Lock", "Locks", "SAYS_IT_IS_CLOSED", "SAYS_SHE_GAINED", "heard_on_a_screen"]
+__all__ = ["Lock", "Locks", "SAYS_IT_IS_CLOSED", "SAYS_SHE_GAINED", "heard_on_a_screen", "locks_as_memory",
+           "locks_from_memory"]
 
 logger = logging.getLogger("Aura.LocksSheMet")
 
@@ -93,6 +94,9 @@ class Lock:
     at: str
     wants: str
     open_to_try: bool = False
+    #: Whether it was seen rather than said: a place she made for and got no nearer to (a ledge too high, a gap too
+    #: wide). It names nothing it wants, so whatever she gains next may open it.
+    seen: bool = False
 
 
 @dataclass
@@ -136,7 +140,24 @@ class Locks:
             if not lock.open_to_try and lock.wants and _named(lock.wants) & _named(sentence):
                 lock.open_to_try = True
                 news.append(f"That's what {lock.at} wanted. Going back to it.")
+            elif not lock.open_to_try and lock.seen:
+                lock.open_to_try = True
+                news.append(f"With that, {lock.at} may be in reach now. Trying it again.")
         return news
+
+    def saw_out_of_reach(self, at: str) -> list[str]:
+        """A place she made for and got no nearer to, kept as a lock that names nothing it wants; what to say of it."""
+        if any(lock.at == at for lock in self.met):
+            return []
+        self.met.append(Lock(said="I made for it and got no nearer", at=at, wants="", seen=True))
+        del self.met[:-MOST_LOCKS]
+        return [f"I can't get to {at} yet. I'll come back to it when something changes."]
+
+    def reopened_seen(self) -> list[Lock]:
+        """The seen locks a gain has opened, taken off the list as they are handed back to be tried."""
+        opened = [lock for lock in self.met if lock.seen and lock.open_to_try]
+        self.met = [lock for lock in self.met if lock not in opened]
+        return opened
 
     def open_to_try(self) -> list[Lock]:
         return [lock for lock in self.met if lock.open_to_try]
@@ -172,3 +193,24 @@ def _lower(text: str) -> str:
     from core.language.words_of_the_language import as_said_inside
 
     return as_said_inside(str(text).rstrip("."))
+
+
+def locks_as_memory(locks: Any) -> dict[str, Any]:
+    """The ways that would not open and what each wanted, and what she gained, kept with the guide to the place."""
+    if locks is None or not (locks.met or locks.gained):
+        return {}
+    return {"met": [[lock.said, lock.at, lock.wants, lock.open_to_try, lock.seen] for lock in locks.met[-12:]],
+            "gained": list(locks.gained[-12:])}
+
+
+def locks_from_memory(held: Any) -> Locks:
+    locks = Locks()
+    if not isinstance(held, dict):
+        return locks
+    for kept in held.get("met") or []:
+        if isinstance(kept, list) and len(kept) >= 3:
+            locks.met.append(Lock(str(kept[0]), str(kept[1]), str(kept[2]), bool(kept[3]) if len(kept) > 3 else False,
+                                  bool(kept[4]) if len(kept) > 4 else False))
+    locks.gained = [str(g) for g in held.get("gained") or []]
+    return locks
+

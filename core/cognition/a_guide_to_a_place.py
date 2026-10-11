@@ -38,7 +38,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.cognition.locks_she_met import Locks
+from core.cognition.locks_she_met import Locks, locks_as_memory, locks_from_memory
 from core.cognition.reading_a_places_progress import (  # noqa: F401 (the existing readout patterns)
     _A_READOUT,
     _A_STAGE,
@@ -198,6 +198,12 @@ class Guide:
     #: The place's sentences as she read them: what each asks, and its lesson as a procedure
     #: (core/cognition/reading_the_rules.py).
     rules: Rules = field(default_factory=Rules)
+    #: Where a test of what she built stopped: the middle of the part placed there and its size, the join to mend
+    #: (core/agency/mending_what_broke.py).
+    broke_at: tuple[float, float, float] | None = None
+    #: The board game she settled the place is, where it is one: its family, the variation of it, and which side is hers
+    #: (core/agency/playing_a_board.py).
+    board: dict[str, Any] = field(default_factory=dict)
 
     # -- taking things in ---------------------------------------------------------------------------------------
 
@@ -665,6 +671,8 @@ class Guide:
     # -- kept between sittings ------------------------------------------------------------------------------------
 
     def as_memory(self) -> dict[str, Any]:
+        from core.cognition.a_plan_to_an_end import plan_as_memory
+
         return {"place": self.place,
                 "controls": {k: [c.act, c.source, c.on] for k, c in self.controls.items()},
                 "pointer": dict(self.pointer),
@@ -675,10 +683,16 @@ class Guide:
                 "strategy": self.strategy[:6], "stage": self.stage, "sources": sorted(self.sources),
                 "names": {part: names[:6] for part, names in self.names.items()},
                 "notes": self.notes.as_memory() if self.notes is not None else {},
-                "reading": self.reading.as_memory()}
+                "reading": self.reading.as_memory(),
+                # What the place's own words said to do, her plan, and the ways that would not open: known on the next
+                # visit before anything is read again.
+                "rules_heard": self.rules.heard[-40:], "plan": plan_as_memory(self.plan),
+                "locks": locks_as_memory(self.locks), "board": dict(self.board)}
 
     @classmethod
     def from_memory(cls, held: Any, place: str = "") -> Guide:
+        from core.cognition.a_plan_to_an_end import plan_from_memory
+
         guide = cls(place=place)
         if not isinstance(held, dict):
             return guide
@@ -696,6 +710,10 @@ class Guide:
         guide.names = {part: list(names) for part, names in (held.get("names") or {}).items()}
         guide.notes = Notebook.from_memory(held.get("notes"))
         guide.reading = WhatThisPlaceIs.from_memory(held.get("reading"))
+        guide.rules.hear([str(p) for p in held.get("rules_heard") or []])
+        guide.plan = plan_from_memory(held.get("plan"))
+        guide.locks = locks_from_memory(held.get("locks"))
+        guide.board = dict(held.get("board") or {})
         return guide
 
 

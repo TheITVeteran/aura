@@ -184,18 +184,27 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     """Every thing that matters to her, nearest first, run forward under the world's own going."""
     from core.agency.what_meeting_things_does import AVOID, CLICK, MEET, SHOOT
 
-    mine = choosing.mine
     worth_of = {MEET: GAIN, CLICK: GAIN, AVOID: -LOSS, SHOOT: -LOSS}
     things = [(t, worth_of.get(choosing.stance(t), 0.0)) for t in choosing.others()]
     things = [(t, w) for t, w in things if w != 0.0]
-    things.sort(key=lambda pair: math.hypot(pair[0].x - mine.x, pair[0].y - mine.y))
-    things = things[:MOST_THINGS]
+    physics = getattr(choosing, "physics", None)
+    # What she plans with is a construal of the scene, as people's is (value-guided construal, Ho et al. 2022): what
+    # cannot come within her reach in the time imagined cannot change her route, and is left out before planning; of
+    # the rest, what could reach her soonest is imagined first. A fast thing from far off outranks a near one going away.
+    fastest = max((math.hypot(*way) for way in scene.ways.values()), default=0.0)
+    construed = []
+    for thing, worth in things:
+        path = _its_path(physics, thing, float(scene.times[-1]) * max(PACES))
+        soonest = _soonest_within_reach(path, scene, fastest, thing)
+        if soonest is not None:
+            construed.append((soonest, thing, worth, path))
+    construed.sort(key=lambda one: one[0])
+    construed = construed[:MOST_THINGS]
+    things = [(thing, worth) for _soonest, thing, worth, _path in construed]
     steps, count = len(scene.times), len(things)
     where = np.zeros((len(PACES), steps, count, 2))
     there = np.ones((len(PACES), steps, count), dtype=bool)
-    physics = getattr(choosing, "physics", None)
-    for column, (thing, _worth) in enumerate(things):
-        path = _its_path(physics, thing, float(scene.times[-1]) * max(PACES))
+    for column, (_soonest, _thing, _worth, path) in enumerate(construed):
         for layer, pace in enumerate(PACES):
             for row, when in enumerate(scene.times):
                 spot = path(float(when) * pace)
@@ -213,6 +222,20 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
         fastest = max([math.hypot(*push) for push in scene.pushes.values()] + [1.0])
         gentle = [meeting.gentle_below(t.kind) if hasattr(meeting, "gentle_below") else None for t, _w in things]
         scene.gentle = np.array([g if g is not None else GENTLE_SHARE * fastest for g in gentle])
+
+
+def _soonest_within_reach(path: Callable[[float], tuple[float, float] | None], scene: _Scene, fastest: float,
+                          thing: Any) -> float | None:
+    """The soonest time in the horizon a thing could be where she could be by then, going as fast as she goes; None
+    where it never could."""
+    near = (max(scene.size) + max(float(thing.w), float(thing.h))) / 2
+    for when in scene.times:
+        for pace in PACES:
+            spot = path(float(when) * pace)
+            if spot is not None and math.hypot(spot[0] - scene.start[0], spot[1] - scene.start[1]) <= (
+                    fastest * float(when) + near):
+                return float(when)
+    return None
 
 
 def _its_path(physics: Any, thing: Any, seconds: float) -> Callable[[float], tuple[float, float] | None]:

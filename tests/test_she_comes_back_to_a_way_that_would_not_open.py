@@ -50,3 +50,19 @@ def test_a_lock_open_to_try_is_gone_back_to_by_the_screens_she_knows():
     finally:
         THE_GUIDE.reset(token)
     assert max(valued, key=valued.get) == 'click "BACK"'
+
+
+def test_a_place_she_could_not_get_to_is_a_lock_seen_and_a_gain_sends_her_back_to_it():
+    """A ledge too high is a lock no screen says: kept as one, with nothing named that it wants, and tried again once
+    she gains anything (core/cognition/locks_she_met.py, core/agency/what_she_cannot_reach.py)."""
+    from core.cognition.locks_she_met import Locks
+
+    locks = Locks()
+    said = locks.saw_out_of_reach("the place at 40% across and 20% down")
+    assert said == ["I can't get to the place at 40% across and 20% down yet. I'll come back to it when something changes."]
+    assert locks.saw_out_of_reach("the place at 40% across and 20% down") == []          # once
+    assert not locks.reopened_seen()
+    news = locks.heard(["You got the double jump!"], [])
+    assert any("may be in reach now" in line for line in news)
+    assert [lock.at for lock in locks.reopened_seen()] == ["the place at 40% across and 20% down"]
+    assert not locks.met

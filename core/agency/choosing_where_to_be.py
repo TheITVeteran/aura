@@ -10,6 +10,7 @@ import math
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from core.agency.a_choice_and_its_reasons import how_soon_she_reaches, reachable_arrivals
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S
 from core.agency.what_meeting_things_does import AVOID, CLICK, IGNORE, MEET, SHOOT, WhatMeetingDoes
 from core.agency.what_she_has_left import CAREFUL_BELOW
@@ -17,6 +18,7 @@ from core.agency.whether_it_goes_by_itself import goes_somewhere
 from core.agency.which_one_answers_to_her import WhichIsHers, ways_carried
 from core.agency.who_is_who import IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
+from core.perception.watching_someone_play import stance_watched
 from core.perception.what_moves_in_the_picture import WhatMoves
 
 #: How far ahead she looks for anything she might walk into.
@@ -127,6 +129,11 @@ class _Choosing:
     at: float | None = None
     #: The situations the place's words put her in (core/agency/situations_she_knows.py).
     situations: tuple[Any, ...] = ()
+    #: What a recording of someone playing it showed (core/perception/watching_someone_play.py).
+    watched: Any = None
+    #: How long her presses take to show, and the arrival she goes to meet (when, where, how soon she can be there).
+    response_s: float = 0.0
+    arrival: Any = None
     #: Whether her thing goes where the pointer goes; the plan she imagined best, the key she holds as it was made, and
     #: the path a press of a key takes her on (core/agency/imagining_ahead.py).
     pointing: bool = False
@@ -189,6 +196,8 @@ class _Choosing:
             self.ahead_s = CARRIED_AHEAD_S
             self.ways, self.rest = ways_carried(hers, keys, self.mine, self.ahead_s)
         self.reach = reach
+        #: When the thing she goes to meet arrives, where, and how soon she can be there (None where her speed is not known).
+        self.arrival: tuple[float, float, float | None] | None = None
         # A key that lifts her and lets her fall is pressed for what its press does, not held as a way to go.
         self.lifts = (presses.lifts(self.mine.kind, max(float(self.mine.w), float(self.mine.h)), self.mine.number)
                       if presses is not None and self.mine is not None else [])
@@ -242,6 +251,12 @@ class _Choosing:
             return AVOID
         # A kind not yet met nor told of is what her situation says such a thing is, by how it moves: what falls is to be
         # caught or kept clear of, what heads for her kept clear of or shot (core/agency/situations_she_knows.py).
+        # What a recording of someone playing it showed the player do with such a thing, first
+        # (core/perception/watching_someone_play.py).
+        if self.watched and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
+            seen = stance_watched(self.watched, self.moves, thing.kind)
+            if seen:
+                return seen
         if self.situations and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
             from core.agency.situations_she_knows import prior_stance
 
@@ -286,11 +301,12 @@ class _Choosing:
             imagined = self.physics.when_it_reaches(thing, line, contact) if self.physics is not None else None
             if imagined is not None:
                 when, there = imagined
-            # The next arrival is urgent even when she cannot get there in
-            # time. A distant, reachable arrival must not pull her away from it.
             candidates.append((when, there, thing))
-        best = self._kept_to(candidates)
+        # Of what arrives, what she can get to in time; a catcher lets go of what cannot be reached, and keeps to the
+        # one gone for among the rest (core/agency/a_choice_and_its_reasons.py).
+        best = self._kept_to(reachable_arrivals(self, candidates, free, her_free) or candidates)
         if best is not None:
+            self.arrival = (best[0], best[1], how_soon_she_reaches(self, best, free, her_free))
             goal = [None, None]
             goal[free] = best[1]
             return (goal[0], goal[1]), "meet", best[2]
