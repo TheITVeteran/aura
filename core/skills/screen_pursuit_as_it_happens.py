@@ -577,9 +577,7 @@ class PlayingAsItHappens:
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
         if (now < self.quiet_until and not held.holding()) or now >= self.ends_at:
-            if now < self.quiet_until and self.keep.get("quiet_said") != self.quiet_until:
-                self.keep["quiet_said"] = self.quiet_until
-                logger.info("leaving this screen alone for %.0fs more", self.quiet_until - now)
+            _logged_leaving_alone(self, now)
             return
         # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
         # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
@@ -829,6 +827,13 @@ def _without_labels(said: str, labels: set) -> str:
     for label in sorted(labels, key=len, reverse=True):
         said = re.sub(rf"(?<!\w){re.escape(label)}(?!\w)", "\n", said)
     return said
+
+
+def _logged_leaving_alone(reflexes: PlayingAsItHappens, now: float) -> None:
+    """That a screen is being left alone, logged once each time it is begun."""
+    if now < reflexes.quiet_until and reflexes.keep.get("quiet_said") != reflexes.quiet_until:
+        reflexes.keep["quiet_said"] = reflexes.quiet_until
+        logger.info("leaving this screen alone for %.0fs more", reflexes.quiet_until - now)
 
 
 def _left_alone_for(reflexes: PlayingAsItHappens) -> float:
