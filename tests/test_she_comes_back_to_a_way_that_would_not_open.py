@@ -59,10 +59,13 @@ def test_a_place_she_could_not_get_to_is_a_lock_seen_and_a_gain_sends_her_back_t
 
     locks = Locks()
     said = locks.saw_out_of_reach("the place at 40% across and 20% down")
-    assert said == ["I can't get to the place at 40% across and 20% down yet. I'll come back to it when something changes."]
+    assert said == ["There are places I can't get to yet. I'll come back to them when something changes."]
     assert locks.saw_out_of_reach("the place at 40% across and 20% down") == []          # once
+    # Another place is kept, but not said: in a busy game every few seconds brings another (LIVE 2026-10-11).
+    assert locks.saw_out_of_reach("the place at 96% across and 54% down") == []
     assert not locks.reopened_seen()
     news = locks.heard(["You got the double jump!"], [])
     assert any("may be in reach now" in line for line in news)
-    assert [lock.at for lock in locks.reopened_seen()] == ["the place at 40% across and 20% down"]
+    assert [lock.at for lock in locks.reopened_seen()] == ["the place at 40% across and 20% down",
+                                                           "the place at 96% across and 54% down"]
     assert not locks.met

@@ -149,9 +149,12 @@ class Locks:
         """A place she made for and got no nearer to, kept as a lock that names nothing it wants; what to say of it."""
         if any(lock.at == at for lock in self.met):
             return []
+        # Said of the first such place, not of each: a place is a position on the screen, and in a busy game every
+        # few seconds brings another (LIVE 2026-10-11 "I can't get to the place at 96% across and 54% down yet").
+        first = not any(lock.seen for lock in self.met)
         self.met.append(Lock(said="I made for it and got no nearer", at=at, wants="", seen=True))
         del self.met[:-MOST_LOCKS]
-        return [f"I can't get to {at} yet. I'll come back to it when something changes."]
+        return ["There are places I can't get to yet. I'll come back to them when something changes."] if first else []
 
     def reopened_seen(self) -> list[Lock]:
         """The seen locks a gain has opened, taken off the list as they are handed back to be tried."""
