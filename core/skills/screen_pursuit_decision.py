@@ -75,14 +75,14 @@ from .screen_pursuit_bearings import (
     _say_what_kind_of_problem,
     _say_what_she_worked_out,
     _the_rest_of_the_run,
-    _the_same_thing_without,
+    _the_same_thing_without,  # noqa: F401 (compatibility export)
     _time_left,  # noqa: F401
-    _was_of_that_window,
-    _what_she_is_not_reading,
+    _was_of_that_window,  # noqa: F401 (compatibility export)
+    _what_she_is_not_reading,  # noqa: F401 (compatibility export)
     _what_there_is_to_aim_at,
     _within_a_move,  # noqa: F401
     _within_the_run,
-    _worth_holding,
+    _worth_holding,  # noqa: F401 (compatibility export)
     a_run_she_can_carry,
     am_i_there,
     let_the_voice_catch_up,
@@ -101,18 +101,18 @@ from .screen_pursuit_looking import (
     _expected_of,  # noqa: F401
     _her_reasoning,
     _how_full,  # noqa: F401
-    _how_it_has_been_going,
+    _how_it_has_been_going,  # noqa: F401 (compatibility export)
     _move_her_own_surface_aside,  # noqa: F401
     _narrate,  # noqa: F401
-    _no_more_than_a_fresh_one_is_worth,
-    _placed_in,
+    _no_more_than_a_fresh_one_is_worth,  # noqa: F401 (compatibility export)
+    _placed_in,  # noqa: F401 (compatibility export)
     _put_her_own_window_away,
     _reasoning_for_a_plan,
     _take_in_the_screen,
     _the_best_reading_available,
     _the_kind_of_world_this_is,
-    _the_thing_she_is_acting_in,
-    _what_she_could_not_learn_from,
+    _the_thing_she_is_acting_in,  # noqa: F401 (compatibility export)
+    _what_she_could_not_learn_from,  # noqa: F401 (compatibility export)
     _where,  # noqa: F401
     _where_clicked,  # noqa: F401
     _where_it_asks,  # noqa: F401
@@ -125,7 +125,7 @@ from .screen_pursuit_surface import (
     PRESSABLE_KEYS,
     _a_pass_in_moves,
     _bound_to_a_window,  # noqa: F401
-    _ensure_page,
+    _ensure_page,  # noqa: F401 (compatibility export)
     _matches,  # noqa: F401
     _screen_size,  # noqa: F401
     _value_is_on_screen,  # noqa: F401
@@ -191,20 +191,31 @@ def _the_lesson_first(valued: dict[str, float], leads: Any = None, can_do: Any =
     # worked, the plan what she is using it for.
     procedures = [p for p in (rules, getattr(guide, "plan", None)) if p is not None]
     reach = _reaching_what_the_next_step_needs(procedures, valued, leads, getattr(guide, "locks", None))
-    # Only the step to do now leads: the next one, or, where it can neither be done nor reached here, the earliest that
-    # can. LIVE 2026-10-10 a trap's TEST TRAP, its lesson's last step, was pressed again and again before a part was
-    # placed, every later step lifted while an early one ("CLICK TO OPEN") matched nothing.
+    # A test of what was made waits until something is. LIVE 2026-10-10 a trap's TEST TRAP was pressed again and again
+    # before a part was placed.
     from core.agency.what_i_can_do_here import what_is_clicked
     from core.cognition.reading_the_rules import tries_what_was_made
 
     to_do = {id(p): p.the_step_to_do(list(valued), reaching=bool(reach)) for p in procedures}
-    built = bool(getattr(guide, "built", "")) or any((getattr(can_do, "carried_to", None) or {}).values())
+    built = bool(getattr(guide, "built", "")) or bool(can_do.placed_count() if hasattr(can_do, "placed_count") else 0)
     out = {}
     for move, value in valued.items():
+        from .screen_step_evidence import artifact_ready_for
+
+        if not artifact_ready_for(move, can_do):
+            continue
+        blocked = False
         for procedure in procedures:
             step = procedure.step_of(move)
             if step is not None and step is to_do[id(procedure)]:
-                value = max(value, best * (NEXT_STEP if step is procedure.next_step() else 1.2))
+                value = max(value, best * NEXT_STEP)
+            elif (step is not None and (holding := procedure.the_step_that_holds()) is not None
+                  and step.order > holding.order and move not in reach and not procedure.reaches_next(move)):
+                # Dependence is a requirement, including when this is the sole
+                # candidate or its exploration score overwhelms all alternatives.
+                blocked = True
+        if blocked or rules.forbids(move):
+            continue
         if not built and tries_what_was_made(what_is_clicked(move) or ""):
             value *= NOTHING_MADE_YET
         if move in reach:
@@ -228,9 +239,12 @@ def _reaching_what_the_next_step_needs(procedures: list[Any], valued: dict[str, 
     from core.agency.what_i_can_do_here import what_is_clicked
 
     toward = getattr(leads, "toward", None)
-    if toward is None:
-        return {}
+    toward = toward or (lambda _needed: {})
     reach: dict[str, float] = {}
+    for procedure in procedures:
+        for move in valued:
+            if procedure.reaches_next(move):
+                reach[move] = 1.0
     for lock in (locks.open_to_try() if locks is not None else ()):
         here = [move for move in valued if what_is_clicked(move) == lock.at]
         for act, worth in ({move: 2.0 for move in here} if here else toward(lock.at)).items():
@@ -299,14 +313,11 @@ def _as_checked(can_do: Any, valued: dict[str, float]) -> dict[str, float]:
     check = the_check()
     if hasattr(can_do, "on_tried"):
         guide = the_guide(paced if isinstance(paced, dict) else None)
-        rules = getattr(guide, "rules", None)
 
         def tried(act: str, answered: bool) -> None:
             check.learned(act, answered)
-            if rules is not None:
-                rules.tried(act, answered)
-            if getattr(guide, "plan", None) is not None:
-                guide.plan.tried(act, answered)
+            # Bound procedure instances are settled before this screen is taken
+            # in; a plan produced meanwhile cannot inherit an earlier input.
             if getattr(guide, "locks", None) is not None:
                 guide.locks.tried(act, answered)
 
@@ -468,6 +479,8 @@ def _decide_the_next_move_what_true_time(
     from core.cognition.two_ways_out import how_long_it_holds
 
     from .screen_pursuit import logger
+    if attempt.verdict.observed_change is None:
+        return
     # And what was true at the time, so an act that does nothing
     # can become an act that needs something.
     opens.she_tried(
@@ -735,6 +748,11 @@ async def decide_the_next_move(
         return _left__
 
     band, looking_at_the_thing = await _decide_the_next_move_what_she_looking(anchor, drawn, narrate, observation, responds, target_app)
+    from .screen_step_evidence import settle_step
+
+    if not settle_step(pending, observation, things_to_click(observation, drawn.get("where")), can_do):
+        no_move["because"] = "the delivered effect needs a fresh observation before another input"
+        return WAITING
     if await _the_screen_taken_in_while_a_lesson_plays(can_do, observation, drawn.get("where"), narrate, no_move):
         return WAITING
     lattice, seen = await _decide_the_next_move_seen(band, coming, in_the_way, observation, responds, target_app)
@@ -803,6 +821,16 @@ async def decide_the_next_move(
                 becomes=expected["after"],
                 becomes_holds=lambda after, forecast=expected["after"]: prediction_held(forecast, after),
             )
+        from .screen_step_evidence import owned_response_state
+
+        response_state = owned_response_state(pending, observation)
+        receipt = pending.get("transfer_receipt")
+        if receipt is not None:
+            from core.runtime.skill_contract import PredicateState
+
+            if receipt.state is PredicateState.SATISFIED:
+                response_state = PredicateState.SATISFIED
+        pending["response_state"] = response_state
         attempt = confirm(
             previous,
             pending["before"],
@@ -812,6 +840,7 @@ async def decide_the_next_move(
             toward=success_when,
             seen_before=pending["arranged"],
             seen_after=laid_out,
+            change_state=response_state,
         )
         history.append(attempt)
         if pending["arranged"] is not None and attempt.progressed is not None:
@@ -828,7 +857,8 @@ async def decide_the_next_move(
                         well=bool(attempt.progressed),
                     )
                     repeats.she_saw(kind, previous.chosen.name, laid_out)
-        rose = _decide_the_next_move_world_where_she(expected, far, in_flight, laid_out, observation, pending, previous, responds, carries)
+        rose = (_decide_the_next_move_world_where_she(expected, far, in_flight, laid_out, observation, pending, previous, responds, carries)
+                if attempt.verdict.measured else None)
         if rose is not None:
             reaches.went(rose)
             if rose > 0:
@@ -854,10 +884,16 @@ async def decide_the_next_move(
         if previous.chosen is not None and expected["took"] == 1:
             # A key that never changes anything is not one of her actions
             # in this world, whoever wrote it down.
-            can_do.tried(previous.chosen.name, it_was_answered(attempt.verdict.observed_change, observation))
-            _grade_how_soon_she_came_back(run, previous.chosen.name, attempt.verdict.held, moves)
+            from .screen_step_evidence import trial_context
+
+            answered = (attempt.verdict.observed_change if response_state is not None
+                        else it_was_answered(attempt.verdict.observed_change, observation))
+            can_do.tried(previous.chosen.name, answered,
+                         **trial_context(pending, observation, can_do.seen_before))
+            if attempt.verdict.measured:
+                _grade_how_soon_she_came_back(run, previous.chosen.name, attempt.verdict.held, moves)
             _it_did_nothing_from_here(
-                pending, laid_out, previous.chosen.name, it_was_answered(attempt.verdict.observed_change, observation)
+                pending, laid_out, previous.chosen.name, answered
             )
             # And whether the way it was sent reaches the thing at all.
             from .screen_pursuit_surface import it_answered
@@ -865,24 +901,26 @@ async def decide_the_next_move(
             it_answered(
                 target_app or anchor["app"],
                 previous.chosen.name,
-                it_was_answered(attempt.verdict.observed_change, observation),
+                answered,
             )
             # And what stood around it when it did no harm — the two
             # pieces either side of a gap, found by taking things away
             # rather than by being described.
-            _learn_what_made_a_move_safe(
-                attempt=attempt,
-                knows=knows,
-                pending=pending,
-                previous=previous,
-            )
+            if attempt.verdict.measured:
+                _learn_what_made_a_move_safe(
+                    attempt=attempt,
+                    knows=knows,
+                    pending=pending,
+                    previous=previous,
+                )
             _decide_the_next_move_what_true_time(attempt, can_do, confirmed_here, in_the_way, opens, previous, responds)
             if can_do.dead() and not foreseen.get("acts"):
                 foreseen["acts"] = True
                 logger.info("what works here: %s", can_do.says())
         _decide_the_next_move_her_own_move(dropped, looking_at_the_thing, pending, previous, responds)
         if (
-            pending["arranged"] is not None
+            attempt.verdict.measured
+            and pending["arranged"] is not None
             and previous.chosen is not None
             and looking_at_the_thing
             and not responds["state"].nothing_answers()
@@ -999,6 +1037,9 @@ async def decide_the_next_move(
             rationale=because,
         )
         pending["before"] = seen
+        from .screen_step_evidence import screen_evidence
+
+        pending["observed_before"] = screen_evidence(observation, can_do.seen_before)
         pending["arranged"] = laid_out
         pending["whole"] = whole
         pending["watched"] = observation
@@ -1491,6 +1532,22 @@ async def decide_the_next_move(
                 if option.name not in responds["state"].tried
             ],
         ))
+        from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+        from .screen_step_evidence import admissible_step
+
+        guide = THE_GUIDE.get()
+        procedures = [p for p in (getattr(guide, "rules", None), getattr(guide, "plan", None)) if p is not None]
+        reach = _reaching_what_the_next_step_needs(procedures, {option.name: 1.0 for option in available},
+                                                can_do.leads, getattr(guide, "locks", None))
+        pending["reaching_moves"] = tuple(reach)
+        available = [option for option in available if admissible_step(option.name, reaching=reach, can_do=can_do)]
+        ahead = {name: forecast for name, forecast in (ahead or {}).items()
+                 if any(option.name == name for option in available)}
+        telling = {name: value for name, value in telling.items() if any(option.name == name for option in available)}
+        if not available:
+            no_move["because"] = "no offered action can satisfy or reach the unresolved requirement"
+            return None
         if telling:
             if ahead:
                 ahead = {
@@ -1796,6 +1853,9 @@ async def decide_the_next_move(
         )
         pending["deliberation"] = chosen
         pending["before"] = seen
+        from .screen_step_evidence import screen_evidence
+
+        pending["observed_before"] = screen_evidence(observation, can_do.seen_before)
         pending["arranged"] = laid_out
         pending["whole"] = whole
         # Kept whole for the comparison that finds where she has effects,
@@ -1961,7 +2021,9 @@ async def decide_the_next_move(
             ),
         )
 
-    return Step(name=f"press {key}", action=act)
+    # The next observation owns recovery. Reusing this closure repeats the
+    # same physical input against a stale source/destination after partial delivery.
+    return Step(name=f"press {key}", action=act, max_retries=0, optional=True)
 
 
 def _how_far_she_saw() -> int:
@@ -1976,7 +2038,7 @@ def _how_far_she_saw() -> int:
 # the split — a silent change of meaning, which is what a move must not do.
 from core.skills.screen_pursuit_decision_branches import (  # noqa: E402
     _FALL_THROUGH,
-    ONLY_SILENCE,
+    ONLY_SILENCE,  # noqa: F401 (compatibility export)
     _a_move_here,
     _decide_the_next_move_act_has_done,
     _decide_the_next_move_blocker,

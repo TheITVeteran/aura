@@ -335,6 +335,11 @@ def _lower(text: str) -> str:
     return as_said_inside(text)
 
 
+def reflex_ways(ways: Any) -> list[str]:
+    """Ways of playing (core/agency/ways_of_playing.py) as the ways her reflexes play, each once; the others left out."""
+    return list(dict.fromkeys(_REFLEX[way] for way in ways if way in _REFLEX))
+
+
 def ways_it_is_played_by(guide: Any) -> list[str]:
     """The ways her reflexes play that the reading of the place says it is done by, most likely first
     (core/agency/the_way_it_is_played.py)."""
@@ -501,15 +506,19 @@ def ask_for_a_reading(guide: Any, ask: Callable[..., Awaitable[Any]] | None, *, 
     if due in reading.asked or not stronger or len(reading.asked) >= MOST_READINGS or due == f"{SEEN}:0":
         return False
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return False
     reading.asked.append(due)
 
     async def asked() -> None:
+        from core.cognition.guidance_lifetime import publication_stamp
+
+        stamp = publication_stamp()
         got = await _a_reading(guide.place, task, rests_on, seen if len(seen) >= SEEN_AFTER else [],
                                _what_it_says(guide) if rests_on == SAID else "",
                                _what_play_showed(reading), ask, scenes=reading.scenes[-3:])
+        stamp.check()
         if got is None:
             # Not answered: asked again when there is next more to go on, a few times at most.
             reading.unanswered += 1
@@ -523,7 +532,17 @@ def ask_for_a_reading(guide: Any, ask: Callable[..., Awaitable[Any]] | None, *, 
         if notes is not None and reading.before and line:
             notes.wonder("what this place is", line, time.monotonic())
 
-    reading.asking = loop.create_task(asked())
+    from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+    reading.asking = task = create_guidance_task(asked())
+
+    def release() -> None:
+        if reading.asking is task:
+            reading.asking = None
+            if due in reading.asked:
+                reading.asked.remove(due)
+
+    retire_when_closed(task, release)
     return True
 
 

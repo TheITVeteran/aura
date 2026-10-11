@@ -111,7 +111,7 @@ def test_the_pursuit_offers_what_works_rather_than_what_it_was_told():
 
     source = pursuit_source()
     assert "screen_options(can_do.available() or move_keys)" in source
-    assert "can_do.tried(previous.chosen.name, it_was_answered(attempt.verdict.observed_change, observation))" in source
+    assert "can_do.tried(previous.chosen.name, answered" in source
 
 
 # ── what she was told is judged on itself ────────────────────────────────

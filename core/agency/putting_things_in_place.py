@@ -93,8 +93,14 @@ class PuttingInPlace:
     screen_carried_on: tuple[str, ...] = ()
     #: What the screen reading found drawn on the screen now, by what she calls each: pictures, not writing.
     pictures: set[str] = field(default_factory=set)
+    #: Current measured pickup hypotheses. None retains the standalone legacy
+    #: action-hypothesis API; a live observation always replaces it, even empty.
+    manipulation_sources: dict[str, dict[str, Any]] | None = None
     #: Turns given the part put down last (core/agency/aiming_what_was_placed.py).
     turned_since_placed: int = 0
+    #: Delivered transfers and their independently observed current effects.
+    placement_receipts: dict[str, Any] = field(default_factory=dict)
+    placement_states: dict[str, Any] = field(default_factory=dict)
 
     def told_of_carrying(self, words: str) -> None:
         """Words read at this place: once they speak of carrying, it is a place where things are carried."""
@@ -103,6 +109,12 @@ class PuttingInPlace:
         from core.perception.where_the_words_point import the_place_named
 
         self.place_named = the_place_named(words) or self.place_named
+
+    def observe_objects(self, observation: dict[str, Any]) -> None:
+        """Replace pickup hypotheses with candidates verified against this capture."""
+        from core.perception.drawn_objects import measured_objects
+
+        self.manipulation_sources = measured_objects(observation)
 
     def carries(self, on_screen: Sequence[str]) -> tuple[str, ...]:
         """Each thing on the screen carried to each other place there, the places marked as the one first, untried
@@ -122,7 +134,9 @@ class PuttingInPlace:
         worth = [move for move in on_screen if what_is_clicked(move) and _not_read_only(move)]
         things = [what_is_clicked(move) or "" for move in worth
                   if not _goes_on(move) and not _A_COMMAND.search(what_is_clicked(move) or "")
-                  and (self.writing_carried or _a_picture(what_is_clicked(move) or "", STANDS_OUT, self.pictures))]
+                  and (self.writing_carried or ((what_is_clicked(move) or "") in self.manipulation_sources
+                       if self.manipulation_sources is not None
+                       else _a_picture(what_is_clicked(move) or "", STANDS_OUT, self.pictures)))]
         # A bin is somewhere a thing is carried to be got rid of, not to be used: it is offered last.
         places = [what_is_clicked(move) or "" for move in worth if not _A_COMMAND.search(what_is_clicked(move) or "")]
         places += [what_is_clicked(move) or "" for move in worth if _A_BIN.search(what_is_clicked(move) or "")]
@@ -142,20 +156,68 @@ class PuttingInPlace:
             offered = served_first(offered, getattr(self, "looked", {}), what_is_carried)
         return tuple(offered[:CARRIES_OFFERED])
 
-    def carried(self, move: str, changed: bool) -> None:
-        """A carry made, and whether the screen answered it; one that answered extends the chain built so far."""
+    def carried(self, move: str, changed: bool, *, receipt: Any = None) -> None:
+        """Response teaches responsiveness; only a bound observed effect extends the build."""
         found = what_is_carried(move)
         if found:
-            self.carried_to[move] = changed
-            self.carries_unanswered = 0 if changed else self.carries_unanswered + 1
-            if changed:
+            from core.runtime.skill_contract import PredicateState
+
+            verified = (receipt is not None and receipt.move == move
+                        and receipt.state is PredicateState.SATISFIED)
+            if receipt is not None and receipt.move == move:
+                if receipt.attempt_id in self.placement_receipts:
+                    return  # a receipt cannot earn another part on a later pass
+                if len(self.placement_receipts) >= 64:
+                    oldest = next(iter(self.placement_receipts))
+                    self.placement_receipts.pop(oldest)
+                    self.placement_states.pop(oldest, None)
+                self.placement_receipts[receipt.attempt_id] = receipt
+                self.placement_states[receipt.attempt_id] = receipt.state
+                if receipt.state is PredicateState.UNKNOWN:
+                    return  # retain the repair obligation without teaching physical nonresponse
+            # An unknown effect stays eligible for a bounded new observation or
+            # repair. A measured unchanged input is remembered as unresponsive.
+            if verified:
+                self.carried_to[move] = True
+            elif not changed and self.carried_to.get(move) is not True:
+                self.carried_to[move] = False
+            self.carries_unanswered = 0 if verified else self.carries_unanswered + 1
+            if verified:
                 from core.perception.where_the_words_point import PLACES
 
                 PLACES.moved()
                 self.turned_since_placed = 0
-            at = getattr(self, "where", {}).get(found[1])
-            if changed and at is not None:
-                self.chain_ends_at = at
+                self.chain_ends_at = receipt.destination_at
+
+    def observe_placements(self, observation: dict[str, Any]) -> None:
+        """Revalidate retained occupants; an edit or reset cannot leave stale build credit."""
+        from core.perception.observed_transfer import revalidate_placement
+
+        epoch = str(observation.get("_capture_epoch") or "")
+        for attempt_id, receipt in self.placement_receipts.items():
+            if epoch and epoch == receipt.after_epoch:
+                self.placement_states[attempt_id] = receipt.state
+            else:
+                self.placement_states[attempt_id] = revalidate_placement(receipt, observation)
+        from core.runtime.skill_contract import PredicateState
+
+        self.chain_ends_at = next((receipt.destination_at for attempt_id, receipt
+                                  in reversed(tuple(self.placement_receipts.items()))
+                                  if self.placement_states.get(attempt_id) is PredicateState.SATISFIED), None)
+
+    def placed_count(self) -> int:
+        """Count measured current occupants, not move strings or replayed receipts."""
+        from core.runtime.skill_contract import PredicateState
+
+        boxes: list[tuple[float, ...]] = []
+        for attempt_id, receipt in self.placement_receipts.items():
+            box = receipt.effect_bbox
+            if self.placement_states.get(attempt_id) is not PredicateState.SATISFIED or box is None:
+                continue
+            if any(abs(box[0] - other[0]) + abs(box[1] - other[1]) < 0.025 for other in boxes):
+                continue
+            boxes.append(box)
+        return len(boxes)
 
 
 def _a_picture(name: str, stands_out: str, pictures: set[str]) -> bool:

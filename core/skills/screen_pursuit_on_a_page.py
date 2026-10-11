@@ -25,6 +25,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.runtime.what_stops_it import current
+
 __all__ = ["HER_OWN_PAGE", "OnAPage", "it_was_answered", "on_her_page"]
 
 #: Where keys go when a page is the surface: the pursuit's names to the
@@ -136,25 +138,33 @@ class OnAPage:
             self._focused = False
 
     async def press(self, key: str) -> bool:
+        context = current(whose="page_input.press")
+        context.check()
         from core.skills.screen_pursuit_surface import PRESSABLE_KEYS
 
         name = str(key or "").strip().lower()
         if name not in PRESSABLE_KEYS:
             return False
         await self._focus()
+        context.check()
         from .screen_pursuit_as_it_happens import AS_IT_HAPPENS
 
         reflexes = AS_IT_HAPPENS.get()
+        watching = self.watching
+        window = watching.begin_act(name) if watching is not None else None
+        delivered = False
         try:
             if reflexes is not None:
                 # In a game, a key is held a moment and watched, the way a person tries one.
                 await reflexes.pressed(name)
             else:
                 await self.page.keyboard.press(_KEY_NAMES.get(name, name))
+            delivered = True
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return False
-        if self.watching is not None:
-            self.watching.acted(name)
+        finally:
+            if window is not None:
+                watching.finish_act(window, delivered)
         return True
 
     async def press_many(self, keys: Sequence[str]) -> int:
@@ -167,6 +177,8 @@ class OnAPage:
 
     async def click(self, x: float, y: float, bounds: Sequence[int] | None) -> bool:
         """A click at shares of ``bounds``, in the page's own pixels; never outside them."""
+        context = current(whose="page_input.click")
+        context.check()
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
             return False
         if bounds and len(bounds) >= 4:
@@ -176,12 +188,19 @@ class OnAPage:
 
             wide, tall = await the_page_size(self.page)
             left = top = 0.0
+        watching = self.watching
+        window = None
+        delivered = False
         try:
+            context.check()
+            window = watching.begin_act(f"click at {x:.2f}, {y:.2f}") if watching is not None else None
             await self.page.mouse.click(left + x * wide, top + y * tall)
+            delivered = True
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return False
-        if self.watching is not None:
-            self.watching.acted(f"click at {x:.2f}, {y:.2f}")
+        finally:
+            if window is not None:
+                watching.finish_act(window, delivered)
         # A click on the drawing is also what gives it the keyboard.
         self._focused = True
         return True
@@ -195,6 +214,9 @@ class OnAPage:
         """A press at ``start`` carried with the button held to ``end`` and let go, at shares of ``bounds``."""
         import asyncio
 
+        context = current(whose="page_input.carry")
+        context.check()
+
         if not all(0.0 <= v <= 1.0 for v in (*start, *end)):
             return False
         if bounds and len(bounds) >= 4:
@@ -205,20 +227,31 @@ class OnAPage:
             wide, tall = await the_page_size(self.page)
             left = top = 0.0
         (x0, y0), (x1, y1) = ((left + x * wide, top + y * tall) for x, y in (start, end))
+        watching = self.watching
+        window = None
+        delivered = False
         try:
+            context.check()
             await self.page.mouse.move(x0, y0)
-            await self.page.mouse.down()
+            context.check()
+            window = watching.begin_act(
+                f"carry from {start[0]:.2f}, {start[1]:.2f} to {end[0]:.2f}, {end[1]:.2f}"
+            ) if watching is not None else None
             try:
+                await self.page.mouse.down()
                 for step in range(1, self.CARRY_STEPS + 1):
+                    context.check()
                     share = step / self.CARRY_STEPS
                     await self.page.mouse.move(x0 + (x1 - x0) * share, y0 + (y1 - y0) * share)
                     await asyncio.sleep(self.CARRY_STEP_S)
             finally:
                 await self.page.mouse.up()
+            delivered = True
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return False
-        if self.watching is not None:
-            self.watching.acted(f"carry from {start[0]:.2f}, {start[1]:.2f} to {end[0]:.2f}, {end[1]:.2f}")
+        finally:
+            if window is not None:
+                watching.finish_act(window, delivered)
         self._focused = True
         return True
 
@@ -290,18 +323,24 @@ def _what_the_stream_shows(seen: dict[str, Any], watching: Any) -> None:
             region["of_its_own"] = True
     if watching.acts:
         when, _act = watching.acts[-1]
-        import time
+        seen["answered"] = watching.answered(when)
+        seen["answer_window"] = watching.answer_window()
 
-        seen["answered"] = watching.answered(when, within_s=max(2.0, time.monotonic() - when))
 
+def it_was_answered(changed: bool | None, observation: dict[str, Any]) -> bool | None:
+    """Use the owned pixel response, or still comparisons when no stream owns it.
 
-def it_was_answered(changed: bool, observation: dict[str, Any]) -> bool:
-    """Whether her act was answered: the picture differs, and the stream does not say it was only going on by itself.
-
-    Two stills differ after a click on a scene that plays by itself whatever
-    she clicked; the stream, which saw the scene changing before she acted,
-    says so (``answered`` False). Where there is no stream, the stills decide.
+    Identical words can accompany a visual response. An incomplete stream
+    supplies None; a measured autonomous change keeps its False veto.
     """
+    if changed is None:
+        return None
+    window = observation.get("answer_window")
+    if isinstance(window, dict):
+        if window.get("delivered") is not True:
+            return None
+        measured = observation.get("answered")
+        return measured if type(measured) is bool else None
     return bool(changed) and observation.get("answered") is not False
 
 

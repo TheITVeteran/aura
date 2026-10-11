@@ -115,8 +115,19 @@ async def _carry_what_she_named(run: SimpleNamespace, thing: str, place: str) ->
     start, end = where_to_click(seen, thing), where_to_click(seen, place)
     if start is None or end is None:
         return False
-    return await carry_normalized(start, end, expect_app=run.target_app or run.anchor["app"],
-                                  bounds=list(seen.get("bounds") or []))
+    from core.perception.observed_transfer import bind_transfer, finish_delivery
+
+    intent = bind_transfer(run.key, seen, source=thing, destination=place,
+                           source_at=start, destination_at=end)
+    started = time.time()
+    delivered = False
+    try:
+        delivered = await carry_normalized(start, end, expect_app=run.target_app or run.anchor["app"],
+                                           bounds=list(seen.get("bounds") or []))
+        return delivered
+    finally:
+        run.pending["transfer_intent"] = finish_delivery(intent, started=started, completed=time.time(),
+                                                         delivered=bool(delivered))
 
 
 async def _after_a_moment(click: Awaitable[bool]) -> bool:
@@ -258,24 +269,44 @@ async def carry_out_the_move(
                 _tell(move_said)
             continue
         _say_intent(step, reason, out_loud=aloud, following_on=position > 0)
-    if two is not None and two.by_clicks:
-        # Taken, then used: a click on the thing, a moment for the screen to answer, and a click on what it is used on.
-        arrived = 1 if await _click_what_she_named(run, two.one) and await _after_a_moment(_click_what_she_named(run, two.other)) else 0
-    elif two is not None:
-        arrived = 1 if await _carry_what_she_named(run, two.one, two.other) else 0
-    elif clicked is not None:
-        arrived = 1 if await _click_what_she_named(run, clicked) else 0
-    elif len(sequence) > 1:
-        # Only the keys that really landed are spoken for. Focus can
-        # move part-way through a batch, and a commentary describing
-        # moves the window never received is the disconnect this
-        # whole path exists to avoid.
-        arrived = await press_many(sequence, expect_app=target_app or anchor["app"])
-    else:
-        arrived = 1 if await press(key, expect_app=target_app or anchor["app"]) else 0
+    from .screen_step_evidence import abandon_bound_step, admissible_step, bind_step
+
+    if not admissible_step(key, reaching=pending.get("reaching_moves", ()), can_do=getattr(run, "can_do", None)):
+        pending["deliberation"] = None
+        expected["after"], expected["took"] = None, 0
+        return False
+    pending.pop("transfer_intent", None)
+    pending.pop("transfer_receipt", None)
+    pending.pop("step_after", None)
+    try:
+        bind_step(run)
+        window = run.observation.get("answer_window")
+        pending["dispatch_sequence_before"] = window.get("sequence") if isinstance(window, dict) else 0
+        pending["dispatch_started_monotonic"] = time.monotonic()
+        if two is not None and two.by_clicks:
+            # Taken, then used: a click on the thing, a moment for the screen to answer, and a click on what it is used on.
+            arrived = 1 if await _click_what_she_named(run, two.one) and await _after_a_moment(_click_what_she_named(run, two.other)) else 0
+        elif two is not None:
+            arrived = 1 if await _carry_what_she_named(run, two.one, two.other) else 0
+        elif clicked is not None:
+            arrived = 1 if await _click_what_she_named(run, clicked) else 0
+        elif len(sequence) > 1:
+            arrived = await press_many(sequence, expect_app=target_app or anchor["app"])
+        else:
+            arrived = 1 if await press(key, expect_app=target_app or anchor["app"]) else 0
+    except BaseException:
+        # Partial delivery cannot be repeated against this old observation.
+        abandon_bound_step(pending, key)
+        pending["deliberation"] = None
+        expected["after"], expected["took"] = None, 0
+        raise
+    pending["dispatch_completed"] = time.time()
+    pending["dispatch_completed_monotonic"] = time.monotonic()
     _bind_delivered_forecast(expected, arrived)
     if not arrived:
         pending["deliberation"] = None
+        # A refused input resolves no obligation; a later move owns a new binding.
+        abandon_bound_step(pending, key)
     if arrived:
         # A landed key is this work getting somewhere, said to whoever is
         # holding a deadline over it: an hour's game is long, not stuck. A
@@ -320,12 +351,17 @@ async def carry_out_the_move(
         # and every part of her that learns from what happened —
         # which acts do anything, how the thing moves, where it
         # answers her — was being taught from that.
+        from .screen_step_evidence import owned_response_state
+
+        scope = (getattr(run, "drawn", None) or {}).get("where")
         came_to_rest, _ = await _settled_after(
             pending["watched"] or {},
             target_app or anchor["app"],
             arrived=_looks_like(
                 expected["after"], responds["state"], responds["lattice"]
             ),
+            response_state=lambda observation: owned_response_state(pending, observation),
+            **({"over": scope} if scope is not None else {}),
         )
         # Only a reading it actually took. Where every capture timed
         # out it hands back the one it was given, and that is the

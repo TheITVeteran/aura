@@ -105,6 +105,10 @@ TOUCHED_WITHIN_S = 1.0
 #: is made for what it clears and not for a near tie.
 CLEARER = 0.5
 
+#: Whether she imagines the moment ahead to choose what to hold where things that matter are moving
+#: (core/agency/imagining_ahead.py).
+IMAGINES = True
+
 #: How often the counters on the screen are read. Reading takes a tenth of a
 #: second off to one side and is never waited for.
 READ_EVERY_S = 0.5
@@ -216,6 +220,8 @@ class _Run:
     #: Where the rules ask for a place to be gone over: the cells her thing has been over, and their size (set once).
     covered: set = field(default_factory=set)
     cell: float = 0.0
+    #: How far ahead of a moving thing a click is aimed (core/agency/leading_a_click.py).
+    leading: Any = None
     #: Cells she held a way toward and did not go: out of her reach, as far as she knows.
     barred: set = field(default_factory=set)
     #: Whether the world stood still until she moved in it: then stillness is hers to break.
@@ -423,6 +429,14 @@ class _Choosing:
     #: The tells she has learned and the time of the picture it is choosing on (core/agency/warning_signs.py).
     signs: Any = None
     at: float | None = None
+    #: The situations the place's words put her in (core/agency/situations_she_knows.py).
+    situations: tuple[Any, ...] = ()
+    #: Whether her thing goes where the pointer goes; the plan she imagined best, the key she holds as it was made, and
+    #: the path a press of a key takes her on (core/agency/imagining_ahead.py).
+    pointing: bool = False
+    planned: Any = None
+    held_now: str = ""
+    press_paths: Any = None
 
     #: How much wider a berth what costs her is given than usual: more as what she has left runs low.
     caution: float = 1.0
@@ -459,6 +473,8 @@ class _Choosing:
         # A key that lifts her and lets her fall is pressed for what its press does, not held as a way to go.
         self.lifts = (presses.lifts(self.mine.kind, max(float(self.mine.w), float(self.mine.h)), self.mine.number)
                       if presses is not None and self.mine is not None else [])
+        self.press_paths = ((lambda key: presses.path(key, self.mine.kind, self.mine.number))
+                            if presses is not None and self.mine is not None else None)
         for lift in self.lifts:
             self.ways.pop(lift, None)
         self.across, self.updown = hers.follows_along if hers.follows_pointer else hers.axes(keys)
@@ -498,6 +514,14 @@ class _Choosing:
                 not self.meeting.known(thing.kind)
                 and self.signs.closing_in(thing, self.mine, max(2 * self.response_s, 3 * self.next_picture_s)))):
             return AVOID
+        # A kind not yet met nor told of is what her situation says such a thing is, by how it moves: what falls is to be
+        # caught or kept clear of, what heads for her kept clear of or shot (core/agency/situations_she_knows.py).
+        if self.situations and self.meeting.evidence.get(thing.kind) is None and thing.kind not in self.meeting.told:
+            from core.agency.situations_she_knows import prior_stance
+
+            supposed = prior_stance(self.situations, thing, self.mine)
+            if supposed:
+                return supposed
         # What only moves in place (a flag waving, stars twinkling, a figure idling) is judged as what stands still is:
         # touched and found to count for nothing, it is decoration, left alone.
         return self.meeting.stance(thing.kind, fixture=not thing.moved or not goes_somewhere(thing))
@@ -668,7 +692,10 @@ class _Choosing:
         return self.danger_along(lambda after: (way[0] * after, way[1] * after))
 
     def a_press_that_clears(self, presses: Any, held: str) -> str | None:
-        """A key whose press takes her clear of what is coming where holding ``held`` on runs into it; else None."""
+        """A key whose press takes her clear of what is coming where holding ``held`` on runs into it; else None. Where
+        she has imagined the moment ahead and it decided, its plan says whether to press now."""
+        if self.planned is not None and self.planned.decides and self.lifts:
+            return self.planned.plan.press_now()
         way = self.ways.get(held, (0.0, 0.0))
         staying = self.danger(way)
         if staying <= 0.0 or presses is None:
@@ -740,6 +767,16 @@ class _Choosing:
             gx = gx - offset[0] if gx is not None else None
             gy = gy - offset[1] if gy is not None else None
         mine = self.mine
+        # Where things that matter are on the move, she imagines the next moment under each plan she could follow and
+        # does the first part of the best (core/agency/imagining_ahead.py); a body carried on by its own going is
+        # steered by where each key takes it a moment ahead, as below.
+        if IMAGINES and not self.ahead_s and not self.pointing:
+            from core.agency.imagining_ahead import best_plan
+
+            self.held_now = held
+            self.planned = best_plan(self, held, (gx, gy))
+            if self.planned is not None and self.planned.decides:
+                return self.planned.plan.first, why, aim
         choices = {"": self.rest, **self.ways}
         moving = choices.get(held, (0.0, 0.0))
         # The old command keeps moving her while the next one is delivered.
@@ -1007,12 +1044,16 @@ async def _click_things(hands: Any, run: _Run, moves: WhatMoves, meeting: WhatMe
         return (0 if meeting.known(thing.kind) else 1, min(exits, default=math.inf))
 
     thing = min(candidates, key=leaving)
-    x, y = thing.where_at(CLICK_LANDS_S)
+    # Led by what has taken things before, where the thing moves (core/agency/leading_a_click.py).
+    lead = run.leading.lead() if run.leading is not None and math.hypot(thing.vx, thing.vy) > 8.0 else CLICK_LANDS_S
+    x, y = thing.where_at(lead)
     sx, sy = moves.share(x, y)
     if 0.0 <= sx <= 1.0 and 0.0 <= sy <= 1.0:
         await hands.click(sx, sy)
         meeting.clicked(thing, at)
         run.last_click = at
+        if run.leading is not None and lead != CLICK_LANDS_S:
+            run.leading.aimed(thing.number, at, lead)
 
 
 #: How often the picture itself is clicked, where the game is played with the pointer and nothing in it is to be clicked.
@@ -1304,6 +1345,30 @@ async def play_as_it_happens(
     told: str = "",
     waits_for_her: bool = False,
 ) -> dict[str, Any]:
+    from core.runtime.what_stops_it import current, interruptible
+
+    with interruptible(current(whose="play_as_it_happens")):
+        return await _play_as_it_happens(
+            look, hands, keys=keys, seconds=seconds, say=say, read_words=read_words,
+            keep=keep, pointer_first=pointer_first, getting_somewhere=getting_somewhere,
+            told=told, waits_for_her=waits_for_her,
+        )
+
+
+async def _play_as_it_happens(
+    look: Callable[[], Awaitable[Any]],
+    hands: Any,
+    *,
+    keys: Sequence[str],
+    seconds: float,
+    say: Callable[[str], Any] | None = None,
+    read_words: Callable[[Any], list[dict[str, Any]]] | None = None,
+    keep: dict[str, Any] | None = None,
+    pointer_first: bool = False,
+    getting_somewhere: Callable[[str], Any] | None = None,
+    told: str = "",
+    waits_for_her: bool = False,
+) -> dict[str, Any]:
     """Play what ``look`` shows through ``hands`` until it stops moving or ``seconds`` pass.
 
     ``look`` returns an RGB picture and when it was taken, or None. ``hands``
@@ -1313,6 +1378,9 @@ async def play_as_it_happens(
     ``waits_for_her`` says the world stood still until she moved in it
     (``it_goes_while_held``): with nothing to go to, she goes where she has not been.
     """
+    from core.runtime.what_stops_it import current
+
+    context = current(whose="play_as_it_happens.frames")
     began = time.monotonic()
     keep = keep if keep is not None else {}
     from core.agency.when_motion_breaks_a_rule import MotionChecks
@@ -1321,6 +1389,9 @@ async def play_as_it_happens(
     moves = WhatMoves(kinds=keep.get("kinds"))
     physics: HowThingsMoveHere = keep.get("physics") or HowThingsMoveHere()
     rules = WhatTheRulesSaid.read(told) if told else None
+    from core.agency.situations_she_knows import caution_of, situations_in
+
+    situations = situations_in(told) if told else ()
     hers: WhichIsHers = keep.get("hers") or WhichIsHers()
     meeting: WhatMeetingDoes = keep.get("meeting") or WhatMeetingDoes()
     for kept in (physics, hers, meeting):
@@ -1339,6 +1410,9 @@ async def play_as_it_happens(
     if run.clicks_pay is not None:
         run.clicks_pay.begin_stretch(run.gains, run.losses)
     run.lately = dict(keep.get("said_lately") or {})
+    from core.agency.leading_a_click import LeadingAClick
+
+    run.leading = keep.get("leading") or LeadingAClick()
     # What is said once ("That's me", what a kind of thing is worth) is said once a game, not once a stretch.
     run.said = set(keep.get("said_once") or ())
     run.avoided_before = {kind for kind in meeting.evidence if meeting.stance(kind) == AVOID}
@@ -1367,10 +1441,12 @@ async def play_as_it_happens(
     ended = ""
     try:
         while not ended:
+            context.check()
             if time.monotonic() - began >= seconds:
                 ended = "out of time"
                 break
             seen = await look()
+            context.check()
             if seen is None:
                 ended = "the picture could not be taken"
                 break
@@ -1381,6 +1457,7 @@ async def play_as_it_happens(
             run.picture_at = at
             run.pictures += 1
             happened = moves.see(picture, at)
+            run.leading.saw(happened, at)
             _where_she_has_come(run, moves, hers, say, at)
             hers.saw(moves, happened, at)
             # A key named for a way moves her; it is taken to fire only where the game's words say it does: LIVE
@@ -1409,7 +1486,8 @@ async def play_as_it_happens(
                                  covered=(run.covered | run.barred, run.cell) if goes_over and run.cell else None,
                                  barred=(run.barred, run.cell) if run.cell else None, presses=run.presses,
                                  reach=run.reach)
-            choosing.signs, choosing.at = run.signs, at
+            choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
+            choosing.caution *= caution_of(situations)
             if rules is not None:
                 choosing.strikes = run.blows.stands_ground(run.blows.keys(rules.fire_keys, hers.makes))
             choosing.going_to = a_place_to_go(run, moves, hers, at, lambda line, once, at=at: _say(run, say, line, at, once=once))
@@ -1435,7 +1513,9 @@ async def play_as_it_happens(
                 ended = "runtime contract violated"
                 _say(run, say, "This still behaves incorrectly: " + violations[0]["finding"] + ". I need to check the repair.", at, once="runtime_fault")
                 break
+            context.check()
             await _act(hands, run, moves, hers, meeting, choosing, at, say=say, rules=rules)
+            context.check()
             await use_controls_on_things(hands, run, moves, hers, happened, at,
                                          lambda line, once, at=at: _say(run, say, line, at, once=once), picture)
             _out_of_her_reach(run, choosing, at)
@@ -1459,7 +1539,7 @@ async def play_as_it_happens(
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
-                 "said_once": run.said})
+                 "said_once": run.said, "leading": run.leading})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
@@ -1679,7 +1759,10 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
         return
     fire = choosing.fire(aim, why)
     discovering = choosing.shot is None
-    if fire is None and discovering and choosing.pointing and choosing.mine is not None:
+    if fire is None and discovering and choosing.mine is not None and rules is not None and rules.a_click_is_a_shot:
+        # Its words say a click shoots: whether the pointer moves her or aims for her, the shot is a click.
+        fire = "mouse"
+    elif fire is None and discovering and choosing.pointing and choosing.mine is not None:
         if rules is not None and rules.a_click_is_a_shot:
             fire = "mouse"
         elif rules is not None:
@@ -1696,12 +1779,17 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
     if fire == "mouse":
         if not hasattr(hands, "click"):
             return
+        tall, wide = choosing.moves.shape
+        target = None if choosing.pointing else _aimed_with_the_pointer(choosing, aim, run)
         if choosing.pointing:
-            tall, wide = choosing.moves.shape
             run.pointer = (min(1.0, max(0.0, choosing.mine.x / max(1, wide))),
                            min(1.0, max(0.0, choosing.mine.y / max(1, tall))))
+        elif target is not None and hasattr(hands, "point"):
+            await hands.point(*run.pointer)
         dispatched = time.monotonic()
         await hands.click(*run.pointer)
+        if target is not None and run.leading is not None:
+            run.leading.aimed(target[0], at, target[1])
     else:
         dispatched = time.monotonic()
         await hands.tap(fire)
@@ -1712,6 +1800,20 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
     run.last_trigger_began = dispatched
     run.last_click = delivered
     run.taps += 1
+
+
+def _aimed_with_the_pointer(choosing: _Choosing, aim: Any, run: _Run) -> tuple[int, float] | None:
+    """Where the pointer aims what her click sends: on the thing it is for, where it will be when the shot gets there,
+    by the lead that has taken things (core/agency/leading_a_click.py). Sets ``run.pointer``; the thing and the lead."""
+    from core.agency.leading_a_click import the_thing_to_aim_at
+
+    thing = the_thing_to_aim_at(choosing, aim)
+    if thing is None or run.leading is None:
+        return None
+    lead = run.leading.lead()
+    x, y = choosing.moves.share(*thing.where_at(lead))
+    run.pointer = (min(1.0, max(0.0, x)), min(1.0, max(0.0, y)))
+    return thing.number, lead
 
 
 async def _strike(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing, rules: WhatTheRulesSaid | None) -> bool:

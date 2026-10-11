@@ -1,0 +1,327 @@
+"""Procedural variable bindings come from owned effects and expire with their context."""
+from types import SimpleNamespace
+
+import pytest
+
+from core.cognition.a_guide_to_a_place import THE_GUIDE, Guide
+from core.cognition.reading_the_rules import Frame, Rules
+from core.runtime.skill_contract import PredicateState
+from core.skills.screen_pursuit_decision import (
+    _reaching_what_the_next_step_needs,
+    _the_lesson_first,
+)
+from core.skills.screen_step_evidence import admissible_step, artifact_ready_for
+
+
+def test_registered_choice_and_readiness_invariants_are_measured():
+    from core.cognition.procedure_binding import _choice_binding_invariant
+    from core.skills.screen_step_evidence import _construction_readiness_invariant
+
+    assert _choice_binding_invariant() == ()
+    assert _construction_readiness_invariant() == ()
+
+
+def observation(epoch, labels, surface="editor"):
+    return {"text": " ".join(labels), "clickable": [f'click "{label}"' for label in labels],
+            "capture_epoch": str(epoch), "capture_at": float(epoch), "surface_id": surface, "bounds": [0, 0, 400, 300]}
+
+
+def rules_with(*frames):
+    return Rules(frames={frame.key: frame for frame in frames})
+
+
+def selector_rules():
+    choose = Frame("Choose the type of component you wish to use", act="click things",
+                   thing="the type of component you wish to use", using="choose")
+    open_panel = Frame("Click here to open the component library", act="click things",
+                       thing="the component library", using="click here to open", order=1)
+    place = Frame("Place the component on the workspace", act="carry", thing="component", where="workspace", order=2)
+    rules = rules_with(choose, open_panel, place)
+    return rules, choose, open_panel, place
+
+
+def expose_choices(rules, open_panel):
+    before = observation(1, ["Component Library", "Run"])
+    after = observation(2, ["Component Library", "Run", "Filters", "Sources", "Delete"])
+    rules.begin('click "Component Library"', before, step_key=open_panel.key)
+    rules.tried('click "Component Library"', True, after=after)
+    return after
+
+
+def test_method_prose_uses_its_named_target_and_never_matches_the_word_here():
+    rules, _, open_panel, _ = selector_rules()
+    assert rules.step_of('click "Component Library"') is open_panel
+    assert rules.step_of('click "Here"') is None
+
+
+def test_a_bare_input_method_binds_an_ordinary_click_but_cannot_swallow_a_named_later_step():
+    method = Frame("CLICK", act="click things", using="CLICK")
+    next_frame = Frame("Next", act="click things", thing="Next", order=1)
+    rules = rules_with(method, next_frame)
+    assert rules.step_of('click "Play"') is method
+    assert rules.step_of('click "Next"') is next_frame
+    guide = Guide(rules=rules)
+    token = THE_GUIDE.set(guide)
+    try:
+        assert not admissible_step('click "Next"')
+    finally:
+        THE_GUIDE.reset(token)
+
+
+def test_opening_a_selector_reaches_its_choice_without_claiming_the_choice_was_done():
+    rules, choose, open_panel, _ = selector_rules()
+    assert rules.reaches_next('click "Component Library"')
+    assert _reaching_what_the_next_step_needs([rules], {'click "Component Library"': 1}, None) == {'click "Component Library"': 1}
+    expose_choices(rules, open_panel)
+    assert rules.next_step() is choose and not rules.passed(choose)
+    assert rules.step_of('click "Filters"') is choose
+    assert rules.step_of('click "Delete"') is None
+    assert rules.step_of('click "Run"') is None
+    assert rules.step_of('click "Component Library"') is None
+
+
+@pytest.mark.parametrize("entity,container", [("component", "library"), ("font", "panel"), ("chart", "menu"), ("asset", "catalog")])
+def test_clicking_a_type_is_a_choice_whose_selector_can_be_reached(entity, container):
+    choose = Frame(f"Click a type of {entity}", act="click things", thing=f"a type of {entity}")
+    opener = Frame(f"Open the {entity} {container}", act="click things", thing=f"{entity} {container}", order=1)
+    rules = rules_with(choose, opener)
+    move = f'click "{entity} {container}"'
+    assert rules.reaches_next(move)
+    before = observation(1, [f"{entity} {container}"])
+    after = observation(2, [f"{entity} {container}", "Alpha", "Beta"])
+    rules.begin(move, before, step_key=opener.key)
+    rules.tried(move, True, after=after)
+    assert rules.step_of('click "Alpha"') is choose
+
+
+@pytest.mark.parametrize("quotes", [('"', '"'), ("'", "'"), ("“", "”")])
+def test_a_quoted_control_name_that_mentions_a_type_is_still_literal(quotes):
+    from core.cognition.procedure_binding import choice_slot
+
+    literal = Frame(f'Click {quotes[0]}Type of chart{quotes[1]}', act="click things", thing="Type of chart")
+    assert not choice_slot(literal)
+    assert rules_with(literal).step_of('click "Type of chart"') is literal
+
+
+def test_a_category_selection_can_reveal_the_next_choice_of_the_same_entity():
+    rules, first, opener, _ = selector_rules()
+    second = Frame("Select an option of component", act="click things", thing="an option of component", using="select", order=1.5)
+    rules.frames[second.key] = second
+    before = expose_choices(rules, opener)
+    rules.begin('click "Filters"', before)
+    after = observation(3, ["Component Library", "Filter A", "Filter B", "Run"])
+    rules.tried('click "Filters"', True, after=after)
+    assert rules.passed(first) and rules.next_step() is second
+    assert rules.step_of('click "Filter A"') is second
+    assert rules.step_of('click "Run"') is None
+
+
+@pytest.mark.parametrize("entity", ["component", "font", "chart", "asset"])
+def test_choice_prose_repeated_as_a_heading_cannot_bind_or_complete_the_variable(entity):
+    choose = Frame(f"Click a type of {entity}", act="click things", thing=f"a type of {entity}", using="click")
+    rules = rules_with(choose)
+    heading = f'click "CHOOSE A TYPE OF {entity.upper()}"'
+    assert rules.step_of(heading) is None
+    assert rules.begin(heading, observation(1, [f"CHOOSE A TYPE OF {entity.upper()}"])) is None
+    assert not rules.passed(choose)
+
+
+def test_selector_receipt_excludes_instruction_headings_from_revealed_values():
+    rules, choose, opener, _ = selector_rules()
+    before = observation(1, ["Component Library"])
+    after = observation(2, ["Choose a type of component", "Filters", "Sources"])
+    rules.begin('click "Component Library"', before, step_key=opener.key)
+    rules.tried('click "Component Library"', True, after=after)
+    assert rules.step_of('click "Filters"') is choose
+    assert rules.step_of('click "Choose a type of component"') is None
+
+
+def object_value(name, epoch, identity="a" * 64):
+    return {"text": name, "x": .1, "y": .2, "width": .1, "height": .1,
+            "center_x": .15, "center_y": .25, "role": "object", "source": "measured_pixels",
+            "candidate_id": identity, "container_bbox": [.05, .1, .4, .7], "capture_epoch": str(epoch)}
+
+
+@pytest.mark.parametrize("entity,container", [("component", "library"), ("font", "panel"), ("chart", "menu"), ("asset", "catalog")])
+def test_owned_selector_can_bind_an_anonymous_measured_candidate(entity, container):
+    choose = Frame(f"Choose an item of {entity}", act="click things", thing=f"an item of {entity}")
+    opener = Frame(f"Open the {entity} {container}", act="click things", thing=f"{entity} {container}", order=1)
+    rules = rules_with(choose, opener)
+    name = "the object at 15.00% across, 25.00% down"
+    before = observation(1, [f"{entity} {container}"])
+    after = observation(2, [f"{entity} {container}", name])
+    after["regions"] = [object_value(name, 2)]
+    move = f'click "{entity} {container}"'
+    rules.begin(move, before, step_key=opener.key)
+    rules.tried(move, True, after=after)
+    assert rules.step_of(f'click "{name}"') is choose
+    # Geometry and appearance bind an offered value, without assigning it an entity name or proving placement.
+    assert not rules.passed(choose)
+
+
+@pytest.mark.parametrize("damage", ["missing_extent", "missing_witness", "foreign_capture", "redirected_container", "ambiguous", "shape_only"])
+def test_unguarded_geometry_cannot_become_a_choice_value(damage):
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, []), observation(2, [name])
+    region = object_value(name, 2)
+    after["regions"] = [region]
+    if damage == "missing_extent":
+        region.pop("width")
+    elif damage == "missing_witness":
+        region.pop("candidate_id")
+    elif damage == "foreign_capture":
+        region["capture_epoch"] = "1"
+    elif damage == "redirected_container":
+        region["container_bbox"] = [.5, .5, .1, .1]
+    elif damage == "ambiguous":
+        after["regions"].append(dict(region))
+    elif damage == "shape_only":
+        region["role"] = "shape"
+    assert RevealedChoices.from_effect(before, after, "open", "choose") is None
+
+
+def test_same_position_with_a_replaced_appearance_is_a_new_value_and_invalidates_the_old_binding():
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, [name]), observation(2, [name])
+    before["regions"] = [object_value(name, 1)]
+    after["regions"] = [object_value(name, 2, "b" * 64)]
+    binding = RevealedChoices.from_effect(before, after, "open", "choose")
+    assert binding is not None and binding.offers(f'click "{name}"', after, "choose")
+    current = observation(3, [name])
+    current["regions"] = [object_value(name, 3, "c" * 64)]
+    assert not binding.offers(f'click "{name}"', current, "choose")
+
+
+def test_current_capture_can_keep_the_same_measured_value_without_persistent_identity_claims():
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, []), observation(2, [name])
+    after["regions"] = [object_value(name, 2)]
+    binding = RevealedChoices.from_effect(before, after, "open", "choose")
+    current = observation(3, [name])
+    current["regions"] = [object_value(name, 3)]
+    assert binding.offers(f'click "{name}"', current, "choose")
+
+
+def test_a_category_selection_cannot_supply_choices_of_another_entity():
+    rules, first, opener, _ = selector_rules()
+    other = Frame("Choose the type of font", act="click things", thing="the type of font", using="choose", order=1.5)
+    rules.frames[other.key] = other
+    before = expose_choices(rules, opener)
+    rules.begin('click "Filters"', before)
+    after = observation(3, ["Component Library", "Filter A", "Filter B", "Run"])
+    rules.tried('click "Filters"', True, after=after)
+    assert rules.passed(first) and rules.next_step() is other
+    assert rules.step_of('click "Filter A"') is None
+
+
+def test_a_completed_selector_can_be_reopened_for_an_unbound_choice_without_erasing_completion():
+    rules, _, opener, _ = selector_rules()
+    expose_choices(rules, opener)
+    hidden = observation(3, ["Component Library", "Run"])
+    rules.observe_context(hidden)
+    move = 'click "Component Library"'
+    assert rules.reaches_next(move) and rules.step_of(move) is opener
+    token = THE_GUIDE.set(Guide(rules=rules))
+    try:
+        assert admissible_step(move)
+        prioritized = _the_lesson_first({move: 1, 'click "Help"': 1})
+        assert prioritized[move] > prioritized['click "Help"']
+    finally:
+        THE_GUIDE.reset(token)
+    attempt = rules.begin(move, hidden)
+    assert attempt.optional and rules.passed(opener)
+    rules.tried(move, False, after=observation(4, ["Component Library", "Run"]))
+    assert rules.passed(opener)
+    rules.begin(move, observation(4, ["Component Library", "Run"]))
+    after = observation(5, ["Component Library", "Filters", "Sources", "Run"])
+    rules.tried(move, True, after=after)
+    assert rules.passed(opener) and rules.step_of('click "Sources"') is rules.next_step()
+
+
+@pytest.mark.parametrize("damage", ["unchanged", "missing_epoch", "other_surface", "old_time", "missing_pixels_context"])
+def test_unmeasured_or_wrong_context_opening_does_not_bind_choices(damage):
+    rules, choose, open_panel, _ = selector_rules()
+    before, after = observation(1, ["Component Library"]), observation(2, ["Filters", "Sources"])
+    changed = True
+    if damage == "unchanged":
+        changed = False
+    elif damage == "missing_epoch":
+        after["capture_epoch"] = ""
+    elif damage == "other_surface":
+        after["surface_id"] = "other editor"
+    elif damage == "old_time":
+        after["capture_at"] = 0
+    else:
+        after["bounds"] = []
+    rules.begin('click "Component Library"', before, step_key=open_panel.key)
+    rules.tried('click "Component Library"', changed, after=after)
+    assert rules.step_of('click "Filters"') is None
+    assert not rules.passed(choose)
+
+
+@pytest.mark.parametrize("change", ["hidden", "surface", "viewport", "old_capture", "epoch_reused"])
+def test_a_revealed_choice_must_still_be_on_the_same_surface(change):
+    rules, _, open_panel, _ = selector_rules()
+    current = expose_choices(rules, open_panel)
+    if change == "hidden":
+        current["clickable"] = ['click "Run"']
+    elif change == "surface":
+        current["surface_id"] = "other editor"
+    elif change == "viewport":
+        current["bounds"] = [0, 0, 600, 500]
+    elif change == "old_capture":
+        current["capture_at"] = 1.
+    else:
+        current["capture_at"] = 3.
+    rules.observe_context(current)
+    assert rules.step_of('click "Filters"') is None
+
+
+def test_an_unrelated_panel_cannot_supply_the_variables_of_a_named_entity():
+    rules, _, _, _ = selector_rules()
+    unrelated = Frame("Open the preferences panel", act="click things", thing="preferences panel", order=3)
+    rules.frames[unrelated.key] = unrelated
+    assert not rules.reaches_next('click "preferences panel"')
+
+
+@pytest.mark.parametrize("label", ["Run", "Test circuit", "Simulate", "Render", "Preview", "Check my answer"])
+def test_unmatched_consuming_controls_need_currently_measured_work(label):
+    carry = Frame("Place the component", act="carry", thing="component", where="workspace")
+    guide = Guide(rules=rules_with(carry), built="Previously placed work needs another look")
+    can_do = SimpleNamespace(carried_to={"some old drag": True}, placed_count=lambda: 0)
+    token = THE_GUIDE.set(guide)
+    try:
+        move = f'click "{label}"'
+        assert not artifact_ready_for(move, can_do)
+        assert not admissible_step(move, can_do=can_do)
+        assert _the_lesson_first({move: 1e9, 'click "Library"': 1}, can_do=can_do) == {'click "Library"': 1}
+        can_do.placed_count = lambda: 1
+        assert artifact_ready_for(move, can_do)
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize("label", ["Play", "Next", "Edit", "Run"])
+def test_an_existing_task_without_a_construction_requirement_can_execute(label):
+    token = THE_GUIDE.set(Guide())
+    try:
+        assert artifact_ready_for(f'click "{label}"')
+    finally:
+        THE_GUIDE.reset(token)
+
+
+def test_measured_selection_satisfies_its_own_step_then_leaves_placement_unresolved():
+    rules, choose, open_panel, place = selector_rules()
+    before = expose_choices(rules, open_panel)
+    rules.begin('click "Filters"', before)
+    after = observation(3, ["Component Library", "Filter A", "Filter B", "Run"])
+    rules.tried('click "Filters"', True, after=after)
+    assert rules.states[choose.key] is PredicateState.SATISFIED
+    assert rules.next_step() is place
+    assert not rules.passed(place)

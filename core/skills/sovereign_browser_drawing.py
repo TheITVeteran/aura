@@ -224,6 +224,25 @@ def chose_the_drawing(moves: list[tuple[Any, Any]]) -> bool:
     return any(str(getattr(action, "selector", "") or "") == DRAWING for action, _said in moves)
 
 
+#: How long a page's player is given to put up the drawing it plays in, and how often it is asked.
+DRAWING_COMES_UP_S = 15.0
+ASKED_EVERY_S = 0.5
+
+
+async def _where_it_draws(page: Any) -> tuple[float, float, float, float] | None:
+    """Where the page draws, asked again while its player is still putting the drawing up: offline 2026-10-10 a game's
+    page was asked before its player had made its drawing, and she gave it up as a page that no longer draws."""
+    import asyncio
+    import time
+
+    gives_up_at = time.monotonic() + DRAWING_COMES_UP_S
+    while True:
+        band = _the_band(await page.evaluate(_WHERE_IT_DRAWS))
+        if band is not None or time.monotonic() >= gives_up_at:
+            return band
+        await asyncio.sleep(ASKED_EVERY_S)
+
+
 def _the_band(said: Any) -> tuple[float, float, float, float] | None:
     """The page's answer to where it draws, as shares of what it is measured in."""
     try:
@@ -263,7 +282,7 @@ async def _on_the_drawing(browser: Any, goal: str, observation: Mapping[str, Any
     if page is None:
         return {**step, "error": "her browser has no page to play on"}
     try:
-        band = _the_band(await page.evaluate(_WHERE_IT_DRAWS))
+        band = await _where_it_draws(page)
     except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
         record_degradation("sovereign_browser", exc, severity="info", action="ask her page where it draws")
         band = None
@@ -582,6 +601,14 @@ def _one_run_s() -> float:
 
 async def _one_run(page: Any, band: tuple[float, float, float, float], goal: str, url: str,
                    deadline: float, keep: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+    from core.cognition.guidance_lifetime import guidance_work
+
+    async with guidance_work() as guidance:
+        return await _one_run_with_guidance(page, band, goal, url, deadline, keep, guidance)
+
+
+async def _one_run_with_guidance(page: Any, band: tuple[float, float, float, float], goal: str, url: str,
+                               deadline: float, keep: dict[str, Any], guidance: Any) -> tuple[dict[str, Any], Any]:
     """One run of the game: menus by the screen pursuit, play by its reflexes, until the run is over."""
     import time
 
@@ -612,6 +639,7 @@ async def _one_run(page: Any, band: tuple[float, float, float, float], goal: str
             max_seconds=max(1.0, deadline - time.monotonic()),
         )
     finally:
+        await guidance.close()
         THE_GUIDE.reset(guided)
         AS_IT_HAPPENS.reset(quick)
         HER_OWN_PAGE.reset(held)

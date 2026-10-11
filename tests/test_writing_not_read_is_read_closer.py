@@ -74,7 +74,9 @@ def test_only_a_few_pieces_are_read_closer_in_one_look_and_never_prose_or_words(
 def test_a_thing_already_going_before_the_press_was_not_sent_by_it():
     from core.agency.playing_by_shots import _where_it_went
 
-    bobbing = SimpleNamespace(number=7, x=200.0, y=160.0, vx=40.0, vy=0.0)
+    # It goes on going after the button comes up (playing_by_shots._went_on_after): a sent thing, but for its going before.
+    bobbing = SimpleNamespace(number=7, x=200.0, y=160.0, vx=40.0, vy=0.0, w=10.0, h=10.0,
+                              path=[(i * 0.1, 200.0 + 4.0 * i, 160.0) for i in range(6)])
     moves = SimpleNamespace(things={7: bobbing}, shape=(200, 300), see=lambda picture, at: [])
     clock = iter(i * 0.1 for i in range(200))
 

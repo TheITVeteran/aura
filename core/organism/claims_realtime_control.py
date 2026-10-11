@@ -6,6 +6,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.causal_identification import (
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
+    from core.agency.deliberate_action import _unmeasured_response_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
     from core.agency.which_one_answers_to_her import (
@@ -13,6 +14,9 @@ def install_realtime_control_claims(suite: Any) -> None:
         _emissions_require_distinct_input_receipts,
         _fresh_control_experiment_forgets_old_rejections,
     )
+    from core.cognition.guidance_lifetime import _completed_guidance_invariant
+    from core.cognition.procedure_binding import _choice_binding_invariant
+    from core.cognition.reading_the_rules import _procedure_completion_is_measured
     from core.organism.model_validation import (
         Claim,
         Evidence,
@@ -20,9 +24,77 @@ def install_realtime_control_claims(suite: Any) -> None:
         ValidationTest,
         boolean_score,
     )
+    from core.perception.drawn_objects import _object_candidates_invariant
+    from core.perception.eyes_of_their_own import _child_capture_custody_invariant
+    from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
+    from core.perception.visual_anchor import _remembered_labels_invariant
+    from core.perception.watching_it_happen import _response_window_keeps_its_evidence
+    from core.perception.where_the_words_point import _named_places_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
-    from core.runtime.what_she_learned import _indexed_knowledge_invariant
+    from core.runtime.what_she_learned import (
+        _indexed_knowledge_invariant,
+        _retained_structure_invariant,
+    )
+    from core.runtime.what_stops_it import _stop_listener_lifetime_invariant
+    from core.skills.screen_step_evidence import (
+        _construction_readiness_invariant,
+        _response_dispatch_invariant,
+    )
+
+    for name, owner, fixture, probe, statement in (
+        ("response_streams_keep_owned_capture_windows", "core/perception/watching_it_happen.py",
+         "tests/test_action_response_windows.py", _response_window_keeps_its_evidence,
+         "Response streams retain delivery intervals and capture timestamps, excluding prior owned changes from background."),
+        ("responses_belong_to_one_delivered_dispatch", "core/skills/screen_step_evidence.py",
+         "tests/test_visual_responses_keep_their_own_dispatch.py", lambda: _response_dispatch_invariant() == (),
+         "Visual responses belong to exactly one delivered input and a fresh observation of the bound surface."),
+        ("unmeasured_responses_are_not_graded", "core/agency/deliberate_action.py",
+         "tests/test_visual_responses_keep_their_own_dispatch.py", lambda: _unmeasured_response_invariant() == (),
+         "Unmeasured responses cannot resolve action episodes or teach success and failure consequences."),
+        ("object_candidates_require_measured_extents", "core/perception/drawn_objects.py",
+         "tests/test_drawn_objects_have_measured_extents.py", lambda: _object_candidates_invariant() == (),
+         "Anonymous object candidates have current measured extents and appearance witnesses, without assumed affordances."),
+        ("completed_guidance_cannot_publish", "core/cognition/guidance_lifetime.py",
+         "tests/test_guidance_lifetime.py", lambda: _completed_guidance_invariant() == (),
+         "Retired guidance operations reject delayed publication while preserving their parent execution owner."),
+        ("remembered_labels_require_current_pixels", "core/perception/visual_anchor.py",
+         "tests/test_visual_anchor.py", lambda: _remembered_labels_invariant() == (),
+         "Remembered control labels require fresh current appearance in the same surface and capture context."),
+        ("choices_require_current_observed_controls", "core/cognition/procedure_binding.py",
+         "tests/test_procedure_bindings_follow_observed_controls.py", lambda: _choice_binding_invariant() == (),
+         "Choice bindings require an observed selector effect and currently visible choices in its capture context."),
+        ("construction_controls_require_current_work", "core/skills/screen_step_evidence.py",
+         "tests/test_procedure_bindings_follow_observed_controls.py", lambda: _construction_readiness_invariant() == (),
+         "Construction execution controls cannot use narrative or historical drag records as current readiness."),
+        ("stop_listeners_have_scoped_lifetimes", "core/runtime/what_stops_it.py",
+         "tests/test_stopped_execution_cannot_keep_acting.py", lambda: _stop_listener_lifetime_invariant() == (),
+         "Cancellation listeners detach without stopping sibling work and retain the parent's stop direction."),
+        ("procedures_require_owned_effects", "core/cognition/reading_the_rules.py",
+         "tests/test_procedure_steps_need_their_own_evidence.py", _procedure_completion_is_measured,
+         "Procedure completion requires the selected step's own observed effect and preserves unresolved prerequisites."),
+        ("named_places_require_current_scene", "core/perception/where_the_words_point.py",
+         "tests/test_named_places_keep_their_scene.py", lambda: _named_places_invariant() == (),
+         "Named visual destinations belong to the current surface, episode, viewport and image revision."),
+        ("transfers_require_measured_occupancy", "core/perception/observed_transfer.py",
+         "tests/test_observed_transfer.py", lambda: _transfer_receipts_require_evidence() == (),
+         "Transfer verification requires fresh measured pixels showing unique new occupancy at the bound destination."),
+        ("child_pixels_keep_capture_custody", "core/perception/eyes_of_their_own.py",
+         "tests/test_other_process_pixels_keep_their_capture.py", lambda: _child_capture_custody_invariant() == (),
+         "Other-process screen readings preserve the exact final captured pixels and reject mismatched capture metadata."),
+    ):
+        suite.add_test(ValidationTest(
+            name=name, description=statement, required_capability="",
+            observation=Observation(name, True, fixture),
+            predict=lambda _model, check=probe: check(),
+            score=lambda value, observation, subject=name: boolean_score(value, expected=observation.value, subject=subject),
+            owner=owner,
+        ))
+        suite.add_claim(Claim(
+            statement=statement, test=name, owner=owner, asserted_in=owner,
+            evidence=Evidence.MEASURED_SYNTHETIC,
+            evidence_note="Offline causal and unknown-state regressions; ordinary live demo performance remains independently unproved.",
+        ))
 
     name = "emissions_require_distinct_input_receipts"
     owner = "core/agency/which_one_answers_to_her.py"
@@ -38,6 +110,22 @@ def install_realtime_control_claims(suite: Any) -> None:
         statement="Emission learning accepts effects during input delivery and requires distinct unambiguous trials.",
         test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
         evidence_note="Delivery windows, repeated births, ambiguity and failed fresh trials measured; live gameplay requires separate evidence.",
+    ))
+
+    name = "retained_structures_reject_damaged_closures"
+    owner = "core/runtime/what_she_learned.py"
+    suite.add_test(ValidationTest(
+        name=name, description="damaged declared positional structures exclude their closure and preserve independent knowledge",
+        required_capability="", observation=Observation("damaged_structures_excluded", True,
+                "tests/test_retained_positional_structures_keep_their_shape.py"),
+        predict=lambda _model: _retained_structure_invariant() == (),
+        score=lambda value, observation, subject=name: boolean_score(value, expected=observation.value, subject=subject),
+        owner=owner,
+    ))
+    suite.add_claim(Claim(
+        statement="Declared retained positional structures are validated before reuse, excluding damaged closures while preserving independent knowledge.",
+        test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
+        evidence_note="Fixed records, vectors, schema evolution and bounded roundtrips measured in independent synthetic domains; live use requires separate evidence.",
     ))
 
     name = "indexed_knowledge_keeps_relationships"

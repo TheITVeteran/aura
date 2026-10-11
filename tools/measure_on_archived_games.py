@@ -36,6 +36,7 @@ ARCHIVED = {
     1: "https://archive.org/details/the-riddlers-secret-identity-inventor_flash",
     2: "https://archive.org/details/food_bash",
     3: "https://archive.org/details/runaway-robot-dexter",
+    4: "https://archive.org/details/eene_spinstadium",
     5: "https://archive.org/details/ask-swami-shaggy_flash",
     6: "https://archive.org/details/cartoon_cove_mini_golf",
     7: "https://archive.org/details/operation-stat",

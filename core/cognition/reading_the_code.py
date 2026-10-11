@@ -190,22 +190,35 @@ def read_the_code_beside(guide: Any, read: Any, ask: Callable[..., Awaitable[Any
     if ask is None or not excerpt:
         return False
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return False
 
     async def asked() -> None:
+        from core.cognition.guidance_lifetime import publication_stamp
+
+        stamp = publication_stamp()
         manual = await what_the_code_says(place, excerpt, ask)
+        stamp.check()
         if not manual:
             logger.info("her model gave no manual of the code of %r", place)
             return
         logger.info("the code of %r, as she read it: %s", place, {k: v for k, v in manual.items() if v})
         await asyncio.to_thread(_keep, world, manual)
+        stamp.check()
         for line in take_in_the_code(guide, manual):
             if tell is not None:
                 tell(line)
 
-    guide.reading_the_code = loop.create_task(asked())
+    from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+    guide.reading_the_code = task = create_guidance_task(asked())
+
+    def release() -> None:
+        if guide.reading_the_code is task:
+            guide.reading_the_code = None
+
+    retire_when_closed(task, release)
     return True
 
 

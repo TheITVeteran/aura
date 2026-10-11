@@ -89,15 +89,18 @@ def ask_in_the_background(guide: Any, *, task: str, said: str, ask: Callable[...
     if guide is None or getattr(guide, "asked_what_i_know", False) or not getattr(guide, "place", ""):
         return False
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return False
     guide.asked_what_i_know = True
 
     async def asked() -> None:
+        from core.cognition.guidance_lifetime import publication_stamp
         from core.cognition.what_this_place_is import ask_for_a_reading
 
+        stamp = publication_stamp()
         manual = await what_i_know_of(guide.place, task, said, ask)
+        stamp.check()
         if manual:
             filled = guide.take_in_what_i_know(manual)
             logger.info("what I know of %r: %s (filled %s)", guide.place, {k: v for k, v in manual.items() if v}, filled)
@@ -108,7 +111,16 @@ def ask_in_the_background(guide: Any, *, task: str, said: str, ask: Callable[...
         # (core/cognition/what_this_place_is.py), asked once the manual is in and her model's one lane is free again.
         ask_for_a_reading(guide, ask, task=task, tell=tell)
 
-    guide.asking_what_i_know = loop.create_task(asked())
+    from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+    guide.asking_what_i_know = task = create_guidance_task(asked())
+
+    def release() -> None:
+        if guide.asking_what_i_know is task:
+            guide.asking_what_i_know = None
+            guide.asked_what_i_know = False
+
+    retire_when_closed(task, release)
     return True
 
 

@@ -155,6 +155,12 @@ def a_stance_said(run: Any, moves: Any, kind: int, stance: str, at: float, *, me
     name = named_for_its_part(moves, kind, sample, {MEET: "get", AVOID: "avoid", SHOOT: "shoot"}.get(stance, ""))
     if name in seeing.stances_said:
         return ""
+    # A listener knows a thing by its colour: two kinds of one colour said to be one worth getting and the other costly
+    # are heard as one thing said both ways (offline 2026-10-10 "I'll keep clear of the cyan things", then "The cyan bars
+    # are worth getting to"). The second is kept to herself.
+    colour = _the_colour_in(name)
+    if colour and any(_the_colour_in(said) == colour and earlier != stance for said, earlier in seeing.stances_said.items()):
+        return ""
     proper = name[:1].isupper()
     them = name if proper else f"the {plural(name)}"
     if stance == AVOID and not met:
@@ -171,6 +177,11 @@ def a_stance_said(run: Any, moves: Any, kind: int, stance: str, at: float, *, me
         seeing.stances_said[name] = stance
         seeing.stance_said_at = at
     return line
+
+
+def _the_colour_in(name: str) -> str:
+    """The colour a name says its thing is, where it says one ("the cyan bars", "small red things"); else ""."""
+    return next((word for word in str(name or "").lower().split() if word in _COLOURS), "")
 
 
 def _a(name: str) -> str:
@@ -327,7 +338,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     seeing.began = at if seeing.began is None else seeing.began
     if seeing.avatar_asking is None and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return
         names = [*guide.names.get("me", [])[:2],
@@ -335,9 +346,22 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         frame = np.array(picture)[..., :3]
 
         async def looked() -> None:
-            seeing.avatar = await where_the_avatar_is(frame, names)
+            from core.cognition.guidance_lifetime import question_work
 
-        seeing.avatar_asking = loop.create_task(looked())
+            with question_work() as stamp:
+                avatar = await where_the_avatar_is(frame, names)
+                stamp.check()
+                seeing.avatar = avatar
+
+        from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+        seeing.avatar_asking = task = create_guidance_task(looked())
+
+        def release() -> None:
+            if seeing.avatar_asking is task:
+                seeing.avatar_asking = None
+
+        retire_when_closed(task, release)
         return
     if seeing.avatar is None:
         return

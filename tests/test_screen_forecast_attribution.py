@@ -127,7 +127,7 @@ async def test_action_helper_binds_the_forecast_before_waiting_for_the_world(mon
     run = NS(
         about_to={"key": "left"}, anchor={"app": "test"}, at_rest={}, busy=Mock(),
         expected=expected, follow_on=["up", "right"], goal="test", in_flight=Mock(),
-        key="left", laid_out=board(1), lattice=Mock(), made=None, moves=[], narrate=False,
+        key="left", laid_out=board(1), lattice=Mock(), made=None, moves=[], narrate=False, observation={},
         pacing={"brief": True, "choice": ""}, pending=pending,
         responds={"state": None, "lattice": None}, target_app="test", world=NS(acts_with_arrivals=0),
     )

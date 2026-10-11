@@ -1,0 +1,210 @@
+"""Bind procedural variables to controls revealed by a measured interaction.
+
+Method words describe input delivery. A named control identifies an input.
+Opening a selector can expose the values of an otherwise unnamed choice slot.
+That binding belongs to the observed surface and its current control inventory.
+"""
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from core.verify.invariants import invariant
+
+_METHOD_WORDS = frozenset("click clicking clicks press pressing here to open opening choose choosing select selecting "
+                          "use using with the a an left right mouse pointer button buttons control controls".split())
+_INPUT_WORDS = frozenset("click clicking clicks press pressing mouse pointer button buttons left right".split())
+_CHOICE = re.compile(r"\b(?:choose|select|pick)\b", re.I)
+_SLOT = re.compile(r"^(?:(?:the|a|an|any|one)\s+)?(?:type|kind|option|item|template|component|style|entry)\b", re.I)
+_CATEGORY = re.compile(r"^(?:(?:the|a|an|any|one)\s+)?(?:type|kind|style)\s+of\s+\S", re.I)
+_LITERAL = re.compile(r'''["“”]|(?:^|\s)'[^']+'(?=\s|[.,!?;:]|$)''')
+_OPENS = re.compile(r"\b(?:open|expand|show|browse)\b", re.I)
+_CONTAINER = re.compile(r"\b(?:library|panel|palette|catalog|catalogue|selector|list|menu|browser|chooser)\b", re.I)
+_COMMAND = re.compile(r"^\W*(?:click|press|open|close|skip|delete|remove|test|run|simulate|execute|render|preview|"
+                      r"start|clear|reset|undo|redo|back|menu|help|quit|exit|options|settings|pause|save|load|submit|"
+                      r"done|finish|launch|play|next|continue|restart|retry|cancel|show|hide|rotate|turn|flip|zoom|"
+                      r"choose|select|pick)\b", re.I)
+_CONSUMES = re.compile(r"^\W*(?:test|run|simulate|execute|render|preview|evaluate|validate|compile|"
+                       r"check\s+(?:my|the)|try\s+(?:it|this)|launch)\b", re.I)
+
+
+def _tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", str(text).casefold()))
+
+
+def control_of(frame: Any) -> str:
+    """The named control, excluding prose that merely describes how to use it."""
+    using = str(frame.using or "")
+    words = _tokens(using)
+    if not words or words <= _METHOD_WORDS:
+        return ""
+    return using
+
+
+def input_method_only(frame: Any) -> bool:
+    """A bare input method has no literal target name to match."""
+    words = _tokens(frame.using or frame.sentence)
+    return (frame.act == "click things" and not frame.thing and not frame.where
+            and bool(words) and words <= _INPUT_WORDS and not re.search(r"[\"'“”]", frame.sentence))
+
+
+def choice_slot(frame: Any) -> bool:
+    return (frame.act == "click things" and not control_of(frame)
+            and not _LITERAL.search(frame.sentence)
+            and bool(_CHOICE.search(f"{frame.using} {frame.sentence}") or _CATEGORY.search(str(frame.thing or "")))
+            and bool(_SLOT.search(str(frame.thing or ""))))
+
+
+def opens_choices(frame: Any) -> bool:
+    return (frame.act == "click things" and bool(_OPENS.search(f"{frame.using} {frame.sentence}"))
+            and bool(_CONTAINER.search(str(frame.thing or ""))))
+
+
+def _choice_subject(choice: Any) -> set[str]:
+    generic = _METHOD_WORDS | frozenset("of one any you your wish want need".split())
+    return {word.rstrip("s") for word in _tokens(_SLOT.sub("", choice.thing, count=1)) - generic}
+
+
+def selector_for(frame: Any, choice: Any) -> bool:
+    """A selector exposes the entity the choice names, or an unrestricted option slot."""
+    subject = _choice_subject(choice)
+    return opens_choices(frame) and choice_slot(choice) and (not subject or subject <= {word.rstrip("s") for word in _tokens(frame.thing)})
+
+
+def selection_reveals(frame: Any, choice: Any) -> bool:
+    """A category selection may expose another choice of that same named entity."""
+    subject = _choice_subject(frame)
+    return choice_slot(frame) and choice_slot(choice) and bool(subject) and subject == _choice_subject(choice)
+
+
+def consumes_artifact(label: str) -> bool:
+    """An evaluation or execution control that needs an artifact in a construction task."""
+    return bool(_CONSUMES.search(str(label or "")))
+
+
+def selection_label(label: str) -> bool:
+    return bool(str(label).strip()) and not str(label).startswith(("the shape at", "the object at", "the one that stands out", "the middle")) and not _COMMAND.search(label)
+
+
+def _object_witnesses(evidence: dict) -> dict[str, tuple]:
+    """Anonymous choice values retain their measured container, extent and appearance."""
+    found: dict[str, tuple] = {}
+    ambiguous: set[str] = set()
+    for region in (evidence.get("regions") or ())[:128]:
+        if not isinstance(region, dict):
+            continue
+        name, identity = str(region.get("text") or ""), str(region.get("candidate_id") or "")
+        box = tuple(region.get(key) for key in ("x", "y", "width", "height"))
+        container = region.get("container_bbox")
+        if (not name.startswith("the object at") or region.get("role") != "object"
+                or region.get("source") != "measured_pixels" or region.get("capture_epoch") != evidence.get("capture_epoch")
+                or not re.fullmatch(r"[0-9a-f]{64}", identity) or not isinstance(container, (list, tuple))
+                or len(container) != 4
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in (*box, *container))):
+            continue
+        x, y, width, height = box
+        cx, cy, cw, ch = container
+        if (min(x, y, cx, cy) < 0 or min(width, height, cw, ch) <= 0 or max(x + width, cx + cw) > 1.000001
+                or max(y + height, cy + ch) > 1.000001 or not (cx <= x and cy <= y and x + width <= cx + cw
+                                                                           and y + height <= cy + ch)):
+            continue
+        if name in found:
+            ambiguous.add(name)
+        else:
+            found[name] = (identity, box, tuple(container))
+    return {name: witness for name, witness in found.items() if name not in ambiguous}
+
+
+@dataclass(frozen=True)
+class RevealedChoices:
+    surface: str
+    bounds: tuple
+    epoch: str
+    capture_at: float
+    moves: frozenset[str]
+    opened_by: str
+    for_step: str
+    object_witnesses: tuple[tuple[str, tuple], ...] = ()
+
+    @classmethod
+    def from_effect(cls, before: dict, after: dict, step_key: str, choice_key: str, *, opened_move: str = "") -> RevealedChoices | None:
+        from core.agency.what_i_can_do_here import what_is_clicked
+
+        surface = str(after.get("surface_id") or "")
+        epoch = str(after.get("capture_epoch") or "")
+        earlier, later = before.get("capture_at"), after.get("capture_at")
+        bounds = after.get("bounds") or ()
+        if (not surface or surface != before.get("surface_id") or not epoch or epoch == before.get("capture_epoch")
+                or not before.get("capture_epoch")
+                or after.get("bounds") != before.get("bounds")
+                or len(bounds) != 4 or any(type(v) not in (int, float) or not math.isfinite(v) for v in bounds)
+                or bounds[2] <= 0 or bounds[3] <= 0
+                or type(earlier) not in (int, float) or type(later) not in (int, float)
+                or not math.isfinite(earlier) or not math.isfinite(later) or not earlier < later):
+            return None
+        introduced = set(after.get("clickable") or ()) - set(before.get("clickable") or ())
+        objects = _object_witnesses(after)
+        previous_objects = _object_witnesses(before)
+        introduced.update(move for move in after.get("clickable") or ()
+                          if (label := what_is_clicked(move)) in objects
+                          and objects[label] != previous_objects.get(label))
+        changed_objects = {label: witness for label, witness in objects.items()
+                           if f'click "{label}"' in introduced}
+        containers = {witness[2] for witness in changed_objects.values()}
+        if len(containers) > 1:
+            # A selector cannot own unrelated changes in another panel. Its
+            # measured location may identify one changed group; otherwise abstain.
+            control = what_is_clicked(opened_move)
+            points = []
+            for region in before.get("regions") or ():
+                if isinstance(region, dict) and region.get("text") == control:
+                    point = region.get("center_x"), region.get("center_y")
+                    if all(type(v) in (int, float) and math.isfinite(v) for v in point):
+                        points.append(point)
+            owned = {box for box in containers for px, py in points
+                     if box[0] <= px <= box[0] + box[2] and box[1] <= py <= box[1] + box[3]}
+            changed_objects = {label: witness for label, witness in changed_objects.items()
+                               if len(points) == 1 and len(owned) == 1 and witness[2] in owned}
+        moves = frozenset(move for move in introduced if (label := what_is_clicked(move))
+                          and (selection_label(label) or label in changed_objects))
+        kept = frozenset(sorted(moves)[:128])
+        witnesses = tuple((move, objects[label]) for move in sorted(kept)
+                          if (label := what_is_clicked(move)) in objects)
+        return cls(surface, tuple(bounds), epoch, later, kept, step_key, choice_key, witnesses) if len(moves) >= 2 or witnesses else None
+
+    def offers(self, move: str, current: dict, step_key: str) -> bool:
+        from core.agency.what_i_can_do_here import what_is_clicked
+
+        at = current.get("capture_at")
+        witnesses = dict(self.object_witnesses)
+        current_objects = _object_witnesses(current) if move in witnesses else {}
+        return (current.get("surface_id") == self.surface and tuple(current.get("bounds") or ()) == self.bounds
+                and bool(current.get("capture_epoch")) and self.for_step == step_key
+                and type(at) in (int, float) and math.isfinite(at) and at >= self.capture_at
+                and (current["capture_epoch"] != self.epoch or at == self.capture_at)
+                and move in self.moves and move in (current.get("clickable") or ())
+                and (move not in witnesses or current_objects.get(what_is_clicked(move)) == witnesses[move]))
+
+
+@invariant("cognition.choice_bindings_require_observed_current_controls", scope="cognition",
+           owner="core/cognition/procedure_binding.py", observational=False)
+def _choice_binding_invariant() -> tuple:
+    from core.cognition.reading_the_rules import Frame
+
+    category = Frame("Click a type of component", act="click things", thing="a type of component", using="click")
+    item = Frame("Choose the type of component you wish to use", act="click things",
+                 thing="the type of component you wish to use", using="choose")
+    other = Frame("Choose a type of font", act="click things", thing="a type of font", using="choose")
+    assert choice_slot(category) and selection_reveals(category, item)
+    assert not selection_reveals(category, other)
+    before = {"surface_id": "editor", "bounds": [0, 0, 400, 300], "capture_epoch": "a", "capture_at": 1., "clickable": []}
+    after = {**before, "capture_epoch": "b", "capture_at": 2., "clickable": ['click "Source"', 'click "Filter"', 'click "Run"']}
+    binding = RevealedChoices.from_effect(before, after, "open", "choose")
+    assert binding is not None and binding.offers('click "Filter"', after, "choose")
+    assert not binding.offers('click "Run"', after, "choose")
+    for changed in ({"surface_id": "elsewhere"}, {"capture_at": 1.}, {"clickable": []}, {"bounds": [0, 0, 800, 600]}):
+        assert not binding.offers('click "Filter"', {**after, **changed}, "choose")
+    assert RevealedChoices.from_effect(after, after, "open", "choose") is None
+    return ()

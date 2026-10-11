@@ -29,6 +29,28 @@ THROW_BY_HOLDING = "Use the mouse to control Wilt, click and hold the mouse butt
 THROW_BY_CLICKING = "Take aim with your mouse and click to throw. Dodge food by pressing the space bar."
 
 
+def _control_screen(layout, *, epoch=1, visible=True, faded=False, surface="canvas"):
+    """Measured persistent button; unrelated page pixels may change independently."""
+    import numpy as np
+
+    from core.perception.observed_transfer import ScreenReading, make_snapshot
+
+    pixels = np.full((200, 200, 3), 32, dtype=np.uint8)
+    if visible:
+        pattern = np.random.default_rng(42).integers(20, 220, (16, 20, 3), dtype=np.uint8)
+        if faded:
+            pattern = (pattern.astype(float) * .5 + 90).astype(np.uint8)
+        pixels[136:152, 162:182] = pattern
+    pixels[10:25, 10:25] = epoch * 15
+    measured = [dict(region) for region in layout]
+    for region in measured:
+        if region.get("text") in {"next", "PLAY"}:
+            region.update(x=.81, y=.68, width=.10, height=.08, center_x=.86, center_y=.72)
+    return ScreenReading({"layout": measured, "surface_id": surface, "bounds": [0, 0, 200, 200],
+                          "capture_at": float(epoch), "_capture_epoch": str(epoch), "settled": True},
+                         picture_snapshot=make_snapshot(pixels))
+
+
 def test_the_words_say_which_way_first():
     assert ways_asked(THROW_BY_HOLDING)[0] == SEND
     assert ways_asked(THROW_BY_CLICKING) == [AS_IT_HAPPENS]          # a click that throws is a shot, made at once
@@ -204,11 +226,11 @@ def test_a_way_on_read_before_is_looked_for_where_it_was_on_a_lesson_whose_own_c
     from core.skills.screen_pursuit_looking import _where_the_way_on_was
 
     paced: dict = {}
-    welcome = {"layout": [{"text": "next", "center_x": 0.86, "center_y": 0.9}, {"text": "back", "center_x": 0.72, "center_y": 0.9}]}
+    welcome = _control_screen([{"text": "next"}, {"text": "back", "center_x": 0.72, "center_y": 0.9}])
     _where_the_way_on_was(welcome, (a_click_on("next"), a_click_on("back")), "Welcome to the island", paced)
-    lesson = {"layout": [{"text": "back", "center_x": 0.72, "center_y": 0.9}]}
+    lesson = _control_screen([{"text": "back", "center_x": 0.72, "center_y": 0.9}], epoch=2)
     offered = _where_the_way_on_was(lesson, (a_click_on("back"),), "HOW TO USE THE PUTTER: 1. Click on your ball", paced)
-    assert a_click_on("next") in offered and where_to_click(lesson, "next") == (0.86, 0.9)
+    assert a_click_on("next") in offered and where_to_click(lesson, "next") == pytest.approx((0.86, 0.72))
     play = {"layout": [{"text": "SCORE 120", "center_x": 0.1, "center_y": 0.05}, {"text": "MENU", "center_x": 0.9, "center_y": 0.05}]}
     assert a_click_on("next") not in _where_the_way_on_was(play, (a_click_on("MENU"),), "SCORE 120 MENU", paced)
 
@@ -270,9 +292,10 @@ def test_a_way_on_is_looked_for_where_it_was_on_a_screen_that_asks_her_to_choose
     from core.skills.screen_pursuit_looking import _where_the_way_on_was
 
     paced: dict = {}
-    welcome = {"layout": [{"text": "next", "center_x": 0.86, "center_y": 0.72}]}
+    welcome = _control_screen([{"text": "next"}])
     _where_the_way_on_was(welcome, (a_click_on("next"),), "Welcome to the island", paced)
-    choose = {"layout": [{"text": "1 Player", "center_x": 0.4, "center_y": 0.55}, {"text": "back", "center_x": 0.7, "center_y": 0.72}]}
+    choose = _control_screen([{"text": "1 Player", "center_x": 0.4, "center_y": 0.55},
+                              {"text": "back", "center_x": 0.7, "center_y": 0.72}], epoch=2, faded=True)
     offered = _where_the_way_on_was(choose, (a_click_on("1 Player"), a_click_on("back")), "Please Select Number Of Players", paced)
     assert a_click_on("next") in offered
 
@@ -283,11 +306,37 @@ def test_a_heading_read_as_a_label_still_says_the_screen_asks_her_to_choose():
     from core.skills.screen_pursuit_looking import _where_the_way_on_was
 
     paced: dict = {}
-    _where_the_way_on_was({"layout": [{"text": "next", "center_x": 0.86, "center_y": 0.72}]}, (a_click_on("next"),),
+    _where_the_way_on_was(_control_screen([{"text": "next"}]), (a_click_on("next"),),
                           "Welcome to the island", paced)
-    choose = {"layout": [{"text": "Please Select Number Of Players", "center_x": 0.4, "center_y": 0.25}]}
+    choose = _control_screen([{"text": "Please Select Number Of Players", "center_x": 0.4, "center_y": 0.25}], epoch=2)
     moves = (a_click_on("Please Select Number Of Players"), a_click_on("1 Player"), a_click_on("back"))
     assert a_click_on("next") in _where_the_way_on_was(choose, moves, "", paced)
+
+
+@pytest.mark.parametrize("damage", ["absent", "other_surface", "old_capture", "reused_epoch", "missing_pixels", "viewport", "occluded"])
+def test_remembered_control_is_never_offered_without_current_owned_visual_evidence(damage):
+    from core.agency.what_i_can_do_here import a_click_on
+    from core.skills.screen_pursuit_looking import _where_the_way_on_was
+
+    paced = {}
+    welcome = _control_screen([{"text": "PLAY"}])
+    _where_the_way_on_was(welcome, (a_click_on("PLAY"),), "Welcome", paced)
+    choice = _control_screen([{"text": "Templates"}], epoch=2, visible=damage != "absent")
+    if damage == "other_surface":
+        choice["surface_id"] = "different application"
+    elif damage == "old_capture":
+        choice["capture_at"] = 0.5
+    elif damage == "reused_epoch":
+        choice["_capture_epoch"] = "1"
+    elif damage == "missing_pixels":
+        choice.picture_snapshot = None
+    elif damage == "viewport":
+        choice["bounds"] = [0, 0, 400, 300]
+    elif damage == "occluded":
+        choice["occluded"] = True
+    offered = _where_the_way_on_was(choice, (a_click_on("Templates"),), "Choose a type of component", paced)
+    assert a_click_on("PLAY") not in offered
+    assert not any(shape.get("text") == "PLAY" for shape in choice.get("shapes", ()))
 
 
 def test_once_a_choice_is_made_on_a_screen_that_asks_for_one_what_goes_on_is_wanted_and_the_other_choices_are_not():

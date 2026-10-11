@@ -334,3 +334,25 @@ def test_her_kind_looked_at_before_she_was_known_is_looked_at_again_where_she_is
     assert again and again[0][1] == moves.things[5].box()             # once she is: where she is
     looking.asked |= {kind for kind, _box in again}
     assert looking._to_look_at(moves, 5, set()) == []                 # and only once
+
+
+def test_two_kinds_of_one_colour_are_not_said_both_ways():
+    """Offline 2026-10-10 "I'll keep clear of the cyan things", then "The cyan bars are worth getting to"."""
+    from types import SimpleNamespace
+
+    from core.agency.naming_what_she_sees import SeeingInPlay, _the_colour_in
+
+    assert _the_colour_in("small cyan bars") == "cyan" and _the_colour_in("the hero") == ""
+    seeing = SeeingInPlay()
+    seeing.stances_said["cyan thing"] = "avoid"
+    from core.agency import naming_what_she_sees as naming
+
+    run = SimpleNamespace(seeing=seeing)
+    moves = SimpleNamespace(things={})
+    original = naming.named_for_its_part
+    naming.named_for_its_part = lambda *_a, **_k: "cyan bar"
+    try:
+        assert naming.a_stance_said(run, moves, 3, "meet", 100.0) == ""
+        assert naming.a_stance_said(run, moves, 3, "avoid", 100.0) != ""
+    finally:
+        naming.named_for_its_part = original

@@ -94,6 +94,9 @@ class WhatThingsAre:
     queue: list[str] = field(default_factory=list)
     asker: Any = field(default=None, repr=False)
     then: list[Any] = field(default_factory=list, repr=False)
+    _owned_queues: dict[Any, list[str]] = field(default_factory=dict, repr=False)
+    _owned_tasks: dict[Any, asyncio.Task] = field(default_factory=dict, repr=False)
+    _owned_callbacks: dict[Any, list[Any]] = field(default_factory=dict, repr=False)
 
     def of(self, name: str) -> WhatAThingIs | None:
         """What she knows of a thing by this name: from her model where it has said, else a first guess, else None.
@@ -118,6 +121,22 @@ class WhatThingsAre:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return False
+        from core.cognition.guidance_lifetime import create_guidance_task, publication_stamp
+
+        stamp = publication_stamp()
+        if stamp.lifetime is not None:
+            owner = stamp.lifetime
+            queue = self._owned_queues.setdefault(owner, [])
+            callbacks = self._owned_callbacks.setdefault(owner, [])
+            self.asking |= set(wanted)
+            queue.extend(wanted)
+            if then is not None:
+                callbacks.append(then)
+            task = self._owned_tasks.get(owner)
+            if task is None or task.done():
+                self.asker = create_guidance_task(self._ask_owned(ask, queue, callbacks, stamp))
+                self._owned_tasks[owner] = self.asker
+            return True
         self.asking |= set(wanted)
         self.queue += wanted
         if then is not None:
@@ -126,11 +145,28 @@ class WhatThingsAre:
             self.asker = loop.create_task(self._ask_in_turn(ask))
         return True
 
-    async def _ask_in_turn(self, ask: Callable[..., Awaitable[Any]]) -> None:
-        while self.queue:
-            batch, self.queue = self.queue[:ASKED_AT_ONCE], self.queue[ASKED_AT_ONCE:]
+    async def _ask_owned(self, ask: Callable[..., Awaitable[Any]], queue: list[str], callbacks: list[Any], stamp: Any) -> None:
+        try:
+            await self._ask_in_turn(ask, queue=queue, callbacks=callbacks, stamp=stamp)
+        finally:
+            self.asking -= set(queue)
+            queue.clear()
+            callbacks.clear()
+            self._owned_queues.pop(stamp.lifetime, None)
+            self._owned_callbacks.pop(stamp.lifetime, None)
+            self._owned_tasks.pop(stamp.lifetime, None)
+
+    async def _ask_in_turn(self, ask: Callable[..., Awaitable[Any]], *, queue: list[str] | None = None,
+                           callbacks: list[Any] | None = None, stamp: Any = None) -> None:
+        queue = self.queue if queue is None else queue
+        callbacks = self.then if callbacks is None else callbacks
+        while queue:
+            batch = queue[:ASKED_AT_ONCE]
+            del queue[:ASKED_AT_ONCE]
             try:
                 learned = await _asked_of_her_model(batch, ask)
+                if stamp is not None:
+                    stamp.check()
             finally:
                 self.asking -= set(batch)
             if not learned:
@@ -142,7 +178,7 @@ class WhatThingsAre:
                     del self.known[next(iter(self.known))]
             self.keep()
             logger.info("what things are, from her model: %s", {o.name: o.bears for o in learned})
-            for then in list(self.then):
+            for then in list(callbacks):
                 then(learned)
 
     def keep(self) -> None:
@@ -212,15 +248,20 @@ async def asked_patiently(ask: Callable[..., Awaitable[Any]], prompt: str, schem
     """Her model's answer, once it is this question's turn among hers (core/cognition/asking_in_turn.py), asked again
     after a wait each time it was busy; what the last try raised, where none answered."""
     from core.cognition.asking_in_turn import in_turn
+    from core.cognition.guidance_lifetime import question_work
 
-    async with in_turn(matters):
-        for wait in (*WAITS_S, None):
-            try:
-                return await ask(prompt, schema, most)
-            except RuntimeError:
-                if wait is None:
-                    raise
-                await asyncio.sleep(wait)
+    with question_work() as stamp:
+        async with in_turn(matters):
+            for wait in (*WAITS_S, None):
+                stamp.check()
+                try:
+                    answer = await ask(prompt, schema, most)
+                    stamp.check()
+                    return answer
+                except RuntimeError:
+                    if wait is None:
+                        raise
+                    await asyncio.sleep(wait)
     return None
 
 
