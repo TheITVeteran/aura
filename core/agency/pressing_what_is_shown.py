@@ -35,6 +35,9 @@ LOOK_EVERY_S = 0.15
 #: instant is never seen held by such a world (measured on tests/fixtures/worlds_that_move/held.html: no press counted).
 PRESSED_FOR_S = 0.06
 
+#: How many presses of a key that is still shown after each of them show that it asks for nothing.
+PRESSED_TO_NO_END = 8
+
 #: Presses made before what is shown is said: by then the keys have been seen over a few looks.
 SAID_AFTER = 4
 
@@ -56,6 +59,9 @@ class KeysShown:
         self.pressed = 0
         #: Each key asked for lately: when it was last seen asked, and where across the screen it stands.
         self.lately: dict[str, tuple[float, float]] = {}
+        #: How often each key has been pressed while it went on being shown, and the keys found to ask for nothing.
+        self.pressed_while_shown: dict[str, int] = {}
+        self.asks_nothing: set[str] = set()
 
     def look(self, picture: Any, at: float) -> None:
         """Take in the last look's keys if it is done, and start another if it is time (off the loop)."""
@@ -79,14 +85,27 @@ class KeysShown:
         across = {str(key["key"]): float(key.get("center_x", 0.0)) for key in drawn}
         before = self.never_absent
         self.never_absent = set(shown) if before is None else before & set(shown)
+        # A key that answers a prompt makes the prompt go: pressed again and again with the key still drawn there, it
+        # was never a prompt. LIVE 2026-10-11 something drawn like a down key showed over a lander, and she pressed
+        # down at it, fast, until the lander was on the ground.
+        for key in [k for k in self.pressed_while_shown if k not in shown]:
+            del self.pressed_while_shown[key]
+        for key, presses in list(self.pressed_while_shown.items()):
+            if presses >= PRESSED_TO_NO_END:
+                logger.info("%s has been pressed %d times and is still shown: it asks for nothing", key, presses)
+                self.asks_nothing.add(key)
+                self.lately.pop(key, None)
+                del self.pressed_while_shown[key]
         for key in shown:
-            if before is not None and key not in before:
+            if before is not None and key not in before and key not in self.asks_nothing:
                 self.lately[key] = (when, across[key])
         # The keys asked for are those seen asked in the last looks, not only the last: a key lit by turns, or read
         # at one look and not the next, is still being asked for (offline 2026-10-09 one of two was read at the first
         # look, and pressing it alone freed nothing).
         asked = tuple(key for key, (seen, _x) in sorted(self.lately.items(), key=lambda item: item[1][1])
                       if when - seen <= SHOWN_FOR_S)
+        if not asked:
+            self.asked = ()
         if asked:
             if asked != self.asked:
                 logger.info("the screen shows %s, not shown at every look before: asked for now", ", ".join(asked))
@@ -110,10 +129,13 @@ class KeysShown:
             await asyncio.sleep(PRESSED_FOR_S)
             await hands.up(key)
             self.pressed += 1
+            self.pressed_while_shown[key] = self.pressed_while_shown.get(key, 0) + 1
 
     def done(self) -> set[str] | None:
         """Let go of a look in flight; what was never absent, for the next stretch of the same game (None: not looked)."""
         if self.looking is not None:
             self.looking.cancel()
             self.looking = None
-        return None if self.never_absent is None else set(self.never_absent)
+        if self.never_absent is None:
+            return set(self.asks_nothing) or None
+        return set(self.never_absent) | self.asks_nothing
