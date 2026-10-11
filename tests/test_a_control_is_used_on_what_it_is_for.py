@@ -163,6 +163,27 @@ async def test_a_door_standing_in_the_place_is_gone_to_used_and_seen_to_have_ope
         THE_GUIDE.reset(token)
 
 
+def test_she_keeps_going_to_one_thing_until_another_is_much_nearer():
+    """Two doors about as far: she goes to one and keeps to it as she goes, and turns to the other only where it is
+    much the nearer (LIVE 2026-10-11 she turned between five things in two seconds)."""
+    from core.perception.what_is_in_a_place import Landmark
+
+    token = THE_GUIDE.set(_guide("Press the SPACE BAR to open doors."))
+    try:
+        said: list[str] = []
+        moves, hers, run = _world([_thing(1, 1, 200.0, 250.0)])
+        run.using.landmarks = [Landmark("door", (0.2, 0.7, 0.26, 0.9)), Landmark("door", (0.74, 0.7, 0.8, 0.9))]
+        run.using.surveyed = 0
+        first = a_place_to_go(run, moves, hers, 1.0, lambda line, once: said.append(once))
+        for x in (190.0, 210.0, 195.0, 205.0):                        # wavering about the middle
+            moves.things[1] = _thing(1, 1, x, 250.0)
+            assert a_place_to_go(run, moves, hers, 1.1, lambda line, once: said.append(once)) == first
+        moves.things[1] = _thing(1, 1, first[0] + (300.0 if first[0] < 200 else -300.0) * 0.9, 250.0)
+        assert a_place_to_go(run, moves, hers, 1.2, lambda line, once: said.append(once)) != first
+    finally:
+        THE_GUIDE.reset(token)
+
+
 @pytest.mark.asyncio
 async def test_after_a_press_that_did_nothing_she_comes_right_up_to_the_thing_before_pressing_again():
     guide = _guide("Press the SPACE BAR to open doors.")
