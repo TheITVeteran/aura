@@ -131,8 +131,9 @@ NEW_SCREEN_STILL_S = 1.5
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
 
-#: Spoken lines are at least this far apart, so each can be read.
+#: Spoken lines are at least this far apart, so each can be read; and what kinds of things are to her, one at a time.
 SAY_EVERY_S = 5.0
+STANCE_EVERY_S = 2.5
 
 #: The least time between two clicks, and how far ahead of a moving thing a
 #: click is aimed: the click's trip through the browser and the next frame.
@@ -186,6 +187,8 @@ class _Run:
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
     legend: tuple[Any, ...] = ()
     said_at: float = -math.inf
+    #: When what a kind of thing is to her was last said: one at a time, the rest when their turn comes.
+    stance_said_at: float = -math.inf
     said: set[str] = field(default_factory=set)
     lines: list[str] = field(default_factory=list)
     reading: asyncio.Task | None = None
@@ -1244,9 +1247,12 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     spent = goes.what_to_say(at)
     if spent:
         _say(run, say, spent, at, once="spent")
-    for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
-                           lambda thing: _named(moves, thing.kind, thing)):
-        _say(run, say, line, at, once=line)
+    # What each kind is to her, one at a time: the rest are said in their turn (core/agency/who_is_who.py).
+    if at - run.stance_said_at >= STANCE_EVERY_S:
+        for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
+                               lambda thing: _named(moves, thing.kind, thing)):
+            _say(run, say, line, at, once=line)
+            run.stance_said_at = at
 
 
 def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float) -> str:
@@ -1421,6 +1427,10 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
     for key in hers.makes:
         _say(run, say, f"{key.capitalize()} fires.", at, once=f"fires {key}")
     for kind in list(meeting.evidence):
+        # What things are to her is said one at a time: LIVE 2026-10-11 one loss had seven kinds said to be threats in
+        # a fifth of a second. The others are said in their turn, if what she makes of them still holds by then.
+        if at - run.stance_said_at < STANCE_EVERY_S:
+            break
         if not meeting.known(kind) or not any(t.kind == kind for t in moves.things.values()):
             continue
         stance = meeting.stance(kind)
@@ -1429,6 +1439,8 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
             line = a_stance_said(run, moves, kind, stance, at, met=kept is not None and (kept.touched > 0 or kept.shot > 0))
             if line:
                 _say(run, say, line, at, once=f"{kind} {stance}")
+                if f"{kind} {stance}" in run.said:
+                    run.stance_said_at = at
     # How it stands, said when it changes: the score, what is left to win, what is left to lose.
     standing = run.contest.says()
     if standing and run.contest_first is None:

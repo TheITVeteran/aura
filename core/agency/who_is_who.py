@@ -355,10 +355,14 @@ class WhoIsWho:
         """The threats on the screen, sure and suspect."""
         return [(thing, d) for thing in things if (d := self.of(thing)).name == THREAT]
 
-    def to_say(self, things: Any, name_of: Any) -> list[str]:
-        """What she has found out of each kind and not yet said: once each, when its own acts have shown it."""
+    def to_say(self, things: Any, name_of: Any, most: int = 1) -> list[str]:
+        """What she has found out of each kind and not yet said: once each, when its own acts have shown it, and no more
+        than ``most`` at a time, the rest left for later (LIVE 2026-10-11 one loss had seven kinds said to be threats
+        in a fifth of a second)."""
         lines = []
         for thing in things:
+            if len(lines) >= most:
+                break
             found = self.of(thing)
             if not found.sure or found.name in (HERS, PENDING, UNKNOWN, PART_OF_THE_PLACE, NEGLIGIBLE):
                 continue
