@@ -77,6 +77,8 @@ LEFT_ALONE_AT_MOST_S = 180.0
 
 #: How often what the page draws is looked at for a board of two sides in turns, in seconds.
 BOARD_LOOKED_FOR_EVERY_S = 3.0
+#: How many of a place's screens of words are kept for what its board's rules are.
+WORDS_KEPT = 60
 
 #: How long a showing is watched for places lit in turn, and how often one screen's showing is followed.
 WATCH_A_SHOWING_S = 6.0
@@ -789,7 +791,12 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
         return False
     reflexes.keep["board_looked_for_at"] = now
     seen = await reflexes.look()
-    words = " ".join([*reflexes.words, str(reflexes.keep.get("counsel") or "")])
+    # What the place said of its rules is kept from one stretch of play to the next: LIVE 2026-10-11 a second stretch
+    # of a draughts game, its rules screen long gone, was played without the piece its rules had changed.
+    heard: list[str] = reflexes.keep.setdefault("words_of_the_place", [])
+    heard += [w for w in reflexes.words if w not in heard]
+    del heard[:-WORDS_KEPT]
+    words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
     board = a_board_in(seen[0]) if seen is not None else None
     if board is None or not a_board_game(board, words):
         return False
@@ -802,6 +809,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
                                "ended": stretch.get("ended"), "settled": stretch.get("ended")})
     if stretch.get("ended") in ("won", "lost"):
         reflexes.over_because = f"the board game ended: {stretch['ended']}"
+    else:
+        # A board played until its time ran out is looked for again at once, not tried with keys meanwhile.
+        reflexes.keep["board_looked_for_at"] = -1e9
     return True
 
 

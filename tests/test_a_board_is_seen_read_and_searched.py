@@ -68,6 +68,20 @@ def test_the_search_takes_a_win_it_can_see_and_a_move_is_said_as_players_say_it(
     assert a_move_said(position, ((5, 1), (4, 2))) == "b3 to c4"
 
 
+def test_each_move_she_makes_is_told_and_heard_as_news():
+    from core.agency.playing_a_board import Searched, a_move_told
+    from core.language.what_a_watcher_hears import WhatAWatcherHears
+
+    position = _position(["........", "........", "........", "........", "........", "........", ".b.b....",
+                          "........"], "b")
+    first, second = ((6, 1), (5, 0)), ((6, 3), (5, 4))
+    told = [a_move_told(position, first, Searched(first, 0.4, 6, 900)),
+            a_move_told(position, second, Searched(second, 1001.0, 7, 900))]
+    assert told == ["My move: b2 to a3, looking 6 moves ahead.", "My move: d2 to e3, and I can see it winning."]
+    watcher = WhatAWatcherHears()
+    assert all(watcher.heard(line, now=10.0 + k) for k, line in enumerate(told))
+
+
 def test_the_real_board_is_searched_within_its_time():
     board = a_board_in(np.asarray(Image.open(PICTURE).convert("RGB")))
     position, up, down = position_of(board, turn="")
@@ -98,6 +112,10 @@ class _NoughtsAndCrosses:
 
     async def look(self):
         self.at += 0.1
+        if self.at < getattr(self, "covered_until", 0.0):
+            covered = self.picture()
+            covered[60:240] = (250, 220, 40)          # a word put up over the board for a moment
+            return covered, self.at
         return self.picture(), self.at
 
     async def click(self, x, y):
@@ -105,6 +123,7 @@ class _NoughtsAndCrosses:
         if self.cells[r][c]:
             return
         self.cells[r][c] = "red"
+        self.covered_until = self.at + getattr(self, "covers_for", 0.0)
         empty = [(rr, cc) for rr in range(3) for cc in range(3) if not self.cells[rr][cc]]
         if empty and not _three(self.cells, "red"):
             rr, cc = empty[0]
@@ -130,3 +149,44 @@ def test_a_placing_game_is_known_by_its_shape_and_won_by_search_through_her_eyes
     said = []
     result = asyncio.run(play_a_board(game.look, game, "", seconds=20.0, say=said.append))
     assert result["ended"] == "won" and _three(game.cells, "red"), (result, game.cells, said)
+
+
+def test_a_board_hidden_a_moment_is_waited_for(monkeypatch):
+    """A word put up over the board after each of her moves (LIVE 2026-10-11 "YOU MOVE A PIECE") hides it for a
+    moment; play waits for it to come back rather than ending."""
+    import asyncio
+
+    from core.agency import playing_a_board as playing
+    from core.agency.playing_a_board import play_a_board
+
+    monkeypatch.setattr(playing, "STILL_S", 0.0)
+    game = _NoughtsAndCrosses()
+    game.covers_for = 1.5
+    result = asyncio.run(play_a_board(game.look, game, "", seconds=30.0, say=None))
+    assert result["ended"] == "won" and _three(game.cells, "red"), (result, game.cells)
+
+
+def test_a_places_rules_are_kept_from_one_stretch_of_play_to_the_next(monkeypatch):
+    """LIVE 2026-10-11 a second stretch of a draughts game, its rules screen long gone, was played without the piece its
+    rules had changed: the words a place said are kept with what she keeps of it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from core.agency import playing_a_board as playing
+    from core.skills import screen_pursuit_as_it_happens as pursuit
+
+    played_by: list[str] = []
+
+    async def play(look, hands, words, *, seconds, say=None):
+        played_by.append(words)
+        return {"moves": 1, "ended": "out of time"}
+
+    async def look():
+        return np.asarray(Image.open(PICTURE).convert("RGB")), 0.0
+
+    monkeypatch.setattr(playing, "play_a_board", play)
+    keep: dict = {}
+    for words in ([WORDS], ["YOU MOVE A PIECE"]):
+        reflexes = SimpleNamespace(keep=keep, words=words, look=look, ends_at=1e9, stretches=[], over_because="")
+        assert asyncio.run(pursuit._played_a_board(reflexes, 100.0))
+    assert draughts_said(played_by[-1], "b", "a").special_swaps

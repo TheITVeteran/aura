@@ -24,7 +24,7 @@ from typing import Any
 
 from core.agency.rules_of_a_board import Draughts, Move, Position
 
-__all__ = ["Searched", "a_board_game", "draughts_said", "is_draughts", "placing_said", "position_of", "search"]
+__all__ = ["Searched", "a_board_game", "a_move_told", "draughts_said", "is_draughts", "placing_said", "position_of", "search"]
 
 #: What a game's words say of its draughts, each a variation of the family, said where a word begins.
 _SAYS = {
@@ -184,6 +184,8 @@ STILL_S = 0.8
 MOVE_SHOWS_S = 2.5
 #: How long a move is searched for.
 THINKS_S = 1.2
+#: How long a board may be out of sight before play is given up as over.
+HIDDEN_AT_MOST_S = 4.0
 
 
 def a_square_named(position: Position, square: tuple[int, int]) -> str:
@@ -200,6 +202,16 @@ def a_move_said(position: Position, move: Move) -> str:
     if abs(move[1][0] - move[0][0]) == 2:
         return f"{names[0]} takes, to " + ", then ".join(names[1:])
     return f"{names[0]} to {names[-1]}"
+
+
+def a_move_told(position: Position, move: Move, found: Searched) -> str:
+    """Her move as she tells it, with what her search saw of it: "My move: c3 to d4, looking 6 moves ahead." Each move
+    is news to a watcher, so the line is about the move (LIVE 2026-10-11 "Moving d3 to c4, ..." was one shape over and
+    over to the chat, and most of her moves went unheard)."""
+    line = f"My move: {a_move_said(position, move)}"
+    if found.move == move and found.worth >= _WON:
+        return line + ", and I can see it winning."
+    return line + (f", looking {found.depth} moves ahead." if found.depth > 1 and found.move == move else ".")
 
 
 async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say: Any = None) -> dict[str, Any]:
@@ -223,6 +235,7 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
     refused: set[Move] = set()
     made = 0
     last_seen, still_since = "", time.monotonic()
+    hidden_since: float | None = None
     while time.monotonic() - began < seconds:
         seen = await look()
         if seen is None:
@@ -230,7 +243,12 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
         picture = seen[0]
         board = a_board_in(picture, sides)
         if board is None or not is_draughts(board, words):
-            return {"moves": made, "ended": "no board is in front of her"}
+            hidden_since, gone = _out_of_sight(hidden_since)
+            if gone:
+                return {"moves": made, "ended": "no board is in front of her"}
+            await asyncio.sleep(0.2)
+            continue
+        hidden_since = None
         sides = sides or board.sides
         said = board.says()
         if said != last_seen:
@@ -256,7 +274,7 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
             move = options[0] if options else None
         if move is None:
             return {"moves": made, "ended": "no move is left to her", "board": said}
-        tell(f"Moving {a_move_said(position, move)}" + (f", {found.depth} moves ahead." if found.depth > 1 else "."))
+        tell(a_move_told(position, move, found))
         for square in (move[:2] if len(move) == 3 and move[2] == move[0] else move):
             x, y = board.centre(*square)
             await hands.click(x / picture.shape[1], y / picture.shape[0])
@@ -272,6 +290,19 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
     return {"moves": made, "ended": "out of time"}
 
 
+def _out_of_sight(since: float | None) -> tuple[float, bool]:
+    """Since when the board has been out of sight, and whether that is too long to wait for it. A board hidden a moment
+    (a word put up over it, a piece taken with a flourish) is waited for: LIVE 2026-10-11 "YOU MOVE A PIECE" put up
+    over the board ended her play two moves in."""
+    since = time.monotonic() if since is None else since
+    return since, time.monotonic() - since > HIDDEN_AT_MOST_S
+
+
+def _waited_longer_while_hidden(board: Any, ends_at: float, latest: float) -> float:
+    """How long a move is waited on to show: time the board is out of sight is not time it failed to show in."""
+    return ends_at if board is not None else min(latest, max(ends_at, time.monotonic() + MOVE_SHOWS_S / 2))
+
+
 async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
     """Whether the board comes to show the move she made: her pieces where the move leaves them."""
     import asyncio
@@ -280,11 +311,13 @@ async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
 
     wanted = {square for square in expected.pieces(mine)}
     ends_at = time.monotonic() + MOVE_SHOWS_S
+    latest = ends_at + HIDDEN_AT_MOST_S
     while time.monotonic() < ends_at:
         seen = await look()
         if seen is None:
             return False
         board = a_board_in(seen[0], sides)
+        ends_at = _waited_longer_while_hidden(board, ends_at, latest)
         if board is not None:
             here = {(r, c) for r in range(board.rows) for c in range(board.columns) if board.cells[r][c].rstrip("+") == mine}
             if here == wanted:
@@ -307,6 +340,7 @@ async def _play_placing(look: Any, hands: Any, rules: Any, *, seconds: float, te
     mine, theirs, she_began = "", "", None
     my_colour: Any = None
     made, refused = 0, set()
+    hidden_since: float | None = None
     last_seen, still_since = "", time.monotonic()
     while time.monotonic() - began < seconds:
         seen = await look()
@@ -315,7 +349,12 @@ async def _play_placing(look: Any, hands: Any, rules: Any, *, seconds: float, te
         picture = seen[0]
         board = a_board_in(picture, sides)
         if board is None:
-            return {"moves": made, "ended": "no board is in front of her"}
+            hidden_since, gone = _out_of_sight(hidden_since)
+            if gone:
+                return {"moves": made, "ended": "no board is in front of her"}
+            await asyncio.sleep(0.2)
+            continue
+        hidden_since = None
         # The sides are named by their colours once both are on the board, and hers is the one her piece was.
         if sides is None and len(board.sides) >= 2:
             sides = board.sides
@@ -375,9 +414,11 @@ async def _a_piece_comes(look: Any, sides: Any, square: tuple[int, int], mine: s
     from core.perception.a_board_seen import a_board_in
 
     ends_at = time.monotonic() + MOVE_SHOWS_S
+    latest = ends_at + HIDDEN_AT_MOST_S
     while time.monotonic() < ends_at:
         seen = await look()
         board = a_board_in(seen[0], sides) if seen is not None else None
+        ends_at = _waited_longer_while_hidden(board, ends_at, latest)
         if board is not None and board.rows > square[0] and board.columns > square[1]:
             piece = board.cells[square[0]][square[1]].rstrip("+")
             if piece and (not mine or piece == mine):
