@@ -31,6 +31,8 @@ class AWayThrough:
     #: Whether she has been seen to go every way on the screen: a floor seen from above, for the rest of the game, though
     #: a key may be judged afresh for a moment.
     floor: bool = False
+    #: The distances from her cell to every cell, and what they were worked out for.
+    _field: tuple | None = field(default=None, repr=False)
 
     def new_screen(self) -> None:
         self.walls.clear()
@@ -102,18 +104,43 @@ class AWayThrough:
 
     def way_length(self, x: float, y: float, to_x: float, to_y: float, wide: float, tall: float) -> float:
         """How far, in pixels, the shortest way round the walls found is from (x, y) to (to_x, to_y): the straight
-        distance where no wall is known, and infinite where the walls found leave no way."""
+        distance where no wall is known, and infinite where the walls found leave no way. Read off the distances from
+        her cell to every cell, worked out once each time she comes to a new cell or a wall is found."""
         if not self.walls or not self.cell:
             return math.hypot(to_x - x, to_y - y)
         start, goal = self._at(x, y), self._at(to_x, to_y)
         if start == goal:
             return math.hypot(to_x - x, to_y - y)
         columns, rows = max(1, int(wide // self.cell) + 1), max(1, int(tall // self.cell) + 1)
-        path = self._shortest(start, goal, columns, rows)
-        if not path:
-            return math.inf
-        cells = [start, *path]
-        return self.cell * sum(math.dist(a, b) for a, b in zip(cells, cells[1:], strict=False))
+        far = self._distances(start, columns, rows).get(goal)
+        return math.inf if far is None else far * self.cell
+
+    def _distances(self, start: Cell, columns: int, rows: int) -> dict[Cell, float]:
+        """How far every cell is from ``start``, eight ways round the walls, a corner not cut between two walls."""
+        key = (start, len(self.walls), columns, rows)
+        if self._field is not None and self._field[0] == key:
+            return self._field[1]
+        far: dict[Cell, float] = {start: 0.0}
+        frontier = [(0.0, start)]
+        while frontier:
+            cost, here = heapq.heappop(frontier)
+            if cost > far.get(here, math.inf):
+                continue
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if not dx and not dy:
+                        continue
+                    there = (here[0] + dx, here[1] + dy)
+                    if not (0 <= there[0] < columns and 0 <= there[1] < rows) or there in self.walls:
+                        continue
+                    if dx and dy and ((here[0] + dx, here[1]) in self.walls or (here[0], here[1] + dy) in self.walls):
+                        continue
+                    step = cost + (math.sqrt(2) if dx and dy else 1.0)
+                    if step < far.get(there, math.inf):
+                        far[there] = step
+                        heapq.heappush(frontier, (step, there))
+        self._field = (key, far)
+        return far
 
     def _at(self, x: float, y: float) -> Cell:
         return int(x // self.cell), int(y // self.cell)

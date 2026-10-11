@@ -684,6 +684,10 @@ class _Choosing:
     def _target_anywhere(self) -> tuple[tuple[float | None, float | None], str, Any]:
         mine = self.mine
         speed = max(self.speed(0), self.speed(1))
+        # Where walls are known on a floor, a still thing is as far as the way round them to it
+        # (core/agency/a_way_through.py), not as far as a straight line through them.
+        through = self.way_through if self.way_through is not None and self.way_through.floor and self.way_through.walls \
+            else None
         candidates = []
         for thing in self.others():
             stance = self.stance(thing)
@@ -691,6 +695,11 @@ class _Choosing:
             if stance not in (MEET, CLICK) or self._out_of_reach(thing) or not thing.moved and _boxes_meet(mine.box(), thing.box()):
                 continue
             when = math.hypot(thing.x - mine.x, thing.y - mine.y) / speed
+            if through is not None and not thing.moved:
+                tall, wide = self.moves.shape
+                when = through.way_length(float(mine.x), float(mine.y), float(thing.x), float(thing.y), wide, tall) / speed
+                if math.isinf(when):
+                    continue
             for _ in range(3):
                 px, py = thing.where_at(when)
                 when = math.hypot(px - mine.x, py - mine.y) / speed
@@ -819,17 +828,34 @@ class _Choosing:
                 best = (risk, key)
         return best[1] if best is not None else None
 
+    def _warned_along(self, path: Callable[[float], tuple[float, float]]) -> float:
+        """What the spots a warning marks cost along ``path``: where she will be when each one's blow is due, by how
+        deep inside its reach that is, so that every step further out is a step better
+        (core/agency/what_a_sound_comes_with.py)."""
+        if not self.warned_spots or self.mine is None:
+            return 0.0
+        tall, wide = self.moves.shape
+        total = 0.0
+        for sx, sy, near, start, end in self.warned_spots:
+            due = (start + end) / 2
+            dx, dy = path(due)
+            x = min(max(self.mine.x + dx, 0.0), float(wide))
+            y = min(max(self.mine.y + dy, 0.0), float(tall))
+            total += max(0.0, 1.0 - math.hypot(x - sx, y - sy) / max(near, 1e-6)) / (due + 0.1)
+        return total
+
     def danger_along(self, path: Callable[[float], tuple[float, float]], times: Sequence[float] = DANGER_AHEAD_S) -> float:
         """How soon and how often her thing, taken along ``path`` (seconds to displacement), meets what to keep clear of,
         looked at ``times`` seconds ahead."""
         mine = self.mine
+        warned = self._warned_along(path)
         threats = [(t, 0.0) for t in self.others()
                    if (self.stance(t) in (AVOID,) or self.stance(t) == SHOOT) and not self._struck_first(t)]
         # What to keep clear of that went out of sight is still where its going was taking it (what_moves_in_the_picture).
         threats += [(t, self.at - when) for t, when in getattr(self.moves, "out_of_sight", {}).values()
                     if self.at is not None and self.meeting.stance(t.kind) == AVOID]
-        if not threats and not self.warned_spots:
-            return 0.0
+        if not threats:
+            return warned
         tall, wide = self.moves.shape
         low_x, high_x = mine.w / 2, wide - mine.w / 2
         low_y, high_y = mine.h / 2, tall - mine.h / 2
@@ -839,10 +865,6 @@ class _Choosing:
             x = min(max(mine.x + dx, low_x), high_x) if high_x >= low_x else mine.x
             y = min(max(mine.y + dy, low_y), high_y) if high_y >= low_y else mine.y
             box = _moved_box(mine.box(), x - mine.x, y - mine.y, 2.0)
-            # A spot a warning marks costs as a thing would, while its blow is due.
-            for sx, sy, near, start, end in self.warned_spots:
-                if start <= after <= end and math.hypot(x - sx, y - sy) <= near:
-                    total += 1.0 / (after + 0.1)
             for thing, away in threats:
                 # What comes for her is where she will be, not where its line was taking it.
                 if self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h))):
@@ -852,7 +874,7 @@ class _Choosing:
                 if (_boxes_meet(box, _moved_box(thing.box(), tx - thing.x, ty - thing.y, 2.0))
                         or (self.reach is not None and self.reach.within(thing, x, y, (tx, ty)))):
                     total += 1.0 / (after + 0.1)
-        return total
+        return total + warned
 
     def _struck_first(self, thing: Any) -> bool:
         """Whether a thing coming at her comes on slowly enough for her blow to reach it before it reaches her.

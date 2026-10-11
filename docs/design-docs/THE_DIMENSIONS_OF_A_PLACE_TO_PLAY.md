@@ -59,7 +59,10 @@ on as it sounded is weighed as danger, as a thing coming at her is; where the
 blow found her wherever she went, the spot is let go. In a world heard and not
 seen, a siren a second before a strike on her spot, heeding it cut the strikes
 after the first minute from 54 to 11 over ten runs, and every sound's meaning
-was learned in all ten.
+was learned in all ten. In whole play, in a browser world whose siren is heard
+and not seen, she learned what each sound meant in every run, and heeding the
+siren cost her 23 lives over three runs of two and a half minutes against 39
+when deaf to it.
 
 ## Allies to keep
 

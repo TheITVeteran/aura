@@ -13,10 +13,8 @@ __all__ = ["NO_NEARER_S", "OUT_OF_REACH_S", "out_of_her_reach"]
 #: How long her thing stays put under a way held before what lies that way is taken to be out of her reach.
 OUT_OF_REACH_S = 0.6
 
-#: How long she makes for a place and gets no nearer before it is taken to be out of her reach; how many times as long
-#: where she is going round walls, along a way that turns away from the place before it turns back.
+#: How long she makes for a place and gets no nearer before it is taken to be out of her reach.
 NO_NEARER_S = 1.5
-WAY_ROUND_PATIENCE = 3.0
 
 
 def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
@@ -56,7 +54,12 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         elif (run.making_for is None or run.making_for[0] != place or far < run.making_for[1] - 0.25 * cell
                 or walls != run.making_for[3]):
             run.making_for = (place, far, at, walls)
-        elif at - run.making_for[2] >= NO_NEARER_S * (WAY_ROUND_PATIENCE if walls else 1.0):
+        elif walls:
+            # With walls known on a floor, a place is out of her reach when they leave no way to it, and only then:
+            # where she gets no nearer along a way that is there, what stops her is a wall not yet found, and being
+            # stopped by it finds it.
+            pass
+        elif at - run.making_for[2] >= NO_NEARER_S:
             run.barred.add(place)
             run.making_for = None
     else:
