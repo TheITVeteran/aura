@@ -186,6 +186,8 @@ MOVE_SHOWS_S = 2.5
 THINKS_S = 1.2
 #: How long a board may be out of sight before play is given up as over.
 HIDDEN_AT_MOST_S = 4.0
+#: How long the other side's answer to her move is waited for before the turn is taken to be hers again.
+ANSWER_AT_MOST_S = 15.0
 
 
 def a_square_named(position: Position, square: tuple[int, int]) -> str:
@@ -237,6 +239,7 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
     made = 0
     tally = _Tally()
     believed: Position | None = None
+    answer_awaited: float | None = None
     won_seen = ""
     last_seen, still_since = "", time.monotonic()
     hidden_since: float | None = None
@@ -273,7 +276,15 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
             last_seen = ""
             await asyncio.sleep(0.2)
             continue
-        position = believed = _standings_kept(position, believed)
+        kept = _standings_kept(position, believed)
+        if answer_awaited is not None and not _answered(kept, believed, rules.other(mine)) \
+                and time.monotonic() - answer_awaited < ANSWER_AT_MOST_S:
+            # Her turn comes when the other side has answered hers, not when the board stands still: offline 2026-10-11
+            # moves clicked while the other side was thinking were refused by the game.
+            await asyncio.sleep(0.2)
+            continue
+        answer_awaited = None
+        position = believed = kept
         tally.saw(position, mine, rules.other(mine))
         winner = rules.winner(position)
         if winner and won_seen != said:
@@ -301,7 +312,7 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
             refused.add((said, move))
             tell("The game wouldn't take that move; I'll go by what it takes.")
             continue
-        believed = expected
+        believed, answer_awaited = expected, time.monotonic()
         made += 1
         last_seen, still_since = "", time.monotonic()
     return tally.came_of(made, "out of time")
@@ -323,6 +334,14 @@ class _Tally:
         first, now = self.first or (0, 0), self.now or (0, 0)
         return {"moves": made, "ended": ended, "taken": max(0, first[1] - now[1]), "lost": max(0, first[0] - now[0]),
                 **more}
+
+
+def _answered(position: Position, before: Position | None, theirs: str) -> bool:
+    """Whether the other side has moved since ``before``: its pieces stand otherwise, or one of hers is gone."""
+    if before is None:
+        return True
+    return ({sq: position.at(sq) for sq in position.pieces(theirs)} != {sq: before.at(sq) for sq in before.pieces(theirs)}
+            or len(position.pieces(position.turn)) < len(before.pieces(position.turn)))
 
 
 def _more_than_there_were(position: Position, before: Position, mine: str, theirs: str) -> bool:
@@ -382,6 +401,9 @@ async def _shown(look: Any, sides: Any, expected: Position, mine: str, move: Mov
     from core.perception.a_board_seen import a_board_in
 
     wanted = {square for square in expected.pieces(mine)}
+    # A swap leaves her pieces on the squares they were on: it shows by where her special piece stands (offline
+    # 2026-10-11 a swap the game had not made was taken as made, and the same swap asked for again).
+    special = {square for square in wanted if expected.at(square)[1:] == SPECIAL}
     ends_at = time.monotonic() + MOVE_SHOWS_S
     latest = ends_at + HIDDEN_AT_MOST_S
     while time.monotonic() < ends_at:
@@ -392,7 +414,8 @@ async def _shown(look: Any, sides: Any, expected: Position, mine: str, move: Mov
         ends_at = _waited_longer_while_hidden(board, ends_at, latest)
         if board is not None:
             here = {(r, c) for r in range(board.rows) for c in range(board.columns) if board.cells[r][c].rstrip("+") == mine}
-            if here == wanted or _made_and_answered(here, wanted, move):
+            apart = {(r, c) for (r, c) in here if board.cells[r][c].endswith("+")}
+            if here == wanted and special <= apart or _made_and_answered(here, wanted, move):
                 return True
         await asyncio.sleep(0.15)
     return False

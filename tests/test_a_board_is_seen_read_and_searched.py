@@ -234,3 +234,97 @@ def test_a_pieces_standing_is_kept_by_its_history_not_its_look_alone():
                              "........"], "b")
     assert _standings_kept(looks_a_man, crowned).at((0, 1)) == "bK"
     assert _more_than_there_were(_position(["b.b.....", *["........"] * 7], "b"), _position(["b.......", *["........"] * 7], "b"), "b", "a")
+
+
+class _DraughtsGame:
+    """Draughts drawn eight by eight, her side blue at the bottom: a piece clicked and then each square it goes to
+    moves it; the other side thinks a while before it answers, and clicks while it thinks do nothing."""
+
+    SQUARE, MARGIN = 40, 10
+
+    def __init__(self, think_s: float = 1.4):
+        import time as _time
+
+        self.time = _time
+        self.rules = Draughts(up="b", down="a", must_take=True)
+        rows = [".a.a.a.a", "a.a.a.a.", ".a.a.a.a", "........", "........", "b.b.b.b.", ".b.b.b.b", "b.b.b.b."]
+        self.position = Position.from_rows([["" if c == "." else c for c in row] for row in rows], "b")
+        self.think_s, self.answer_at, self.picked, self.clicked_out_of_turn, self.made = think_s, None, [], 0, 0
+
+    def _settle(self):
+        if self.answer_at is not None and self.time.monotonic() >= self.answer_at:
+            moves = self.rules.moves(self.position)
+            if moves:
+                self.position = self.rules.after(self.position, moves[0])
+            self.answer_at = None
+
+    def picture(self):
+        size = 8 * self.SQUARE + 2 * self.MARGIN
+        image = np.full((size, size, 3), 60, np.uint8)
+        for r in range(8):
+            for c in range(8):
+                y, x = self.MARGIN + r * self.SQUARE, self.MARGIN + c * self.SQUARE
+                image[y:y + self.SQUARE, x:x + self.SQUARE] = (235, 205, 205) if (r + c) % 2 == 0 else (190, 110, 110)
+                cell = self.position.cells[r][c]
+                if cell:
+                    image[y + 10:y + 30, x + 10:x + 30] = (40, 60, 200) if cell[0] == "b" else (200, 40, 40)
+        return image
+
+    async def look(self):
+        self._settle()
+        return self.picture(), self.time.monotonic()
+
+    async def click(self, x, y):
+        self._settle()
+        if self.position.turn != "b" or self.answer_at is not None:
+            self.clicked_out_of_turn += 1
+            return
+        size = 8 * self.SQUARE + 2 * self.MARGIN
+        square = (int((y * size - self.MARGIN) // self.SQUARE), int((x * size - self.MARGIN) // self.SQUARE))
+        self.picked.append(square)
+        moves = [m for m in self.rules.moves(self.position) if m[:len(self.picked)] == tuple(self.picked)]
+        if not moves:
+            self.picked = [square] if any(m[0] == square for m in self.rules.moves(self.position)) else []
+            return
+        done = [m for m in moves if len(m) == len(self.picked)]
+        if done and len(done[0]) > 1:
+            self.position, self.picked, self.made = self.rules.after(self.position, done[0]), [], self.made + 1
+            self.answer_at = self.time.monotonic() + self.think_s
+
+
+def test_her_turn_comes_when_the_other_side_has_answered_not_when_the_board_stands_still(monkeypatch):
+    """Offline 2026-10-11 moves clicked while the other side was thinking were refused by the game, and read as moves
+    the game does not allow."""
+    import asyncio
+
+    from core.agency import playing_a_board as playing
+    from core.agency.playing_a_board import play_a_board
+
+    monkeypatch.setattr(playing, "STILL_S", 0.3)
+    monkeypatch.setattr(playing, "THINKS_S", 0.2)
+    game, said = _DraughtsGame(), []
+    result = asyncio.run(play_a_board(game.look, game, "Checkers.", seconds=14.0, say=said.append))
+    assert game.made >= 3 and game.clicked_out_of_turn == 0, (result, game.made, game.clicked_out_of_turn, said)
+    assert not any("wouldn't take" in line for line in said), said
+
+
+def test_a_swap_is_seen_made_only_where_the_special_piece_now_stands(monkeypatch):
+    """A swap leaves her pieces on the squares they were on (offline 2026-10-11 a swap the game had not made was taken
+    as made, and asked for again)."""
+    import asyncio
+
+    from core.agency import playing_a_board as playing
+
+    monkeypatch.setattr(playing, "MOVE_SHOWS_S", 0.4)
+    picture = np.asarray(Image.open(PICTURE).convert("RGB"))
+    known = a_board_in(picture)
+    position, up, _down = position_of(known, turn="")
+    rules = Draughts(up=up, down=_down, special_swaps=True)
+    swap = ((7, 3), (6, 2), (7, 3))
+    expected = rules.after(Position(position.cells, up), swap)
+
+    async def look():
+        return picture, 0.0
+
+    assert not asyncio.run(playing._shown(look, known.sides, expected, up, swap, known))
+    assert asyncio.run(playing._shown(look, known.sides, Position(position.cells, up), up, (), known))
