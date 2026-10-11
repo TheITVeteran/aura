@@ -131,8 +131,10 @@ NEW_SCREEN_STILL_S = 1.5
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
 
-#: How long a thing must have been on the screen to be taken for her by how her presses move it.
-THERE_BEFORE_S = 1.5
+#: How long a thing must have been on the screen to be taken for her by how her presses move it: offline 2026-10-11 in a
+#: flying shooter things on the screen a second or two (an enemy, a shot) were taken for her and lost a second later,
+#: a dozen times in a minute.
+THERE_BEFORE_S = 3.0
 
 #: Spoken lines are at least this far apart, so each can be read; and what kinds of things are to her, one at a time.
 SAY_EVERY_S = 5.0
