@@ -49,6 +49,9 @@ class Board:
     cells: list[list[str]] = field(default_factory=list)
     #: Each side's colour, for telling the sides apart in the next picture.
     sides: dict[str, tuple[float, float, float]] = field(default_factory=dict)
+    #: The colour of an empty square of each of the two colours squares come in by turns (those whose row and column
+    #: add up to an even number, then the rest): the board known again by its ground.
+    ground: tuple[tuple[float, float, float], ...] = ()
 
     def centre(self, row: int, column: int) -> tuple[float, float]:
         """The middle of a square, in the picture's pixels."""
@@ -180,10 +183,15 @@ def _by_the_comb(across: np.ndarray, down: np.ndarray, wide: int, tall: int
     return float(left + 1), float(top + 1), float(width), float(height), columns, rows
 
 
-def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]] | None = None) -> Board | None:
+def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]] | None = None,
+               known: Board | None = None) -> Board | None:
     """The board a picture shows, with what stands on each square; None where it shows none. ``sides`` are the sides'
-    colours as seen before, so a side keeps its name from one picture to the next."""
-    lattice = the_lattice(picture)
+    colours as seen before, so a side keeps its name from one picture to the next. ``known`` is the board as seen
+    before in a game going on: a board does not move or change its squares in play, so its lattice is kept, and the
+    board is there where most of its squares show their own ground (LIVE 2026-10-11 a board of eight by eight read
+    in one picture as eight by ten, a piece of hers on a square that is not there, and a win claimed from it)."""
+    lattice = (known.left, known.top, known.width, known.height, known.columns, known.rows) if known else \
+        the_lattice(picture)
     if lattice is None:
         return None
     left, top, width, height, columns, rows = lattice
@@ -197,12 +205,16 @@ def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]]
             corners = [_the_look(image, left, top, width, height, r, c, ys, xs)
                        for ys in ((0.06, 0.18), (0.82, 0.94)) for xs in ((0.06, 0.18), (0.82, 0.94))]
             bare[r, c] = np.median(np.array(corners), axis=0)
+    ground = _the_ground(bare)
+    if known is not None and known.ground and not _the_same_ground(bare, known.ground):
+        return None
     held = [(r, c) for r in range(rows) for c in range(columns) if np.linalg.norm(looks[r, c] - bare[r, c]) > HOLDS]
     # A tall piece (a figure standing on its piece) reaches up into the square above it: what crosses a square's lower
     # border into a held square below is that piece, not one of its own.
     tall_ones = {(r + 1, c) for r, c in held if (r + 1, c) in held and _crosses_down(image, bare, left, top, width, height, r, c)}
     held = [(r, c) for r, c in held if (r + 1, c) not in tall_ones]
-    board = Board(rows, columns, left, top, width, height, [["" for _ in range(columns)] for _ in range(rows)])
+    board = Board(rows, columns, left, top, width, height, [["" for _ in range(columns)] for _ in range(rows)],
+                  ground=ground)
     if not held:
         return board
     # A piece's side is told by its own pixels (those unlike its bare square), its lower half's where the piece fills it:
@@ -221,6 +233,25 @@ def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]]
             if (r, c) in tall_ones or (len(mine) > 2 and np.linalg.norm(looks[r, c] - usual) > STANDS_APART):
                 board.cells[r][c] = f"{side}+"
     return board
+
+
+#: The share of a board's squares that must show their own ground for the board to be there.
+SAME_GROUND = 0.7
+
+
+def _the_ground(bare: np.ndarray) -> tuple[tuple[float, float, float], ...]:
+    """The colour of the squares of each of the two turns, as the middle of their bare corners."""
+    rows, columns = bare.shape[:2]
+    turns = [[bare[r, c] for r in range(rows) for c in range(columns) if (r + c) % 2 == k] for k in (0, 1)]
+    return tuple(tuple(float(v) for v in np.median(np.array(one), axis=0)) for one in turns if one)
+
+
+def _the_same_ground(bare: np.ndarray, ground: tuple[tuple[float, float, float], ...]) -> bool:
+    """Whether most squares show the ground of their own turn: the board is still there, where it was."""
+    rows, columns = bare.shape[:2]
+    alike = sum(1 for r in range(rows) for c in range(columns)
+                if np.linalg.norm(bare[r, c] - np.array(ground[(r + c) % len(ground)])) <= HOLDS)
+    return alike >= SAME_GROUND * rows * columns
 
 
 def _the_pieces_colour(image: np.ndarray, bare: np.ndarray, left: float, top: float, width: float, height: float,

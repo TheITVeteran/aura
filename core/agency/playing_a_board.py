@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from core.agency.rules_of_a_board import Draughts, Move, Position
+from core.agency.rules_of_a_board import KING, SPECIAL, Draughts, Move, Position
 
 __all__ = ["Searched", "a_board_game", "a_move_told", "draughts_said", "is_draughts", "placing_said", "position_of", "search"]
 
@@ -195,9 +195,9 @@ def a_square_named(position: Position, square: tuple[int, int]) -> str:
 
 
 def a_move_said(position: Position, move: Move) -> str:
-    """A move as a watcher reads it: "c3 to d4", "c3 takes on e5", "swaps c1 with d2"."""
+    """A move as a watcher reads it: "c3 to d4", "c3 takes, to e5", "c1 swaps with d2"."""
     if len(move) == 3 and move[2] == move[0]:
-        return f"swapping {a_square_named(position, move[0])} with {a_square_named(position, move[1])}"
+        return f"{a_square_named(position, move[0])} swaps with {a_square_named(position, move[1])}"
     names = [a_square_named(position, square) for square in move]
     if abs(move[1][0] - move[0][0]) == 2:
         return f"{names[0]} takes, to " + ", then ".join(names[1:])
@@ -230,26 +230,30 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
         if a_board_game(first, words) == "placing":
             return await _play_placing(look, hands, placing_said(first, words), seconds=seconds, tell=tell)
     sides: dict[str, Any] | None = None
+    known: Any = None
     rules: Draughts | None = None
     mine = ""
-    refused: set[Move] = set()
+    refused: set[tuple[str, Move]] = set()
     made = 0
+    tally = _Tally()
+    believed: Position | None = None
+    won_seen = ""
     last_seen, still_since = "", time.monotonic()
     hidden_since: float | None = None
     while time.monotonic() - began < seconds:
         seen = await look()
         if seen is None:
-            return {"moves": made, "ended": "the picture could not be taken"}
+            return tally.came_of(made, "the picture could not be taken")
         picture = seen[0]
-        board = a_board_in(picture, sides)
+        board = a_board_in(picture, sides, known)
         if board is None or not is_draughts(board, words):
             hidden_since, gone = _out_of_sight(hidden_since)
             if gone:
-                return {"moves": made, "ended": "no board is in front of her"}
+                return tally.came_of(made, "no board is in front of her")
             await asyncio.sleep(0.2)
             continue
         hidden_since = None
-        sides = sides or board.sides
+        sides, known = sides or board.sides, known or board
         said = board.says()
         if said != last_seen:
             last_seen, still_since = said, time.monotonic()
@@ -264,30 +268,88 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
             rules = draughts_said(words, up, down)
             tell(_the_rules_said(rules))
         position = Position(position.cells, mine)
+        if believed is not None and _more_than_there_were(position, believed, mine, rules.other(mine)):
+            # No piece comes onto a draughts board in play: a picture with more is misread, and looked at again.
+            last_seen = ""
+            await asyncio.sleep(0.2)
+            continue
+        position = believed = _standings_kept(position, believed)
+        tally.saw(position, mine, rules.other(mine))
         winner = rules.winner(position)
+        if winner and won_seen != said:
+            # An end is believed when it is seen again a moment later, not from one picture.
+            won_seen, last_seen = said, ""
+            await asyncio.sleep(STILL_S)
+            continue
         if winner:
-            return {"moves": made, "ended": "won" if winner == mine else "lost", "board": said}
+            return tally.came_of(made, "won" if winner == mine else "lost", board=said)
         found = search(rules, position, seconds=THINKS_S)
         move = found.move
-        if move is None or move in refused:
-            options = [m for m in rules.moves(position) if m not in refused]
+        if move is None or (said, move) in refused:
+            options = [m for m in rules.moves(position) if (said, m) not in refused]
             move = options[0] if options else None
         if move is None:
-            return {"moves": made, "ended": "no move is left to her", "board": said}
+            return tally.came_of(made, "no move is left to her", board=said)
         tell(a_move_told(position, move, found))
         for square in (move[:2] if len(move) == 3 and move[2] == move[0] else move):
             x, y = board.centre(*square)
             await hands.click(x / picture.shape[1], y / picture.shape[0])
             await asyncio.sleep(0.35)
         expected = rules.after(position, move)
-        if not await _shown(look, sides, expected, mine):
+        if not await _shown(look, sides, expected, mine, move, known):
             # The game would not take it: the rules she holds allowed a move it does not.
-            refused.add(move)
+            refused.add((said, move))
             tell("The game wouldn't take that move; I'll go by what it takes.")
             continue
+        believed = expected
         made += 1
         last_seen, still_since = "", time.monotonic()
-    return {"moves": made, "ended": "out of time"}
+    return tally.came_of(made, "out of time")
+
+
+@dataclass
+class _Tally:
+    """How many pieces each side had when she first came to move in a stretch of play, and when she last did: what she
+    took and what she lost, for whoever asks whether the game is getting anywhere."""
+
+    first: tuple[int, int] | None = None
+    now: tuple[int, int] | None = None
+
+    def saw(self, position: Position, mine: str, theirs: str) -> None:
+        self.now = (len(position.pieces(mine)), len(position.pieces(theirs)))
+        self.first = self.first or self.now
+
+    def came_of(self, made: int, ended: str, **more: Any) -> dict[str, Any]:
+        first, now = self.first or (0, 0), self.now or (0, 0)
+        return {"moves": made, "ended": ended, "taken": max(0, first[1] - now[1]), "lost": max(0, first[0] - now[0]),
+                **more}
+
+
+def _more_than_there_were(position: Position, before: Position, mine: str, theirs: str) -> bool:
+    """Whether a side has more pieces than it had: in draughts none ever comes onto the board, so the picture is
+    misread."""
+    return any(len(position.pieces(side)) > len(before.pieces(side)) for side in (mine, theirs))
+
+
+def _standings_kept(position: Position, before: Position | None) -> Position:
+    """A piece's standing as its history says, not its look alone: a side has no more special pieces than it had, the
+    ones that stand where its special ones stood before (or nearest) are they, and any other that looks apart has been
+    crowned; a piece crowned before is crowned still where it stands. LIVE 2026-10-11 a piece crowned on the far row
+    looked like a special one there, and that wins."""
+    if before is None:
+        return position
+    cells = [list(row) for row in position.cells]
+    for side in {cell[:1] for row in position.cells for cell in row if cell}:
+        apart = [square for square in position.pieces(side) if position.at(square)[1:] == SPECIAL]
+        kept: set[tuple[int, int]] = set()
+        for were in (square for square in before.pieces(side) if before.at(square)[1:] == SPECIAL):
+            left = [square for square in apart if square not in kept]
+            if left:
+                kept.add(min(left, key=lambda square, were=were: abs(square[0] - were[0]) + abs(square[1] - were[1])))
+        for r, c in position.pieces(side):
+            if (r, c) in apart and (r, c) not in kept or position.at((r, c)) == side and before.at((r, c)) == side + KING:
+                cells[r][c] = side + KING
+    return Position(tuple(tuple(row) for row in cells), position.turn)
 
 
 def _out_of_sight(since: float | None) -> tuple[float, bool]:
@@ -303,8 +365,18 @@ def _waited_longer_while_hidden(board: Any, ends_at: float, latest: float) -> fl
     return ends_at if board is not None else min(latest, max(ends_at, time.monotonic() + MOVE_SHOWS_S / 2))
 
 
-async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
-    """Whether the board comes to show the move she made: her pieces where the move leaves them."""
+def _made_and_answered(here: set[tuple[int, int]], wanted: set[tuple[int, int]], move: Move) -> bool:
+    """Her move made, and the other side's answer come before she looked: the square it left is empty of hers, none of
+    hers stands where the move leaves none, and where it went is hers or one of hers was taken. LIVE 2026-10-11 a quick
+    answer that took one of her pieces read as the game not taking her move."""
+    if not move or (len(move) == 3 and move[2] == move[0]):
+        return False
+    return move[0] not in here and here <= wanted and (move[-1] in here or len(here) < len(wanted))
+
+
+async def _shown(look: Any, sides: Any, expected: Position, mine: str, move: Move = (), known: Any = None) -> bool:
+    """Whether the board comes to show the move she made: her pieces where the move leaves them, or the move made and
+    answered already."""
     import asyncio
 
     from core.perception.a_board_seen import a_board_in
@@ -316,11 +388,11 @@ async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
         seen = await look()
         if seen is None:
             return False
-        board = a_board_in(seen[0], sides)
+        board = a_board_in(seen[0], sides, known)
         ends_at = _waited_longer_while_hidden(board, ends_at, latest)
         if board is not None:
             here = {(r, c) for r in range(board.rows) for c in range(board.columns) if board.cells[r][c].rstrip("+") == mine}
-            if here == wanted:
+            if here == wanted or _made_and_answered(here, wanted, move):
                 return True
         await asyncio.sleep(0.15)
     return False
@@ -341,20 +413,21 @@ async def _play_placing(look: Any, hands: Any, rules: Any, *, seconds: float, te
     my_colour: Any = None
     made, refused = 0, set()
     hidden_since: float | None = None
+    known: Any = None
     last_seen, still_since = "", time.monotonic()
     while time.monotonic() - began < seconds:
         seen = await look()
         if seen is None:
             return {"moves": made, "ended": "the picture could not be taken"}
         picture = seen[0]
-        board = a_board_in(picture, sides)
+        board = a_board_in(picture, sides, known)
         if board is None:
             hidden_since, gone = _out_of_sight(hidden_since)
             if gone:
                 return {"moves": made, "ended": "no board is in front of her"}
             await asyncio.sleep(0.2)
             continue
-        hidden_since = None
+        hidden_since, known = None, known or board
         # The sides are named by their colours once both are on the board, and hers is the one her piece was.
         if sides is None and len(board.sides) >= 2:
             sides = board.sides
@@ -393,7 +466,7 @@ async def _play_placing(look: Any, hands: Any, rules: Any, *, seconds: float, te
         tell(f"Placing at {a_square_named(position, move[0])}.")
         x, y = board.centre(*move[0])
         await hands.click(x / picture.shape[1], y / picture.shape[0])
-        placed = await _a_piece_comes(look, sides, move[0], mine)
+        placed = await _a_piece_comes(look, sides, move[0], mine, known)
         if placed is None:
             refused.add(move)
             continue
@@ -407,7 +480,7 @@ def _apart(one: Any, other: Any) -> float:
     return float(sum((float(a) - float(b)) ** 2 for a, b in zip(one, other, strict=False)))
 
 
-async def _a_piece_comes(look: Any, sides: Any, square: tuple[int, int], mine: str) -> Any:
+async def _a_piece_comes(look: Any, sides: Any, square: tuple[int, int], mine: str, known: Any = None) -> Any:
     """The colour of the side of the piece that comes onto ``square`` after her click; None where none comes in time."""
     import asyncio
 
@@ -417,7 +490,7 @@ async def _a_piece_comes(look: Any, sides: Any, square: tuple[int, int], mine: s
     latest = ends_at + HIDDEN_AT_MOST_S
     while time.monotonic() < ends_at:
         seen = await look()
-        board = a_board_in(seen[0], sides) if seen is not None else None
+        board = a_board_in(seen[0], sides, known) if seen is not None else None
         ends_at = _waited_longer_while_hidden(board, ends_at, latest)
         if board is not None and board.rows > square[0] and board.columns > square[1]:
             piece = board.cells[square[0]][square[1]].rstrip("+")

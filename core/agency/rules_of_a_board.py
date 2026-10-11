@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-__all__ = ["Draughts", "Move", "Placing", "Position"]
+__all__ = ["KING", "MAN", "SPECIAL", "Draughts", "Move", "Placing", "Position"]
 
 #: A square: row, column.
 Square = tuple[int, int]

@@ -804,9 +804,12 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
                                  say=_said_while_playing)
     logger.info("a board played: %s", stretch)
-    reflexes.stretches.append({"pictures": stretch.get("moves", 0), "gains": int(stretch.get("ended") == "won"),
-                               "losses": int(stretch.get("ended") == "lost"), "seconds": time.monotonic() - now,
-                               "ended": stretch.get("ended"), "settled": stretch.get("ended")})
+    # What the other side lost is what she gained, and turns the game took are the game going on.
+    reflexes.stretches.append({"pictures": stretch.get("moves", 0), "turns": stretch.get("moves", 0),
+                               "gains": int(stretch.get("ended") == "won") + int(stretch.get("taken") or 0),
+                               "losses": int(stretch.get("ended") == "lost") + int(stretch.get("lost") or 0),
+                               "seconds": time.monotonic() - now, "ended": stretch.get("ended"),
+                               "settled": stretch.get("ended")})
     if stretch.get("ended") in ("won", "lost"):
         reflexes.over_because = f"the board game ended: {stretch['ended']}"
     else:

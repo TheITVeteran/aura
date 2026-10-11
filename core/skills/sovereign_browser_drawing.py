@@ -421,7 +421,10 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # break, could never be reached, and a game was left after four minutes with nothing said.
         if (until_won and run["ended"] != "won" and not reflexes.over_because
                 and time.monotonic() - started >= ROUND_S - 20.0 and time.monotonic() < deadline):
+            # A game in turns that is taking hers is going on, whatever is gained in it: LIVE 2026-10-11 a draughts
+            # game was begun again from the top in its fourth minute, she having made thirty moves in it.
             if (run["gains"] > 0 or reflexes.new_screens or _steps_done(keep) > steps_before
+                    or any(stretch.get("turns") for stretch in reflexes.stretches)
                     or await _stopped_to_take_stock(STUCK_HERE, goal, reflexes, run, runs, keep, deadline)):
                 runs.pop()  # the same round, still getting somewhere, or with something new to go by: played on
                 continue

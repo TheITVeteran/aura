@@ -190,3 +190,47 @@ def test_a_places_rules_are_kept_from_one_stretch_of_play_to_the_next(monkeypatc
         reflexes = SimpleNamespace(keep=keep, words=words, look=look, ends_at=1e9, stretches=[], over_because="")
         assert asyncio.run(pursuit._played_a_board(reflexes, 100.0))
     assert draughts_said(played_by[-1], "b", "a").special_swaps
+
+
+def test_a_move_answered_before_she_looks_is_a_move_made():
+    from core.agency.playing_a_board import _made_and_answered
+
+    wanted = {(4, 1), (5, 2), (6, 3)}                      # where her move from (5, 0) to (4, 1) leaves her pieces
+    assert _made_and_answered({(4, 1), (6, 3)}, wanted, ((5, 0), (4, 1)))          # answered by taking (5, 2)
+    assert _made_and_answered({(5, 2), (6, 3)}, wanted, ((5, 0), (4, 1)))          # answered by taking the piece moved
+    assert not _made_and_answered({(5, 0), (5, 2), (6, 3)}, wanted, ((5, 0), (4, 1)))   # not made
+    assert not _made_and_answered({(4, 1), (5, 2), (6, 3), (7, 0)}, wanted, ((5, 0), (4, 1)))
+
+
+def test_a_board_in_play_keeps_its_squares_and_is_lost_from_sight_when_covered():
+    """A board does not move or change its squares in play (LIVE 2026-10-11 eight by eight read once as eight by ten,
+    and a win claimed from it): the board seen first is kept, and is there where its squares show their own ground."""
+    picture = np.asarray(Image.open(PICTURE).convert("RGB"))
+    known = a_board_in(picture)
+    assert len(known.ground) == 2
+    again = a_board_in(picture, known.sides, known)
+    assert again.says() == known.says() and (again.rows, again.columns) == (8, 8)
+    covered = picture.copy()
+    covered[100:300] = (250, 220, 40)
+    assert a_board_in(covered, known.sides, known) is None
+
+
+def test_a_pieces_standing_is_kept_by_its_history_not_its_look_alone():
+    from core.agency.playing_a_board import _more_than_there_were, _standings_kept
+
+    before = _position(["........", "..b.....", "........", "....B...", "........", "........", "......a.",
+                        "........"], "b")
+    # The man came to the far row and was crowned, and looks apart there as the special piece does.
+    now = _position([".B......", "........", "........", "....B...", "........", "........", "......a.",
+                     "........"], "a")
+    rules = Draughts(up="b", down="a", special_wins_at_far_row=True)
+    assert rules.winner(now) == "b"                                   # as the picture alone has it: won
+    kept = _standings_kept(now, before)
+    assert kept.at((0, 1)) == "bK" and kept.at((3, 4)) == "b+" and rules.winner(kept) == ""
+    # A crowned piece that looks like the rest of its side is crowned still.
+    crowned = Position(tuple(tuple("bK" if (r, c) == (0, 1) else cell for c, cell in enumerate(row))
+                             for r, row in enumerate(before.cells)), "b")
+    looks_a_man = _position([".b......", "........", "........", "....B...", "........", "........", "........",
+                             "........"], "b")
+    assert _standings_kept(looks_a_man, crowned).at((0, 1)) == "bK"
+    assert _more_than_there_were(_position(["b.b.....", *["........"] * 7], "b"), _position(["b.......", *["........"] * 7], "b"), "b", "a")
