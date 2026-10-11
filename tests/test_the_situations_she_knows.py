@@ -69,3 +69,21 @@ def test_the_ways_a_situation_is_played_by_reach_the_ways_she_chooses_from():
     assert "steer" in ways_of(situations_in("Catch the falling eggs."))
     assert AS_IT_HAPPENS in ways_asked("Catch the falling eggs in your basket.")
     assert FOLLOW in ways_asked("Copy the dance moves in order.")
+
+
+def test_a_mechanic_its_words_show_reaches_the_ways_she_chooses_from_and_one_its_program_alone_shows_does_not():
+    """Before, a mechanic the guide held reached her choice of way only through her model's reading of the place."""
+    import time
+
+    from core.agency.the_way_it_is_played import SEND, ways_asked
+    from core.cognition.a_guide_to_a_place import PROGRAM, THE_GUIDE, TOLD, Guide
+
+    guide = Guide(place="somewhere")
+    token = THE_GUIDE.set(guide)
+    try:
+        guide._know("sending by strength", ["says “drag back”"], PROGRAM, time.monotonic())
+        assert SEND not in ways_asked("A screen with nothing to say.")
+        guide._know("sending by strength", ["says “drag back”"], TOLD, time.monotonic())
+        assert SEND in ways_asked("A screen with nothing to say.")
+    finally:
+        THE_GUIDE.reset(token)

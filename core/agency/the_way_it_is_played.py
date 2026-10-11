@@ -92,6 +92,10 @@ def ways_asked(read: str, last_screen: str = "") -> list[str]:
     from core.cognition.what_this_place_is import reflex_ways
 
     looks += reflex_ways(ways_of(situations_in(read)))
+    # And the ways of the mechanics its words show it has, as the guide holds them, without her model's reading: a
+    # mechanic known only from its program is left out, as what its program listens for is not how it is played.
+    if guide is not None:
+        looks += reflex_ways(_ways_of_mechanics_said(guide))
     return asked + [way for way in dict.fromkeys(looks) if way not in asked and way != TYPE]
 
 
@@ -133,6 +137,20 @@ def progress(stretch: dict[str, Any], before: dict[str, Any] | None = None, task
     if task and held_her_own(stretch) and (_LASTING_IS_THE_TASK.search(task) or _a_lasting_situation(task)):
         return "lasted"
     return ""
+
+
+def _ways_of_mechanics_said(guide: Any) -> list[str]:
+    """The ways that play the mechanics in play at a place by its words, not by its program alone."""
+    from core.agency.mechanics_she_knows import known
+    from core.cognition.a_guide_to_a_place import PROGRAM
+
+    ways: list[str] = []
+    for name, kept in getattr(guide, "mechanics", {}).items():
+        mechanic = known(name)
+        if mechanic is None or not guide.in_play(name) or not any(source != PROGRAM for source in kept.sources):
+            continue
+        ways += [way for way in mechanic.ways if way not in ways]
+    return ways
 
 
 def _a_lasting_situation(task: str) -> bool:
