@@ -61,6 +61,9 @@ STRETCH_S = 300.0
 
 #: How long a showing is watched for places lit in turn, and how often one screen's showing is followed.
 WATCH_A_SHOWING_S = 6.0
+
+#: Words saying a place is worked by the pointer pressed on things, so a place it shows is done again by a click on it.
+_CLICKED = re.compile(r"\b(?:click|tap|touch|press (?:on|the) (?:button|light|square|tile))", re.I)
 FOLLOW_AT_MOST = 6
 
 #: The longest she waits for her model's answer to a question a screen asks, in seconds.
@@ -333,6 +336,12 @@ class PlayingAsItHappens:
             self.words.append(said)
             del self.words[:-12]
             self._a_screen_not_seen_before(said)
+            # Asked once, held to for the game: the next look, after the title's PLAY, is a watch for what is shown, and
+            # the screens it is done on (WATCH, a score) never say it again.
+            from core.agency.doing_again_what_was_shown import asks_to_follow
+
+            if asks_to_follow(said):
+                self.keep["asked_to_follow"] = True
         if self.first_ways_back is None and observation.get("ok", True):
             self.first_ways_back = restart_controls(observation)
 
@@ -498,10 +507,16 @@ class PlayingAsItHappens:
             self.quiet_until = 0.0
         if (now < self.quiet_until and not held.holding()) or now >= self.ends_at:
             return
+        # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
+        # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
+        # see what it did while the first arrow was being shown (offline 2026-10-11). Where nothing is shown, as on a
+        # menu, the watching gives up in a moment and the menu is gone on from as before.
+        if self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
+            return
         if not self.under_her_hand and self._a_menu_first():
             return
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
-        if await self._did_again_what_it_showed():
+        if not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
@@ -604,40 +619,48 @@ class PlayingAsItHappens:
             self.under_her_hand = False
 
     async def _did_again_what_it_showed(self) -> bool:
-        """Where the screen's words ask for what it shows to be followed: the arrows it draws pressed as keys, else the
-        places it lights in turn clicked in their order (core/agency/doing_again_what_was_shown.py). Whether anything
-        was done."""
-        from core.agency.doing_again_what_was_shown import (
-            Shown,
-            arrows_in,
-            asks_to_follow,
-            do_again,
-            lit_in_turn,
-        )
+        """Where the place's words ask for what it shows to be done again: each showing watched and done again, round
+        after round, by the controls her presses have been seen to light (core/agency/doing_again_what_was_shown.py,
+        core/agency/what_a_press_lights.py). Whether anything was done."""
+        from core.agency.doing_again_what_was_shown import asks_to_follow, follow
+        from core.agency.playing_as_it_happens import controls_named_in
+        from core.agency.the_way_it_is_played import FOLLOW
+        from core.agency.what_a_press_lights import WhatAPressLights
         from core.perception.what_the_pixels_show import recognize_text
 
-        told = " ".join(self.words[-3:])
-        if not asks_to_follow(told):
+        # Asked on any screen of this place, and held to for the game: the ask is on the title screen, and the screen it
+        # is done on says WATCH and a score (offline 2026-10-11, a book of arrows: after PLAY nothing on the screen said
+        # to follow, and she pressed keys to see what they did until her lives were gone).
+        if not self.keep.get("asked_to_follow"):
+            if not asks_to_follow(" ".join(self.words)):
+                return False
+            self.keep["asked_to_follow"] = True
+        if FOLLOW in self.held_to().let_go:
+            # It has had its turn here and got nowhere: the place is left to the pursuit until it says something new.
             return False
         tries = self.keep.setdefault("followed", {})
         key = self.words[-1][:80] if self.words else ""
         if tries.get(key, 0) >= FOLLOW_AT_MOST:
             return False
         tries[key] = tries.get(key, 0) + 1
-        seen = await self.look()
-        if seen is None:
-            return False
-        shown = Shown(keys=arrows_in(seen[0], recognize_text(seen[0])))
-        if len(shown.keys) < 2:
-            shown = Shown(places=await lit_in_turn(self.look, WATCH_A_SHOWING_S))
-        if len(shown.keys) + len(shown.places) < 2:
+        said = " ".join(self.words)
+        named, _pointer_first = controls_named_in(said, keys_without_words=(), during_play=True)
+        keys = list(dict.fromkeys([*(self.keep.get("named_keys") or []), *named]))
+        lights = self.keep.setdefault("what_a_press_lights", WhatAPressLights())
+
+        def a_round(record: dict[str, Any]) -> None:
+            # Taken up as the way this place is played, so play goes on with it from look to look, and the pursuit does
+            # not press keys to see what they do between one showing and the next.
+            self.stretches.append(record)
+            self.held_to().choose([FOLLOW], " ".join(self.words[-6:]))
+            self._judge(FOLLOW, record)
+
+        rounds = await follow(self.look, self, lights, keys=keys, clicks=bool(_CLICKED.search(said)),
+                              rounds_at_most=FOLLOW_AT_MOST, watch_s=WATCH_A_SHOWING_S, read_words=recognize_text,
+                              say=_said_while_playing, each_round=a_round)
+        if not rounds:
             logger.info("asked to follow what is shown, and nothing was shown in order")
-            return False
-        done = await do_again(shown, self, say=_said_while_playing)
-        logger.info("did again what was shown: %s (%d acts)", shown, done)
-        self.stretches.append({"pictures": done, "gains": 0, "losses": 0, "ended": "did again what was shown",
-                               "followed": {"keys": shown.keys, "places": shown.places}})
-        return bool(done)
+        return bool(rounds)
 
     async def _typed_what_it_asks(self) -> bool:
         """Where the screen's words ask for words typed, typed (core/agency/typing_what_is_asked.py), twice at most for

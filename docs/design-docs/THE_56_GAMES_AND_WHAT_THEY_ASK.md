@@ -38,7 +38,8 @@ if any of them is not called from her live play or has no test.
 | a view going by | a world that scrolls past | `core/perception/how_the_scenery_goes_by.py` |
 | a world bigger than the view | how far the view going by has taken her, and which way the rest lies | `core/perception/where_in_a_world.py` |
 | keys shown | press the keys a screen draws mid-play while it shows them, in turn and fast where several are lit by turns | `core/agency/pressing_what_is_shown.py` |
-| copy a sequence | do again, in order, what was shown | `core/agency/doing_again_what_was_shown.py` |
+| copy a sequence | do again, in order, what was shown: watched until the showing is over, had again by a press where it was missed | `core/agency/doing_again_what_was_shown.py` |
+| what a press lights | which place each control lights when pressed, learned from her own presses and turned round to do again a thing shown there | `core/agency/what_a_press_lights.py` |
 | remember what was shown | remember what each place showed when turned over, and turn together two that showed alike | `core/agency/things_that_go_together.py` |
 | a board in turns | a board, moves in turns, someone on the other side | `core/skills/screen_pursuit.py` with `core/agency/looking_ahead.py` |
 | a grid's rule | a grid whose rule is found by moving in it | `core/skills/screen_pursuit.py` (her rule of the world) |

@@ -81,9 +81,14 @@ WAYS: tuple[Way, ...] = (
     Way("keys shown", "press the keys a screen shows as pictures mid-play, while it shows them: in turn and fast where several are",
         "core.agency.pressing_what_is_shown:KeysShown", "core.agency.playing_as_it_happens",
         "tests/test_keys_a_screen_shows_are_pressed.py"),
-    Way("copy a sequence", "do again, in order, what a screen shows: arrows drawn, or places lit one after another",
-        "core.agency.doing_again_what_was_shown:do_again", "core.skills.screen_pursuit_as_it_happens",
-        "tests/test_what_was_shown_is_done_again_in_its_order.py"),
+    Way("copy a sequence", "do again, in order, what a screen shows: arrows drawn, or places lit one after another, "
+        "watched until the showing is over and had again by a press where it was missed",
+        "core.agency.doing_again_what_was_shown:follow", "core.skills.screen_pursuit_as_it_happens",
+        "tests/test_a_showing_is_done_again_whatever_it_looks_like.py"),
+    Way("what a press lights", "which place on the screen each control lights when pressed, learned from her own presses "
+        "and turned round to do again a thing shown at that place",
+        "core.agency.what_a_press_lights:pressed_and_watched", "core.agency.doing_again_what_was_shown",
+        "tests/test_a_showing_is_done_again_whatever_it_looks_like.py"),
     Way("a view going by", "a world that scrolls past, in layers",
         "core.perception.how_the_scenery_goes_by:how_the_view_moved", "core.perception.what_moves_in_the_picture",
         "tests/test_scenery_going_by_is_not_things.py"),
@@ -112,7 +117,7 @@ WAYS: tuple[Way, ...] = (
         "tests/test_a_legend_says_what_things_are.py"),
     Way("bars", "read the bars that fill and empty (health, energy, paint, a boss, time); a fall of what she has left is a "
         "loss, and low, what costs her is given a wider berth",
-        "core.agency.what_she_has_left:bars_read", "core.agency.playing_as_it_happens",
+        "core.agency.what_she_has_left:bars_read", "core.agency.reading_while_playing",
         "tests/test_a_bar_that_empties_is_what_she_has_left.py"),
     Way("carried", "a body carried on by its own going and pushed by her keys (a lander, a ship, a skater): known by what each "
         "key adds to its going, steered by where that takes it a moment ahead, and brought onto a thing slowly",
@@ -146,7 +151,7 @@ WAYS: tuple[Way, ...] = (
         "tests/test_she_reads_what_a_place_is.py"),
     Way("checked against the guide", "each act she weighs scaled by what the guide says of it (a control, information, "
         "not part of the task, past a boundary), learned from what acts did",
-        "core.cognition.checking_the_debate:the_check", "core.skills.screen_pursuit_decision",
+        "core.cognition.checking_the_debate:the_check", "core.skills.screen_pursuit_decision_lesson",
         "tests/test_a_guide_says_how_a_place_is_worked.py"),
     Way("read the program", "read the program a page runs, where it can be had, for how it is worked: keys, pointer, "
         "controls, instructions; nothing that would spoil it",
@@ -171,7 +176,7 @@ WAYS: tuple[Way, ...] = (
         "tests/test_she_reads_the_signs_before_harm.py"),
     Way("turn what was placed", "turn a part put into a chain until what it sends out points on toward where the chain "
         "must go, by her eyes on where its output ends and where the goal is",
-        "core.agency.aiming_what_was_placed:a_turn_wanted", "core.skills.screen_pursuit_decision",
+        "core.agency.aiming_what_was_placed:a_turn_wanted", "core.skills.screen_pursuit_decision_lesson",
         "tests/test_a_part_put_down_is_turned_toward_where_the_chain_goes.py"),
     Way("the situation", "know the situation a place's words put her in (things to catch or dodge, something to keep away "
         "until help comes, a toss to whoever takes it, a clock to beat or outlast) and play it as it asks before anything "

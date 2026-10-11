@@ -109,3 +109,50 @@ def test_a_screen_that_asks_to_follow_its_arrows_has_them_pressed_on_her_page(mo
     playing.words = ["Follow the arrow keys in the book to cast the spell"]
     assert asyncio.run(playing._did_again_what_it_showed())
     assert pressed == ["left", "left", "up", "right"]
+
+
+def test_arrows_always_drawn_and_lit_in_turn_are_the_keys_in_the_order_they_lit():
+    """A book of four arrows, all drawn all the time, one going a darker red at a time: the order is the lighting, read
+    as the keys the lit arrows point to, and the words changing at the end (WATCH to YOUR TURN) are no place in it."""
+    from core.agency.doing_again_what_was_shown import shown_in_turn
+
+    spots = {"up": (88, 10), "right": (150, 60), "down": (88, 110), "left": (26, 60)}
+    order = ["left", "up", "up", "down", "right"]
+    clock = {"t": 0.0}
+
+    def drawn(lit: str | None, ended: bool):
+        picture = np.full((160, 200, 3), (192, 184, 160), np.uint8)
+        for way, (x, y) in spots.items():
+            tile = np.zeros((40, 200, 3), np.uint8)[:40, :40]
+            _arrow(tile, 4, 4, way, size=30)
+            mask = tile.any(axis=2)
+            picture[y:y + 40, x:x + 40][mask] = (230, 50, 50) if way == lit else (150, 140, 120)
+        picture[150:158, 4:40 if ended else 20] = 255
+        return picture
+
+    async def look():
+        clock["t"] += 1 / 25
+        t = clock["t"]
+        # The showing begins a moment after the watching does, as a screen saying WATCH gives one.
+        step = int((t - 0.5) / 0.85) if t >= 0.5 else -1
+        lit = order[step] if 0 <= step < len(order) and ((t - 0.5) % 0.85) < 0.6 else None
+        return drawn(lit, ended=step >= len(order)), t
+
+    shown = asyncio.run(shown_in_turn(look, 10.0))
+    assert shown.keys == order, shown
+
+
+def test_letters_of_the_writing_are_not_read_as_arrows():
+    """A screen saying YOUR TURN under a pad of arrows: the Y and the T taper as arrow heads do, and are no keys."""
+    import shutil
+
+    if shutil.which("tesseract") is None:
+        pytest.skip("no tesseract program here")
+    from PIL import Image, ImageDraw, ImageFont
+
+    from core.perception.what_the_pixels_show import recognize_text
+
+    picture = Image.new("RGB", (480, 320), (43, 29, 58))
+    ImageDraw.Draw(picture).text((180, 280), "YOUR TURN", fill=(255, 216, 74), font=ImageFont.load_default(size=18))
+    pixels = np.asarray(picture).copy()
+    assert arrows_in(pixels, recognize_text(np.ascontiguousarray(pixels[:, :, ::-1]))) == []
