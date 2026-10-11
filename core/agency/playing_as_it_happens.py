@@ -105,6 +105,10 @@ TOUCHED_WITHIN_S = 1.0
 #: is made for what it clears and not for a near tie.
 CLEARER = 0.5
 
+#: Whether she imagines the moment ahead to choose what to hold where things that matter are moving
+#: (core/agency/imagining_ahead.py).
+IMAGINES = True
+
 #: How often the counters on the screen are read. Reading takes a tenth of a
 #: second off to one side and is never waited for.
 READ_EVERY_S = 0.5
@@ -427,6 +431,12 @@ class _Choosing:
     at: float | None = None
     #: The situations the place's words put her in (core/agency/situations_she_knows.py).
     situations: tuple[Any, ...] = ()
+    #: Whether her thing goes where the pointer goes; the plan she imagined best, the key she holds as it was made, and
+    #: the path a press of a key takes her on (core/agency/imagining_ahead.py).
+    pointing: bool = False
+    planned: Any = None
+    held_now: str = ""
+    press_paths: Any = None
 
     #: How much wider a berth what costs her is given than usual: more as what she has left runs low.
     caution: float = 1.0
@@ -463,6 +473,8 @@ class _Choosing:
         # A key that lifts her and lets her fall is pressed for what its press does, not held as a way to go.
         self.lifts = (presses.lifts(self.mine.kind, max(float(self.mine.w), float(self.mine.h)), self.mine.number)
                       if presses is not None and self.mine is not None else [])
+        self.press_paths = ((lambda key: presses.path(key, self.mine.kind, self.mine.number))
+                            if presses is not None and self.mine is not None else None)
         for lift in self.lifts:
             self.ways.pop(lift, None)
         self.across, self.updown = hers.follows_along if hers.follows_pointer else hers.axes(keys)
@@ -680,7 +692,10 @@ class _Choosing:
         return self.danger_along(lambda after: (way[0] * after, way[1] * after))
 
     def a_press_that_clears(self, presses: Any, held: str) -> str | None:
-        """A key whose press takes her clear of what is coming where holding ``held`` on runs into it; else None."""
+        """A key whose press takes her clear of what is coming where holding ``held`` on runs into it; else None. Where
+        she has imagined the moment ahead and it decided, its plan says whether to press now."""
+        if self.planned is not None and self.planned.decides and self.lifts:
+            return self.planned.plan.press_now()
         way = self.ways.get(held, (0.0, 0.0))
         staying = self.danger(way)
         if staying <= 0.0 or presses is None:
@@ -752,6 +767,16 @@ class _Choosing:
             gx = gx - offset[0] if gx is not None else None
             gy = gy - offset[1] if gy is not None else None
         mine = self.mine
+        # Where things that matter are on the move, she imagines the next moment under each plan she could follow and
+        # does the first part of the best (core/agency/imagining_ahead.py); a body carried on by its own going is
+        # steered by where each key takes it a moment ahead, as below.
+        if IMAGINES and not self.ahead_s and not self.pointing:
+            from core.agency.imagining_ahead import best_plan
+
+            self.held_now = held
+            self.planned = best_plan(self, held, (gx, gy))
+            if self.planned is not None and self.planned.decides:
+                return self.planned.plan.first, why, aim
         choices = {"": self.rest, **self.ways}
         moving = choices.get(held, (0.0, 0.0))
         # The old command keeps moving her while the next one is delivered.
