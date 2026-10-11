@@ -92,7 +92,7 @@ WENT_WITHIN_S = 0.5
 
 #: How many prizes a kind must have taken first to be a rival for sure, and how many losses of it must have cost her
 #: for it to be on her side for sure.
-TAKEN_FOR_SURE = 2
+TAKEN_FOR_SURE = 3
 #: How many times a kind must have done a thing (cost her, counted, stopped her, done nothing) for that to be shown.
 SHOWN_AFTER = 2
 #: How many meetings that did nothing a cost, and a gain, stand against: past that many, it came with the meeting by
@@ -214,11 +214,19 @@ class WhoIsWho:
             if at - self.first_seen.get(number, at) < FLEETING_S and area < SMALL_SHARE * size * size:
                 self.fleeting.add(kind)
             if prizes and kind in prizes:
-                self._who_took(box, here, mine)
+                self._who_took(box, here, mine, _at_the_edge(box, shape))
 
-    def _who_took(self, box: tuple[float, float, float, float], here: dict[int, Any], mine: Any) -> None:
-        """A prize went: where she was not on it and another thing was, that thing's kind took it first."""
-        if mine is not None and _overlap(box, _box(mine), 2.0):
+    def prize_shown(self, kind: int) -> bool:
+        """Whether a kind has been shown to be a prize: counted twice, and at least as often as it did nothing."""
+        kept = self.kinds.get(kind)
+        return kept is not None and kept.gains >= SHOWN_AFTER and kept.gains >= kept.nothings
+
+    def _who_took(self, box: tuple[float, float, float, float], here: dict[int, Any], mine: Any,
+                  at_the_edge: bool = False) -> None:
+        """A prize went: where she was not on it and another thing was, that thing's kind took it first. A prize gone
+        off the edge of the picture was taken by nothing: it went by. LIVE 2026-10-11 a flying shooter going by had
+        five kinds said to be friendly competition."""
+        if at_the_edge or (mine is not None and _overlap(box, _box(mine), 2.0)):
             return
         for thing in here.values():
             if getattr(thing, "moved", False) and _overlap(box, _box(thing), 2.0):

@@ -134,3 +134,46 @@ def test_a_thing_her_eyes_took_for_hers_that_nothing_of_hers_moves_answers_to_no
     assert _nothing_answers(run, hers, meeting, 40) == "nothing here answers to me while it moves"
     hers.follows_pointer = True
     assert not _nothing_answers(run, hers, meeting, 40)
+
+
+def test_a_gauge_that_fills_from_one_end_is_not_her():
+    """LIVE 2026-10-11 a shooter's super-shot bar filled while space was held and emptied as the shot went; it answered
+    to space and x, and she took it for herself ("I'm the white bar at the top left, moved by space and x"). A body goes
+    about whole; a gauge fills from one end that stays put."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    def thing(number, x, y, w, h, at):
+        return SimpleNamespace(number=number, kind=number, x=x, y=y, w=w, h=h, vx=0.0, vy=0.0, seen=at, born=0.0, size=w * h,
+                               moved=True)
+
+    hers = WhichIsHers()
+    hers.number, hers.kind = 1, 1                         # taken for her, as it was
+    at = 1.0
+    for step in range(8):
+        at += 0.1
+        width = 20.0 + 6.0 * step                          # filling rightward from x = 10
+        bar = thing(1, 10.0 + width / 2, 12.0, width, 6.0, at)
+        body = thing(2, 100.0 + 5.0 * step, 150.0, 24.0, 30.0, at)
+        moves = SimpleNamespace(things={1: bar, 2: body}, shape=(300, 400), kinds=[])
+        hers.saw(moves, [], at)
+    assert hers.number != 1 and 1 in hers.not_mine
+    assert not hers._outlines.a_gauge(2)
+
+
+def test_what_her_presses_bring_out_is_not_taken_for_her():
+    """Offline 2026-10-11 each shot of a flying shooter was taken for her as it was fired, nine in sixteen seconds: what
+    her presses bring out goes the same way at every press, and she is the thing that was there before the press."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import _found_by_her_presses
+    from core.agency.which_one_answers_to_her import Makes, WhichIsHers
+
+    hers = WhichIsHers()
+    hers.makes["x"] = Makes("x", 5, 300.0, 0.0, 6)
+    run = SimpleNamespace(presses=SimpleNamespace(curves={"x": object()}, kinds_it_moves=lambda far: {5, 6}))
+    shot = SimpleNamespace(number=40, kind=5, born=9.8)
+    girl = SimpleNamespace(number=3, kind=6, born=1.0)
+    _found_by_her_presses(run, SimpleNamespace(things={40: shot, 3: girl}), hers, 10.0)
+    assert hers.number == 3

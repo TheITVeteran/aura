@@ -131,6 +131,9 @@ NEW_SCREEN_STILL_S = 1.5
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
 
+#: How long a thing must have been on the screen to be taken for her by how her presses move it.
+THERE_BEFORE_S = 1.5
+
 #: Spoken lines are at least this far apart, so each can be read; and what kinds of things are to her, one at a time.
 SAY_EVERY_S = 5.0
 STANCE_EVERY_S = 2.5
@@ -1195,7 +1198,8 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     # What she sends out is hers as much as what goes with her.
     sent = {shot.kind for shot in hers.makes.values()}
     size = max(float(mine.w), float(mine.h)) if mine is not None else 16.0
-    prizes = {kind for kind, kept in who.kinds.items() if kept.gains}
+    # What is taken from her is a prize shown to be one, not a kind that once came with a count going up.
+    prizes = {kind for kind, kept in who.kinds.items() if kept.gains and who.prize_shown(kind)}
     who.saw(at, things, mine, prizes=prizes, comes_for_her=lambda thing: run.comes.comes_for_her(thing, size),
             with_her=lambda thing: goes_with(thing, mine) or thing.kind in sent, shape=moves.shape)
     for kind, kept in meeting.evidence.items():
@@ -1885,7 +1889,12 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
     if hers.number is not None or hers.follows_pointer or not run.presses.curves:
         return
     kinds = run.presses.kinds_it_moves(TOLD_FROM_STANDING_PX * 2)
-    candidates = [thing for thing in moves.things.values() if thing.kind in kinds]
+    # What her presses bring out (a shot) goes the same way at every press, and is not her: offline 2026-10-11 each
+    # shot of a flying shooter was taken for her as it was fired, nine of them in sixteen seconds. She is a thing that
+    # was there before the press.
+    made = {makes.kind for makes in hers.makes.values()}
+    candidates = [thing for thing in moves.things.values() if thing.kind in kinds and thing.kind not in made
+                  and at - float(getattr(thing, "born", at)) >= THERE_BEFORE_S]
     if len(candidates) == 1:
         hers.moved_by_her_presses(candidates[0], at)
 

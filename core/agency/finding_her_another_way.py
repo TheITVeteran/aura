@@ -71,7 +71,7 @@ class FoundAnotherWay:
         trials was never found by them, while every press of space was seen
         to lift its kind and let it down.
         """
-        if self.number is not None or thing.number in self.not_mine:
+        if self.number is not None or thing.number in self.not_mine or _a_gauge(self, thing.number):
             return
         self.number, self.kind = thing.number, thing.kind
         self.identification.receipts.append({"epoch": self.identification.epoch, "reason": "moved alike by every press",
@@ -94,3 +94,9 @@ class FoundAnotherWay:
                                              "selected": thing.number})
         logger.info("her thing is %s: her eyes took it for the player's own (%s)", thing.number, what)
 
+
+def _a_gauge(hers: Any, number: int) -> bool:
+    """Whether a thing has filled and emptied from one end: a gauge her presses change, not her (core/agency/
+    which_one_answers_to_her.py)."""
+    outlines = getattr(hers, "_outlines", None)
+    return bool(outlines is not None and outlines.a_gauge(number))
