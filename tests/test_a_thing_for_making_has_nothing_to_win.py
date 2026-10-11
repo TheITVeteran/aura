@@ -59,3 +59,12 @@ def test_an_invitation_to_imagine_and_make_is_read_as_made():
     assert what_it_asks_of_a_player(said) == "make"
     assert what_it_asks_of_a_player("Make it to the end of the level to win.") == "win"
     assert what_it_asks_of_a_player("Make the highest score you can before time runs out.") == "score"
+
+
+def test_a_goal_said_with_who_it_is_for_or_where_a_thing_is_brought_is_an_end_and_points_are_a_score():
+    """LIVE 2026-10-11 "help the Eds get their jawbreakers" with a score on the screen was played for its score."""
+    from core.language.what_counts_as_done import END, MEASURE, shape_in
+
+    assert shape_in("Help the Eds get their jawbreakers by using crazy contraptions.", a_measure_seen=True) == END
+    assert shape_in("Create elaborate tubes to get a jawbreaker into a cup.", a_measure_seen=True) == END
+    assert shape_in("Drop the coins into the slots for points.", a_measure_seen=True) == MEASURE

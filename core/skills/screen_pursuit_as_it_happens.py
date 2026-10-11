@@ -72,6 +72,9 @@ LEAVE_A_MOVING_MENU_S = 20.0
 #: The longest one stretch of play runs before the pursuit gets a look.
 STRETCH_S = 300.0
 
+#: The longest a screen whose movement keeps answering to nothing is left alone before it is tried again, in seconds.
+LEFT_ALONE_AT_MOST_S = 180.0
+
 #: How often what the page draws is looked at for a board of two sides in turns, in seconds.
 BOARD_LOOKED_FOR_EVERY_S = 3.0
 
@@ -636,7 +639,7 @@ class PlayingAsItHappens:
         _keep_what_she_learned(self.page, self.keep)
         logger.info("a stretch played as it happened: %s", {k: stretch.get(k) for k in ("seconds", "ended", "hers", "keys_that_move_her", "pictures_a_second", "learned", "gains", "losses", "new_views", "views_along")})
         if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
-            self.quiet_until, self.quiet_on = time.monotonic() + LEAVE_A_MOVING_MENU_S, self.said_now
+            self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
             self.under_her_hand = False
 
     async def _did_again_what_it_showed(self) -> bool:
@@ -764,6 +767,16 @@ def _without_labels(said: str, labels: set) -> str:
     for label in sorted(labels, key=len, reverse=True):
         said = re.sub(rf"(?<!\w){re.escape(label)}(?!\w)", "\n", said)
     return said
+
+
+def _left_alone_for(reflexes: PlayingAsItHappens) -> float:
+    """How long a moving screen that answered to nothing is left alone: twice as long each time the same screen does it
+    again. LIVE 2026-10-11 a building game's characters idled on its board, and every twenty seconds she spent nineteen
+    finding again that nothing there answered to her."""
+    kept = reflexes.keep.get("left_alone_on")
+    times = kept[1] + 1 if kept is not None and not _a_different_screen(reflexes.said_now, kept[0]) else 1
+    reflexes.keep["left_alone_on"] = (reflexes.said_now, times)
+    return min(LEFT_ALONE_AT_MOST_S, LEAVE_A_MOVING_MENU_S * 2 ** (times - 1))
 
 
 async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
