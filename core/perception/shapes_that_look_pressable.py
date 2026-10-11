@@ -100,8 +100,9 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
     return list(named.values())[:at_most]
 
 
-#: The most shapes whose writing is read from the shape itself, in one look.
+#: The most shapes whose writing is read from the shape itself, in one look; and the most words a button bears.
 READ_ON_AT_MOST = 6
+BUTTON_WORDS = 2
 
 
 def _named_by_their_writing(pixels: np.ndarray, shapes: list[tuple[float, dict[str, Any]]],
@@ -114,7 +115,9 @@ def _named_by_their_writing(pixels: np.ndarray, shapes: list[tuple[float, dict[s
         words = written_on(pixels, region, read)
         if words:
             region = {**region, "text": words, "written_on_it": True}
-            share += 2.0
+            # A button bears a word or two; a shape with more on it is a title or a panel, the button inside it is the
+            # one to press (offline 2026-10-11 a title read as "Coco's Scrambler PLAY" came before its PLAY button).
+            share += 2.0 if len(words.split()) <= BUTTON_WORDS else 0.5
         worded.append((share, region))
     return sorted([*worded, *shapes[READ_ON_AT_MOST:]], key=lambda pair: -pair[0])
 
