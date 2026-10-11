@@ -79,3 +79,16 @@ def test_a_moment_is_imagined_in_the_time_of_a_picture():
     for _ in range(5):
         best_plan(choosing, "", (None, None))
     assert (time.perf_counter() - began) / 5 < 0.06
+
+
+def test_a_body_carried_on_by_its_own_going_is_brought_onto_its_pad_slowly():
+    """A lander falls under a pull and is held up by a key; coming onto the pad fast breaks it there."""
+    pad = _Thing(number=5, kind=5, x=200.0, y=290.0, w=60.0, h=8.0, vx=0.0, vy=0.0, moved=False)
+    pushes = {"": (0.0, 80.0), "up": (0.0, -160.0), "left": (-120.0, 80.0), "right": (120.0, 80.0)}
+    hers = SimpleNamespace(carried=True, push_of=lambda key: pushes.get(key))
+    meeting = SimpleNamespace(gentle_below=lambda kind: 40.0)
+    choosing = _choosing([(pad, MEET)], ways={"up": (0.0, -60.0), "left": (-60.0, 0.0), "right": (60.0, 0.0)})
+    choosing.hers, choosing.meeting = hers, meeting
+    choosing.mine.y, choosing.mine.vy = 200.0, 120.0     # falling onto the pad, too fast to land on it
+    imagined = best_plan(choosing, "", (None, None))
+    assert imagined.decides and imagined.plan.first == "up" and imagined.costs == 0

@@ -78,7 +78,7 @@ def _surface() -> Any:
         negatives=("The game was released in 2002 by Cartoon Network.", "The rocket launches when the timer hits zero.",
                    "Click to throw a snowball at the other team.", "While flying, click and hold to use Glide Power.",
                    "Use the arrow keys to move and space to jump.", "Drag the stickers onto the scene, then take a photo.",
-                   "Drag each part to where it attaches."),
+                   "Drag each part to where it attaches.", "Hold the space bar to charge, then release for a super shot."),
         features=model_hidden_features)
 
 
@@ -92,12 +92,28 @@ def sends_by_letting_go(told: str) -> bool:
     passes over is decided by the surface where it has decided one like it, and abstains otherwise.
     """
     for sentence in re.split(r"(?<=[.!?;])\s+|\n", "\n".join(" ".join(line.lower().split()) for line in told.splitlines())):
+        if _a_key_held(sentence):
+            SENDS_BY_LETTING_GO.observe(sentence, holds=False)
+            continue
         if _the_floor_says_it_sends(sentence):
             SENDS_BY_LETTING_GO.observe(sentence, holds=True)
             return True
         if len(sentence.split()) >= 4 and _learned_it_sends(sentence):
             return True
     return False
+
+
+#: A key held and let go, and the pointer: what a key held does is the key's (a charge, a jump held long), and a send is
+#: a press of the pointer pulled or held. LIVE 2026-10-11 "Hold space bar to charge, then release for super shot" had
+#: her pulling and letting go of the mouse at a flying shooter for the whole of a game.
+_A_KEY_HELD = re.compile(r"\b(?:hold|holding|press and hold|keep)\s+(?:down\s+)?(?:the\s+)?(?:space\s*bar|space|"
+                         r"(?:[a-z]|\w+)\s+key|keys?|arrows?(?:\s+keys?)?|shift|enter|ctrl)\b")
+_THE_POINTER = re.compile(r"\b(?:mouse|click\w*|pointer|cursor|drag\w*|pull\w*|slingshot)\b")
+
+
+def _a_key_held(sentence: str) -> bool:
+    """Whether a sentence tells of a key held and let go, and not of the pointer."""
+    return bool(_A_KEY_HELD.search(sentence)) and not _THE_POINTER.search(sentence)
 
 
 def _learned_it_sends(sentence: str) -> bool:

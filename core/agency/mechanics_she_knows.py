@@ -187,7 +187,7 @@ MECHANICS: tuple[Mechanic, ...] = (
              "the order is the whole of it: one wrong step and the sequence fails",
              "watch the whole sequence, then do it again in its order",
              r"\b(?:repeat (?:the|after)|copy|follow (?:the|along)|simon|in the (?:same )?order|sequence|pattern)\b",
-             r"sequence|rhythm|\bbeats?\b|simon", ("copy a sequence",)),
+             r"sequence|rhythm|\bbeats?\b|simon", ("copy a sequence", "what a press lights")),
     # -- what she is after ----------------------------------------------------------------------------------------
     Mechanic("score", GOAL,
              "a count that goes up when you do what the place rewards",
@@ -299,7 +299,8 @@ MECHANICS: tuple[Mechanic, ...] = (
              "every move answers a move: look ahead as far as there is time",
              "consider each move by what the other side can do after it",
              r"\b(?:board|checkers|chess|your (?:turn|move)|grid|tiles?|squares?)\b",
-             r"checkers|board_?(?:array|grid)|your_?turn|player_?turn", ("a board in turns", "a grid's rule")),
+             r"checkers|board_?(?:array|grid)|your_?turn|player_?turn",
+             ("a board in turns", "a grid's rule", "a board seen and searched")),
     Mechanic("matching", STRUCTURE,
              "things are turned or chosen two at a time; alike ones go together",
              "what each showed is to be remembered: the second of a pair is where the first was seen",

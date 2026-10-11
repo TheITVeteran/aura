@@ -141,8 +141,11 @@ def in_a_sentence(moves: Any, hers: Any, meeting: Any, physics: Any, keys: list[
             bits.append("bounces off the walls")
         if kind in physics.kinds and len(physics.kinds[kind].meetings) >= 2:
             bits.append("turns back off me")
+        # What a kind is worth to her is said by itself, once shown (core/agency/who_is_who.py); here it is only what
+        # was told of it: LIVE 2026-10-11 every account of a scrolling game said again, of kinds met once, what each
+        # had seemed to cost or count.
         stance = meeting.stance(kind)
-        if meeting.known(kind) or kind in meeting.told:
+        if kind in meeting.told:
             bits.append({MEET: "is worth getting", AVOID: "costs me", SHOOT: "is worth shooting", CLICK: "is worth clicking"}.get(stance, ""))
         bits = [bit for bit in bits if bit]
         if bits:

@@ -40,3 +40,24 @@ def test_a_drawn_button_is_offered_inside_a_game_and_clicked_where_it_is():
     at = where_to_click(seen, "the shape at 90% across, 90% down")
     assert at is not None and at[0] > 0.85 and at[1] > 0.85
     assert things_to_click(seen, drawn_where=None) == ()
+
+
+def test_the_words_on_a_drawn_button_no_reading_of_the_screen_made_out_name_it_and_put_it_first():
+    """LIVE-like 2026-10-11 a title's PLAY, small red letters in a red frame, was not read from the whole screen, and
+    the shape it stood in was offered after five others, none of them it. Read from the shape itself it is PLAY."""
+    picture = Image.new("RGB", (600, 400), (250, 240, 240))
+    draw = ImageDraw.Draw(picture)
+    draw.ellipse((60, 60, 260, 300), fill=(240, 120, 40))                 # a figure on the title, larger than the button
+    draw.rectangle((470, 340, 580, 380), outline=(220, 30, 30), width=4)  # the button's frame
+    draw.rectangle((490, 352, 560, 368), fill=(220, 30, 30))              # its lettering, as a reader would see it
+    pixels = np.asarray(picture)
+
+    def read(patch):
+        patch = np.asarray(patch)
+        red = ((patch[..., 0] > 180) & (patch[..., 1] < 80)).mean()
+        return [{"text": "e"}, {"text": "PLAY"}] if 0.15 < red < 0.9 else []
+
+    shapes = pressable_shapes(pixels, read=read)
+    assert shapes[0]["text"] == "PLAY" and shapes[0]["written_on_it"], [s["text"] for s in shapes]
+    assert abs(shapes[0]["center_x"] - 0.875) < 0.05 and abs(shapes[0]["center_y"] - 0.9) < 0.05
+    assert where_to_click({"shapes": shapes}, "PLAY") is not None

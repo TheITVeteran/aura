@@ -115,3 +115,81 @@ def test_the_end_screen_a_stretch_begins_on_is_not_its_end_however_long_the_firs
     run = _Run(keys=["up"], began=0.0)
     run.words_read = [(2.5, "landings: 1"), (2.5, "try again"), (5.0, "try again")]
     assert not _said_it_is_over(run)
+
+
+def test_a_thing_her_eyes_took_for_hers_that_nothing_of_hers_moves_answers_to_nothing():
+    """LIVE 2026-10-11 the boy on a game's animated title was taken for her by her eyes, no key moved him, and she
+    played the title for a minute before its START: a thing taken for hers answers to her only once something of hers
+    moves it."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import _nothing_answers, _Run
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    run = _Run(keys=[], began=0)
+    meeting = SimpleNamespace(verdicts=[], evidence={})
+    hers = WhichIsHers()
+    hers.seen_to_be_her(SimpleNamespace(number=4, kind=2), 1.0, "child character")
+    assert hers.kind == 2
+    assert _nothing_answers(run, hers, meeting, 40) == "nothing here answers to me while it moves"
+    hers.follows_pointer = True
+    assert not _nothing_answers(run, hers, meeting, 40)
+
+
+def test_a_gauge_that_fills_from_one_end_is_not_her():
+    """LIVE 2026-10-11 a shooter's super-shot bar filled while space was held and emptied as the shot went; it answered
+    to space and x, and she took it for herself ("I'm the white bar at the top left, moved by space and x"). A body goes
+    about whole; a gauge fills from one end that stays put."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    def thing(number, x, y, w, h, at):
+        return SimpleNamespace(number=number, kind=number, x=x, y=y, w=w, h=h, vx=0.0, vy=0.0, seen=at, born=0.0, size=w * h,
+                               moved=True)
+
+    hers = WhichIsHers()
+    hers.number, hers.kind = 1, 1                         # taken for her, as it was
+    at = 1.0
+    for step in range(8):
+        at += 0.1
+        width = 20.0 + 6.0 * step                          # filling rightward from x = 10
+        bar = thing(1, 10.0 + width / 2, 12.0, width, 6.0, at)
+        body = thing(2, 100.0 + 5.0 * step, 150.0, 24.0, 30.0, at)
+        moves = SimpleNamespace(things={1: bar, 2: body}, shape=(300, 400), kinds=[])
+        hers.saw(moves, [], at)
+    assert hers.number != 1 and 1 in hers.not_mine
+    assert not hers._outlines.a_gauge(2)
+
+
+def test_what_her_presses_bring_out_is_not_taken_for_her():
+    """Offline 2026-10-11 each shot of a flying shooter was taken for her as it was fired, nine in sixteen seconds: what
+    her presses bring out goes the same way at every press, and she is the thing that was there before the press."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import _found_by_her_presses
+    from core.agency.which_one_answers_to_her import Makes, WhichIsHers
+
+    hers = WhichIsHers()
+    hers.makes["x"] = Makes("x", 5, 300.0, 0.0, 6)
+    run = SimpleNamespace(presses=SimpleNamespace(curves={"x": object()}, kinds_it_moves=lambda far: {5, 6}))
+    shot = SimpleNamespace(number=40, kind=5, born=9.8)
+    girl = SimpleNamespace(number=3, kind=6, born=1.0)
+    _found_by_her_presses(run, SimpleNamespace(things={40: shot, 3: girl}), hers, 10.0)
+    assert hers.number == 3
+
+
+def test_a_body_hovering_where_it_is_is_no_gauge():
+    """A figure flying in place moves within itself, its edges stirring on every side: it is not a gauge for doing so
+    (offline 2026-10-11 each girl of a flying shooter was taken for a gauge as she hovered)."""
+    import random
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import _HowOutlinesGo
+
+    outlines, rng = _HowOutlinesGo(), random.Random(3)
+    for _ in range(30):
+        left, right = 100.0 + rng.choice((0.0, 0.0, -3.0, 3.0)), 140.0 + rng.choice((0.0, 0.0, -3.0, 3.0))
+        top, bottom = 50.0 + rng.choice((0.0, -3.0)), 90.0 + rng.choice((0.0, 3.0))
+        outlines.saw(SimpleNamespace(number=7, x=(left + right) / 2, y=(top + bottom) / 2, w=right - left, h=bottom - top))
+    assert outlines.from_an_end[7] >= 3 and not outlines.a_gauge(7)

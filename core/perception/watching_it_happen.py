@@ -66,6 +66,11 @@ ANSWERS_WITHIN_S = 2.0
 #: all the time, and is part of the picture.
 ALWAYS = 0.6
 
+#: A cell that changed after this share of her other recent acts, whatever they were, changes whatever she does: it is
+#: no act's answer. Judged over the last few acts, of more than one kind.
+AFTER_ANY_ACT = 0.7
+OTHER_ACTS_SEEN = 8
+
 #: Over how long, and in what share of its frames, a picture changing by
 #: itself is a world in motion (a game being played) rather than a scene.
 IN_MOTION_OVER_S = 2.0
@@ -223,6 +228,7 @@ class Watching:
         autonomous = [m.cells for m in before if not self._hers(m.at)]
         busy = np.any(autonomous, axis=0) if autonomous else np.zeros((CELLS[1], CELLS[0]), dtype=bool)
         busy |= np.mean(background, axis=0) > ALWAYS
+        busy |= self._after_any_act(act_at, window.act)
         if any((m.cells & ~busy).any() for m in after):
             return True
         # A negative needs the entire interval; the first still frame is early,
@@ -233,6 +239,26 @@ class Watching:
         if covered is None or covered.at - covered.since > gap or covered.at - ends > gap:
             return None
         return False
+
+    def _after_any_act(self, act_at: float, act: str) -> np.ndarray:
+        """The cells that changed after most of her other recent acts, whatever each was: a change that follows every
+        act alike is caused by none of them. LIVE 2026-10-11 a building game's characters idled while she acted every
+        few seconds, so no picture was free of her acts to show it, and each press of an arrow key, which the game does
+        not listen for, was taken to have done something."""
+        none = np.zeros((CELLS[1], CELLS[0]), dtype=bool)
+        others = [w for w in list(self._windows)[-OTHER_ACTS_SEEN - 1:]
+                  if w.started != act_at and w.act != act and w.finished is not None and w.delivered]
+        if len(others) < 3 or len({w.act for w in others}) < 2:
+            return none
+        followed = []
+        for other in others:
+            ends = other.finished + ANSWERS_WITHIN_S
+            after = [m.cells for m in self.moments if other.started <= m.at <= ends]
+            if after:
+                followed.append(np.any(after, axis=0))
+        if len(followed) < 3:
+            return none
+        return np.mean(followed, axis=0) >= AFTER_ANY_ACT
 
     def answer_window(self) -> dict[str, Any] | None:
         """Detached timing and delivery evidence for the latest attempted input."""

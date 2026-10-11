@@ -184,6 +184,20 @@ def _the_colour_in(name: str) -> str:
     return next((word for word in str(name or "").lower().split() if word in _COLOURS), "")
 
 
+#: What a thing can be only to a body moved about: somewhere to go, something to stand on, something to keep clear of.
+_TO_A_BODY = frozenset({"to stand on", "to reach", "danger"})
+
+
+def _not_moved_about(guide: Any) -> bool:
+    """Whether the place is done by a way other than moving a body about, by what it says or what it is read to be."""
+    from core.cognition.what_this_place_is import not_steered, said_not_steered
+
+    try:
+        return bool(said_not_steered(guide) or not_steered(guide))
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _a(name: str) -> str:
     return ("an " if name[:1].lower() in "aeiou" else "a ") + name if name[:1].islower() else name
 
@@ -267,7 +281,11 @@ def seen_in_play(run: Any, moves: Any, hers: Any, meeting: Any, picture: Any, at
     seeing.looking.look(picture, moves, at, mine=hers.number, met=list(meeting.evidence))
     _who_i_am_to_my_eyes(run, seeing, guide, moves, hers, meeting, picture, at, tell)
     for kind, sighting in seeing.looking.newly():
-        who = guide.seen.saw(kind, sighting.what, sighting.odd, getattr(sighting, "who", ""))
+        # A name her eyes give a thing is its name where the place's words have it: LIVE 2026-10-11 her eyes called
+        # things on a game's title "Big Shot Checkers", the game's own name, and "Littlest Pet Shop", which nothing
+        # there says.
+        named = getattr(sighting, "who", "")
+        who = guide.seen.saw(kind, sighting.what, sighting.odd, named if guide.has_said(named) else "")
         colour = colour_name(moves.kinds[kind].colour) if kind < len(moves.kinds) else ""
         if kind < len(moves.kinds):
             # How it looks to her play, so where it is can be found by other ways of looking (a send's).
@@ -309,6 +327,11 @@ def _make_of(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any, hers: Any, 
         meeting.supposed[kind] = stance
         logger.info("what she supposes of kind %s (%s, %s): %s", kind, what, bears, stance)
     if mine or bears not in _WORTH_SAYING or seeing.said >= MOST_SAID or at - seeing.said_at < SAY_EVERY_S:
+        return
+    # Where the place is done another way than by moving a body (building, making, a board), what a thing would be to
+    # a body (a door to go through, a platform to stand on) bears on nothing she does: LIVE 2026-10-11 "That looks like a
+    # door. Maybe I can go through it, or perhaps it's locked" over a game of building a machine.
+    if _not_moved_about(guide) and bears in _TO_A_BODY:
         return
     if not any(t.kind == kind for t in moves.things.values()):
         return
@@ -378,7 +401,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         guide.seen.mine = (thing.kind, what)
         # A first guess is said only while it is one: where play has found her already, what her eyes took is kept, not
         # said over what play showed.
-        if not known:
+        if not known and not _not_moved_about(guide):
             tell(f"That looks like me: {_the(what)}. I'll see if it answers to me.", "looks like me")
         else:
             logger.info("her eyes took %s for hers; play has her as %s", what, hers.number)

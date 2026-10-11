@@ -310,3 +310,37 @@ def test_the_live_learning_seam_uses_the_validated_response(response_state, monk
         assert responsive.unanswered == 0 and responsive.effective == 1
     else:
         assert asdict(responsive) == original
+
+
+def _idling(at, acts, panel=0):
+    """A picture whose corner flickers by itself half a second after each of her acts, whatever the act (an idle
+    animation that happens to fall there), and whose panel shows ``panel``."""
+    pixels = _picture(panel)
+    if any(0.5 <= at - act < 0.75 for act in acts):
+        pixels[5:30, 110:150] = 220
+    return pixels
+
+
+def test_a_change_that_follows_every_act_alike_is_no_acts_answer():
+    """LIVE 2026-10-11 a game's characters idled while she acted every few seconds; no picture was free of her acts to
+    show it, and each arrow key, which the game does not listen for, was taken to have done something."""
+    watching = Watching(take=_nothing)
+    acts: list[float] = []
+    for n in range(17):
+        watching.saw(_idling(10.0 + n / 8, acts), 10.0 + n / 8)
+    at = 12.25
+    for name in ("click one", "click two", "up", "down", "click three", "space", "left"):
+        window = watching.begin_act(name, at + 0.01)
+        watching.finish_act(window, True, at + 0.02)
+        acts.append(at + 0.01)
+        for step in range(1, 25):
+            watching.saw(_idling(at + step / 8, acts), at + step / 8)
+        last = window
+        at += 3.0
+    assert watching.answered(last.started) is not True
+    clicked = watching.begin_act("click the panel", at + 0.01)
+    watching.finish_act(clicked, True, at + 0.02)
+    acts.append(at + 0.01)
+    for step in range(1, 25):
+        watching.saw(_idling(at + step / 8, acts, panel=190), at + step / 8)
+    assert watching.answered(clicked.started) is True

@@ -99,6 +99,11 @@ WAYS: tuple[Way, ...] = (
     Way("a board in turns", "a board, moves in turns, someone on the other side: looked ahead as far as there is time",
         "core.agency.looking_ahead:look_ahead", "core.skills.screen_pursuit_decision",
         "tests/test_looking_as_far_ahead_as_there_is_time_for.py"),
+    Way("a board seen and searched", "a board drawn with no writing on it, two sides of pieces in turns: its squares and "
+        "pieces seen, its family known from the board and its words, its rules as its words change them, and every move "
+        "and answer searched as deep as there is time for; a move the game will not take changes the rules she holds",
+        "core.agency.playing_a_board:play_a_board", "core.skills.screen_pursuit_as_it_happens",
+        "tests/test_a_board_is_seen_read_and_searched.py"),
     Way("a grid's rule", "a grid whose rule is found by moving in it",
         "core.skills.screen_pursuit_decision_reading:the_pixels_show_a_grid", "core.skills.screen_pursuit_decision_reading",
         "tests/test_the_places_are_seen_not_inferred.py"),

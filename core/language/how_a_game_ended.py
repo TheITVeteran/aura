@@ -194,14 +194,17 @@ def offers_a_win(words: str) -> bool:
 
 _FOR_POINTS: Final = re.compile(
     r"\b(as many (?:points|\w+) as (?:possible|you can)|highest score|high score|beat your (?:best|score|record)|"
-    r"get the most|score as (?:many|much|high)|before (?:the )?time runs out|in (?:one|two|three|\d+) minutes?)\b"
+    r"get the most|score as (?:many|much|high)|before (?:the )?time runs out|in (?:one|two|three|\d+) minutes?|"
+    r"for (?:bonus |extra |more )?points)\b"
 )
 _TO_WIN: Final = re.compile(r"\b(first to|wins?\b|beat (?:the|him|her|them|your opponent)|defeat|win the|to win)\b")
 #: An objective a player is set, that is reached and then over: someone rescued, all of something found, a place got to.
 _OBJECTIVE: Final = re.compile(
     r"\b(rescue|save (?:the|him|her|them|his|their)|escape (?:from|the)|find (?:all|every|the|his|her|their)|"
     r"collect (?:all|every)|reach the (?:end|top|exit|goal|finish|other side)|solve|"
-    r"help \w+ (?:to )?(?:find|get|escape|save|rescue|stop|reach|collect))\b"
+    r"help (?:\w+ ){1,3}(?:to )?(?:find|get|escape|save|rescue|stop|reach|collect)|"
+    # Something brought to a place is an end reached: "get a jawbreaker into a cup", "put the ball onto the green".
+    r"(?:get|put|bring|guide|roll|drop|land) (?:\w+ ){1,3}(?:into|onto) (?:a|an|the|his|her|their|your) \w+)\b"
 )
 #: Words that set a player to make something, not to win: a maker, a dress-up, a paint box. Picking favourites is making
 #: where there are several things to pick ("your favorite body parts"); one pick ("Pick your favorite color!" for a golf

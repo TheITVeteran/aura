@@ -47,13 +47,17 @@ ALIKE_AT_LEAST = 3
 STANDS_OUT = "the one that stands out at"
 
 
-def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MOST) -> list[dict[str, Any]]:
+def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MOST,
+                     read: Any = None) -> list[dict[str, Any]]:
     """The pressable-looking shapes of ``picture`` as regions (shares of the picture), named by where they are.
 
     A shape under writing in ``apart_from`` (regions of the same picture) is
     left out: the writing already names it, and is clicked by its words. The
     one that stands apart from its alike shapes is kept whatever is written on
-    it, and comes first.
+    it, and comes first. Given ``read`` (a reader of writing), the writing on
+    each shape no reading of the whole picture made out is read from the shape
+    itself, enlarged: a shape with words on it is named by them, and comes
+    first (core/perception/reading_closer.py).
     """
     pixels = np.asarray(picture, dtype=np.float32)
     if pixels.ndim == 2:
@@ -88,10 +92,31 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
             "shape": True, **({"stands_apart": True} if stands else {}),
         }))
     shapes.sort(key=lambda pair: -pair[0])
+    if read is not None:
+        shapes = _named_by_their_writing(pixels, shapes, read)
     named: dict[str, dict[str, Any]] = {}
     for _share, region in shapes:
         named.setdefault(region["text"], region)
     return list(named.values())[:at_most]
+
+
+#: The most shapes whose writing is read from the shape itself, in one look.
+READ_ON_AT_MOST = 6
+
+
+def _named_by_their_writing(pixels: np.ndarray, shapes: list[tuple[float, dict[str, Any]]],
+                            read: Any) -> list[tuple[float, dict[str, Any]]]:
+    """Shapes with the words written on them as their names, those with words first."""
+    from core.perception.reading_closer import written_on
+
+    worded = []
+    for share, region in shapes[:READ_ON_AT_MOST]:
+        words = written_on(pixels, region, read)
+        if words:
+            region = {**region, "text": words, "written_on_it": True}
+            share += 2.0
+        worded.append((share, region))
+    return sorted([*worded, *shapes[READ_ON_AT_MOST:]], key=lambda pair: -pair[0])
 
 
 def _standing_out(small: np.ndarray) -> np.ndarray:

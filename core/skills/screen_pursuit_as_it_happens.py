@@ -72,6 +72,14 @@ LEAVE_A_MOVING_MENU_S = 20.0
 #: The longest one stretch of play runs before the pursuit gets a look.
 STRETCH_S = 300.0
 
+#: The longest a screen whose movement keeps answering to nothing is left alone before it is tried again, in seconds.
+LEFT_ALONE_AT_MOST_S = 180.0
+
+#: How often what the page draws is looked at for a board of two sides in turns, in seconds.
+BOARD_LOOKED_FOR_EVERY_S = 3.0
+#: How many of a place's screens of words are kept for what its board's rules are.
+WORDS_KEPT = 60
+
 #: How long a showing is watched for places lit in turn, and how often one screen's showing is followed.
 WATCH_A_SHOWING_S = 6.0
 
@@ -531,6 +539,9 @@ class PlayingAsItHappens:
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
         if not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
+        # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py).
+        if await _played_a_board(self, now):
+            return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
         said = " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")])
@@ -630,7 +641,7 @@ class PlayingAsItHappens:
         _keep_what_she_learned(self.page, self.keep)
         logger.info("a stretch played as it happened: %s", {k: stretch.get(k) for k in ("seconds", "ended", "hers", "keys_that_move_her", "pictures_a_second", "learned", "gains", "losses", "new_views", "views_along")})
         if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
-            self.quiet_until, self.quiet_on = time.monotonic() + LEAVE_A_MOVING_MENU_S, self.said_now
+            self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
             self.under_her_hand = False
 
     async def _did_again_what_it_showed(self) -> bool:
@@ -758,6 +769,53 @@ def _without_labels(said: str, labels: set) -> str:
     for label in sorted(labels, key=len, reverse=True):
         said = re.sub(rf"(?<!\w){re.escape(label)}(?!\w)", "\n", said)
     return said
+
+
+def _left_alone_for(reflexes: PlayingAsItHappens) -> float:
+    """How long a moving screen that answered to nothing is left alone: twice as long each time the same screen does it
+    again. LIVE 2026-10-11 a building game's characters idled on its board, and every twenty seconds she spent nineteen
+    finding again that nothing there answered to her."""
+    kept = reflexes.keep.get("left_alone_on")
+    times = kept[1] + 1 if kept is not None and not _a_different_screen(reflexes.said_now, kept[0]) else 1
+    reflexes.keep["left_alone_on"] = (reflexes.said_now, times)
+    return min(LEFT_ALONE_AT_MOST_S, LEAVE_A_MOVING_MENU_S * 2 ** (times - 1))
+
+
+async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
+    """Where what the page draws is a board of two sides in turns, it is played by search, its rules read from what the
+    place has said (core/agency/playing_a_board.py); whether it was. Looked for every few seconds, not every look."""
+    from core.agency.playing_a_board import a_board_game, play_a_board
+    from core.perception.a_board_seen import a_board_in
+
+    if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
+        return False
+    reflexes.keep["board_looked_for_at"] = now
+    seen = await reflexes.look()
+    # What the place said of its rules is kept from one stretch of play to the next: LIVE 2026-10-11 a second stretch
+    # of a draughts game, its rules screen long gone, was played without the piece its rules had changed.
+    heard: list[str] = reflexes.keep.setdefault("words_of_the_place", [])
+    heard += [w for w in reflexes.words if w not in heard]
+    del heard[:-WORDS_KEPT]
+    words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
+    board = a_board_in(seen[0]) if seen is not None else None
+    if board is None or not a_board_game(board, words):
+        return False
+    logger.info("a board of two sides in turns (%s): playing it by search", a_board_game(board, words))
+    stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
+                                 say=_said_while_playing)
+    logger.info("a board played: %s", stretch)
+    # What the other side lost is what she gained, and turns the game took are the game going on.
+    reflexes.stretches.append({"pictures": stretch.get("moves", 0), "turns": stretch.get("moves", 0),
+                               "gains": int(stretch.get("ended") == "won") + int(stretch.get("taken") or 0),
+                               "losses": int(stretch.get("ended") == "lost") + int(stretch.get("lost") or 0),
+                               "seconds": time.monotonic() - now, "ended": stretch.get("ended"),
+                               "settled": stretch.get("ended")})
+    if stretch.get("ended") in ("won", "lost"):
+        reflexes.over_because = f"the board game ended: {stretch['ended']}"
+    else:
+        # A board played until its time ran out is looked for again at once, not tried with keys meanwhile.
+        reflexes.keep["board_looked_for_at"] = -1e9
+    return True
 
 
 def _lines_of(regions: list[dict[str, Any]]) -> list[str]:

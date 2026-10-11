@@ -131,8 +131,12 @@ NEW_SCREEN_STILL_S = 1.5
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
 
-#: Spoken lines are at least this far apart, so each can be read.
+#: How long a thing must have been on the screen to be taken for her by how her presses move it.
+THERE_BEFORE_S = 1.5
+
+#: Spoken lines are at least this far apart, so each can be read; and what kinds of things are to her, one at a time.
 SAY_EVERY_S = 5.0
+STANCE_EVERY_S = 2.5
 
 #: The least time between two clicks, and how far ahead of a moving thing a
 #: click is aimed: the click's trip through the browser and the next frame.
@@ -186,6 +190,8 @@ class _Run:
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
     legend: tuple[Any, ...] = ()
     said_at: float = -math.inf
+    #: When what a kind of thing is to her was last said: one at a time, the rest when their turn comes.
+    stance_said_at: float = -math.inf
     said: set[str] = field(default_factory=set)
     lines: list[str] = field(default_factory=list)
     reading: asyncio.Task | None = None
@@ -923,9 +929,9 @@ class _Choosing:
             if turned is not None:
                 return turned, why, aim
         # Where things that matter are on the move, she imagines the next moment under each plan she could follow and
-        # does the first part of the best (core/agency/imagining_ahead.py); a body carried on by its own going is
-        # steered by where each key takes it a moment ahead, as below.
-        if IMAGINES and not self.ahead_s and not self.pointing:
+        # does the first part of the best (core/agency/imagining_ahead.py), a body carried on by its own going by what
+        # each key adds to it; where no plan meets anything different, she goes for where she means to be, as below.
+        if IMAGINES and not self.pointing:
             from core.agency.imagining_ahead import best_plan
 
             self.held_now = held
@@ -1214,7 +1220,8 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     # What she sends out is hers as much as what goes with her.
     sent = {shot.kind for shot in hers.makes.values()}
     size = max(float(mine.w), float(mine.h)) if mine is not None else 16.0
-    prizes = {kind for kind, kept in who.kinds.items() if kept.gains}
+    # What is taken from her is a prize shown to be one, not a kind that once came with a count going up.
+    prizes = {kind for kind, kept in who.kinds.items() if kept.gains and who.prize_shown(kind)}
     who.saw(at, things, mine, prizes=prizes, comes_for_her=lambda thing: run.comes.comes_for_her(thing, size),
             with_her=lambda thing: goes_with(thing, mine) or thing.kind in sent, shape=moves.shape)
     for kind, kept in meeting.evidence.items():
@@ -1266,9 +1273,12 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
     spent = goes.what_to_say(at)
     if spent:
         _say(run, say, spent, at, once="spent")
-    for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
-                           lambda thing: _named(moves, thing.kind, thing)):
-        _say(run, say, line, at, once=line)
+    # What each kind is to her, one at a time: the rest are said in their turn (core/agency/who_is_who.py).
+    if at - run.stance_said_at >= STANCE_EVERY_S:
+        for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
+                               lambda thing: _named(moves, thing.kind, thing)):
+            _say(run, say, line, at, once=line)
+            run.stance_said_at = at
 
 
 def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float) -> str:
@@ -1306,7 +1316,10 @@ def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at:
     # Allow two complete experiments and their intervening wait before
     # declaring that no control answers. The run's own deadline still bounds it.
     experiment_time = 8 * len(run.keys) * TRY_A_KEY_S + RECHECK_CONTROLS_S if run.keys else 0.0
-    if at - run.began < NOTHING_ANSWERS_S + experiment_time or hers.kind is not None:
+    # A thing her eyes took for hers that nothing of hers has ever moved answers to nothing: LIVE 2026-10-11 the boy on
+    # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
+    answers = hers.kind is not None and (hers.follows_pointer or bool(hers.keys_that_move_her(run.keys)))
+    if at - run.began < NOTHING_ANSWERS_S + experiment_time or answers:
         return ""
     if meeting.verdicts:
         # What is counted keeps it going while it is not all going against her: LIVE 2026-10-09 a game's bar went down
@@ -1440,6 +1453,10 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
     for key in hers.makes:
         _say(run, say, f"{key.capitalize()} fires.", at, once=f"fires {key}")
     for kind in list(meeting.evidence):
+        # What things are to her is said one at a time: LIVE 2026-10-11 one loss had seven kinds said to be threats in
+        # a fifth of a second. The others are said in their turn, if what she makes of them still holds by then.
+        if at - run.stance_said_at < STANCE_EVERY_S:
+            break
         if not meeting.known(kind) or not any(t.kind == kind for t in moves.things.values()):
             continue
         stance = meeting.stance(kind)
@@ -1448,6 +1465,8 @@ def _what_she_says(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers, mee
             line = a_stance_said(run, moves, kind, stance, at, met=kept is not None and (kept.touched > 0 or kept.shot > 0))
             if line:
                 _say(run, say, line, at, once=f"{kind} {stance}")
+                if f"{kind} {stance}" in run.said:
+                    run.stance_said_at = at
     # How it stands, said when it changes: the score, what is left to win, what is left to lose.
     standing = run.contest.says()
     if standing and run.contest_first is None:
@@ -1892,7 +1911,12 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
     if hers.number is not None or hers.follows_pointer or not run.presses.curves:
         return
     kinds = run.presses.kinds_it_moves(TOLD_FROM_STANDING_PX * 2)
-    candidates = [thing for thing in moves.things.values() if thing.kind in kinds]
+    # What her presses bring out (a shot) goes the same way at every press, and is not her: offline 2026-10-11 each
+    # shot of a flying shooter was taken for her as it was fired, nine of them in sixteen seconds. She is a thing that
+    # was there before the press.
+    made = {makes.kind for makes in hers.makes.values()}
+    candidates = [thing for thing in moves.things.values() if thing.kind in kinds and thing.kind not in made
+                  and at - float(getattr(thing, "born", at)) >= THERE_BEFORE_S]
     if len(candidates) == 1:
         hers.moved_by_her_presses(candidates[0], at)
 

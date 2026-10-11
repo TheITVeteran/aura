@@ -34,3 +34,17 @@ def test_a_send_named_is_not_a_send_told():
     assert not sends_by_letting_go("Help the hamsters enjoy their time off with the new extreme sport of hamster launching!")
     assert not sends_by_letting_go("When the hamster lines up with the pillow, click again to launch the hamster.")
     assert sends_by_letting_go("Fill the power meter and release.")
+
+
+@pytest.mark.parametrize("said, sends", [
+    ("Hold space bar to charge, then release for super shot", False),
+    ("Hold the A key to charge your punch, then let go.", False),
+    ("Click and hold to aim, then release to shoot.", True),
+    ("Hold the mouse button to build up power, then let go to putt.", True),
+])
+def test_a_key_held_and_let_go_is_a_charge_and_not_a_send(said, sends):
+    """LIVE 2026-10-11 "Hold space bar to charge, then release for super shot" had her pulling and letting go of the mouse
+    at a flying shooter for the whole of a game: what a key held does is the key's."""
+    from core.agency.playing_by_shots import sends_by_letting_go
+
+    assert sends_by_letting_go(said) is sends

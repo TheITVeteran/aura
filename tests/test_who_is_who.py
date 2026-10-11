@@ -192,10 +192,55 @@ def test_what_comes_for_her_is_suspected_before_it_has_ever_hurt_her(seed):
     assert suspected_at is not None and (first_blow is None or suspected_at < first_blow), (suspected_at, first_blow)
 
 
-def test_what_she_has_found_out_is_said_once_each():
+def test_what_she_has_found_out_is_said_once_each_and_one_at_a_time():
+    """LIVE 2026-10-11 one loss had seven kinds said to be threats in a fifth of a second."""
     who, things, _first_blow, _suspected = _a_minute()
     present = [thing for thing in things.values() if thing is not None]
-    said = who.to_say(present, lambda thing: f"kind {thing.kind}")
+    said: list[str] = []
+    while True:
+        one = who.to_say(present, lambda thing: f"kind {thing.kind}")
+        if not one:
+            break
+        assert len(one) == 1
+        said += one
     assert any("friendly competition" in line for line in said), said
     assert any("a threat" in line for line in said), said
-    assert not who.to_say(present, lambda thing: f"kind {thing.kind}")
+    assert len(said) == len(set(said)) and not who.to_say(present, lambda thing: f"kind {thing.kind}")
+
+
+def test_once_is_a_sign_and_twice_is_shown():
+    """LIVE 2026-10-11 a scrolling game had twenty kinds each said for sure to be a threat, a prize or a rival, every one
+    from a single meeting that came by chance. Once, a kind is played as what it seemed and not said; twice, it is."""
+    from core.agency.who_is_who import PRIZE, THREAT, WhoIsWho
+
+    who = WhoIsWho()
+    coin, spike = _thing(1, 7, 50.0, 50.0), _thing(2, 8, 90.0, 50.0)
+    who.met(7, "gain")
+    who.met(8, "loss")
+    assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, False)
+    assert (who.of(spike).name, who.of(spike).sure) == (THREAT, False)
+    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == []
+    who.met(7, "gain")
+    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: getting it counted."]
+
+
+def test_what_a_kind_did_is_weighed_against_what_it_did_not():
+    """A kind met a dozen times for nothing and once as a count went up is not a prize: it is played and said as what
+    it mostly did."""
+    from core.agency.who_is_who import PRIZE, THREAT, WhoIsWho
+
+    who = WhoIsWho()
+    bush, bat = _thing(1, 3, 50.0, 50.0), _thing(2, 4, 90.0, 50.0)
+    who.met(3, "gain")
+    who.met(4, "loss")
+    for _ in range(12):
+        who.met(3, "nothing")
+        who.met(4, "nothing")
+    assert who.of(bush).name not in (PRIZE, THREAT) and who.of(bat).name not in (PRIZE, THREAT)
+    coin = _thing(3, 5, 10.0, 10.0)
+    for what in ("gain", "nothing", "gain"):
+        who.met(5, what)
+    assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, True)
+    spike = _thing(4, 6, 30.0, 10.0)
+    who.met(6, "loss")
+    assert who.of(spike).name == THREAT

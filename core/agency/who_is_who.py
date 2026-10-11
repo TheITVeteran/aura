@@ -92,7 +92,15 @@ WENT_WITHIN_S = 0.5
 
 #: How many prizes a kind must have taken first to be a rival for sure, and how many losses of it must have cost her
 #: for it to be on her side for sure.
-TAKEN_FOR_SURE = 2
+TAKEN_FOR_SURE = 3
+#: How many times a kind must have done a thing (cost her, counted, stopped her, done nothing) for that to be shown.
+SHOWN_AFTER = 2
+#: The most kinds whose part is said in one game: LIVE 2026-10-11 a flying shooter had over twenty said in two minutes.
+MOST_SAID = 5
+#: How many meetings that did nothing a cost, and a gain, stand against: past that many, it came with the meeting by
+#: chance. A cost stands against more, since a second is dear.
+NOTHINGS_TO_A_COST = 4
+NOTHINGS_TO_A_GAIN = 2
 LOST_WITH_FOR_SURE = 2
 
 #: The most a kind's going may be expected by chance in the moment before a blow for the blow to be put to its loss:
@@ -208,11 +216,19 @@ class WhoIsWho:
             if at - self.first_seen.get(number, at) < FLEETING_S and area < SMALL_SHARE * size * size:
                 self.fleeting.add(kind)
             if prizes and kind in prizes:
-                self._who_took(box, here, mine)
+                self._who_took(box, here, mine, _at_the_edge(box, shape))
 
-    def _who_took(self, box: tuple[float, float, float, float], here: dict[int, Any], mine: Any) -> None:
-        """A prize went: where she was not on it and another thing was, that thing's kind took it first."""
-        if mine is not None and _overlap(box, _box(mine), 2.0):
+    def prize_shown(self, kind: int) -> bool:
+        """Whether a kind has been shown to be a prize: counted twice, and at least as often as it did nothing."""
+        kept = self.kinds.get(kind)
+        return kept is not None and kept.gains >= SHOWN_AFTER and kept.gains >= kept.nothings
+
+    def _who_took(self, box: tuple[float, float, float, float], here: dict[int, Any], mine: Any,
+                  at_the_edge: bool = False) -> None:
+        """A prize went: where she was not on it and another thing was, that thing's kind took it first. A prize gone
+        off the edge of the picture was taken by nothing: it went by. LIVE 2026-10-11 a flying shooter going by had
+        five kinds said to be friendly competition."""
+        if at_the_edge or (mine is not None and _overlap(box, _box(mine), 2.0)):
             return
         for thing in here.values():
             if getattr(thing, "moved", False) and _overlap(box, _box(thing), 2.0):
@@ -306,24 +322,32 @@ class WhoIsWho:
         if thing.number in self.hers:
             return Designation(HERS, True, "it answers to me")
         kept = self.kinds.get(thing.kind) or _Kind()
-        if kept.blows or kept.losses:
-            return Designation(THREAT, True, "it has cost me")
+        # Once is a sign, twice is shown: a thing a cost or a gain came with once is taken for what it seemed and played
+        # as such, but is not said for sure until it does so again. LIVE 2026-10-11 a scrolling game had twenty kinds
+        # each said for sure to be a threat, a prize or a rival, every one from a single meeting that came by chance.
+        costs = kept.blows + kept.losses
+        # And what it did is weighed against what it did not: a kind met a dozen times for nothing and once as a count
+        # went up is not a prize, and once as she was hurt is most likely not what hurt her.
+        if costs and costs * NOTHINGS_TO_A_COST > kept.nothings:
+            return Designation(THREAT, costs >= SHOWN_AFTER,
+                               "it has cost me" if costs >= SHOWN_AFTER else "it seemed to cost me")
         if kept.got_past:
-            return Designation(THREAT, True, "it costs me when it gets past")
+            return Designation(THREAT, kept.got_past >= SHOWN_AFTER, "it costs me when it gets past")
         if kept.lost_with >= LOST_WITH_FOR_SURE:
             return Designation(FRIENDLY, True, "losing it cost me")
-        if kept.gains:
-            return Designation(PRIZE, True, "getting it counted")
+        if kept.gains and kept.gains * NOTHINGS_TO_A_GAIN >= kept.nothings:
+            shown = kept.gains >= SHOWN_AFTER and kept.gains >= kept.nothings
+            return Designation(PRIZE, shown, "getting it counted" if shown else "getting it seemed to count")
         if kept.took >= TAKEN_FOR_SURE:
             return Designation(RIVAL, True, "it takes what I'm after, and meeting it costs me nothing")
         if kept.stopped and not kept.losses:
-            return Designation(IN_HER_WAY, True, "it stops me")
+            return Designation(IN_HER_WAY, kept.stopped >= SHOWN_AFTER, "it stops me")
         keeps_with = self._keeps_with(thing.number)
         if kept.nothings:
             if keeps_with:
                 return Designation(FRIENDLY, False, "it keeps with me and does nothing to me")
             if kept.moved:
-                return Designation(NEUTRAL, True, "it goes its own way and meeting it does nothing")
+                return Designation(NEUTRAL, kept.nothings >= SHOWN_AFTER, "it goes its own way and meeting it does nothing")
             return Designation(PART_OF_THE_PLACE, True, "it never moves and meeting it does nothing")
         # One that keeps with her at its own distance is a companion, though its going points at her as a pursuer's does.
         if keeps_with:
@@ -355,18 +379,32 @@ class WhoIsWho:
         """The threats on the screen, sure and suspect."""
         return [(thing, d) for thing in things if (d := self.of(thing)).name == THREAT]
 
-    def to_say(self, things: Any, name_of: Any) -> list[str]:
-        """What she has found out of each kind and not yet said: once each, when its own acts have shown it."""
-        lines = []
+    def to_say(self, things: Any, name_of: Any, most: int = 1) -> list[str]:
+        """What she has found out of each kind and not yet said: once each, when its own acts have shown it, and no more
+        than ``most`` at a time, the rest left for later (LIVE 2026-10-11 one loss had seven kinds said to be threats
+        in a fifth of a second)."""
+        if len(self.said) >= MOST_SAID:
+            return []
+        found_out = []
         for thing in things:
             found = self.of(thing)
-            if not found.sure or found.name in (HERS, PENDING, UNKNOWN, PART_OF_THE_PLACE, NEGLIGIBLE):
+            if not found.sure or found.name in (HERS, PENDING, UNKNOWN, PART_OF_THE_PLACE, NEGLIGIBLE, NEUTRAL):
                 continue
-            if (thing.kind, found.name) in self.said:
+            if (thing.kind, found.name) in self.said or any(kind == thing.kind for kind, _found, _thing in found_out):
                 continue
-            self.said.add((thing.kind, found.name))
+            found_out.append((thing.kind, found, thing))
+        # What has shown itself most is said first; a person names the few things that matter, not every one.
+        found_out.sort(key=lambda one: -self._shown_by(one[0]))
+        lines = []
+        for kind, found, thing in found_out[:max(0, min(most, MOST_SAID - len(self.said)))]:
+            self.said.add((kind, found.name))
             lines.append(f"The {name_of(thing)} is {_spoken(found.name)}: {found.why}.")
         return lines
+
+    def _shown_by(self, kind: int) -> int:
+        """How many times a kind has done what it is taken for."""
+        kept = self.kinds.get(kind) or _Kind()
+        return kept.blows + kept.losses + kept.gains + kept.got_past + kept.took + kept.lost_with + kept.stopped
 
 
 def _spoken(name: str) -> str:

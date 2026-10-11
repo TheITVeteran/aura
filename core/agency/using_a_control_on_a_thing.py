@@ -41,6 +41,8 @@ BESIDE = 0.6
 #: How soon after a press what it did is judged, and how long between presses at one thing.
 JUDGED_AFTER_S = 0.7
 AGAIN_AFTER_S = 2.5
+#: Another thing is gone to instead of the one she is going to only where it is this much nearer than that one.
+NEARER_BY = 0.6
 #: Presses at one kind that did nothing before the key is no longer used on that kind.
 NOTHING_TWICE = 2
 #: Acts that are held while they last (a ladder is climbed for as long as the key is held), and how long.
@@ -159,6 +161,9 @@ class UsingOnThings:
     survey_again_at: float | None = None
     surveying: Any = None
     surveyed_at: float = 0.0
+    #: The thing she is going to (its name and where it was), kept to until another is much nearer: LIVE 2026-10-11
+    #: she turned to five things in two seconds, each as near as the last as she went.
+    heading: tuple[str, float, float] | None = None
 
     def new_screen(self, happened: list[dict[str, Any]], at: float) -> None:
         if any(h.get("what") == "new screen" for h in happened):
@@ -203,17 +208,31 @@ class UsingOnThings:
         mine = hers.thing(moves)
         if guide is None or mine is None:
             return None
-        best = None
+        found = []
         for spot in _spots(guide, moves, mine, self.landmarks):
             if spot.number is not None and moves.things[spot.number].moved:
                 continue
             control = _a_use_for(guide, self, spot, at, waiting=False)
             if control is None or control.key == "the pointer":
                 continue
-            far = abs(spot.x - mine.x) + abs(spot.y - mine.y)
-            if best is None or far < best[0]:
-                best = (far, spot, control)
-        return ((best[1].x, best[1].y), best[1], best[2]) if best is not None else None
+            found.append((abs(spot.x - mine.x) + abs(spot.y - mine.y), spot, control))
+        if not found:
+            self.heading = None
+            return None
+        best = min(found, key=lambda one: one[0])
+        kept = self._still_headed_for(found)
+        if kept is not None and best[0] >= NEARER_BY * kept[0]:
+            best = kept
+        self.heading = (best[1].name, best[1].x, best[1].y)
+        return (best[1].x, best[1].y), best[1], best[2]
+
+    def _still_headed_for(self, found: list[tuple[float, _Spot, Any]]) -> tuple[float, _Spot, Any] | None:
+        """Of the things she could go to, the one she was going to: of its name, the one nearest where it was."""
+        if self.heading is None:
+            return None
+        name, x, y = self.heading
+        same = [one for one in found if one[1].name == name]
+        return min(same, key=lambda one: abs(one[1].x - x) + abs(one[1].y - y)) if same else None
 
     def survey(self, guide: Any, moves: Any, picture: Any, at: float) -> None:
         """Her eyes asked, beside her play, what stands in this screen that a player could go to or use: once a screen,
