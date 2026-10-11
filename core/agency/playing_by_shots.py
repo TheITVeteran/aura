@@ -139,7 +139,9 @@ def _the_floor_says_it_sends(sentence: str) -> bool:
         return True
     if _HELD.search(sentence) and _HELD_TO_SEND.search(sentence):
         return True
-    return bool(_THROWN.search(sentence) and not clicked)
+    # A throw told ("throw the ball", "then throw it"), not a throw told of: LIVE 2026-10-11 what fans wrote of a
+    # bowling game, that its hero throws bowling balls at pins, had her pulling and letting go at its level select.
+    return bool(not clicked and any(_told_to(word, sentence) for word in ("throw", "toss")))
 
 
 def _told_to(word: str, sentence: str) -> bool:
