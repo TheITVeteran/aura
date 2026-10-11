@@ -88,6 +88,19 @@
       this.losses = (this.losses || 0) + 1;
       if (this.lives <= 0) this.over("no lives left");
     },
+    // A tone of a pitch for a while, as a game's sounds are started: an oscillator on the page's audio. Whether it is
+    // heard aloud is the browser's business; that it was started is what a listener hears.
+    tone(pitch, seconds, wave) {
+      try {
+        this.audio = this.audio || new (window.AudioContext || window.webkitAudioContext)();
+        const osc = this.audio.createOscillator();
+        osc.type = wave || "sine";
+        osc.frequency.value = pitch;
+        osc.connect(this.audio.destination);
+        osc.start();
+        osc.stop(this.audio.currentTime + (seconds || 0.1));
+      } catch (e) { /* a page with no audio plays nothing */ }
+    },
   };
   window.__world = world;
 

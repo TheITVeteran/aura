@@ -80,7 +80,7 @@ from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
 from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, ways_carried
-from core.agency.who_is_who import IN_HER_WAY, NEVER_SHOT
+from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -295,6 +295,12 @@ class _Run:
     plays_for: Any = None
     who: Any = None
     touches_told: dict[int, int] = field(default_factory=dict)
+    #: What each sound the page plays comes with (core/agency/what_a_sound_comes_with.py), and how many presses of hers
+    #: it has been told of.
+    sounds: Any = None
+    presses_told: int = 0
+    #: What comes for her allies (core/agency/keeping_allies.py).
+    allies: Any = None
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -489,6 +495,12 @@ class _Choosing:
     plays_for: Any = None
     who: Any = None
     seconds_left: float | None = None
+    #: Spots a warning heard lately marks, to keep clear of until its blow is due and gone: (x, y, how near counts, from,
+    #: until), the times in seconds from now (core/agency/what_a_sound_comes_with.py).
+    warned_spots: tuple = ()
+    #: What comes for her allies, and her allies on the screen (core/agency/keeping_allies.py).
+    allies: Any = None
+    allies_here: tuple = ()
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -659,8 +671,10 @@ class _Choosing:
             when = abs((thing.x, thing.y)[along] - (mine.x, mine.y)[along]) / max(1.0, flight)
             low, high = _range_of(self.moves, thing.kind, across, self.physics)
             there = _ahead(thing, when, low, high, across)
-            if best is None or when < best[0]:
-                best = (when, there, thing)
+            # What comes for one of her allies is aimed at before what does not (core/agency/keeping_allies.py).
+            first = 0 if self.allies is not None and self.allies.threatened([thing], self.allies_here) else 1
+            if best is None or (first, when) < (best[3], best[0]):
+                best = (when, there, thing, first)
         if best is None:
             return None
         goal: list[float | None] = [None, None]
@@ -724,6 +738,10 @@ class _Choosing:
         comes = self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h)))
         worth_s = self.plays_for.worth_taking_out_s(thing.kind, comes_for_her=comes, at=self.at,
                                                     seconds_left=self.seconds_left)
+        # Losing an ally it comes for costs her as a blow does.
+        if self.allies is not None and self.allies_here:
+            worth_s += self.allies.worth_taking_out_s(thing, self.allies_here,
+                                                      self.plays_for.worth_of_a_blow_s(self.at, self.seconds_left) or 0.0)
         # Both in gains a second: the threat's worth over the time to take it out, against one gain over the time to it.
         return worth_s * self.plays_for.rate(self.at) / max(lining_up, self.next_picture_s) > 1.0 / max(meet_rank, 1e-3)
 
@@ -810,7 +828,7 @@ class _Choosing:
         # What to keep clear of that went out of sight is still where its going was taking it (what_moves_in_the_picture).
         threats += [(t, self.at - when) for t, when in getattr(self.moves, "out_of_sight", {}).values()
                     if self.at is not None and self.meeting.stance(t.kind) == AVOID]
-        if not threats:
+        if not threats and not self.warned_spots:
             return 0.0
         tall, wide = self.moves.shape
         low_x, high_x = mine.w / 2, wide - mine.w / 2
@@ -821,6 +839,10 @@ class _Choosing:
             x = min(max(mine.x + dx, low_x), high_x) if high_x >= low_x else mine.x
             y = min(max(mine.y + dy, low_y), high_y) if high_y >= low_y else mine.y
             box = _moved_box(mine.box(), x - mine.x, y - mine.y, 2.0)
+            # A spot a warning marks costs as a thing would, while its blow is due.
+            for sx, sy, near, start, end in self.warned_spots:
+                if start <= after <= end and math.hypot(x - sx, y - sy) <= near:
+                    total += 1.0 / (after + 0.1)
             for thing, away in threats:
                 # What comes for her is where she will be, not where its line was taking it.
                 if self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h))):
@@ -1185,13 +1207,32 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
         if kept.shoot >= 0.5 and kind not in goes.pays_to_shoot:
             goes.shot_paid(kind)
     has_bar = run.bars is not None and any(bar.meaning == "down is bad" for bar in run.bars.bars())
-    blows = len(goes.blows)
+    blows, gains = len(goes.blows), len(goes.gains)
     goes.saw(at, meeting.readouts.current, out_of=meeting.readouts.out_of, vitals=run.vitals if has_bar else None)
     if len(goes.blows) > blows and mine is not None:
         kind = who.blow(at, mine, things)
         if kind is not None and who.kinds[kind].blows:
             goes.blow_from(kind)
-    goes.saw_threats(at, [(thing.number, thing.kind) for thing, _found in who.threats(things)])
+    # What she hears is learned against what happens (core/agency/what_a_sound_comes_with.py).
+    sounds = run.sounds
+    if len(goes.blows) > blows:
+        sounds.blow(at, mine)
+    if len(goes.gains) > gains:
+        sounds.gained(at)
+    presses = sum(run.input_key_downs.values()) + run.taps
+    if presses > run.presses_told:
+        sounds.pressed(at)
+        run.presses_told = presses
+    sounds.judge_clear(at, mine)
+    choosing.warned_spots = tuple(sounds.spots_to_keep_clear_of(at))
+    for line in sounds.to_say(at):
+        _say(run, say, line, at, once=line)
+    threats = [thing for thing, _found in who.threats(things)]
+    goes.saw_threats(at, [(thing.number, thing.kind) for thing in threats])
+    allies = tuple(thing for thing in things if (mine is None or thing.number != mine.number)
+                   and who.of(thing).name == FRIENDLY)
+    run.allies.saw(threats, allies)
+    choosing.allies, choosing.allies_here = run.allies, allies
     # What she has found is in her way stands in the way of every plan to go round it (core/agency/a_way_through.py):
     # each thing of a kind that stopped her is a wall over all it covers, before she has bumped into the rest of it.
     for thing in things:
@@ -1541,6 +1582,13 @@ async def _play_as_it_happens(
     run.plays_for.told(asked=str(keep.get("asked") or ""), words=told)
     run.who = keep.get("who") or WhoIsWho()
     run.touches_told = dict(keep.get("touches_told") or {})
+    from core.agency.what_a_sound_comes_with import WhatSoundsComeWith
+
+    run.sounds = keep.get("sounds_heard") or WhatSoundsComeWith()
+    from core.agency.keeping_allies import KeepingAllies
+
+    run.allies = keep.get("allies") or KeepingAllies()
+    run.presses_told = sum(run.input_key_downs.values()) + run.taps
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
     ended = ""
@@ -1562,6 +1610,8 @@ async def _play_as_it_happens(
             run.picture_at = at
             run.pictures += 1
             happened = moves.see(picture, at)
+            for sound in getattr(picture, "sounds", ()):
+                run.sounds.heard_sound(sound.at, sound.sig, hers.thing(moves))
             run.leading.saw(happened, at)
             for gone in (h.get("thing") for h in happened if h.get("what") == "gone"):
                 if gone is not None and gone == run.gone_for.number:
@@ -1653,7 +1703,8 @@ async def _play_as_it_happens(
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
                  "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
-                 "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told})
+                 "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
+                 "sounds_heard": run.sounds, "allies": run.allies})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,

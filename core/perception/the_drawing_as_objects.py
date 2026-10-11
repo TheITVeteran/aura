@@ -138,12 +138,15 @@ async def release(page: Any) -> None:
 
 
 class ObservedPicture(np.ndarray):
-    """An RGB picture with an optional description of the same rendered scene."""
+    """An RGB picture with an optional description of the same rendered scene, and the sounds the page started since
+    the picture before (core/perception/what_the_page_plays.py)."""
 
     drawing_scene: dict[str, Any] | None = None
+    sounds: tuple = ()
 
     def __array_finalize__(self, source: Any) -> None:
         self.drawing_scene = getattr(source, "drawing_scene", None)
+        self.sounds = getattr(source, "sounds", ())
 
 
 def described(picture: np.ndarray, scene: Any) -> np.ndarray:

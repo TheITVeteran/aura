@@ -562,8 +562,11 @@ class PhantomBrowser(_ActsOnThePage):
             try:
                 self.context = await self.browser.new_context(**self._page_size(), user_agent=user_agent)
                 from core.perception.the_drawing_as_objects import BOOTSTRAP
+                from core.perception.what_the_page_plays import BOOTSTRAP as LISTEN
 
                 await self.context.add_init_script(BOOTSTRAP)
+                # What a page plays is heard from its first sound (core/perception/what_the_page_plays.py).
+                await self.context.add_init_script(LISTEN)
                 keep_downloads(self.context)  # core/capabilities/where_downloads_go.py
                 await self._apply_stealth(self.context)
                 self.page = await self.context.new_page()

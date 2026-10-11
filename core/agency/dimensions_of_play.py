@@ -71,7 +71,8 @@ DIMENSIONS: dict[str, tuple[Value, ...]] = {
                                                                                  "core.agency.how_the_contest_stands:ContestStands"),
          ("a board",)),
         ("more than one of hers", "several of hers, one answering at a time", ("switch",), ("switching", "switch")),
-        ("allies to keep", "someone on her side to keep safe or bring back", (), ("rescue and allies",)),
+        ("allies to keep", "someone on her side to keep safe or bring back",
+         ("core.agency.keeping_allies:KeepingAllies", "core.agency.who_is_who:WhoIsWho"), ("rescue and allies",)),
     ),
     "seeing": _values(
         "seeing",
@@ -83,7 +84,9 @@ DIMENSIONS: dict[str, tuple[Value, ...]] = {
                                                                       "core.perception.what_the_pixels_show:recognize_text"),
          ("score", "lives", "a clock")),
         ("the program", "what its program says of its keys and its words, read before play", ("read the program",), ()),
-        ("sound", "what it plays when something happens", (), ("sound controls",)),
+        ("sound", "what it plays when something happens, and what each sound comes with",
+         ("core.perception.what_the_page_plays:sounds_in", "core.agency.what_a_sound_comes_with:WhatSoundsComeWith"),
+         ("sound controls",)),
     ),
     "space": _values(
         "space",

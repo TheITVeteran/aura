@@ -22,14 +22,14 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 18 |
 | Values across them | 107 |
 | Kinds of place they make, multiplied out | 26,754,416,640,000 |
-| Values with an answer | 101 |
+| Values with an answer | 103 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
 | Values a game needs | 0 to 53, 23.4 on average |
-| Games with an answer for every value they need | 21 |
+| Games with an answer for every value they need | 32 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 6 values with none answers every value the
+place of their own. Answering the 4 values with none answers every value the
 56 need, where the dimensions are independent.
 
 Eight values were answered on 11 October, each by a module shown working in a
@@ -42,6 +42,35 @@ for (`core/agency/a_thing_gone_for.py`), meeting by what she is now
 (`core/agency/a_way_through.py`) finds its way in its own world and is joined
 to her play, but in whole play on a world of rooms she has not yet got through
 a gap, so it stays on the list below.
+
+## Sound
+
+What a page plays is heard the way its drawing is read: a script loaded before
+the page's own wraps the calls that start a sound (an audio buffer, an
+oscillator, a media element) and notes each as it starts, with a signature by
+which the same sound is known again (`core/perception/what_the_page_plays.py`).
+The sounds come to her with each picture. What each means is learned from what
+happens around it, against what chance would give
+(`core/agency/what_a_sound_comes_with.py`): it comes with a point, with a blow,
+with a press of hers, or it is a warning, which the blows she takes follow at a
+steady while. A warning is read from the blows and not from its hearings, so a
+warning she heeds is still one. While a warning's blow is due, the spot she was
+on as it sounded is weighed as danger, as a thing coming at her is; where the
+blow found her wherever she went, the spot is let go. In a world heard and not
+seen, a siren a second before a strike on her spot, heeding it cut the strikes
+after the first minute from 54 to 11 over ten runs, and every sound's meaning
+was learned in all ten.
+
+## Allies to keep
+
+What is on her side is found by what losing it cost her (who is who, below);
+what comes for it is found as what comes for her is, by how its going lines up
+with the way to it, picture after picture (`core/agency/keeping_allies.py`). A
+threat coming for an ally is aimed at before one that is not, and is worth
+taking out by what losing the ally would cost her, by how soon it gets there.
+In a world where threats came for her and for an ally walking to and fro,
+played for herself she lost the ally about twenty times in two minutes; keeping
+it, not once, and she was hit no more.
 
 ## What she plays for, and who is who
 
@@ -119,10 +148,8 @@ seams are kept to one owner each, so that the answers compose:
 
 | Games | Dimension: value | What answers it |
 |---|---|---|
-| 18 | seeing: sound | what a page plays, heard as events, and what each came with (a point, a life lost) |
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
 | 9 | meeting: pushed to a place | a thing she runs into moves; got to its place by pushing it from its far side |
-| 9 | sides: allies to keep | someone on her side, kept clear of what would cost her through them |
 | 6 | logistics: spend a supply | a meter spent where it does most, and saved where it does least |
 | 5 | searching: where a piece goes | each place a falling piece could land, judged by what it would clear and leave |
 

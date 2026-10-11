@@ -178,7 +178,8 @@ _THE_CANVAS_NOW = """
     window.__auraCanvas = canvas;
   }
   try { return {pixels:canvas.toDataURL('image/jpeg', 0.8),
-    scene:window.__auraDrawingObservation?.snapshot(canvas) ?? null}; } catch (e) { return null; }
+    scene:window.__auraDrawingObservation?.snapshot(canvas) ?? null,
+    sounds:window.__auraSoundsHeard?.take() ?? null}; } catch (e) { return null; }
 })
 """
 
@@ -198,8 +199,11 @@ class CanvasFrames:
         try:
             if not self._observing:
                 from core.perception.the_drawing_as_objects import acquire
+                from core.perception.what_the_page_plays import BOOTSTRAP as LISTEN
 
                 self._observing = await acquire(self.page)
+                # What the page plays is heard from here on, where it was not listened to from its first script.
+                await self.page.evaluate(LISTEN)
             data = await self.page.evaluate(_THE_CANVAS_NOW, clip)
         except Exception as why:  # noqa: BLE001 - a page that cannot be asked has no canvas to read
             logger.debug("the canvas could not be read: %s", why)
@@ -221,8 +225,9 @@ class CanvasFrames:
                 return None
         if isinstance(data, dict):
             from core.perception.the_drawing_as_objects import described
+            from core.perception.what_the_page_plays import heard_with, sounds_in
 
-            picture = described(picture, data.get("scene"))
+            picture = heard_with(described(picture, data.get("scene")), sounds_in(data.get("sounds"), at))
         return picture, at
 
     async def close(self) -> None:

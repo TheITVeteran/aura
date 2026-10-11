@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Storm</title></head><body>
+<script src="world.js"></script>
+<script>
+// Coins on an open field, and a storm overhead. Now and then a siren sounds, and a little over a second later lightning
+// strikes where she stood when it sounded. Nothing on the screen warns of it; only the siren does.
+const game = {
+  title: "STORM", rules: ["Arrow keys to walk.", "Pick up the coins.", "Lightning costs a life."],
+  reset(world) {
+    this.me = { x: 232, y: 170, w: 16, h: 16 }; this.coins = []; this.strikes = []; this.flashes = [];
+    this.siren = 3 + world.rand() * 2; this.safe = 0;
+  },
+  step(dt, world) {
+    const me = this.me, v = 100 * dt;
+    if (world.held.has("ArrowLeft")) me.x -= v;
+    if (world.held.has("ArrowRight")) me.x += v;
+    if (world.held.has("ArrowUp")) me.y -= v;
+    if (world.held.has("ArrowDown")) me.y += v;
+    me.x = Math.max(0, Math.min(world.W - me.w, me.x)); me.y = Math.max(30, Math.min(world.H - me.h, me.y));
+    while (this.coins.length < 2) this.coins.push({ x: 20 + world.rand() * 430, y: 50 + world.rand() * 240, w: 12, h: 12 });
+    for (const c of this.coins) if (hits(c, me)) { c.gone = true; world.score += 5; world.tone(1320, 0.08); }
+    this.coins = this.coins.filter((c) => !c.gone);
+    this.siren -= dt; this.safe -= dt;
+    if (this.siren <= 0) {
+      world.tone(440, 0.4, "square");
+      this.strikes.push({ t: 1.2, x: me.x + me.w / 2, y: me.y + me.h / 2 });
+      this.siren = 3 + world.rand();
+    }
+    for (const s of this.strikes) {
+      s.t -= dt;
+      if (s.t <= 0) {
+        s.gone = true; this.flashes.push({ x: s.x, y: s.y, t: 0.15 });
+        const dx = me.x + me.w / 2 - s.x, dy = me.y + me.h / 2 - s.y;
+        if (this.safe <= 0 && Math.hypot(dx, dy) < 70) { world.lose(); world.tone(110, 0.3, "sawtooth"); this.safe = 0.5; }
+      }
+    }
+    this.strikes = this.strikes.filter((s) => !s.gone);
+    for (const f of this.flashes) f.t -= dt;
+    this.flashes = this.flashes.filter((f) => f.t > 0);
+  },
+  backdrop(ctx) { ctx.fillStyle = "#1d2b1d"; ctx.fillRect(0, 0, 480, 320); },
+  draw(ctx) {
+    ctx.fillStyle = "#ffd700"; for (const c of this.coins) { ctx.beginPath(); ctx.arc(c.x + 6, c.y + 6, 6, 0, 6.3); ctx.fill(); }
+    ctx.fillStyle = "#f4f4ff"; for (const f of this.flashes) ctx.fillRect(f.x - 70, f.y - 70, 140, 140);
+    ctx.fillStyle = "#4aa3ff"; ctx.fillRect(this.me.x, this.me.y, 16, 16);
+  },
+  readouts: scoreAndLives,
+};
+playWorld(game);
+</script></body></html>
