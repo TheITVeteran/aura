@@ -53,6 +53,10 @@ CHANGING = 0.02
 #: How much waiting before a plan starts doing what it does costs, a second of it: her model of the world is never
 #: exact, and of two plans that come out alike, the one that moves sooner leaves room for what it gets wrong.
 WAITING = 0.2
+#: Of a carried body's greatest push, the share of a second's worth of it under which it comes onto a thing gently,
+#: where how fast meeting a thing may be is not known yet.
+GENTLE_SHARE = 0.25
+
 #: The most things imagined: the nearest that matter.
 MOST_THINGS = 16
 #: How much faster and slower than she has measured the world is imagined going, plan by plan: her measure of it is
@@ -107,6 +111,11 @@ class _Scene:
     worth: np.ndarray = field(default_factory=lambda: np.zeros(0))
     there: np.ndarray = field(default_factory=lambda: np.zeros((0, 0, 0), dtype=bool))
     barred: Any = None
+    #: For a body carried on by its own going: how much each key ("" for none) adds to its going each second, its going
+    #: now, and the speed above which meeting each thing it means to come onto breaks on it (by thing).
+    pushes: dict[str, tuple[float, float]] | None = None
+    going: tuple[float, float] = (0.0, 0.0)
+    gentle: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
 
 def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) -> list[Plan]:
@@ -160,6 +169,13 @@ def _the_scene(choosing: Any, horizon: float) -> _Scene | None:
     scene = _Scene(times=times, start=start, size=(float(mine.w), float(mine.h)),
                    bounds=(mine.w / 2, mine.h / 2, wide - mine.w / 2, tall - mine.h / 2), ways=ways,
                    rest=tuple(getattr(choosing, "rest", (0.0, 0.0))), paths=paths, barred=getattr(choosing, "barred", None))
+    hers = getattr(choosing, "hers", None)
+    if hers is not None and getattr(hers, "carried", False):
+        # Carried on by its own going, a key adds to her going rather than setting it.
+        pushes = {key: hers.push_of(key) for key in ["", *ways]}
+        scene.pushes = {key: push for key, push in pushes.items() if push is not None}
+        scene.going = (float(mine.vx), float(mine.vy))
+        scene.start = (float(mine.x), float(mine.y))
     _the_world_run_forward(choosing, scene)
     return scene
 
@@ -190,6 +206,13 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     scene.where, scene.there = where, there
     scene.sizes = np.array([[float(t.w), float(t.h)] for t, _w in things]).reshape(count, 2)
     scene.worth = np.array([w for _t, w in things])
+    if scene.pushes is not None:
+        # What she comes onto, she comes onto gently: under the speed meeting it has been found to cost above, or a
+        # gentle share of her going where that is not known yet.
+        meeting = choosing.meeting
+        fastest = max([math.hypot(*push) for push in scene.pushes.values()] + [1.0])
+        gentle = [meeting.gentle_below(t.kind) if hasattr(meeting, "gentle_below") else None for t, _w in things]
+        scene.gentle = np.array([g if g is not None else GENTLE_SHARE * fastest for g in gentle])
 
 
 def _its_path(physics: Any, thing: Any, seconds: float) -> Callable[[float], tuple[float, float] | None]:
@@ -220,13 +243,21 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     """Her thing run under ``plan``, held against the world as it goes, and what that comes to."""
     times = scene.times
     xs, ys = np.empty(len(times)), np.empty(len(times))
+    speeds = np.zeros(len(times))
     x, y = scene.start
     low_x, low_y, high_x, high_y = scene.bounds
     previous = 0.0
+    going = scene.going
     for index, when in enumerate(times):
         key = next(key for start, key in reversed(plan.held) if start <= when - STEP_S / 2 or start == 0.0)
-        vx, vy = scene.ways.get(key, scene.rest) if key else scene.rest
         step = float(when) - previous
+        if scene.pushes is not None:
+            push = scene.pushes.get(key, scene.pushes.get("", (0.0, 0.0)))
+            going = (going[0] + push[0] * step, going[1] + push[1] * step)
+            vx, vy = going
+        else:
+            vx, vy = scene.ways.get(key, scene.rest) if key else scene.rest
+        speeds[index] = math.hypot(vx, vy)
         previous = float(when)
         nx, ny = x + vx * step, y + vy * step
         if not _barred(scene.barred, nx, ny):
@@ -247,7 +278,7 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     if scene.worth.size:
         # The plan held against the world at each pace, and what it comes to taken over all of them.
         for layer in range(len(PACES)):
-            met, got, lost = _what_it_meets(scene, layer, xs, ys, caution)
+            met, got, lost = _what_it_meets(scene, layer, xs, ys, caution, speeds)
             worth += met / len(PACES)
             gets, costs = (got, lost) if PACES[layer] == 1.0 else (gets, costs)
     gx, gy = goal
@@ -262,8 +293,10 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     return Imagined(plan, worth, gets, costs, (float(xs[-1]), float(ys[-1])))
 
 
-def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, caution: float) -> tuple[float, int, int]:
-    """What her path meets in the world run at one pace: its worth, how many worth getting it gets, how many cost her."""
+def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, caution: float,
+                   speeds: np.ndarray | None = None) -> tuple[float, int, int]:
+    """What her path meets in the world run at one pace: its worth, how many worth getting it gets, how many cost her.
+    A carried body coming onto a thing faster than it can be met breaks on it: that meeting costs."""
     where, there = scene.where[layer], scene.there[layer]
     apart_x = np.abs(where[:, :, 0] - xs[:, None])
     apart_y = np.abs(where[:, :, 1] - ys[:, None])
@@ -275,10 +308,15 @@ def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, ca
     meets = (apart_x <= reach_x + berth) & (apart_y <= reach_y + berth) & there
     worth, gets, costs, lost_at = 0.0, 0, 0, len(xs)
     firsts = [int(hits[0]) if hits.size else -1 for hits in (np.flatnonzero(meets[:, c]) for c in range(scene.worth.size))]
+    if scene.pushes is not None and speeds is not None and scene.gentle.size:
+        for column, first in enumerate(firsts):
+            if first >= 0 and not costly[column] and speeds[first] > scene.gentle[column]:
+                costly = costly.copy()
+                costly[column] = True
     for column, first in enumerate(firsts):
         if first >= 0 and costly[column]:
             costs += 1
-            worth += scene.worth[column] * caution * (SOONER ** first)
+            worth += -LOSS * caution * (SOONER ** first)
             lost_at = min(lost_at, first)
     for column, first in enumerate(firsts):
         # What is got after she has been hit is not got.

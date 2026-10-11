@@ -901,9 +901,9 @@ class _Choosing:
             if turned is not None:
                 return turned, why, aim
         # Where things that matter are on the move, she imagines the next moment under each plan she could follow and
-        # does the first part of the best (core/agency/imagining_ahead.py); a body carried on by its own going is
-        # steered by where each key takes it a moment ahead, as below.
-        if IMAGINES and not self.ahead_s and not self.pointing:
+        # does the first part of the best (core/agency/imagining_ahead.py), a body carried on by its own going by what
+        # each key adds to it; where no plan meets anything different, she goes for where she means to be, as below.
+        if IMAGINES and not self.pointing:
             from core.agency.imagining_ahead import best_plan
 
             self.held_now = held
