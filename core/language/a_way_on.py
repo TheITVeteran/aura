@@ -18,8 +18,8 @@ import re
 from core.language.learned_matcher import LearnedMatcher
 from core.language.model_features import model_hidden_features
 
-__all__ = ["asks_to_choose", "confirms", "how_much_it_leads_on", "offers_a_way_on", "says_it_is_being_made_ready",
-           "says_it_is_paused"]
+__all__ = ["asks_to_choose", "confirms", "how_much_it_leads_on", "nearly_says", "offers_a_way_on",
+           "says_it_is_being_made_ready", "says_it_is_paused"]
 
 #: Labels that go on, whole: a label that merely contains "play" ("Display")
 #: is not one. "Try again" is one: LIVE 2026-10-10 a lander's end screen said OUCH! and TRY AGAIN over twinkling stars,
@@ -72,6 +72,40 @@ def _plain(label: str) -> str:
     return " ".join(re.sub(r"[^\w' !]+", " ", str(label or "")).split()).strip()
 
 
+#: Ways on of two words, for labels the screen reading got a letter or two wrong, or put a stray mark before or after.
+_TWO_WORDS = ("try again", "play again", "play game", "play now", "start game", "new game", "start over")
+
+
+def _letters_apart(one: str, other: str, at_most: int) -> bool:
+    """Whether two short strings are within ``at_most`` letters of each other, a letter wrong, missing or added."""
+    if abs(len(one) - len(other)) > at_most:
+        return False
+    row = list(range(len(other) + 1))
+    for i, a in enumerate(one, 1):
+        last, row[0] = row[0], i
+        for j, b in enumerate(other, 1):
+            last, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, last + (a != b))
+    return row[-1] <= at_most
+
+
+def nearly_says(label: str, phrases: tuple[str, ...] = _TWO_WORDS) -> str:
+    """The phrase a short label nearly says, where the screen reading has it a letter or two out or with a stray mark
+    or two at either end ("TRY ABAIN", "UUTRY-AGAIN", "try againfu m"); "" where it says none. LIVE 2026-10-11 a crash
+    screen's TRY AGAIN was read three such ways, none was known for a way back, and she pressed keys at the screen for a
+    minute and a half each time."""
+    said = " ".join(re.sub(r"[^a-z ]+", " ", str(label or "").lower()).split())
+    if not 4 <= len(said) <= 20:
+        return ""
+    squeezed = said.replace(" ", "")
+    for phrase in phrases:
+        whole = phrase.replace(" ", "")
+        # As it stands; or with up to three stray letters before it or after it.
+        tries = [squeezed] + [squeezed[cut:] for cut in (1, 2, 3)] + [squeezed[:-cut] for cut in (1, 2, 3)]
+        if any(len(tried) >= len(whole) - 1 and _letters_apart(tried, whole, 1) for tried in tries):
+            return phrase
+    return ""
+
+
 def offers_a_way_on(said: str) -> bool:
     """Whether writing on a screen includes a way on by its words alone ("START", "How to play", "Next"): a phrase of
     up to three of its words that the floor is sure goes on. No learned guess is asked: this is read every look."""
@@ -106,6 +140,8 @@ def how_much_it_leads_on(label: str) -> float:
         _A_WAY_ON.observe(plain, holds=True)
         return 1.6
     if " " not in plain and any(_one_letter_off(plain.lower(), word) for word in _ONE_WORD):
+        return 1.4
+    if nearly_says(plain):
         return 1.4
     # A short number alone is one to pick, as a level or a page is (core/skills/screen_pursuit_bearings.py
     # `_a_readout`): LIVE 2026-10-08 the one open level of a game was "1", rated a thing to read, and never pressed.
