@@ -250,6 +250,8 @@ def test_what_a_key_did_to_a_piece_is_known_and_gives_every_way_it_can_lie() -> 
     assert what_a_turn_did(ell, turned) == ("shape", 1)
     assert len(orientations(ell, ("shape", 1))) == 4
     assert what_a_turn_did(trio, trio) is None
+    # An order learned on three parts is not put on a piece read with two: LIVE-like 2026-10-11 it was, and play stopped.
+    assert orientations(((0, 0, 4), (0, 1, 5)), ("order", (1, 2, 0))) == [((0, 0, 4), (0, 1, 5))]
 
 
 def test_kinds_that_go_together_are_learned_from_what_went_and_what_stayed() -> None:

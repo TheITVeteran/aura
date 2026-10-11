@@ -161,6 +161,9 @@ class PlayingAsItHappens:
     #: Play that knows when its game has stopped (a well nothing more comes down) said it has: with a way to start again
     #: on screen, the run is over, though that way was on screen before.
     play_stopped: bool = False
+    #: A well was tried this run and no key of hers moved its piece; and how long she has waited at a well for a piece.
+    no_well_here: bool = False
+    waited_at_a_well: float = 0.0
     #: When she last played anything, and the screens not seen before counted when the last stretch was judged.
     played_at: float = 0.0
     _screens_judged: int = 0
@@ -835,17 +838,34 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
 _KEYS_FOR_A_PIECE = ("left", "right", "up", "down", "space")
 
 
+#: How long, in one run, a well she has played before is waited at for a piece to come down it before the screen is
+#: left to her other ways.
+WAITS_AT_A_WELL_S = 45.0
+
+
 async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
     """Where what the page draws is a well with a piece coming down it, each piece is put where it lands best, her keys
     and what clears found by trying and watching (core/agency/playing_a_well.py); whether it was. Looked for every few
-    seconds, and not again in a place where nothing she pressed moved the piece."""
-    from core.agency.playing_a_well import a_well_with_a_piece_coming_down, play_a_well
+    seconds, and not again this run where nothing she pressed moved the piece. A well she has played before, seen with
+    nothing yet coming down it, is waited at: LIVE-like 2026-10-11 a second game of falling tiles opened on a moment
+    with no piece in it, was steered about in for fifty seconds as a place to move through, and was lost by then."""
+    from core.agency.playing_a_well import (
+        NOTHING_MOVES_IT,
+        a_well_with_a_piece_coming_down,
+        play_a_well,
+    )
 
-    if reflexes.keep.get("no_well_here") or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
+    if reflexes.no_well_here or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
     reflexes.keep["well_looked_for_at"] = now
-    well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"))
+    empty: list[Any] = []
+    well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"), empty)
     if well is None:
+        waited = time.monotonic() - now
+        if empty and reflexes.keep.get("well_keys") and reflexes.waited_at_a_well + waited < WAITS_AT_A_WELL_S:
+            reflexes.waited_at_a_well += waited
+            reflexes.keep["well_looked_for_at"] = -1e9
+            return True
         return False
     reflexes.keep["well_seen"] = well
     logger.info("a well %d across and %d down with a piece coming down it: playing it by where each piece lands best",
@@ -855,12 +875,24 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
     del heard[:-WORDS_KEPT]
     words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
     keys = list(dict.fromkeys([*_KEYS_FOR_A_PIECE, *(k for k in reflexes.keep.get("named_keys") or [] if k != MOUSE_BUTTON)]))
-    stretch = await play_a_well(reflexes.look, reflexes, well, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
-                                say=_said_while_playing, offered=keys, known=reflexes.keep)
-    logger.info("a well played: %s", stretch)
-    if stretch.get("ended") == "nothing she presses moves the piece across":
-        reflexes.keep["no_well_here"] = True
+    try:
+        stretch = await play_a_well(reflexes.look, reflexes, well, words,
+                                    seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
+                                    say=_said_while_playing, offered=keys, known=reflexes.keep)
+    except (IndexError, KeyError, ValueError, TypeError, AttributeError, ArithmeticError) as why:
+        # A fault in playing the well is hers to hear of and not the game's to lose by: the screen goes to her other
+        # ways for the rest of the run. Offline 2026-10-11 one such fault ended a whole run two minutes in.
+        from core.runtime.errors import record_degradation
+
+        logger.exception("playing the well failed")
+        record_degradation("playing_a_well", why, action="left the well to her other ways for this run")
+        reflexes.no_well_here = True
         return False
+    logger.info("a well played: %s", stretch)
+    if stretch.get("ended") == NOTHING_MOVES_IT:
+        reflexes.no_well_here = True
+        return False
+    reflexes.waited_at_a_well = 0.0
     reflexes.stretches.append({"pictures": stretch.get("pieces", 0), "turns": stretch.get("pieces", 0),
                                "gains": int(stretch.get("cleared") or 0), "losses": 0,
                                "seconds": time.monotonic() - now, "ended": stretch.get("ended"),

@@ -38,24 +38,28 @@ from core.agency.where_a_piece_goes import (
 
 logger = logging.getLogger("Aura.PlayingAWell")
 
-__all__ = ["GoesWith", "HerKeys", "WhatClears", "a_well_with_a_piece_coming_down", "orientations", "play_a_well",
+__all__ = ["NOTHING_MOVES_IT", "GoesWith", "HerKeys", "WhatClears", "a_well_with_a_piece_coming_down", "orientations", "play_a_well",
            "what_a_turn_did"]
 
 Cell = tuple[int, int]
 Parts = tuple[tuple[int, int, int], ...]
 
+#: How a stretch ends where no key of hers takes the piece across.
+NOTHING_MOVES_IT = "nothing she presses moves the piece across"
 #: The name of the learned rule, beside the named ones.
 GOES_WITH = "what goes with what"
 #: How long a key is held for a press, and how long after it the piece is looked at.
 HELD_S, SHOWS_S = 0.06, 0.16
 #: How long a key that seemed to do nothing is held to see whether it brings the piece down.
-HELD_TO_DROP_S = 0.45
+HELD_TO_DROP_S = 0.35
 #: How many rows more than it would have fallen by itself a piece must come down for a key to be the one that drops it.
 ROWS_MORE = 2.0
 #: How often a key is tried before it is taken to do nothing to a piece.
 TRIES_OF_A_KEY = 2
 #: How long after a piece lands what it left is believed: what clears takes a moment to go.
 SETTLES_S = 1.2
+#: How many looks at most are taken to get two running that agree.
+STEADY_LOOKS = 5
 #: How long what rests must be seen unchanged, after changing, before it is taken in as it then is.
 COMES_TO_REST_S = 0.3
 #: How long a thing read as a piece may hang unmoved before it is taken for part of what rests.
@@ -96,6 +100,9 @@ def _reordered(parts: Parts, order: Sequence[int]) -> Parts:
     ``order`` gives for it."""
     places = sorted((dc, dr) for dc, dr, _kind in parts)
     kinds = [kind for _dc, _dr, kind in sorted(parts)]
+    if len(order) != len(kinds):
+        # An order learned on a piece of so many parts says nothing of one with more or fewer: it lies as it lies.
+        return _normal(parts)
     return _normal([(dc, dr, kinds[order[i]]) for i, (dc, dr) in enumerate(places)])
 
 
@@ -330,6 +337,8 @@ class _Game:
     last: Any = None
     stood: dict[Cell, int] = field(default_factory=dict)
     unmoved_since: float = 0.0
+    #: For each cell holding something not counted as resting: what it holds, and since when it has held it.
+    held_since: dict[Cell, tuple[int, float]] = field(default_factory=dict)
     #: Since when what rests has been seen to differ from what she holds, and the cells as last read.
     changing_since: float | None = None
     cells_before: dict[Cell, int] | None = None
@@ -371,6 +380,24 @@ class _Game:
             return cells, None, True
         return cells, the_piece_in(got[0], self.well, self.stack), False
 
+    async def steady(self) -> tuple[dict[Cell, int], Any, bool] | None:
+        """A look to act on: looks, a moment apart, until two running agree on where the piece is and how it lies. A
+        piece caught part-way across or part-way through changing is read as it is not: LIVE-like 2026-10-11 one read
+        mid-slide with a part missing was taken for a new piece, and the key that slid it for the key that drops."""
+        before: tuple[Any, ...] | None = None
+        seen = None
+        for _ in range(STEADY_LOOKS):
+            seen = await self.seen()
+            if seen is None or seen[2]:
+                return seen
+            piece = seen[1]
+            mark = (None,) if piece is None else (piece.column, round(piece.row), _normal(piece.parts))
+            if mark == before:
+                return seen
+            before = mark
+            await _wait(LOOKS_APART_S)
+        return seen
+
     async def let_go(self) -> None:
         if self.holding:
             await self.hands.up(self.holding)
@@ -410,7 +437,8 @@ def _stands(game: _Game, piece: Any) -> dict[Cell, int]:
 
 
 def _a_new_piece(piece: Any, last: Any) -> bool:
-    return last is not None and piece is not None and piece.row < last.row - 0.5
+    """Whether a piece is the next one and not the one last seen: at the top, where the last was well below it."""
+    return last is not None and piece is not None and piece.row < 1.0 and last.row > piece.row + 1.5
 
 
 def _falls_in(game: _Game, seconds: float) -> float:
@@ -432,19 +460,27 @@ def _room_under(game: _Game, piece: Any) -> float:
 
 
 async def _find_out(game: _Game, key: str, before: Any) -> None:
-    """Press a key on the piece and know it by what it did: took the piece across, changed it, or brought it down."""
+    """Press a key on the piece and know it by what it did: took the piece across, changed it, or brought it down.
+    What it did is judged from a steady look, and where the look cannot say (what rests is changing, the piece is out
+    of sight, less of it is read than there was) nothing is concluded and the key is tried again."""
     keys = game.keys
+    if keys.left and keys.right and keys.nothing.get(key) and not keys.drop and before.whole:
+        # Pressed before to no effect: all that is left to find is whether, held, it brings the piece down.
+        await _held_to_see(game, key, before)
+        return
     room = _room_under(game, before)
     await game.press(key)
-    seen = await game.seen()
-    after = seen[1] if seen is not None else None
+    seen = await game.steady()
+    after = seen[1] if seen is not None and not seen[2] else None
     logger.info("pressed %s on a piece at column %d, row %.1f, %s: then %s", key, before.column, before.row,
                 [kind for _dc, _dr, kind in sorted(before.parts)],
                 (after.column, round(after.row, 1), [kind for _dc, _dr, kind in sorted(after.parts)]) if after is not None else None)
-    if after is None or _a_new_piece(after, before) or _stands(game, after):
-        # The piece is down already. With room under it, the key dropped it the whole way; with none, it was landing
-        # anyway and the press showed nothing either way.
-        if room >= ROWS_MORE + 1.0 and (after is None or _a_new_piece(after, before) or after.row - before.row >= room):
+    if after is None or (before.whole and len(after.parts) < len(before.parts) and not _a_new_piece(after, before)):
+        return
+    if _a_new_piece(after, before) or (_stands(game, after) and after.row - before.row >= room - 0.5):
+        # Down the whole way, with room there was to fall: the key that drops a piece. With no room it was landing
+        # anyway, and the press showed nothing either way.
+        if room >= ROWS_MORE + 1.0:
             keys.drop = keys.drop or key
         return
     if after.column != before.column:
@@ -458,19 +494,27 @@ async def _find_out(game: _Game, key: str, before: Any) -> None:
         keys.turn, keys.turn_does = key, did
         return
     keys.nothing[key] = keys.nothing.get(key, 0) + 1
-    if keys.drop or not before.whole or keys.held.get(key):
-        return
-    # Held, it may bring the piece down faster than the piece comes by itself: tried only with room enough under the
-    # piece that coming down by itself could not be taken for it, and on a later piece where there is not.
-    if _room_under(game, after) < _falls_in(game, HELD_TO_DROP_S + SHOWS_S) + ROWS_MORE + 1.0:
+    if not keys.drop and before.whole:
+        await _held_to_see(game, key, after)
+
+
+async def _held_to_see(game: _Game, key: str, piece: Any) -> None:
+    """Hold a key that did nothing when pressed, to see whether it brings the piece down faster than the piece comes
+    by itself: tried only with room enough under the piece that coming down by itself could not be taken for it, and
+    left for a later piece where there is not."""
+    keys = game.keys
+    if keys.held.get(key) or _room_under(game, piece) < _falls_in(game, HELD_TO_DROP_S + SHOWS_S) + ROWS_MORE + 0.5:
         return
     began = _now()
     await game.hands.down(key)
     await _wait(HELD_TO_DROP_S)
     await game.hands.up(key)
-    seen = await game.seen()
-    lower = seen[1] if seen is not None else None
-    fell = (lower.row - after.row) if lower is not None and not _a_new_piece(lower, after) else float(game.well.rows)
+    seen = await game.steady()
+    lower = seen[1] if seen is not None and not seen[2] else None
+    logger.info("held %s on a piece at row %.1f: then %s", key, piece.row, round(lower.row, 1) if lower is not None else None)
+    # Out of sight, or what rests already changing: with the room there was under it, it could only have got down that
+    # fast by the key.
+    fell = float(game.well.rows) if lower is None or _a_new_piece(lower, piece) else lower.row - piece.row
     if fell >= _falls_in(game, _now() - began) + ROWS_MORE:
         keys.drop = key
     else:
@@ -647,10 +691,35 @@ def _its_fall_noted(game: _Game, piece: Any, pressed: bool) -> None:
         game.row_changed_at = game.unmoved_since = now
 
 
+def _what_stayed_put_is_taken_in(game: _Game, cells: dict[Cell, int]) -> bool:
+    """Cells that hold something she does not count among what rests, and have held the same thing for longer than
+    any part of a falling piece stays in one cell, rest: a piece whose landing she missed. They join what rests, so
+    one landing missed is not carried through the rest of the game as part of every piece after it. Whether any did."""
+    now, stack = _now(), game.stack or {}
+    game.held_since = {cell: (kind, game.held_since[cell][1] if game.held_since.get(cell, (None, 0.0))[0] == kind else now)
+                       for cell, kind in cells.items() if cell not in stack}
+    usual = sorted(game.fall_periods)[len(game.fall_periods) // 2] if game.fall_periods else 0.0
+    long_enough = max(STUCK_S, (game.tallest + 1.5) * usual)
+    stayed = {cell: kind for cell, (kind, since) in game.held_since.items() if now - since >= long_enough}
+    if not stayed:
+        return False
+    logger.info("%d cell(s) not counted as resting have not moved for %.1fs: taken in as resting", len(stayed), long_enough)
+    _held_to_what_it_left(game, stack)
+    game.stack = {**stack, **stayed}
+    game.last, game.plan, game.stood, game.held_since = None, None, {}, {}
+    return True
+
+
 async def _while_it_changes(game: _Game, cells: dict[Cell, int]) -> None:
     """What rests is changing (something is clearing, or falling into the gap it left): nothing is pressed, and once
     two looks a moment apart agree it is taken in again."""
     await game.let_go()
+    if game.changing_since is None and game.last is not None and game.last.whole:
+        # What rests changed while a piece was in the air: the piece is down, and what it landed on has begun to
+        # clear before she saw it standing. It landed where a piece lying as it lay, over that column, comes to rest.
+        placed = dropped(game.the_well(game.stack or {}), _normal(game.last.parts), game.last.column)
+        if placed is not None:
+            _it_landed(game, {cell: kind for cell, kind in placed.cells.items() if cell not in (game.stack or {})})
     game.changing_since = game.changing_since or _now()
     if cells == game.cells_before and _now() - game.changing_since >= COMES_TO_REST_S:
         _taken_in_again(game, cells)
@@ -671,7 +740,7 @@ async def _one_piece_on(game: _Game, piece: Any) -> bool:
         # In place, where trying a key costs the piece nothing: her other keys are tried until what changes a piece
         # and what brings it down are both found, each held only while there is room under the piece to tell by.
         key = game.keys.to_try(game.offered)
-        roomy = _room_under(game, piece) >= _falls_in(game, HELD_TO_DROP_S + SHOWS_S) + ROWS_MORE + 1.0
+        roomy = _room_under(game, piece) >= _falls_in(game, HELD_TO_DROP_S + SHOWS_S) + ROWS_MORE + 0.5
         if key and (roomy or not game.keys.nothing.get(key)):
             await _tried(game, key, piece)
         elif game.keys.drop and not game.holding:
@@ -717,6 +786,8 @@ async def play_a_well(look: Any, hands: Any, well: Any, words: str = "", *, seco
             if changing:
                 await _while_it_changes(game, cells)
                 continue
+            if _what_stayed_put_is_taken_in(game, cells):
+                continue
             if piece is None:
                 nothing_since = nothing_since or _now()
                 if _now() - nothing_since > OVER_AFTER_S:
@@ -751,10 +822,13 @@ async def play_a_well(look: Any, hands: Any, well: Any, words: str = "", *, seco
                 continue
             pressed = True
             if not await _one_piece_on(game, piece):
-                ended = "nothing she presses moves the piece across"
+                ended = NOTHING_MOVES_IT
                 break
     finally:
         await game.let_go()
+    if ended == NOTHING_MOVES_IT:
+        # What she held of her keys did not let her place a piece: it is let go, and found again from nothing next time.
+        game.keys = HerKeys()
     _kept(game, known)
     return {"ended": ended, "pieces": game.pieces, "cleared": game.cleared, "rule": game.clears.name(),
             "keys": game.keys.said(), "seconds": round(_now() - began, 1)}
@@ -799,9 +873,10 @@ def _kept(game: _Game, known: dict[str, Any] | None) -> None:
     known["well_enters"] = sorted(game.enters)
 
 
-async def a_well_with_a_piece_coming_down(look: Any, known: Any = None) -> Any:
+async def a_well_with_a_piece_coming_down(look: Any, known: Any = None, seen: list[Any] | None = None) -> Any:
     """The well in front of her, where there is one with something coming down in it by itself: the two things that
-    make a game one of falling pieces. Watched for a few seconds, with nothing pressed."""
+    make a game one of falling pieces. Watched for a few seconds, with nothing pressed. A well seen with nothing yet
+    coming down it is put in ``seen``, for whoever would rather wait for a piece than take it for something else."""
     from core.perception.a_well_seen import (
         a_ground_like_a_wells,
         a_well_in,
@@ -824,6 +899,8 @@ async def a_well_with_a_piece_coming_down(look: Any, known: Any = None) -> Any:
                 return None
             await _wait(LOOKS_APART_S)
             continue
+        if seen is not None and not seen:
+            seen.append(well)
         piece = the_piece_in(got[0], well, what_rests(what_stands_in(got[0], well), well))
         if piece is not None:
             # The same thing lower down than it was, as much of it in sight, over the same column; or more of it in
