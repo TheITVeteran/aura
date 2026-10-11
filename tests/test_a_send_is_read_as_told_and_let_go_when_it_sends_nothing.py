@@ -26,3 +26,11 @@ def test_a_way_that_never_did_what_it_is_for_is_let_go_until_the_place_says_some
     held.never_did_it(SEND, "a photo game's words")
     assert held.choose([SEND], "a photo game's words") == ""
     assert held.choose([SEND], "Now pull back the slingshot and release to fire.") == SEND
+
+
+def test_a_send_named_is_not_a_send_told():
+    # Offline 2026-10-10 "the new extreme sport of hamster launching" had her pull and let go twenty-nine times at a game
+    # played by clicks.
+    assert not sends_by_letting_go("Help the hamsters enjoy their time off with the new extreme sport of hamster launching!")
+    assert not sends_by_letting_go("When the hamster lines up with the pillow, click again to launch the hamster.")
+    assert sends_by_letting_go("Fill the power meter and release.")

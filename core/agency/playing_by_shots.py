@@ -119,20 +119,23 @@ def _the_floor_says_it_sends(sentence: str) -> bool:
     # In the forms a player is told to do it: "release", "releasing", "pull back"; not a word that tells of
     # something done ("released in 2002", "the rocket launches", "pulled by gravity"): offline 2026-10-10 what was
     # looked up of a photo game said it was released, and she pulled and let go at it forty times.
-    if any(re.search(_as_told(word), sentence) for word in _SENDING_WORDS
-           if not (clicked and word in ("launch", "fling"))):
+    if any(_told_to(word, sentence) for word in _SENDING_WORDS if not (clicked and word in ("launch", "fling"))):
         return True
     if _HELD.search(sentence) and _HELD_TO_SEND.search(sentence):
         return True
     return bool(_THROWN.search(sentence) and not clicked)
 
 
-def _as_told(word: str) -> str:
-    """``word`` as a player is told to do it: itself, or doing it ("pull", "pulling", "release", "releasing")."""
-    if " " in word:
-        return rf"\b{re.escape(word)}\b"
+def _told_to(word: str, sentence: str) -> bool:
+    """Whether ``sentence`` tells a player to do ``word``: the word where an instruction puts it, at the head of the
+    sentence or of a clause, or after "then", "and", "or", "to" ("Pull back and release to launch", "then let go"), or
+    "doing" it at the head of a sentence ("Pulling back further gives more power"). A thing named by it is not told:
+    "the new extreme sport of hamster launching" (offline 2026-10-10, twenty-nine pulls at a game played by clicks)."""
+    if " " in word and not word.startswith("let "):
+        return bool(re.search(rf"\b{re.escape(word)}\b", sentence))
     doing = f"{word[:-1]}ing" if word.endswith("e") else f"{word}ing"
-    return rf"\b(?:{re.escape(word)}|{re.escape(doing)})\b"
+    head = r"(?:^|[,;:]\s*|\b(?:then|and|or|to|just|simply|now|you)\s+)"
+    return bool(re.search(rf"{head}{re.escape(word)}\b", sentence) or re.search(rf"^{re.escape(doing)}\b", sentence))
 
 
 async def _let_go(hands: Any, start: tuple[float, float], setting: Setting, way: str) -> None:
