@@ -1,0 +1,2479 @@
+[
+ {
+  "number": 0,
+  "game": "Scooby-Doo: Scooby Snapshot",
+  "address": "https://archive.org/details/scooby-snapshot_flash",
+  "file": "game.swf",
+  "bytes": 378846,
+  "said": [],
+  "keys": {},
+  "pointer": [
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "dragging",
+   "levels",
+   "using things"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 1,
+  "game": "Batman: The Riddler's Secret Identity Inventor",
+  "error": "HTTPError: HTTP Error 500: Internal Server Error"
+ },
+ {
+  "number": 2,
+  "game": "Cartoon Network: Food Bash",
+  "address": "https://archive.org/details/food_bash",
+  "file": "food_bash.swf",
+  "bytes": 326605,
+  "said": [
+   "HOW TO PLAY",
+   "T ake aim with your mouse and click to throw.",
+   "Dodge food by pressing the space bar The first to splat the other five times wins!",
+   "BETTER LUCK NEXT TIME!",
+   "next level you WIN, hOT SHOT eds girls jack great job you've won all four levels!"
+  ],
+  "keys": {
+   "space": ""
+  },
+  "pointer": [
+   "drags"
+  ],
+  "wins": [
+   "you win"
+  ],
+  "loses": [
+   "better luck"
+  ],
+  "situations": [
+   "keeping clear of what comes",
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "a clock",
+   "aiming",
+   "hazards",
+   "levels",
+   "menus",
+   "pages of results",
+   "parking",
+   "shooting",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "health"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "click things",
+   "counters",
+   "read the signs",
+   "send",
+   "shoot",
+   "steer",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 3,
+  "game": "Dexter's Laboratory: Runaway Robot",
+  "address": "https://archive.org/details/runaway-robot-dexter",
+  "file": "Runaway Robot.swf",
+  "bytes": 519168,
+  "said": [
+   "start continue skip instructions instructions Help Dexter find his missing robot !",
+   "Use your MOUSE to move from room to room.",
+   "Click the DEXTER ICON to access your inventory.",
+   "items to collect Night-Vision Glasses To see in the dark X-Ray Glasses To see through objects Heat Sensor Glasses To see items that generate heat Geiger Glasses To see radioactive items Battery Pack To recharge the robot night-vision glasses you found the x-ray glasses heat-sensor glasses geiger glasses You found a BATTERY PACK!"
+  ],
+  "keys": {
+   "space": ""
+  },
+  "pointer": [
+   "clicks",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "clicking things",
+   "collecting",
+   "enemies",
+   "fuel",
+   "making",
+   "menus",
+   "pointer steering",
+   "rescue and allies",
+   "steering",
+   "using things"
+  ],
+  "in_its_code": [
+   "errors"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "make",
+   "read the signs",
+   "shoot",
+   "steer",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "an errand of things found and used",
+   "something made, nothing won"
+  ]
+ },
+ {
+  "number": 4,
+  "game": "Ed, Edd n Eddy: Spin Stadium",
+  "address": "https://archive.org/details/eene_spinstadium",
+  "file": "eene_spinstadium.swf",
+  "bytes": 249571,
+  "said": [
+   "Click to Start Earn points by knocking other tops out of the stadium.",
+   "Move your mouse to aim, then click to release your top."
+  ],
+  "keys": {},
+  "pointer": [
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "aiming",
+   "menus",
+   "score"
+  ],
+  "in_its_code": [
+   "health"
+  ],
+  "ways": [
+   "counters",
+   "send",
+   "shoot"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent"
+  ]
+ },
+ {
+  "number": 5,
+  "game": "Scooby-Doo: Ask Swami Shaggy",
+  "address": "https://archive.org/details/ask-swami-shaggy_flash",
+  "file": "game.swf",
+  "bytes": 113676,
+  "said": [
+   "Try to type only \"Yes\" or \"No\" questions.",
+   "Don't forget to click \"Ask.\" 3."
+  ],
+  "keys": {},
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "questions",
+   "waiting"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 6,
+  "game": "Cartoon Network: Cartoon Cove Mini Golf",
+  "address": "https://archive.org/details/cartoon_cove_mini_golf",
+  "file": "cartoon_cove_mini_golf.swf",
+  "bytes": 1940451,
+  "said": [
+   "Please Select Number Of Players Enter your name."
+  ],
+  "keys": {
+   "s": "",
+   "space": ""
+  },
+  "pointer": [
+   "steers",
+   "aims",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "choosing from options",
+   "focus and selection",
+   "typing"
+  ],
+  "in_its_code": [
+   "aiming",
+   "bouncing",
+   "making",
+   "pointer steering",
+   "score",
+   "sending by strength",
+   "sound controls"
+  ],
+  "ways": [
+   "click things",
+   "type"
+  ],
+  "kinds": [
+   "clicking things as they come",
+   "words typed as asked"
+  ]
+ },
+ {
+  "number": 7,
+  "game": "Cartoon Network: Operation S.T.A.T.",
+  "address": "https://archive.org/details/operation-stat",
+  "file": "operation-stat.swf",
+  "bytes": 727843,
+  "said": [
+   "Click on items as you find them.",
+   "Then drag them here and assemble them before time runs out!"
+  ],
+  "keys": {},
+  "pointer": [
+   "steers",
+   "drags",
+   "hides it"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "getting them all against a clock"
+  ],
+  "mechanics": [
+   "a clock",
+   "dragging",
+   "fuel",
+   "using things"
+  ],
+  "in_its_code": [],
+  "ways": [
+   "bars",
+   "carry",
+   "counters",
+   "use things"
+  ],
+  "kinds": [
+   "a build planned from parts",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 8,
+  "game": "Courage the Cowardly Dog: Nightmare Vacation",
+  "address": "https://archive.org/details/courage_the_cowardly_dog_nightmare_vacation",
+  "file": "game.swf",
+  "bytes": 804039,
+  "said": [],
+  "keys": {
+   "left": "",
+   "right": "",
+   "up": "",
+   "h": "",
+   "s": "",
+   "space": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a clock",
+   "a world bigger than the screen",
+   "enemies",
+   "hazards",
+   "health",
+   "levels",
+   "menus",
+   "shooting",
+   "sound controls",
+   "steering"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 9,
+  "game": "Cow and Chicken: Ballet Parking",
+  "address": "https://archive.org/details/ballet-parking",
+  "file": "Ballet Parking.swf",
+  "bytes": 932113,
+  "said": [
+   "It's time for swimming!",
+   "I have found my keys!",
+   "The final level!!!",
+   "Forward Reverse Turn left Turn right Quit Music on/off Bump into the cars and make them spin like ballistic ballerinas until they reach the parking spot that matches their color.",
+   "Make sure you use the right strategy: both the time and the number of hits are limited!",
+   "After you complete a level, a 5 letter code will be displayed.",
+   "Enter it above and you will be able to play the level again whenever you want.",
+   "New level code:"
+  ],
+  "keys": {
+   "return": "",
+   "1": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "a clock",
+   "information shown",
+   "matching",
+   "menus",
+   "parking",
+   "reaching a place",
+   "sound controls"
+  ],
+  "in_its_code": [
+   "aiming",
+   "bouncing",
+   "enemies",
+   "levels"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "counters",
+   "remember what was shown",
+   "steer"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "pairs remembered"
+  ]
+ },
+ {
+  "number": 10,
+  "game": "Dexter's Laboratory: Clone-A Doodle Doo",
+  "address": "https://archive.org/details/dexter_cloneadoodledoo",
+  "file": "dexter_cloneadoodledoo.swf",
+  "bytes": 559649,
+  "said": [
+   "Don't Let the Day Get Away",
+   "How to Use the FenceBlaster",
+   "Click anywhere in the yard to place a fence post.",
+   "Drag the mouse in the direction you would like your fence to go.",
+   "Release the mouse button to launch your fence!",
+   "This energy will be dangerous to the chickens until it solidifies.",
+   "Don't let them touch it, or you will lose points!",
+   "Catch more than one chicken at a time for bonus points!",
+   "The game is over when Dexter fails to capture the required number of chickens before time is up.",
+   "This shows you how much time Dexter has remaining.",
+   "This shows you how many chickens Dexter needs to catch.",
+   "Catch Chickens to Win!",
+   "sounds launchFence zapChicken postUp bgLoop zapRooster arrowPoint chickenLand levelLose levelClear bonusSound find first: total: update: test: Current",
+   "Time Total Previous"
+  ],
+  "keys": {},
+  "pointer": [
+   "clicks",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "catching what falls"
+  ],
+  "mechanics": [
+   "a clock",
+   "collecting",
+   "dragging",
+   "forms",
+   "hazards",
+   "health",
+   "information shown",
+   "launching programs",
+   "pages of results",
+   "power-ups",
+   "score",
+   "shooting",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "a command line",
+   "aiming",
+   "levels"
+  ],
+  "ways": [
+   "bars",
+   "carry",
+   "click things",
+   "counters",
+   "read the signs",
+   "shoot",
+   "steer",
+   "type",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a build planned from parts",
+   "words typed as asked"
+  ]
+ },
+ {
+  "number": 11,
+  "game": "Ed, Edd n Eddy's Candy Machine Deluxe",
+  "error": "HTTPError: HTTP Error 500: Internal Server Error"
+ },
+ {
+  "number": 12,
+  "game": "Samurai Jack: Code of the Samurai",
+  "address": "https://archive.org/details/samurai-jack",
+  "file": "Samurai_Jack.swf",
+  "bytes": 1540137,
+  "said": [],
+  "keys": {
+   "return": "",
+   "space": "",
+   "left": "",
+   "up": "",
+   "right": "",
+   "down": "",
+   "1": "",
+   "2": "",
+   "3": "",
+   "4": "",
+   "5": "",
+   "6": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a clock",
+   "enemies",
+   "hazards",
+   "health",
+   "jumping",
+   "levels",
+   "lives",
+   "locked ways",
+   "pausing",
+   "power-ups",
+   "pull",
+   "story"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 13,
+  "game": "Scooby-Doo and the Creepy Castle",
+  "address": "https://archive.org/details/scooby-doo-and-the-creepy-castle_flash",
+  "file": "scooby-doo-and-the-creepy-castle.swf",
+  "bytes": 881047,
+  "said": [
+   "As Scooby walks, click on objects to place them in your inventory.",
+   "Click on the doors to open or close them.",
+   "Use the objects you find to keep away the ghosts.",
+   "skip instructions But Fred and Velma are still in there."
+  ],
+  "keys": {},
+  "pointer": [
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "clicking things",
+   "dialogs",
+   "menus",
+   "using things"
+  ],
+  "in_its_code": [
+   "a clock",
+   "chains",
+   "dragging",
+   "levels",
+   "locked ways",
+   "power-ups",
+   "shooting",
+   "winning and losing"
+  ],
+  "ways": [
+   "click things",
+   "use things"
+  ],
+  "kinds": [
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 14,
+  "game": "Scooby-Doo: Scooby Trap",
+  "address": "https://archive.org/details/scooby-doo-scooby-trap_flash",
+  "file": "game.swf",
+  "bytes": 835166,
+  "said": [],
+  "keys": {
+   "left": "crouch",
+   "right": "crouch",
+   "r": "",
+   "e": "",
+   "a": "",
+   "l": "",
+   "t": "",
+   "h": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a clock",
+   "collecting",
+   "enemies",
+   "hazards",
+   "health",
+   "jumping",
+   "lives",
+   "power-ups",
+   "pull",
+   "score",
+   "sound controls",
+   "steering"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 16,
+  "game": "Toonami: Tunnel Rush",
+  "address": "https://archive.org/details/1100_tunnel_rush",
+  "file": "tunnel_rush.swf",
+  "bytes": 939698,
+  "said": [
+   "Titlecard Choose the difficulty level Easy Hard",
+   "Avoid or shoot the obstacles or they may cause you to lose time.",
+   "Shoot These Pick Up These Wall 1000 pts Mine 500 pts Electricity Beam 750 pts Energy Sphere 1000 pts Bomb 500 pts Qualification Lines 2500 pts Zip Arrows 1000 pts Shield 1000 pts Holograph 750 pts",
+   "Your final score :"
+  ],
+  "keys": {
+   "right": "",
+   "left": "",
+   "shift": "",
+   "space": "",
+   "up": "boost",
+   "down": "boost",
+   "1": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "keeping clear of what comes",
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "a clock",
+   "choosing from options",
+   "collecting",
+   "forms",
+   "hazards",
+   "health",
+   "information shown",
+   "power-ups",
+   "score",
+   "shooting",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "holding to sustain",
+   "steering"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "counters",
+   "read the signs",
+   "shoot",
+   "steer",
+   "type",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "an errand of things found and used",
+   "words typed as asked"
+  ]
+ },
+ {
+  "number": 17,
+  "game": "KND: Numbuh Generator",
+  "address": "https://archive.org/details/knd-numbuh-generator",
+  "file": "knd-numbuh-generator.swf",
+  "bytes": 1051643,
+  "said": [
+   "Then click on the GENERATE button to see your character in action!"
+  ],
+  "keys": {},
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "clicking things",
+   "making"
+  ],
+  "in_its_code": [
+   "enemies"
+  ],
+  "ways": [
+   "click things",
+   "make"
+  ],
+  "kinds": [
+   "clicking things as they come",
+   "something made, nothing won"
+  ]
+ },
+ {
+  "number": 18,
+  "game": "KND: Operation Tommy",
+  "address": "https://archive.org/details/operation-tommy",
+  "file": "Operation Tommy.swf",
+  "bytes": 542926,
+  "said": [],
+  "keys": {
+   "up": "",
+   "left": "",
+   "right": ""
+  },
+  "pointer": [
+   "clicks"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a clock",
+   "menus",
+   "pull",
+   "steering",
+   "thrust"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 19,
+  "game": "Foster's: A Friend in Need",
+  "address": "https://archive.org/details/a-friend-in-need",
+  "file": "a-friend-in-need.swf",
+  "bytes": 604833,
+  "said": [
+   "How To Play Oh, no!",
+   "Keep Bloo safely in the arms of his friends until Mac arrives.",
+   "Use the mouse to aim and toss Bloo with one of three throwing options: DANGEROUS!",
+   "Try Again Game Over Your score: Play Again CONGRATULATIONS!"
+  ],
+  "keys": {
+   "down": "",
+   "e": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [
+   "congratulations"
+  ],
+  "loses": [
+   "game over",
+   "try again"
+  ],
+  "situations": [
+   "keeping something away from whoever is after it",
+   "holding on until the end"
+  ],
+  "mechanics": [
+   "aiming",
+   "choosing from options",
+   "hazards",
+   "menus",
+   "rescue and allies",
+   "score",
+   "shooting",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "a clock",
+   "pull"
+  ],
+  "ways": [
+   "click things",
+   "counters",
+   "read the signs",
+   "send",
+   "shoot",
+   "steer",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 20,
+  "game": "Foster's: Coco's Egg Scramble",
+  "address": "https://archive.org/details/cocos-egg-scramble",
+  "file": "cocos-egg-scramble.swf",
+  "bytes": 365992,
+  "said": [
+   "How To Play Coco is dropping eggs left and right!",
+   "Use the mouse to move Mac, then click to throw the ball and crack open the eggs before they fall.",
+   "Press the Space Bar to jump.",
+   "Catch the prizes inside, but watch out for the eggs carrying a different surprise!",
+   "Play Again Game Over Your score:"
+  ],
+  "keys": {
+   "up": "",
+   "down": "",
+   "space": ""
+  },
+  "pointer": [
+   "aims",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [
+   "catching what falls",
+   "keeping clear of what comes"
+  ],
+  "mechanics": [
+   "bouncing",
+   "collecting",
+   "hazards",
+   "jumping",
+   "menus",
+   "parking",
+   "pointer steering",
+   "pull",
+   "score",
+   "shooting",
+   "steering",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "health",
+   "power-ups"
+  ],
+  "ways": [
+   "carried",
+   "click things",
+   "counters",
+   "jump",
+   "read the signs",
+   "shoot",
+   "steer",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 21,
+  "game": "Foster's: Door to Door",
+  "address": "https://archive.org/details/door-to-door-game",
+  "file": "door-to-door.swf",
+  "bytes": 401059,
+  "said": [
+   "How To Play",
+   "Click on the doors.",
+   "Play Again Out of Time You have failed.",
+   "Next Level Congratulations!",
+   "Your time: Level 1 finished."
+  ],
+  "keys": {
+   "right": "",
+   "t": "",
+   "u": ""
+  },
+  "pointer": [],
+  "wins": [
+   "congratulations"
+  ],
+  "loses": [
+   "out of time"
+  ],
+  "situations": [],
+  "mechanics": [
+   "a clock",
+   "clicking things",
+   "information shown",
+   "levels",
+   "menus",
+   "pages of results",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "a world going by"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "counters"
+  ],
+  "kinds": [
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 22,
+  "game": "Foster's: Mid-Flight Snack",
+  "address": "https://archive.org/details/mid-flight-snack",
+  "file": "mid-flight-snack.swf",
+  "bytes": 571229,
+  "said": [
+   "How To Play Eduardo, Mac and Bloo are raiding the kitchen for a late-night snack.",
+   "Click the mouse button to jump and start the catapult.",
+   "Use the mouse to move and grab as much food as you can on each jump.",
+   "Play Again Game Over Your score: Your rating:"
+  ],
+  "keys": {
+   "up": "",
+   "e": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [],
+  "mechanics": [
+   "clicking things",
+   "collecting",
+   "jumping",
+   "menus",
+   "pointer steering",
+   "score",
+   "steering",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "health",
+   "power-ups",
+   "pull"
+  ],
+  "ways": [
+   "click things",
+   "counters",
+   "jump",
+   "steer",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 23,
+  "game": "Foster's: Simply Smashing",
+  "address": "https://archive.org/details/simply-smashing",
+  "file": "simply-smashing.swf",
+  "bytes": 386658,
+  "said": [
+   "Use the mouse to move Frankie back and forth to catch the items before they crash.",
+   "Click the mouse button to call for Eduardo to take the rescued pieces to safety.",
+   "Try to stack as many objects as you can for bonus points.",
+   "How To Play",
+   "Play Again Game Over Your score: Mr."
+  ],
+  "keys": {
+   "left": "",
+   "l": "",
+   "space": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [
+   "catching what falls",
+   "building up"
+  ],
+  "mechanics": [
+   "clicking things",
+   "collecting",
+   "hazards",
+   "menus",
+   "pointer steering",
+   "power-ups",
+   "score",
+   "stacking",
+   "steering",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "health",
+   "pull"
+  ],
+  "ways": [
+   "click things",
+   "counters",
+   "read the signs",
+   "stack",
+   "steer",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a build planned from parts",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 24,
+  "game": "Foster's: Wilt's Wash N' Swoosh",
+  "address": "https://archive.org/details/wilts-wash-swoosh",
+  "file": "wilts-wash-swoosh.swf",
+  "bytes": 359958,
+  "said": [
+   "How To Play",
+   "Use the mouse to control Wilt, click and hold the mouse button to aim, then release to shoot.",
+   "Get the for a time bonus .",
+   "Play Again Game Over Your score:"
+  ],
+  "keys": {
+   "left": "",
+   "o": "",
+   "space": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [],
+  "mechanics": [
+   "a clock",
+   "aiming",
+   "collecting",
+   "menus",
+   "pointer steering",
+   "power-ups",
+   "score",
+   "sending by strength",
+   "shooting",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "bouncing"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "counters",
+   "send",
+   "shoot",
+   "steer",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 25,
+  "game": "Camp Lazlo: Paintcan Panic",
+  "address": "https://archive.org/details/pjinns_camp_lazlo2_flash",
+  "file": "pjinns_camp_lazlo2.swf",
+  "bytes": 1976494,
+  "said": [],
+  "keys": {
+   "p": "pause",
+   "w": "",
+   "l": "",
+   "m": "mute",
+   "z": "",
+   "left": "",
+   "up": "",
+   "right": "",
+   "down": ""
+  },
+  "pointer": [
+   "clicks",
+   "holds",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a world going by",
+   "aiming",
+   "covering ground",
+   "enemies",
+   "jumping",
+   "pausing",
+   "power-ups",
+   "score",
+   "serving",
+   "sound controls",
+   "steering"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 26,
+  "game": "KND: Tummy Trouble",
+  "address": "https://archive.org/details/knd-tummy-trouble",
+  "file": "knd-tummy-trouble.swf",
+  "bytes": 660182,
+  "said": [
+   "start HINT: shoot containers to find the hidden Gaslax!",
+   "CLICK TO CONTINUE",
+   "Map Collision Transitions final score:"
+  ],
+  "keys": {},
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "maps and canvases",
+   "menus",
+   "score",
+   "shooting"
+  ],
+  "in_its_code": [
+   "enemies",
+   "health",
+   "levels",
+   "locked ways",
+   "story",
+   "striking",
+   "using things",
+   "waiting"
+  ],
+  "ways": [
+   "carry",
+   "counters",
+   "shoot"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a build planned from parts"
+  ]
+ },
+ {
+  "number": 27,
+  "game": "The Batman: The Cobblepot Caper",
+  "address": "https://archive.org/details/the-batman-cobblebot-caper",
+  "file": "The Batman - The Cobblebot Caper.swf",
+  "bytes": 2078586,
+  "said": [
+   "PRESS THE SPACE BAR TO JUMP",
+   "PRESS & HOLD THE SPACE BAR TO GLIDE ACROSS PIT",
+   "PRESS THE ARROW KEYS TO WALK LEFT OR RIGHT FIND THE UNDERGROUND LAB AND SAVE THE DOCTOR PRESS THE 'S' KEY TO PUNCH 'D' TO KICK, 'A' FOR BATARANG ESCAPE FROM THE LAB WITHIN 90 SECONDS....",
+   "USE THE ELEVATOR TO GET AS HIGH AS YOU CAN DEFEAT ALL THE PENGUIN'S GOONS TO PROCEED USE TO GLIDE TO DESCEND TO THE STREET LEVEL",
+   "TIME UNTIL DETONATION",
+   "THE PENGUIN PREVAILS...THIS TIME"
+  ],
+  "keys": {
+   "up": "",
+   "down": "",
+   "left": "",
+   "right": "",
+   "d": "",
+   "s": "",
+   "a": "",
+   "space": "",
+   "l": "",
+   "i": "",
+   "f": "",
+   "e": ""
+  },
+  "pointer": [
+   "clicks"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "shooting what comes",
+   "getting to the way out",
+   "building up",
+   "a fight at close quarters"
+  ],
+  "mechanics": [
+   "a clock",
+   "holding to sustain",
+   "jumping",
+   "parking",
+   "reaching a place",
+   "rescue and allies",
+   "saving and opening",
+   "steering",
+   "striking",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "a world going by",
+   "collecting",
+   "enemies",
+   "hazards",
+   "health",
+   "levels",
+   "lives",
+   "power-ups",
+   "pull",
+   "score",
+   "shooting",
+   "sound controls"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "counters",
+   "jump",
+   "steer",
+   "strike",
+   "time a press",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a press timed to a moving thing",
+   "a build planned from parts",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 28,
+  "game": "Tom's Trap-O-Matic",
+  "address": "https://archive.org/details/toms_trap-o-matic",
+  "file": "tj_trapomatic.swf",
+  "bytes": 1499215,
+  "said": [
+   "CLICK TO OPEN",
+   "CHOOSE A TYPE OF DEVICE",
+   "the trap-o-matic starts with this mouse trap \u2026 AND toM NEEDS YOUR HELP TO buILD a Trap to the cage that WiLL catch Jerry!",
+   "click here to open THE device Library choose the type of device you wish to use click and drag a device from the Library place the device on any active square place THE devicE at the end of ANOTHER DEVICE'S arrow to make A connectION use the controls to rotate or deLete the DeVIce",
+   "Additional DEVICES \u2026 UNTIL YOU are ready to test the trap!"
+  ],
+  "keys": {},
+  "pointer": [
+   "steers",
+   "clicks",
+   "holds",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "catching what falls"
+  ],
+  "mechanics": [
+   "a board",
+   "chains",
+   "choosing from options",
+   "collecting",
+   "dragging",
+   "hazards",
+   "links and pages",
+   "rescue and allies",
+   "stacking",
+   "things that cannot be undone",
+   "using things"
+  ],
+  "in_its_code": [
+   "pointer steering",
+   "shooting"
+  ],
+  "ways": [
+   "a board in turns",
+   "a chain",
+   "a grid's rule",
+   "a plan to an end",
+   "carry",
+   "click things",
+   "reach what a step needs",
+   "read the signs",
+   "stack",
+   "steer",
+   "turn what was placed",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a board searched in turns",
+   "a rule found and searched",
+   "a build planned from parts",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 31,
+  "game": "Foster's: Big Shot Checkers",
+  "address": "https://archive.org/details/big-shot-checkers",
+  "file": "big-shot-checkers.swf",
+  "bytes": 988563,
+  "said": [
+   "You can move your character To other Checkers that are next to it."
+  ],
+  "keys": {},
+  "pointer": [
+   "holds",
+   "hides it"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "a board",
+   "menus",
+   "pages of results"
+  ],
+  "in_its_code": [
+   "a clock",
+   "a world going by",
+   "following a sequence",
+   "jumping",
+   "score",
+   "sound controls",
+   "winning and losing"
+  ],
+  "ways": [
+   "a board in turns",
+   "a grid's rule",
+   "click things"
+  ],
+  "kinds": [
+   "clicking things as they come",
+   "a board searched in turns",
+   "a rule found and searched"
+  ]
+ },
+ {
+  "number": 32,
+  "game": "Ben 10: Blockade Blitz",
+  "address": "https://archive.org/details/ben-10-blockade-blitz-swf",
+  "file": "Ben 10 - Blockade Blitz.swf",
+  "bytes": 1030254,
+  "said": [
+   "press Some aliens fire projectiles.",
+   "Click to shoot.",
+   "Press Z to clear the screen.",
+   "Collect a hero bonus to turn alien.",
+   "Use the ball to destroy the blocks.",
+   "Catch the falling bonuses.",
+   "Move Ben with the mouse.",
+   "Now he must collect the pieces of the Omnitrix and escape from Vilgax\u2019s lair!"
+  ],
+  "keys": {
+   "space": "",
+   "right": "",
+   "left": "",
+   "control": "",
+   "shift": "",
+   "return": "",
+   "tab": ""
+  },
+  "pointer": [
+   "steers",
+   "clicks",
+   "holds",
+   "drags",
+   "hides it"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "catching what falls",
+   "shooting what comes",
+   "getting to the way out"
+  ],
+  "mechanics": [
+   "bouncing",
+   "collecting",
+   "power-ups",
+   "pull",
+   "reaching a place",
+   "shooting",
+   "using things"
+  ],
+  "in_its_code": [
+   "a clock",
+   "aiming",
+   "dragging",
+   "enemies",
+   "health",
+   "hints on hovering",
+   "levels",
+   "lives",
+   "menus",
+   "pausing",
+   "score",
+   "sending by strength",
+   "story",
+   "striking",
+   "winning and losing"
+  ],
+  "ways": [
+   "carried",
+   "click things",
+   "jump",
+   "shoot",
+   "steer",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 33,
+  "game": "Ben 10: Krakken Attack",
+  "address": "https://archive.org/details/ben_10_kraken_attack",
+  "file": "ben_10_kraken_attack.swf",
+  "bytes": 397609,
+  "said": [
+   "HOW TO PLAY",
+   "How to play Fire at the Kraken to wear down its energy, sending it back into the depths of the lake, before time runs out.",
+   "Aim for the Kraken\u2019s chest for maximum damage.",
+   "Watch out for its fire - especially the deadly blue Plasma Bursts!",
+   "Shoot them before they land in your path.",
+   "Use your 'Up' arrow key to change direction, and press the 'Space' bar to fire.",
+   "RESTART LAST LEVEL"
+  ],
+  "keys": {
+   "space": "",
+   "up": ""
+  },
+  "pointer": [
+   "clicks"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "keeping clear of what comes",
+   "getting them all against a clock",
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "a clock",
+   "aiming",
+   "fuel",
+   "hazards",
+   "health",
+   "information shown",
+   "menus",
+   "parking",
+   "pull",
+   "shooting",
+   "steering"
+  ],
+  "in_its_code": [
+   "enemies",
+   "power-ups",
+   "score",
+   "sound controls",
+   "winning and losing"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "counters",
+   "jump",
+   "read the signs",
+   "send",
+   "shoot",
+   "steer",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent"
+  ]
+ },
+ {
+  "number": 34,
+  "game": "Cartoon Network: Ready, Im, Fire!",
+  "address": "https://archive.org/details/cnreadyimfire",
+  "file": "readyimfire.swf",
+  "bytes": 660173,
+  "said": [
+   "\u2022www.cartoonnetwork.com/readyimfire/snowball?Params-5B51209555 Use the arrow keys to dodge!",
+   "Use the arrow keys to throw!",
+   "copy this link and IM or email it to a friend to see if they can dodge your snowballs!",
+   "Choose a character to dodge snowballs!",
+   "Choose a character to throw snowballs!"
+  ],
+  "keys": {
+   "up": "",
+   "down": "",
+   "left": "",
+   "right": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "keeping clear of what comes"
+  ],
+  "mechanics": [
+   "choosing from options",
+   "following a sequence",
+   "forms",
+   "hazards",
+   "links and pages",
+   "rescue and allies",
+   "shooting",
+   "steering"
+  ],
+  "in_its_code": [
+   "using things"
+  ],
+  "ways": [
+   "click things",
+   "copy a sequence",
+   "read the signs",
+   "shoot",
+   "steer",
+   "type",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a sequence remembered and done again",
+   "words typed as asked"
+  ]
+ },
+ {
+  "number": 35,
+  "game": "Operation Z.E.R.O. Out-Mandy'd",
+  "address": "https://archive.org/details/operation-zero-out-mandyd",
+  "file": "operation-zero-out-mandyd.swf",
+  "bytes": 2781834,
+  "said": [
+   "Mandy's on a mission to take control of the Kids Next Door."
+  ],
+  "keys": {
+   "p": "pause",
+   "2": "",
+   "1": "",
+   "3": "",
+   "left": "",
+   "right": "",
+   "x": "",
+   "z": "",
+   "up": "",
+   "down": ""
+  },
+  "pointer": [
+   "clicks",
+   "holds",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "menus",
+   "pages of results"
+  ],
+  "in_its_code": [
+   "a world going by",
+   "aiming",
+   "enemies",
+   "errors",
+   "following a sequence",
+   "health",
+   "jumping",
+   "lives",
+   "locked ways",
+   "pausing",
+   "power-ups",
+   "score",
+   "serving",
+   "shooting",
+   "sound controls",
+   "steering",
+   "using things",
+   "waiting"
+  ],
+  "ways": [
+   "click things"
+  ],
+  "kinds": [
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 36,
+  "game": "KND: Flight of the Hamsters",
+  "address": "https://archive.org/details/flight-of-the-hamsters-game",
+  "file": "flight-of-the-hamsters.swf",
+  "bytes": 1223524,
+  "said": [
+   "Start INSTRUCTIONS Powering the Kids Next Door Treehouse is hard wor k !",
+   "Help the hamsters enjoy their time off with the new extreme sport of hamster launchin g !",
+   "> Click your mouse button to start the hamster in motion.",
+   "When the hamster lines up with the pillow, click again to launch the hamster.",
+   "> While flying, click and hold your mouse button to use Glide Powe r !",
+   "The Glide Meter refills slowly when not in use.",
+   "> Grab Items to keep the hamster in the air for as long as possible."
+  ],
+  "keys": {
+   "right": "",
+   "space": "pause",
+   "1": "",
+   "up": "",
+   "down": "",
+   "left": ""
+  },
+  "pointer": [
+   "clicks",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "holding on until the end",
+   "pressing at the right moment"
+  ],
+  "mechanics": [
+   "a clock",
+   "collecting",
+   "holding to sustain",
+   "information shown",
+   "launching programs",
+   "menus",
+   "pages of results",
+   "rescue and allies",
+   "shooting",
+   "timing a press",
+   "using things"
+  ],
+  "in_its_code": [
+   "a world bigger than the screen",
+   "aiming",
+   "bouncing",
+   "jumping",
+   "pausing",
+   "power-ups",
+   "pull",
+   "sound controls",
+   "winning and losing"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "counters",
+   "shoot",
+   "steer",
+   "time a press",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a press timed to a moving thing",
+   "clicking things as they come",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 37,
+  "game": "KND: Rainbow Monkey Rundown",
+  "address": "https://archive.org/details/rainbow-monkey-rundown",
+  "file": "rainbow-monkey-rundown.swf",
+  "bytes": 1159793,
+  "said": [
+   "Move the mouse to control your boat.",
+   "Click the mouse button to hit enemies with your yo-yo.",
+   "Grab the rainbow monkeys to get bonuses.",
+   "Bonus Energy Jumbo Yo-Yo Exploding Yo-Yo"
+  ],
+  "keys": {},
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "clicking things",
+   "collecting",
+   "dragging",
+   "enemies",
+   "health",
+   "pointer steering",
+   "power-ups",
+   "steering"
+  ],
+  "in_its_code": [
+   "bouncing",
+   "levels",
+   "pull",
+   "score",
+   "shooting",
+   "sound controls",
+   "striking"
+  ],
+  "ways": [
+   "bars",
+   "carry",
+   "click things",
+   "counters",
+   "read the signs",
+   "shoot",
+   "steer",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a build planned from parts"
+  ]
+ },
+ {
+  "number": 38,
+  "game": "Foster's: Team Work",
+  "address": "https://archive.org/details/2199-foster-mansion-team-work",
+  "file": "2199 - Foster Mansion_ Team Work.swf",
+  "bytes": 1229064,
+  "said": [
+   "Level NN Completed",
+   "Jump Close egg Right Left Grab the eggs Coco lays and use them to catch the bombs before they explode.",
+   "CONTROLs Inside Coco\u2019s eggs you will find special surprises.",
+   "INSTRUCTIONS Help Bloo escape from the Extreme-osaurus while Mac and the other imaginary friends try to deactivate the bombs.",
+   "Complete the bonus level in time and you will earn an extra life.",
+   "Get ready for the next level"
+  ],
+  "keys": {
+   "1": "",
+   "2": "",
+   "3": "",
+   "up": "",
+   "down": "",
+   "right": "",
+   "left": "",
+   "control": "",
+   "shift": "",
+   "return": "",
+   "tab": ""
+  },
+  "pointer": [
+   "clicks",
+   "holds",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "catching what falls",
+   "getting to the way out"
+  ],
+  "mechanics": [
+   "a clock",
+   "collecting",
+   "dialogs",
+   "jumping",
+   "levels",
+   "lives",
+   "menus",
+   "pages of results",
+   "power-ups",
+   "reaching a place",
+   "rescue and allies",
+   "timing a press"
+  ],
+  "in_its_code": [
+   "a world bigger than the screen",
+   "a world going by",
+   "bouncing",
+   "dragging",
+   "hints on hovering",
+   "pausing",
+   "pull",
+   "score",
+   "sending by strength",
+   "shooting",
+   "sound controls",
+   "steering",
+   "winning and losing"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "click things",
+   "counters",
+   "jump",
+   "steer",
+   "time a press",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a press timed to a moving thing",
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 39,
+  "game": "Powerpuff Girls: Attack of the Puppybots",
+  "address": "https://archive.org/details/ppgpuppybots",
+  "file": "ppgpuppybots.swf",
+  "bytes": 1270459,
+  "said": [
+   "TRY TO RESCUE MORE PUPPIES",
+   "Use Blossom\u2019s ice breath Use Bubbles super sonic scream Use Buttercup\u2019s super strength punch Invincibility!",
+   "health bar super shot bar pow The 3 girls share the health bar Hold space bar to charge, then release for super shot Collect all 3 letters to unlock the ultimate super shot Control the girls press to fire, hold to charge space press X to switch out the girls",
+   "events Next Level Last level Game Over",
+   "Gives you invincibility Restores your health candy heart"
+  ],
+  "keys": {
+   "space": "",
+   "up": "",
+   "down": "",
+   "right": "",
+   "left": ""
+  },
+  "pointer": [],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [
+   "a fight at close quarters"
+  ],
+  "mechanics": [
+   "charging",
+   "collecting",
+   "health",
+   "levels",
+   "lives",
+   "menus",
+   "pages of results",
+   "parking",
+   "power-ups",
+   "rescue and allies",
+   "shooting",
+   "striking",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "a clock",
+   "aiming",
+   "chains",
+   "enemies",
+   "pausing",
+   "steering",
+   "story",
+   "switching"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "charge",
+   "click things",
+   "counters",
+   "send",
+   "shoot",
+   "steer",
+   "strike",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 40,
+  "game": "Pokemon: Towering Legends",
+  "address": "https://archive.org/details/pokemon-towering-legends_flash",
+  "file": "pokemon-towering-legends.swf",
+  "bytes": 836228,
+  "said": [
+   "Move your mouse to stack crystals of the same color into a tower.",
+   "Click the mouse button to create a tower fusion.",
+   "The more crystals you stack at one time, the more points you'll get from the tower fusion.",
+   "Don't let your tower run into crystals of a different color, or your tower will get blown apart!."
+  ],
+  "keys": {},
+  "pointer": [],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "building up"
+  ],
+  "mechanics": [
+   "a clock",
+   "clicking things",
+   "hazards",
+   "information shown",
+   "making",
+   "matching",
+   "score",
+   "stacking"
+  ],
+  "in_its_code": [],
+  "ways": [
+   "bars",
+   "click things",
+   "counters",
+   "make",
+   "read the signs",
+   "remember what was shown",
+   "stack",
+   "steer",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "pairs remembered",
+   "a build planned from parts",
+   "something made, nothing won"
+  ]
+ },
+ {
+  "number": 41,
+  "game": "Ben 10: Cavern Run",
+  "address": "https://archive.org/details/ben-10-cavern-run-swf",
+  "file": "Ben 10 - Cavern Run.swf",
+  "bytes": 1048065,
+  "said": [],
+  "keys": {
+   "home": "",
+   "delete": "",
+   "pagedown": ""
+  },
+  "pointer": [
+   "steers",
+   "clicks",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [],
+  "in_its_code": [
+   "a clock",
+   "jumping",
+   "lives",
+   "locked ways",
+   "menus",
+   "pausing",
+   "pointer steering",
+   "power-ups",
+   "score",
+   "sound controls",
+   "winning and losing"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 42,
+  "game": "Total Drama: H-Bomb's Killah Beatz",
+  "address": "https://archive.org/details/beatz-editor",
+  "file": "BeatzEditor.swf",
+  "bytes": 1022695,
+  "said": [
+   "Delete 1 or more sounds to add new ones.",
+   "Connected to service.",
+   "Could not connect to service: Logged in as Could not login as Library loaded."
+  ],
+  "keys": {
+   "shift": ""
+  },
+  "pointer": [
+   "holds",
+   "drags"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "errors",
+   "signing in"
+  ],
+  "in_its_code": [
+   "menus",
+   "pausing",
+   "sound controls"
+  ],
+  "ways": [],
+  "kinds": []
+ },
+ {
+  "number": 44,
+  "game": "Regular Show: All-Nighter",
+  "address": "https://archive.org/details/regular-show-all-nighter",
+  "file": "AllNighterGMC2.swf",
+  "bytes": 9622143,
+  "said": [
+   "Increase electric eel time",
+   "Click anywhere to continue",
+   "x Catch bonus Message must include header Subscription must include handler and type Message routed without the required receiver: from: to: container added << Notification Finished << container not loaded << sending message to : << game slave received unique: LocalConnection sent successfully.",
+   "and level Loading Complete"
+  ],
+  "keys": {
+   "return": "",
+   "shift": "",
+   "control": "",
+   "escape": "",
+   "space": "",
+   "left": "",
+   "up": "",
+   "right": "",
+   "down": ""
+  },
+  "pointer": [
+   "clicks",
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "catching what falls"
+  ],
+  "mechanics": [
+   "a clock",
+   "collecting",
+   "forms",
+   "menus",
+   "notices",
+   "power-ups",
+   "waiting"
+  ],
+  "in_its_code": [
+   "enemies",
+   "health",
+   "jumping",
+   "levels",
+   "pausing",
+   "pull",
+   "serving",
+   "shooting",
+   "winning and losing"
+  ],
+  "ways": [
+   "bars",
+   "click things",
+   "counters",
+   "steer",
+   "type"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "words typed as asked"
+  ]
+ },
+ {
+  "number": 45,
+  "game": "Gumball: Blind Fooled",
+  "address": "https://archive.org/details/blind-fooled_202408",
+  "file": "Blind Fooled.swf",
+  "bytes": 3749630,
+  "said": [
+   "total score final level score level score you didn't beat your previous score be quick and collect all the rainbows for gold!",
+   "Use or [WASD] to move Anais Stand next to a box and press or [S] to pick it up Press or [S] again to drop the box Move boxes here to make steps Once you've made the steps, press [SPACE] to blow your whistle Start/Stop Darwin and Gumball with [SPACE] Don't let Darwin bump in to Carmen!",
+   "Stack boxes here to block the way Use the springboard to bounce Darwin and Gumball.",
+   "Move it and re-use it.",
+   "Anais can also use the springboard!",
+   "Don't let Gumball fall too far!",
+   "Use laundry baskets for long drops Masami will give Gumball a ride across the gap!",
+   "Masami will move away from Anais Use mops to cover the gaps Give the dog his bone!",
+   "control anais with the or wasd move objects on each level help gumball and darwin find each other collect all the rainbows !",
+   "press space to order gumball and darwin to walk or stop Gumball and Darwin have made up some pretty stupid games before, but this time they've really out-dumbed themselves.",
+   "are you sure you want to reset your awards and score?",
+   "can you beat every level?",
+   "try to finish the levels you skipped!",
+   "you earned a gold star on every level!"
+  ],
+  "keys": {
+   "control": "",
+   "down": "",
+   "return": "",
+   "escape": "",
+   "left": "",
+   "right": "",
+   "shift": "",
+   "space": "",
+   "up": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [
+   "you beat"
+  ],
+  "loses": [],
+  "situations": [
+   "building up"
+  ],
+  "mechanics": [
+   "a clock",
+   "a world bigger than the screen",
+   "bouncing",
+   "choosing from options",
+   "collecting",
+   "covering ground",
+   "dialogs",
+   "hazards",
+   "information shown",
+   "jumping",
+   "menus",
+   "pages of results",
+   "parking",
+   "pull",
+   "rescue and allies",
+   "score",
+   "serving",
+   "stacking",
+   "steering",
+   "using things"
+  ],
+  "in_its_code": [
+   "following a sequence",
+   "levels",
+   "locked ways",
+   "pausing",
+   "winning and losing"
+  ],
+  "ways": [
+   "a world bigger than the view",
+   "bars",
+   "carried",
+   "click things",
+   "counters",
+   "jump",
+   "read the signs",
+   "serve",
+   "stack",
+   "steer",
+   "unseen",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a build planned from parts",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 46,
+  "game": "Annoying Orange: Escape from Dr. Fruitenstein",
+  "address": "https://archive.org/details/annoying-orange-escape-from-dr.-fruitenstein",
+  "file": "annoying-orange-games-escape-from-dr-fruitenstein.swf",
+  "bytes": 10311210,
+  "said": [
+   "CLICK ON A BALLOOON Solutions solutions",
+   "CLICK TO JUMP, THEN CUT THE ROPE FRUITS CAN FLY A BALLOOON",
+   "container added << Notification Finished << container not loaded Controller can only be a member of one world sending unique to unique val: << sending message to : << game slave received unique: LocalConnection connected successfully."
+  ],
+  "keys": {},
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "jumping",
+   "notices"
+  ],
+  "in_its_code": [
+   "a clock",
+   "hazards",
+   "levels",
+   "pausing",
+   "pull",
+   "score",
+   "shooting",
+   "sound controls"
+  ],
+  "ways": [
+   "jump"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead"
+  ]
+ },
+ {
+  "number": 47,
+  "game": "Cartoon Network: SnowBrawl Fight!",
+  "address": "https://archive.org/details/cartoon-network-snowbrawl-fight",
+  "file": "Cartoon Network Snowbrawl Fight.swf",
+  "bytes": 7149788,
+  "said": [
+   "The elves know nothing cheers up Santa more than a good snowbrawl fight so they decide to hold the Ultimate Snowdown, the North Pole \u2019 s greatest snowbrawl tournament.",
+   "Instructions In snowbrawl, you have to take out the opposing team to win the battle.",
+   "You win the battle once you turn all the opposing players into snowmen.",
+   "use special moves to throw snowballs harder.",
+   "Dash Dash Shot or Dash + Jump + Shot Jump Shot",
+   "Control A Moves Control B Moves",
+   "Player Name Score",
+   "Oh, man, that move was whack!",
+   "I guess we'll try to beat \u2018 em next time!",
+   "Don't worry, Captain K \u2019 nuckles I'll find a way to win this even if it means never going to sleepys.",
+   "This is worse than that time at the Christmas theme park.",
+   "EXP POINTS LEFT:",
+   "ADD SOME POINTS TO iNCREASE TEAM STATS.",
+   "NOT ENOUGH EXP Points Better luck next time!",
+   "Santa finally had some time to unwind and play his favorite game.",
+   "And now that he \u2019 s fully energized and refreshed, Santa will be making sure everyone gets their presents on time!",
+   "sound update save old ratings trace2: enemy name: ball holder name: for bonus combo score added Deze functie is ongeldig voor het gekozen encryptietype!",
+   "Geen key opgegeven voor de encryptie Deze functie is ongeldig voor het gekozen encryptietype!",
+   "Geen key opgegeven voor de decryptie Geen modus opgegeven voor Rijndael decryptie.",
+   "MainMenu loaded currrent screen popup removed popup created menu clickedzzzzzzzzzzzzzzzzzzzzzzz --->removePage ako un TEAM choice: My Team: save old ratings This are the teams infobox loaded infoBox pause infoBox unpause Score: snow ball destroyed superball2 deleted superbal3 deleted name of pindut",
+   "ball starting postition Im on jump not jump",
+   "Enemy removed: Enemy added: kalabaw: random Catch trow ball!"
+  ],
+  "keys": {
+   "up": "",
+   "down": "",
+   "left": "",
+   "right": "",
+   "space": "",
+   "control": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [
+   "you win"
+  ],
+  "loses": [
+   "better luck"
+  ],
+  "situations": [
+   "catching what falls",
+   "a fight at close quarters"
+  ],
+  "mechanics": [
+   "a clock",
+   "bouncing",
+   "collecting",
+   "enemies",
+   "jumping",
+   "locked ways",
+   "menus",
+   "pages of results",
+   "parking",
+   "pausing",
+   "power-ups",
+   "saving and opening",
+   "score",
+   "shooting",
+   "sound controls",
+   "striking",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "errors",
+   "following a sequence",
+   "health"
+  ],
+  "ways": [
+   "a plan to an end",
+   "bars",
+   "carried",
+   "click things",
+   "counters",
+   "jump",
+   "pause",
+   "reach what a step needs",
+   "read the signs",
+   "shoot",
+   "steer",
+   "strike",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come"
+  ]
+ },
+ {
+  "number": 52,
+  "game": "Gumball: Water Sons",
+  "address": "https://archive.org/details/tawog-water-sons",
+  "file": "WaterSons.swf",
+  "bytes": 3726251,
+  "said": [
+   "USE THE MOUSE TO AIM & CLICK TO THROw!",
+   "Use space bar to switch characters Be careful of obstacles...",
+   "USE the 'R' KEY TO RESTART THE LEVEL."
+  ],
+  "keys": {
+   "escape": "",
+   "right": "",
+   "space": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [],
+  "mechanics": [
+   "aiming",
+   "information shown",
+   "parking",
+   "shooting",
+   "switching",
+   "using things"
+  ],
+  "in_its_code": [
+   "bouncing",
+   "levels",
+   "locked ways",
+   "menus",
+   "story"
+  ],
+  "ways": [
+   "bars",
+   "carried",
+   "counters",
+   "send",
+   "shoot",
+   "steer",
+   "switch",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 54,
+  "game": "Sonic Boom: Link 'N Smash",
+  "address": "https://archive.org/details/sonic-boom-link-n-smash",
+  "file": "Sonic Boom Link 'n Smash.swf",
+  "bytes": 867796,
+  "said": [
+   "Adding title screen!",
+   "HOW TO PLAY",
+   "Time to learn how to play!",
+   "Use the Left and Right Arrow Key \u2026 to move the Tile Block left or right.",
+   "Press and hold the Down Arrow Key \u2026 to drop the Tile Block faster.",
+   "Press the Up Arrow Key \u2026 to change the order of the Tiles in the Tile Block.",
+   "Touch Character Tiles to their specific Item Tiles to score.",
+   "When a character is flashing, click them or \u2026 Press the Number Key shown next to them to do a super move!",
+   "Take what you've learned \u2026 And go for the highest score you can!",
+   "GAME OVER - TIME OUT GAME OVER - BLOCKED DROP"
+  ],
+  "keys": {
+   "left": "",
+   "right": "",
+   "up": "",
+   "down": "",
+   "space": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [
+   "game over"
+  ],
+  "situations": [],
+  "mechanics": [
+   "a board",
+   "a clock",
+   "information shown",
+   "menus",
+   "pages of results",
+   "pull",
+   "score",
+   "serving",
+   "steering",
+   "using things",
+   "winning and losing"
+  ],
+  "in_its_code": [
+   "levels",
+   "pausing",
+   "sound controls"
+  ],
+  "ways": [
+   "a board in turns",
+   "a grid's rule",
+   "bars",
+   "carried",
+   "click things",
+   "counters",
+   "jump",
+   "serve",
+   "steer",
+   "use things"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "clicking things as they come",
+   "a board searched in turns",
+   "a rule found and searched",
+   "an errand of things found and used"
+  ]
+ },
+ {
+  "number": 55,
+  "game": "Gumball: Battle Bowlers",
+  "address": "https://archive.org/details/the-amazing-world-of-gumball-battle-bowlers",
+  "file": "game.swf",
+  "bytes": 7214874,
+  "said": [
+   "use the number keys to switch between characters and stay ahead of the enemies.",
+   "hit 1 to switch to anais.",
+   "hit 2 to switch to gumball.",
+   "hold on tobias!",
+   "the sprike moves quickly from place to place, zig-zagging like a caffienated roach. he'll approach in three zig-zags, then stop for a second or two. he's not especially strong, but you have to be fast to take him out!",
+   "level select Road Rage Backyard Beatdown charging...",
+   "score total highest combo health damage speed these guys aren't very bright or strong.",
+   "just like his weaker cousin, he can only be hurt when his mouth is open.",
+   "he's only vulnerable when his mouth is open.",
+   "No enemies [object Puddle] [object spaceBumper4] [object spaceBumper2] [object spaceBumper5] [object BadShoe] container added << Notification Finished << container not loaded sending unique to unique val: << sending message to : << game slave received unique: LocalConnection connected successfully.",
+   "mega ball perfect aim +1 health crazy ball [object SimpleButton] YOUR BASE SCORE WAS YOUR SCORE WITH COMBOS WAS: For two stars you need For three stars you need x combo!",
+   "killed: time: score: combo use wasd to move use the arrow keys to move good job!",
+   "now use your mouse to aim and shoot the evil pin!"
+  ],
+  "keys": {
+   "left": ""
+  },
+  "pointer": [
+   "holds"
+  ],
+  "wins": [],
+  "loses": [],
+  "situations": [
+   "shooting what comes"
+  ],
+  "mechanics": [
+   "a clock",
+   "aiming",
+   "bouncing",
+   "charging",
+   "choosing from options",
+   "enemies",
+   "focus and selection",
+   "health",
+   "information shown",
+   "menus",
+   "notices",
+   "score",
+   "shooting",
+   "steering",
+   "switching"
+  ],
+  "in_its_code": [
+   "jumping",
+   "levels",
+   "lives",
+   "locked ways",
+   "pausing",
+   "power-ups",
+   "sound controls",
+   "striking",
+   "using things",
+   "winning and losing"
+  ],
+  "ways": [
+   "bars",
+   "charge",
+   "click things",
+   "counters",
+   "read the signs",
+   "send",
+   "shoot",
+   "steer",
+   "switch",
+   "unseen"
+  ],
+  "kinds": [
+   "real-time control by imagining ahead",
+   "a shot aimed and sent",
+   "clicking things as they come"
+  ]
+ }
+]
