@@ -361,3 +361,11 @@ def test_what_she_plays_is_named_up_to_the_control_that_does_it():
     guide = Guide(place="a flying game")
     guide.take_in(SCREEN, "Control the girls press to switch. Guide the lander safely onto the pad.")
     assert guide.names["me"] == ["girls", "lander"]
+
+
+def test_two_verbs_of_one_thing_name_no_thing_after_or():
+    """LIVE 2026-10-11 "Avoid or shoot obstacles" was said as "I'll keep clear of the or shoot obstacles"."""
+    guide = Guide(place="a tunnel racer")
+    guide.take_in(SCREEN, "Avoid or shoot obstacles; such as walls, mines and electricity beams.")
+    assert "or shoot obstacles" not in guide.things and all(
+        not name.startswith("or ") for names in guide.names.values() for name in names)

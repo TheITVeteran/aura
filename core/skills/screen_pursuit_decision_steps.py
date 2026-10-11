@@ -424,14 +424,21 @@ def _borrow_from_the_world_it_is_most_like(
     # Said by what a person calls it, never by the name it is filed under: LIVE 2026-10-09 she read out
     # 'her-own-browser-https-archive-org-details-food-bash'.
     called = str(solved[likeness.world][1].get("_called") or "") or _a_name_to_say(likeness.world)
-    _tell(
-        f"This is shaped like {called or 'something'}, which I worked out before, so I "
-        "will start from how that moved and let my moves here decide."
-    )
+    # Lent on any likeness that clears its control, but said only where the two are much alike: LIVE 2026-10-11 a
+    # tunnel racer was said to be "shaped like Beatz Editor", a beat maker.
+    if called and float(likeness.score) >= SAID_WHEN_ALIKE:
+        _tell(
+            f"This is shaped like {called}, which I worked out before, so I "
+            "will start from how that moved and let my moves here decide."
+        )
     logger.info(
         "lent by %s, at %.2f of a fresh start: %s",
         likeness.says(), float(given.get("trust") or 0.0), knows.rules.says(),
     )
+
+
+#: How much of two worlds' structure must be shared for her to say the one is like the other.
+SAID_WHEN_ALIKE = 0.6
 
 
 def _a_name_to_say(filed_as: str) -> str:

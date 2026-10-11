@@ -209,3 +209,22 @@ def test_a_thing_whose_outlines_were_forgotten_is_no_gauge_and_no_fault():
     assert outlines.a_gauge(9) is False
     outlines.forget_all_but({})
     assert outlines.a_gauge(4) is False and not outlines.from_an_end
+
+
+def test_a_bar_named_as_a_score_is_not_what_she_has_left(monkeypatch):
+    """LIVE 2026-10-11 "The SCORE bar goes down: it's what I have left." """
+    from types import SimpleNamespace
+
+    from core.agency import reading_while_playing as reading
+    from core.agency import what_she_has_left
+
+    monkeypatch.setattr(what_she_has_left, "bars_read", lambda *a, **k: [{"what": "loss", "counter": "the SCORE bar",
+                                                                          "at": 1.0}])
+    monkeypatch.setattr(what_she_has_left, "what_is_left", lambda bars: None)
+    said, verdicts = [], []
+    run = SimpleNamespace(bars=object(), regions_read=[], gains=0, losses=0, presses=None, reach=None, vitals=None)
+    meeting = SimpleNamespace(_verdict=verdicts.append, _met={}, vitals=None)
+    hers = SimpleNamespace(kind=1, follows_pointer=False, thing=lambda moves: None)
+    moves = SimpleNamespace(shape=(300, 400))
+    reading._read_the_bars(run, meeting, hers, moves, None, 1.0, said.append)
+    assert run.losses == 0 and not verdicts and not said
