@@ -22,6 +22,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from core.verify import invariant
+
 #: The selector the observer gives what a page draws. Not a CSS selector: a move
 #: on it is a hand-over, never a click.
 DRAWING = "::drawing"
@@ -698,19 +700,35 @@ def _keep_the_guide(guide: Any) -> None:
 
 
 def _how_the_run_went(reflexes: Any, result: Mapping[str, Any]) -> dict[str, str]:
-    from core.language.how_a_game_ended import how_it_ended, how_it_ended_in
+    from core.language.how_a_game_ended import how_it_ended, how_it_ended_in, says_play_is_ongoing
 
     words = reflexes.ending_words or str(result.get("last_seen") or "")
     parts = list(getattr(reflexes, "ending_parts", None) or [])
     ended = how_it_ended_in(parts) if parts else how_it_ended(words)
+    ongoing = says_play_is_ongoing("\n".join([str(result.get("last_seen") or ""), words, *parts]))
+    if ongoing:
+        ended = ""
     # Where the end screen's words do not say, the counters may: her score at
     # what wins, theirs at it, nothing left to lose (core/agency/how_the_contest_stands.py).
     played = [s for s in getattr(reflexes, "stretches", []) if s.get("pictures")]
     if any((s.get("runtime_checks") or {}).get("violations") for s in played):
         ended = "interrupted"
-    if not ended and played:
+    if not ended and played and not ongoing:
         ended = str(played[-1].get("settled") or "")
     return {"ended": ended, "words": " ".join(words.split()), "said": reflexes.what_it_came_to()}
+
+
+@invariant("agency.current_play_vetoes_predicted_completion", scope="agency",
+           owner="core/skills/sovereign_browser_drawing.py", observational=False)
+def _current_play_veto_invariant() -> tuple:
+    """Current turn evidence prevents a board or counter prediction from declaring a win or loss."""
+    from types import SimpleNamespace
+
+    for prediction in ("won", "lost"):
+        reflexes = SimpleNamespace(ending_words="Your turn to make a move", ending_parts=["Your turn to make a move"],
+                                   stretches=[{"pictures": 1, "settled": prediction}], what_it_came_to=lambda: "")
+        assert _how_the_run_went(reflexes, {})["ended"] == ""
+    return ()
 
 
 #: The least time one of several games asked for is given, in seconds.

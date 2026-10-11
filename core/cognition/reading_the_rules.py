@@ -35,15 +35,20 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any
 
+from core.cognition.action_refinement import (
+    BoundActionRefinement,
+    choose_and_carry,
+)
 from core.cognition.procedure_binding import (
     RevealedChoices,
     choice_slot,
     control_of,
     input_method_only,
     opens_choices,
-    selection_reveals,
-    selector_for,
 )
+from core.cognition.procedure_refinement import attempt_for, begin_refinement, settle_refinement
+from core.cognition.procedure_selectors import bind_revealed_controls, opens_needed_choices
+from core.cognition.selector_view import UNKNOWN_SELECTOR_VIEW
 from core.runtime.lockdep import checked_lock
 from core.runtime.skill_contract import (
     PredicateState,
@@ -166,6 +171,16 @@ class StepAttempt:
     expected: str = ""
     predicates: str = "[]"
     optional: bool = False
+    refinement_id: str = ""
+    refinement_role: str = ""
+
+
+@dataclass(frozen=True)
+class PendingActionRefinement:
+    """Both owned obligations frozen before their shared physical input."""
+
+    binding: BoundActionRefinement
+    attempts: tuple[StepAttempt, StepAttempt]
 
 
 @dataclass(frozen=True)
@@ -369,6 +384,7 @@ class Rules:
     repeat_states: dict[str, PredicateState] = field(default_factory=dict)
     effects: dict[str, Sequence[SemanticPredicate | Mapping[str, Any]]] = field(default_factory=dict)
     pending_step: StepAttempt | None = None
+    pending_refinement: PendingActionRefinement | None = None
     receipts: list[StepReceipt] = field(default_factory=list)
     _attempt_number: int = 0
     asking: Any = None
@@ -383,6 +399,7 @@ class Rules:
     binding_context: EvidenceSnapshot = field(default_factory=lambda: EvidenceSnapshot.of({}))
     #: The screens (as what they offered) a requirement was the earliest on and could be neither done nor reached.
     missing_on: dict[str, set[int]] = field(default_factory=dict)
+    selector_view: Any = None
 
     def hear(self, passages: Iterable[str]) -> list[str]:
         """Passages the place showed, in order: kept, and read at once where one like it was read before; a passage
@@ -475,9 +492,12 @@ class Rules:
 
     def step_of(self, move: str) -> Frame | None:
         """Bind unresolved requirements first, then an available repetition of a confirmed step."""
+        refinement = self.refinement_of(move)
+        if refinement is not None:
+            return self.frames.get(refinement.choice_key)
         matching = self._matching_steps(move)
         return next((f for f in matching if not self.passed(f)),
-                    next((f for f in matching if f.again or self._opens_needed_choices(f)), None))
+                    next((f for f in matching if f.again or opens_needed_choices(self, f)), None))
 
     def repeat_opportunities(self, offered: Sequence[str]) -> list[Frame]:
         """Confirmed repetitions offered here, independently of the next mandatory requirement."""
@@ -495,7 +515,7 @@ class Rules:
             if clicked and choice_slot(frame):
                 # A variable's prose can be repeated as a heading. Only an
                 # owned reveal may bind its actual value controls.
-                if (frame is self.next_step() and self.revealed_choices is not None
+                if (frame in (self.next_step(), the_step_that_holds(self)) and self.revealed_choices is not None
                         and self.revealed_choices.offers(move, self.binding_context.evidence, frame.key)):
                     contextual.append(frame)
                 continue
@@ -524,17 +544,19 @@ class Rules:
         """A choice cannot use controls that disappeared or belong to another surface."""
         self.binding_context = EvidenceSnapshot.of(observation)
 
+    def refinement_of(self, move: str, before: Mapping[str, Any] | None = None) -> Any:
+        """A proposal only; private pixels and the physical attempt must still be bound."""
+        return choose_and_carry(self, move, before)
+
+    def current_selector_view(self, observation: Mapping[str, Any], clickable: Sequence[str] = ()) -> Any:
+        if self.selector_view is None or self.selector_view is UNKNOWN_SELECTOR_VIEW:
+            return self.selector_view
+        return self.selector_view.current(observation, clickable)
+
     def reaches_next(self, move: str) -> bool:
         """Opening a selector reaches an unbound choice, even when the prose listed the choice first."""
         frame = next((frame for frame in self._matching_steps(move) if opens_choices(frame)), None)
-        return frame is not None and self._opens_needed_choices(frame)
-
-    def _opens_needed_choices(self, frame: Frame) -> bool:
-        needed = self.next_step()
-        return bool(needed is not None and selector_for(frame, needed)
-                    and (self.revealed_choices is None or not any(
-                        self.revealed_choices.offers(move, self.binding_context.evidence, needed.key)
-                        for move in self.revealed_choices.moves)))
+        return frame is not None and opens_needed_choices(self, frame)
 
     def the_step_to_do(self, offered: Sequence[str], reaching: bool = False) -> Frame | None:
         """The earliest requirement, when offered. Missing prerequisites do not authorize later requirements, except one
@@ -558,21 +580,23 @@ class Rules:
         return None
 
     def begin(self, move: str, before: Any, *, step_key: str | None = None,
-              effects: Sequence[SemanticPredicate | Mapping[str, Any]] = ()) -> StepAttempt | None:
+              effects: Sequence[SemanticPredicate | Mapping[str, Any]] = (),
+              refinement: BoundActionRefinement | None = None) -> StepAttempt | None:
         """Bind an act before dispatch. A pending act must be settled before another requirement is attempted."""
         if self.pending_step is not None:
             raise RuntimeError("a procedure step is still awaiting its owned observation")
+        if refinement is not None:
+            return begin_refinement(self, move, before, refinement, effects, step_key)
         frame = self.frames.get(step_key) if step_key is not None else self.step_of(move)
-        if frame is None or self.passed(frame) and not (frame.again or self._opens_needed_choices(frame)):
+        if frame is None or self.passed(frame) and not (frame.again or opens_needed_choices(self, frame)):
             return None
-        predicates = [*self.effects.get(frame.key, ()), *effects]
-        encoded = json.dumps([(p.to_dict() if isinstance(p, SemanticPredicate) else
-                               semantic_predicate_from_mapping(p).to_dict()) for p in predicates],
-                             sort_keys=True, allow_nan=False)
-        self._attempt_number += 1
-        self.pending_step = StepAttempt(self._attempt_number, frame.key, str(move), EvidenceSnapshot.of(before),
-                                        str(getattr(self, "expects", {}).get(frame.key) or ""), encoded,
-                                        optional=self.passed(frame))
+        from core.agency.what_i_can_do_here import what_is_clicked
+
+        if choice_slot(frame) and what_is_clicked(move) is None:
+            # A ranking proposal cannot silently turn an unbound physical carry
+            # into a satisfied selection obligation.
+            return None
+        self.pending_step = attempt_for(self, frame, move, EvidenceSnapshot.of(before), effects)
         return self.pending_step
 
     def _settled(self, receipt: StepReceipt) -> StepReceipt:
@@ -581,8 +605,8 @@ class Rules:
         key = receipt.step_key
         if receipt.attempt.optional:
             self.repeat_states[key] = receipt.state
-            if receipt.state == PredicateState.SATISFIED:
-                self._bind_revealed_controls(receipt)
+            if receipt.state == PredicateState.SATISFIED and not receipt.attempt.refinement_id:
+                bind_revealed_controls(self, receipt)
             self.pending_step = None
             return receipt
         self.states[key] = receipt.state
@@ -591,7 +615,8 @@ class Rules:
             self.failed_steps.discard(key)
             self.unanswered_steps.pop(key, None)
             self.unknown_steps.pop(key, None)
-            self._bind_revealed_controls(receipt)
+            if not receipt.attempt.refinement_id:
+                bind_revealed_controls(self, receipt)
         else:
             self.done.discard(key)
             if receipt.state == PredicateState.UNSATISFIED:
@@ -602,14 +627,6 @@ class Rules:
                 self.unknown_steps[key] = self.unknown_steps.get(key, 0) + 1
         self.pending_step = None
         return receipt
-
-    def _bind_revealed_controls(self, receipt: StepReceipt) -> None:
-        frame = self.frames.get(receipt.step_key)
-        needed = self.next_step()
-        if frame is not None and needed is not None and (selector_for(frame, needed) or selection_reveals(frame, needed)):
-            self.revealed_choices = RevealedChoices.from_effect(
-                receipt.before.evidence, receipt.after.evidence, frame.key, needed.key, opened_move=receipt.attempt.move)
-            self.observe_context(receipt.after.evidence)
 
     def seen_before(self) -> bool:
         """Whether everything this place has shown her she had understood on an earlier visit: a lesson she has seen."""
@@ -655,6 +672,8 @@ class Rules:
         attempt = self.pending_step
         if attempt is not None and attempt.move != move:
             raise RuntimeError("the observed act differs from the pending procedure step")
+        if self.pending_refinement is not None:
+            return settle_refinement(self, move, changed, after)
         if attempt is None:
             attempt = self.begin(move, before, step_key=step_key, effects=effects)
         if attempt is None:

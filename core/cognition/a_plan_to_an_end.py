@@ -124,7 +124,9 @@ class Plan(Rules):
         self._pending_changed = changed
         if after is None and (attempt.expected or attempt.predicates != "[]") and changed is not False:
             self.awaiting = attempt.step_key
-            (self.repeat_states if attempt.optional else self.states)[attempt.step_key] = PredicateState.UNKNOWN
+            attempts = self.pending_refinement.attempts if self.pending_refinement is not None else (attempt,)
+            for pending in attempts:
+                (self.repeat_states if pending.optional else self.states)[pending.step_key] = PredicateState.UNKNOWN
             return None
         return super().tried(move, changed, before=before, after=after, step_key=step_key, effects=effects)
 
@@ -159,6 +161,14 @@ class Plan(Rules):
         """Settle the pending step with its owned result. Missing measurements leave the requirement unresolved."""
         attempt = self.pending_step
         if attempt is None:
+            return self.stuck
+        if self.pending_refinement is not None:
+            from core.cognition.procedure_refinement import settle_refinement
+
+            if effects:
+                raise ValueError("a refined action's effects must be declared before its input")
+            measured_change = self._pending_changed if changed is None else changed
+            settle_refinement(self, attempt.move, measured_change, shown)
             return self.stuck
         if before is not None and attempt.before.encoded == "null":
             attempt = replace(attempt, before=EvidenceSnapshot.of(before))

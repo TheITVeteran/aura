@@ -39,6 +39,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.cognition.locks_she_met import Locks
+from core.cognition.reading_a_places_progress import (  # noqa: F401 (the existing readout patterns)
+    _A_READOUT,
+    _A_STAGE,
+    readout_from,
+    stage_from,
+)
 from core.cognition.reading_the_rules import NOTHING, READ, Frame, Rules
 from core.cognition.what_she_notices import Notebook
 from core.cognition.what_things_are import WhatSheSees
@@ -73,10 +79,6 @@ _A_GOAL = re.compile(r"\b(?:your (?:goal|mission|job|task) is|the (?:goal|object
 #: section's name, not what it says.
 _A_HEADING = re.compile(r"^\s*(?:(?:[A-Z]{3,}\s+){1,3}(?=[A-Z][a-z])|(?:[A-Z][A-Za-z]*\s+){0,2}(?i:objective|goal|controls?|"
                         r"instructions|how to play|rules|tips?|strategy|hint)\s*:\s*)")
-#: A short label shown with a value: what is read off the screen, not pressed.
-_A_READOUT = re.compile(r"^\W*([A-Za-z][A-Za-z .'-]{1,24}?)\s*[:=]?\s*(?:[\d.,/%]+|\.\.\.|…)?\W*$")
-#: Writing that says which stage she is on.
-_A_STAGE = re.compile(r"\b(level|stage|wave|round|mission|world|chapter)\s*:?\s*(\d{1,3})\b", re.I)
 #: A power that lasts a while: "invincible for 10 seconds".
 _FOR_A_WHILE = re.compile(r"\bfor (\d{1,3}) (?:seconds|secs?)\b", re.I)
 #: Buttons and keys that are not part of play: pressed in play, they stop it, silence it, or leave it.
@@ -232,8 +234,8 @@ class Guide:
         if source == SCREEN:
             # A label read off the screen with a value beside it; an instruction ("Watch your fuel") is not one.
             for label in new:
-                self._readout_from(label)
-        news += self._stage_from(text, at)
+                readout_from(self, label)
+        news += stage_from(self, text, at)
         # New to play, not merely read first: what the place shows after play has begun that it had not shown before.
         late = self.playing and source == SCREEN and bool(self.mechanics)
         # What the place says is new or gone first; then what it only mentions.
@@ -615,28 +617,6 @@ class Guide:
         if how:
             self.take_in(MODEL, how, at)
         return list(dict.fromkeys(filled))
-
-    def _readout_from(self, label: str) -> None:
-        match = _A_READOUT.match(label or "")
-        if not match or len(label.split()) > 4:
-            return
-        words = " ".join(match.group(1).lower().split())
-        measured = self.measures(words)
-        if measured and words not in self.readouts:
-            self.readouts[words] = measured
-
-    def _stage_from(self, text: str, at: float) -> list[str]:
-        found = _A_STAGE.search(text)
-        if not found:
-            return []
-        stage = f"{found.group(1).lower()} {found.group(2)}"
-        if stage == self.stage:
-            return []
-        before, self.stage = self.stage, stage
-        if not before:
-            return []
-        self.changes.append((at, f"now on {stage}"))
-        return [f"Now on {stage}."]
 
     def _know(self, name: str, evidence: list[str], source: str, at: float, *, late: bool = False) -> list[str]:
         known = self.mechanics.get(name)

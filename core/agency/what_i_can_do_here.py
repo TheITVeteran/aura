@@ -283,7 +283,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
                 self.pointer_only = (said or set(controls)) == {"the pointer"}
 
     def looked_at(self, clickable: Sequence[str], says: str = "", looks: Mapping[str, tuple[float, ...]] | None = None,
-                  where: Mapping[str, tuple[float, float]] | None = None) -> None:
+                  where: Mapping[str, tuple[float, float]] | None = None, selector_view: Any = None) -> None:
         """What she can click now: the writing that was there at the last look too.
 
         A control stays where it is; a readout changes. LIVE 2026-10-03 04:49,
@@ -301,7 +301,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         self.saw_looks(looks or {})
         self.on_screen = tuple(label for label in now if label in self.seen_before or _goes_on(label))
         self.seen_before = now
-        self.leads.looked(now, says)
+        self.leads.looked(now, says, selector_view=selector_view)
 
     # ── finding out ──────────────────────────────────────────────────────
 
