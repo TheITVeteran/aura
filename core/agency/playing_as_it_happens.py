@@ -168,6 +168,9 @@ class _Run:
     held_trying: bool = False
     trying: int = 0
     tried_at: float = 0.0
+    #: How many holds and rests have gone to the key that points against a going, and which key that was.
+    countered: int = 0
+    countering: str = ""
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
     last_moving: float = 0.0
@@ -1074,13 +1077,25 @@ async def _hold(hands: Any, run: _Run, hers: WhichIsHers, key: str, at: float, *
     hers.holding(key, delivered, trying=trying)
 
 
-async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float) -> None:
-    """Hold each key in turn, with a rest between, to see what answers."""
+async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float, moves: Any = None) -> None:
+    """Hold each key in turn, with a rest between, to see what answers. The key that points against the way the
+    biggest moving thing is going is held first, and again after one rest (core/agency/the_key_against_its_going.py):
+    LIVE 2026-10-11 a lander down in five seconds was never found to be hers in ten goes of four seconds a round."""
+    from core.agency.the_key_against_its_going import FIRST, against_its_going
+
     if at - run.tried_at < TRY_A_KEY_S:
         return
-    turn = run.trying % (2 * len(run.keys))
-    run.trying += 1
-    key = run.keys[turn // 2] if turn % 2 == 0 else ""
+    against = against_its_going(run.keys, getattr(moves, "things", {}).values(), 2.0 * TOLD_FROM_STANDING_PX) \
+        if run.countered < FIRST else ""
+    if against or 0 < run.countered < FIRST:
+        run.countering = against or run.countering
+        key = run.countering if run.countered % 2 == 0 else ""
+        run.countered += 1
+    else:
+        run.countered = FIRST
+        turn = run.trying % (2 * len(run.keys))
+        run.trying += 1
+        key = run.keys[turn // 2] if turn % 2 == 0 else ""
     await _hold(hands, run, hers, key, at, trying=True)
     run.tried_at = run.held_since
 
@@ -1857,7 +1872,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     if choosing.mine is None and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
     if not trying_the_pointer and run.trying < 2 * len(run.keys) and not hers.keys_known(run.keys) and not hers.follows_pointer:
-        await _try_the_keys(hands, run, hers, at)
+        await _try_the_keys(hands, run, hers, at, moves)
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):
         return
@@ -1919,7 +1934,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
             if run.last_click == at:
                 return
         if run.trying < 4 * len(run.keys):
-            await _try_the_keys(hands, run, hers, at)
+            await _try_the_keys(hands, run, hers, at, moves)
             return
         await _hold(hands, run, hers, "", at)
         if pointer_trial:
@@ -2185,6 +2200,8 @@ def _what_is_known_of(meeting: WhatMeetingDoes, thing: Any) -> str:
 #: How often she fires while still finding which thing is hers, by a key the words named for it or a click that throws.
 FIRE_WHILE_FINDING_S = 0.35
 THROW_WHILE_FINDING_S = 0.6
+#: How often at most the key for getting out of the way is pressed at something coming at her.
+GOT_OUT_OF_THE_WAY_EVERY_S = 0.5
 
 
 async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, moves: WhatMoves,
@@ -2196,24 +2213,36 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     shooter holding one arrow at a time to see what moved, and never fired. A press of the fire key moves nothing, so
     the finding goes on as before, and what each press brings out beside her is how she learns it fires.
     """
+    from core.agency.thrown_at_what_shows import comes_at_her, what_the_shot_goes_at
+
     if rules is None:
         return
-    fire = next((key for key in rules.fire_keys if key not in WAYS and key != run.held), None)
+    # A key the words give to getting out of the way is not one to fire with, whatever else a run-on line made of it:
+    # LIVE 2026-10-11 "...FIVE TIMES WINS DODGE FOOD BY PRESSING THE SPACE BAR" gave space to hitting as well, she
+    # tapped it three times a second as her shot, and in a food fight lost in fourteen seconds she threw nothing.
+    away = [key for key in rules.dodge_keys if key not in WAYS]
+    fire = next((key for key in rules.fire_keys if key not in WAYS and key != run.held and key not in away), None)
     if fire is not None and at - run.last_trigger_began >= FIRE_WHILE_FINDING_S:
         began = time.monotonic()
         await hands.tap(fire)
         hers.tapped(fire, time.monotonic(), began=began)
         run.last_trigger_began, run.taps = began, run.taps + 1
         return
+    if away and at - run.last_trigger_began >= GOT_OUT_OF_THE_WAY_EVERY_S and comes_at_her(moves.things.values()):
+        # With no body of hers in the place, what comes at her grows; the key for getting out of the way is pressed.
+        run.last_trigger_began = time.monotonic()
+        await hands.tap(away[0])
+        run.taps += 1
     if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < THROW_WHILE_FINDING_S:
         return
-    going = [t for t in moves.things.values() if math.hypot(t.vx, t.vy) > 8.0 and t.number != hers.number
-             and t.kind not in {made.kind for made in hers.makes.values()}]
-    if not going:
+    # At whoever has just shown, before whatever is going across (core/agency/thrown_at_what_shows.py).
+    target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
+                                   not_kinds={made.kind for made in hers.makes.values()})
+    if target is None:
         return
-    target = max(going, key=lambda t: t.size)
     tall, wide = moves.shape
-    await hands.click(min(1.0, max(0.0, target.x / max(1, wide))), min(1.0, max(0.0, target.y / max(1, tall))))
+    x, y = target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
+    await hands.click(min(1.0, max(0.0, x / max(1, wide))), min(1.0, max(0.0, y / max(1, tall))))
     run.last_click = at
 
 
