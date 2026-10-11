@@ -74,3 +74,59 @@ def test_the_real_board_is_searched_within_its_time():
     rules = draughts_said(WORDS, up, down)
     found = search(rules, Position(position.cells, up), seconds=0.6)
     assert found.move in rules.moves(Position(position.cells, up)) and found.depth >= 3
+
+
+class _NoughtsAndCrosses:
+    """A drawn three-by-three board, ruled in grey lines, red pieces hers and blue the other side's: each click of hers
+    on an empty square puts a red piece there, and the other side answers in the first empty square."""
+
+    def __init__(self):
+        self.cells = [["" for _ in range(3)] for _ in range(3)]
+        self.at = 0.0
+
+    def picture(self):
+        image = np.full((300, 300, 3), 235, np.uint8)
+        for k in range(4):
+            image[:, min(299, k * 100):min(300, k * 100 + 3)] = 90
+            image[min(299, k * 100):min(300, k * 100 + 3), :] = 90
+        for r in range(3):
+            for c in range(3):
+                if self.cells[r][c]:
+                    colour = (200, 40, 40) if self.cells[r][c] == "red" else (40, 60, 200)
+                    image[r * 100 + 28:r * 100 + 72, c * 100 + 28:c * 100 + 72] = colour
+        return image
+
+    async def look(self):
+        self.at += 0.1
+        return self.picture(), self.at
+
+    async def click(self, x, y):
+        r, c = min(2, int(y * 3)), min(2, int(x * 3))
+        if self.cells[r][c]:
+            return
+        self.cells[r][c] = "red"
+        empty = [(rr, cc) for rr in range(3) for cc in range(3) if not self.cells[rr][cc]]
+        if empty and not _three(self.cells, "red"):
+            rr, cc = empty[0]
+            self.cells[rr][cc] = "blue"
+
+
+def _three(cells, who):
+    lines = [[(r, c) for c in range(3)] for r in range(3)] + [[(r, c) for r in range(3)] for c in range(3)]
+    lines += [[(i, i) for i in range(3)], [(i, 2 - i) for i in range(3)]]
+    return any(all(cells[r][c] == who for r, c in line) for line in lines)
+
+
+def test_a_placing_game_is_known_by_its_shape_and_won_by_search_through_her_eyes_and_hands(monkeypatch):
+    import asyncio
+
+    from core.agency import playing_a_board as playing
+    from core.agency.playing_a_board import a_board_game, play_a_board
+
+    monkeypatch.setattr(playing, "STILL_S", 0.0)
+    game = _NoughtsAndCrosses()
+    board = a_board_in(game.picture())
+    assert (board.rows, board.columns) == (3, 3) and a_board_game(board) == "placing"
+    said = []
+    result = asyncio.run(play_a_board(game.look, game, "", seconds=20.0, say=said.append))
+    assert result["ended"] == "won" and _three(game.cells, "red"), (result, game.cells, said)

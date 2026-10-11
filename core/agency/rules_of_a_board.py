@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-__all__ = ["Draughts", "Move", "Position"]
+__all__ = ["Draughts", "Move", "Placing", "Position"]
 
 #: A square: row, column.
 Square = tuple[int, int]
@@ -176,3 +176,70 @@ class Draughts:
 
     def with_changes(self, **changes: bool) -> Draughts:
         return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class Placing:
+    """A family where a move puts one piece of one's own on an empty place, and a line of so many of one side wins:
+    noughts and crosses (three, anywhere), four in a row dropped down columns, five in a row anywhere. ``falls`` where
+    a piece put in a column falls to the lowest empty place in it."""
+
+    line: int = 3
+    falls: bool = False
+    first: str = "a"
+    second: str = "b"
+
+    def other(self, side: str) -> str:
+        return self.second if side == self.first else self.first
+
+    def moves(self, position: Position) -> list[Move]:
+        if self.winner(position):
+            return []
+        if self.falls:
+            found = []
+            for column in range(position.columns):
+                row = next((r for r in range(position.rows - 1, -1, -1) if position.cells[r][column] == ""), None)
+                if row is not None:
+                    found.append(((row, column),))
+            # The middle columns first: they take part in the most lines.
+            return sorted(found, key=lambda move: abs(move[0][1] - (position.columns - 1) / 2))
+        middle = ((position.rows - 1) / 2, (position.columns - 1) / 2)
+        empty = [((r, c),) for r in range(position.rows) for c in range(position.columns) if position.cells[r][c] == ""]
+        return sorted(empty, key=lambda move: abs(move[0][0] - middle[0]) + abs(move[0][1] - middle[1]))
+
+    def after(self, position: Position, move: Move) -> Position:
+        cells = [list(row) for row in position.cells]
+        r, c = move[0]
+        cells[r][c] = position.turn
+        return Position(tuple(tuple(row) for row in cells), self.other(position.turn))
+
+    def _lines(self, position: Position) -> list[list[str]]:
+        rows, columns, n = position.rows, position.columns, self.line
+        found = []
+        for r in range(rows):
+            for c in range(columns):
+                for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+                    end_r, end_c = r + dr * (n - 1), c + dc * (n - 1)
+                    if 0 <= end_r < rows and 0 <= end_c < columns:
+                        found.append([position.cells[r + dr * k][c + dc * k] for k in range(n)])
+        return found
+
+    def winner(self, position: Position) -> str:
+        for cells in self._lines(position):
+            if cells[0] and all(cell == cells[0] for cell in cells):
+                return cells[0]
+        if all(cell for row in position.cells for cell in row):
+            return "-"  # full and no line: drawn
+        return ""
+
+    def worth(self, position: Position, side: str) -> float:
+        """Open lines: each line holding pieces of one side only is worth more the more it holds."""
+        total = 0.0
+        for cells in self._lines(position):
+            mine = sum(1 for cell in cells if cell == side)
+            theirs = sum(1 for cell in cells if cell == self.other(side))
+            if mine and not theirs:
+                total += 4 ** mine
+            elif theirs and not mine:
+                total -= 4 ** theirs
+        return total / (4 ** self.line)

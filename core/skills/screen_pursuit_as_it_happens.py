@@ -782,7 +782,7 @@ def _left_alone_for(reflexes: PlayingAsItHappens) -> float:
 async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     """Where what the page draws is a board of two sides in turns, it is played by search, its rules read from what the
     place has said (core/agency/playing_a_board.py); whether it was. Looked for every few seconds, not every look."""
-    from core.agency.playing_a_board import is_draughts, play_a_board
+    from core.agency.playing_a_board import a_board_game, play_a_board
     from core.perception.a_board_seen import a_board_in
 
     if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
@@ -791,9 +791,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     seen = await reflexes.look()
     words = " ".join([*reflexes.words, str(reflexes.keep.get("counsel") or "")])
     board = a_board_in(seen[0]) if seen is not None else None
-    if board is None or not is_draughts(board, words):
+    if board is None or not a_board_game(board, words):
         return False
-    logger.info("a board of two sides in turns: playing it by search")
+    logger.info("a board of two sides in turns (%s): playing it by search", a_board_game(board, words))
     stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
                                  say=_said_while_playing)
     logger.info("a board played: %s", stretch)

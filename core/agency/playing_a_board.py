@@ -24,7 +24,7 @@ from typing import Any
 
 from core.agency.rules_of_a_board import Draughts, Move, Position
 
-__all__ = ["Searched", "draughts_said", "is_draughts", "position_of", "search"]
+__all__ = ["Searched", "a_board_game", "draughts_said", "is_draughts", "placing_said", "position_of", "search"]
 
 #: What a game's words say of its draughts, each a variation of the family, said where a word begins.
 _SAYS = {
@@ -47,6 +47,42 @@ def draughts_said(words: str, up: str, down: str) -> Draughts:
     changes = {name: value for name, (said, value) in _SAYS.items() if said.search(words or "")}
     # Where nothing says men keep to forward, the family's usual way holds; and a special piece moves either way.
     return rules.with_changes(**changes) if changes else rules
+
+
+#: What names a placing game, and the line that wins it; and a board's own shape where its words say nothing.
+_PLACING_NAMED = (
+    (re.compile(r"\b(?:tic[- ]?tac[- ]?toe|noughts and crosses|x'?s and o'?s|three in a row)\b", re.I), 3, False),
+    (re.compile(r"\b(?:connect (?:4|four)|four in a row)\b", re.I), 4, True),
+    (re.compile(r"\b(?:five in a row|gomoku|connect (?:5|five))\b", re.I), 5, False),
+)
+_PLACING_SHAPES = {(3, 3): (3, False), (6, 7): (4, True), (15, 15): (5, False), (19, 19): (5, False)}
+
+
+def placing_said(board: Any, words: str = "") -> Any:
+    """The placing family a board is, by its words first and else by its shape: a line of three on three by three, four
+    dropped down the columns of six by seven, five on a large open board; None where it is no placing game."""
+    from core.agency.rules_of_a_board import Placing
+
+    if board is None:
+        return None
+    for named, line, falls in _PLACING_NAMED:
+        if named.search(words or ""):
+            return Placing(line=line, falls=falls or bool(re.search(r"\bdrop\b|\bcolumn", words or "", re.I)))
+    shaped = _PLACING_SHAPES.get((board.rows, board.columns))
+    if shaped is None:
+        return None
+    # A placing game begins nearly empty, and a draughts board full of two facing sides is not one.
+    held = sum(1 for row in board.cells for cell in row if cell)
+    return Placing(line=shaped[0], falls=shaped[1]) if held <= 2 else None
+
+
+def a_board_game(board: Any, words: str = "") -> str:
+    """Which family of board game a board seen is ("draughts", "placing"), or "" where it is none she knows."""
+    if is_draughts(board, words):
+        return "draughts"
+    if placing_said(board, words) is not None:
+        return "placing"
+    return ""
 
 
 def is_draughts(board: Any, words: str = "") -> bool:
@@ -126,6 +162,8 @@ def _negamax(rules: Draughts, position: Position, depth: int, alpha: float, beta
     if looked[0] % 256 == 0 and time.monotonic() > ends_at:
         raise TimeoutError
     winner = rules.winner(position)
+    if winner == "-":
+        return 0.0  # a board filled with no winner is drawn
     if winner:
         return (_WON + depth) if winner == position.turn else -(_WON + depth)
     if depth <= 0:
@@ -174,6 +212,11 @@ async def play_a_board(look: Any, hands: Any, words: str, *, seconds: float, say
 
     began = time.monotonic()
     tell = say or (lambda _line: None)
+    seen = await look()
+    if seen is not None:
+        first = a_board_in(seen[0])
+        if a_board_game(first, words) == "placing":
+            return await _play_placing(look, hands, placing_said(first, words), seconds=seconds, tell=tell)
     sides: dict[str, Any] | None = None
     rules: Draughts | None = None
     mine = ""
@@ -248,6 +291,99 @@ async def _shown(look: Any, sides: Any, expected: Position, mine: str) -> bool:
                 return True
         await asyncio.sleep(0.15)
     return False
+
+
+async def _play_placing(look: Any, hands: Any, rules: Any, *, seconds: float, tell: Any) -> dict[str, Any]:
+    """A placing game played: her side is whatever her first piece is, it is her turn when the count of pieces says so,
+    and each move is a click on the place (or the column) the search chooses."""
+    import asyncio
+    from dataclasses import replace
+
+    from core.perception.a_board_seen import a_board_in
+
+    began = time.monotonic()
+    tell(f"It's {rules.line} in a row" + (", dropped down the columns" if rules.falls else "") + ". I'll search my moves.")
+    sides: dict[str, Any] | None = None
+    mine, theirs, she_began = "", "", None
+    my_colour: Any = None
+    made, refused = 0, set()
+    last_seen, still_since = "", time.monotonic()
+    while time.monotonic() - began < seconds:
+        seen = await look()
+        if seen is None:
+            return {"moves": made, "ended": "the picture could not be taken"}
+        picture = seen[0]
+        board = a_board_in(picture, sides)
+        if board is None:
+            return {"moves": made, "ended": "no board is in front of her"}
+        # The sides are named by their colours once both are on the board, and hers is the one her piece was.
+        if sides is None and len(board.sides) >= 2:
+            sides = board.sides
+        if my_colour is not None and board.sides:
+            mine = min(board.sides, key=lambda side: _apart(board.sides[side], my_colour))
+            theirs = next((side for side in board.sides if side != mine), theirs)
+        said = board.says()
+        if said != last_seen:
+            last_seen, still_since = said, time.monotonic()
+            await asyncio.sleep(0.1)
+            continue
+        if time.monotonic() - still_since < STILL_S:
+            await asyncio.sleep(0.1)
+            continue
+        cells = [[cell.rstrip("+") for cell in row] for row in board.cells]
+        counts = {side: sum(row.count(side) for row in cells) for side in {c for row in cells for c in row if c}}
+        if she_began is None:
+            she_began = not counts
+            theirs = next(iter(counts), "")
+        her_turn = counts.get(mine, 0) == counts.get(theirs, 0) - (0 if she_began else 1) if mine else \
+            sum(counts.values()) == (0 if she_began else 1)
+        me, them = mine or "me", theirs or "them"
+        rows = [[me if c == mine and mine else them if c and c != mine else "" for c in row] for row in cells]
+        position = Position.from_rows(rows, me)
+        game = replace(rules, first=me, second=them)
+        ended = game.winner(position)
+        if ended:
+            return {"moves": made, "ended": "drawn" if ended == "-" else "won" if ended == me else "lost", "board": said}
+        if not her_turn:
+            await asyncio.sleep(0.2)
+            continue
+        found = search(game, position, seconds=THINKS_S)
+        move = found.move if found.move not in refused else next((m for m in game.moves(position) if m not in refused), None)
+        if move is None:
+            return {"moves": made, "ended": "no move is left to her", "board": said}
+        tell(f"Placing at {a_square_named(position, move[0])}.")
+        x, y = board.centre(*move[0])
+        await hands.click(x / picture.shape[1], y / picture.shape[0])
+        placed = await _a_piece_comes(look, sides, move[0], mine)
+        if placed is None:
+            refused.add(move)
+            continue
+        my_colour = my_colour if my_colour is not None else placed
+        made += 1
+        last_seen, still_since = "", time.monotonic()
+    return {"moves": made, "ended": "out of time"}
+
+
+def _apart(one: Any, other: Any) -> float:
+    return float(sum((float(a) - float(b)) ** 2 for a, b in zip(one, other, strict=False)))
+
+
+async def _a_piece_comes(look: Any, sides: Any, square: tuple[int, int], mine: str) -> Any:
+    """The colour of the side of the piece that comes onto ``square`` after her click; None where none comes in time."""
+    import asyncio
+
+    from core.perception.a_board_seen import a_board_in
+
+    ends_at = time.monotonic() + MOVE_SHOWS_S
+    while time.monotonic() < ends_at:
+        seen = await look()
+        board = a_board_in(seen[0], sides) if seen is not None else None
+        if board is not None and board.rows > square[0] and board.columns > square[1]:
+            piece = board.cells[square[0]][square[1]].rstrip("+")
+            if piece and (not mine or piece == mine):
+                return board.sides.get(piece)
+        await asyncio.sleep(0.15)
+    return None
 
 
 def _the_rules_said(rules: Draughts) -> str:

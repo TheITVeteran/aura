@@ -76,7 +76,7 @@ def _period(profile: np.ndarray, least: int, most: int) -> tuple[int, int, float
         best = (spacing, 0, 0.0)
         for phase in range(spacing):
             teeth = profile[phase::spacing]
-            if teeth.size < FEWEST + 1:
+            if teeth.size < FEWEST:
                 continue
             # Each tooth is the stronger of a pixel either side: an edge drawn on the pixel boundary falls on one of two.
             near = np.maximum(teeth, np.concatenate([profile[phase + 1::spacing], np.zeros(1)])[: teeth.size])
@@ -88,6 +88,43 @@ def _period(profile: np.ndarray, least: int, most: int) -> tuple[int, int, float
         return (0, 0, 0.0)
     top = max(score for _s, _p, score in found)
     return next(one for one in found if one[2] >= NEARLY * top)
+
+
+#: How near two edges must be to be one line's two sides, and how nearly evenly spaced a chain of lines must be.
+ONE_LINE_PX = 4
+EVEN_PX = 3
+
+
+def _the_chain(profile: np.ndarray) -> tuple[float, float, int] | None:
+    """The lattice along one axis from where its edges stand out: the strongest edges, a ruled line's two sides taken as
+    one, and the longest run of them evenly spaced; where it starts, its spacing, and how many squares it spans."""
+    if profile.size < 8:
+        return None
+    strong = float(profile.mean() + 2.0 * profile.std())
+    peaks = [i for i in range(profile.size) if profile[i] >= strong
+             and profile[i] == profile[max(0, i - 2):i + 3].max()]
+    merged: list[list[int]] = []
+    for at in peaks:
+        if merged and at - merged[-1][-1] <= ONE_LINE_PX:
+            merged[-1].append(at)
+        else:
+            merged.append([at])
+    lines = [sum(group) / len(group) for group in merged]
+    best: list[float] = []
+    for first in range(len(lines)):
+        for second in range(first + 1, len(lines)):
+            spacing = lines[second] - lines[first]
+            if spacing < 6:
+                continue
+            chain = [lines[first], lines[second]]
+            for nxt in lines[second + 1:]:
+                if abs(nxt - chain[-1] - spacing) <= EVEN_PX:
+                    chain.append(nxt)
+            if len(chain) > len(best):
+                best = chain
+    if len(best) < FEWEST + 1:
+        return None
+    return best[0], (best[-1] - best[0]) / (len(best) - 1), len(best) - 1
 
 
 def _run(profile: np.ndarray, spacing: int, phase: int) -> tuple[int, int]:
@@ -113,6 +150,22 @@ def the_lattice(picture: np.ndarray) -> tuple[float, float, float, float, int, i
     tall, wide = grey.shape
     across = np.abs(np.diff(grey, axis=1)).mean(axis=0)
     down = np.abs(np.diff(grey, axis=0)).mean(axis=1)
+    found = _by_the_comb(across, down, wide, tall)
+    if found is not None:
+        return found
+    # Squares told apart by ruled lines, not by colour, have an edge each side of each line: the lattice is the longest
+    # chain of lines evenly spaced, each line's two sides taken as one.
+    by_peaks = _the_chain(across), _the_chain(down)
+    if all(by_peaks):
+        (left, width, columns), (top, height, rows) = by_peaks
+        if FEWEST <= columns <= MOST and FEWEST <= rows <= MOST:
+            return float(left + 1), float(top + 1), float(width), float(height), columns, rows
+    return None
+
+
+def _by_the_comb(across: np.ndarray, down: np.ndarray, wide: int, tall: int
+                 ) -> tuple[float, float, float, float, int, int] | None:
+    """The lattice from the spacing at which the edges peak most regularly: squares told apart by their colours."""
     width, x0, x_score = _period(across, wide // MOST, wide // FEWEST)
     height, y0, y_score = _period(down, tall // MOST, tall // FEWEST)
     if min(x_score, y_score) < STANDS_OUT or not width or not height:
@@ -152,8 +205,9 @@ def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]]
     board = Board(rows, columns, left, top, width, height, [["" for _ in range(columns)] for _ in range(rows)])
     if not held:
         return board
-    # A piece's side is told by its base, where a figure standing on a piece still shows the piece.
-    bases = {(r, c): _the_look(image, left, top, width, height, r, c, (0.62, 0.88), (0.3, 0.7)) for r, c in held}
+    # A piece's side is told by its own pixels (those unlike its bare square), its lower half's where the piece fills it:
+    # a figure standing on a piece still shows the piece there.
+    bases = {(r, c): _the_pieces_colour(image, bare[r, c], left, top, width, height, r, c) for r, c in held}
     colours = np.array([bases[(r, c)] for r, c in held])
     named = _sides_of(colours, sides)
     board.sides = {name: tuple(float(v) for v in colour) for name, colour in named["colours"].items()}
@@ -167,6 +221,23 @@ def a_board_in(picture: np.ndarray, sides: dict[str, tuple[float, float, float]]
             if (r, c) in tall_ones or (len(mine) > 2 and np.linalg.norm(looks[r, c] - usual) > STANDS_APART):
                 board.cells[r][c] = f"{side}+"
     return board
+
+
+def _the_pieces_colour(image: np.ndarray, bare: np.ndarray, left: float, top: float, width: float, height: float,
+                       row: int, column: int) -> np.ndarray:
+    """The colour of what stands in a square: the middle colour of its pixels unlike the bare square, from its lower
+    half where those are many there, else from all of it."""
+    tall, wide = image.shape[:2]
+    x0, x1 = int(left + (column + 0.12) * width), int(left + (column + 0.88) * width)
+    y0, ym, y1 = int(top + (row + 0.12) * height), int(top + (row + 0.5) * height), int(top + (row + 0.88) * height)
+    whole = image[max(0, y0):min(tall, y1), max(0, x0):min(wide, x1)].reshape(-1, 3)
+    lower = image[max(0, ym):min(tall, y1), max(0, x0):min(wide, x1)].reshape(-1, 3)
+    for part in (lower, whole):
+        unlike = part[np.linalg.norm(part - bare, axis=1) > HOLDS] if part.size else part
+        if len(unlike) >= max(4, 0.2 * len(part)):
+            return np.median(unlike, axis=0)
+    unlike = whole[np.linalg.norm(whole - bare, axis=1) > HOLDS] if whole.size else whole
+    return np.median(unlike, axis=0) if len(unlike) else bare
 
 
 def _crosses_down(image: np.ndarray, bare: np.ndarray, left: float, top: float, width: float, height: float,
