@@ -121,6 +121,8 @@ class _Spot:
     bears: str = ""
     usually: str = ""
     someone: bool = False
+    #: Her eyes have no name for its kind, so ``name`` is only how it looks ("brown thing"), and a control is tried on it.
+    unnamed: bool = False
 
     @property
     def mark(self) -> tuple[Any, ...]:
@@ -343,6 +345,14 @@ def _spots(guide: Any, moves: Any, mine: Any, landmarks: list[Any]) -> list[_Spo
             bears, usually = _known(seen.by_kind.get(thing.kind, "") or name)
             spots.append(_Spot(name, thing.x, thing.y, thing.w, thing.h, thing.number, thing.kind, None, bears, usually,
                                thing.kind in seen.who))
+        else:
+            # A kind her eyes have not named is still something a control may be for, known by how it looks until a
+            # press beside it shows what it is (offline 2026-10-11, with no eyes to name things: told "press the space
+            # bar to open doors", she walked the hall and never pressed beside a door).
+            from core.agency.naming_what_she_sees import describe
+
+            spots.append(_Spot(describe(moves, thing.kind, thing), thing.x, thing.y, thing.w, thing.h, thing.number,
+                               thing.kind, unnamed=True))
     tall, wide = moves.shape
     for landmark in landmarks:
         left, top, right, bottom = landmark.box
@@ -367,7 +377,8 @@ def _a_use_for(guide: Any, using: UsingOnThings, spot: _Spot, at: float, *, wait
         pair = (control.key, spot.name)
         if pair not in using.worked and using.nothing.get(pair, 0) >= NOTHING_TWICE:
             continue
-        if a_name_for(control.on, spot.name, spot.bears, spot.usually, control.act, spot.someone):
+        if spot.unnamed or a_name_for(control.on, spot.name, spot.bears, spot.usually, control.act, spot.someone):
+            # A thing of no known name is tried: what the press does there says whether it is one the control is for.
             return control
     return None
 
