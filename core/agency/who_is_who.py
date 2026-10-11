@@ -95,6 +95,8 @@ WENT_WITHIN_S = 0.5
 TAKEN_FOR_SURE = 3
 #: How many times a kind must have done a thing (cost her, counted, stopped her, done nothing) for that to be shown.
 SHOWN_AFTER = 2
+#: The most kinds whose part is said in one game: LIVE 2026-10-11 a flying shooter had over twenty said in two minutes.
+MOST_SAID = 5
 #: How many meetings that did nothing a cost, and a gain, stand against: past that many, it came with the meeting by
 #: chance. A cost stands against more, since a second is dear.
 NOTHINGS_TO_A_COST = 4
@@ -381,18 +383,28 @@ class WhoIsWho:
         """What she has found out of each kind and not yet said: once each, when its own acts have shown it, and no more
         than ``most`` at a time, the rest left for later (LIVE 2026-10-11 one loss had seven kinds said to be threats
         in a fifth of a second)."""
-        lines = []
+        if len(self.said) >= MOST_SAID:
+            return []
+        found_out = []
         for thing in things:
-            if len(lines) >= most:
-                break
             found = self.of(thing)
-            if not found.sure or found.name in (HERS, PENDING, UNKNOWN, PART_OF_THE_PLACE, NEGLIGIBLE):
+            if not found.sure or found.name in (HERS, PENDING, UNKNOWN, PART_OF_THE_PLACE, NEGLIGIBLE, NEUTRAL):
                 continue
-            if (thing.kind, found.name) in self.said:
+            if (thing.kind, found.name) in self.said or any(kind == thing.kind for kind, _found, _thing in found_out):
                 continue
-            self.said.add((thing.kind, found.name))
+            found_out.append((thing.kind, found, thing))
+        # What has shown itself most is said first; a person names the few things that matter, not every one.
+        found_out.sort(key=lambda one: -self._shown_by(one[0]))
+        lines = []
+        for kind, found, thing in found_out[:max(0, min(most, MOST_SAID - len(self.said)))]:
+            self.said.add((kind, found.name))
             lines.append(f"The {name_of(thing)} is {_spoken(found.name)}: {found.why}.")
         return lines
+
+    def _shown_by(self, kind: int) -> int:
+        """How many times a kind has done what it is taken for."""
+        kept = self.kinds.get(kind) or _Kind()
+        return kept.blows + kept.losses + kept.gains + kept.got_past + kept.took + kept.lost_with + kept.stopped
 
 
 def _spoken(name: str) -> str:

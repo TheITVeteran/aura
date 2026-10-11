@@ -177,3 +177,19 @@ def test_what_her_presses_bring_out_is_not_taken_for_her():
     girl = SimpleNamespace(number=3, kind=6, born=1.0)
     _found_by_her_presses(run, SimpleNamespace(things={40: shot, 3: girl}), hers, 10.0)
     assert hers.number == 3
+
+
+def test_a_body_hovering_where_it_is_is_no_gauge():
+    """A figure flying in place moves within itself, its edges stirring on every side: it is not a gauge for doing so
+    (offline 2026-10-11 each girl of a flying shooter was taken for a gauge as she hovered)."""
+    import random
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import _HowOutlinesGo
+
+    outlines, rng = _HowOutlinesGo(), random.Random(3)
+    for _ in range(30):
+        left, right = 100.0 + rng.choice((0.0, 0.0, -3.0, 3.0)), 140.0 + rng.choice((0.0, 0.0, -3.0, 3.0))
+        top, bottom = 50.0 + rng.choice((0.0, -3.0)), 90.0 + rng.choice((0.0, 3.0))
+        outlines.saw(SimpleNamespace(number=7, x=(left + right) / 2, y=(top + bottom) / 2, w=right - left, h=bottom - top))
+    assert outlines.from_an_end[7] >= 3 and not outlines.a_gauge(7)
