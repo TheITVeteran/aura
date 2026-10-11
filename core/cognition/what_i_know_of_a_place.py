@@ -104,9 +104,13 @@ def ask_in_the_background(guide: Any, *, task: str, said: str, ask: Callable[...
         if manual:
             filled = guide.take_in_what_i_know(manual)
             logger.info("what I know of %r: %s (filled %s)", guide.place, {k: v for k, v in manual.items() if v}, filled)
+            # What her model supposes of a place is weighed with the rest and not said: it is the least sure thing she
+            # has, as often of places like this one as of this one. LIVE 2026-10-11 she told the person a game of
+            # falling tiles was a rhythm game tapped in time with music, and a tunnel flown round was to be kept to
+            # the middle of, before she had seen either played.
             line = _what_it_added(manual, filled)
-            if line and tell is not None:
-                tell(line)
+            if line:
+                logger.info("kept to herself: %s", line)
         # And what the place is, on what there is to go on now: its name, what it says, what she has seen of it
         # (core/cognition/what_this_place_is.py), asked once the manual is in and her model's one lane is free again.
         ask_for_a_reading(guide, ask, task=task, tell=tell)
