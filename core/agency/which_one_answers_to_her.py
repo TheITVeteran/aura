@@ -409,6 +409,9 @@ def _apart2(a: tuple[float, float], b: tuple[float, float]) -> float:
     return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
 
 
+#: How long her thing may be out of the picture's things (hidden behind or merged with another) and still be hers.
+HIDDEN_A_MOMENT_S = 1.0
+
 #: How far an edge must go to have moved, and how little to have stayed, in the picture's pixels; how far the end of a
 #: gauge that moves must have run over its changes, and how many changes it takes to tell; and how many outlines are
 #: kept of each thing.
@@ -741,18 +744,24 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         if any(h.get("what") == "new screen" for h in happened):
             self._new_screen_at = at
         if self.number is not None and self.number not in moves.things and not self.follows_pointer:
-            # A missing track cannot hand its old trial scores to a rival.
-            # Nearby visual continuity may retain the measured controls;
-            # otherwise a new independent experiment must establish them.
             nearby = self._one_of_her_kind(moves, at)
-            self.identification.reset("established track absent")
-            self._by_thing.clear()
-            self._by_kind.clear()
-            if nearby is None:
-                self._lost_sight(at)
+            if nearby is None and at - self.last_seen_at < HIDDEN_A_MOMENT_S:
+                # Hidden a moment, behind or across another thing, she is who she was, and is looked for again in the
+                # next picture: offline 2026-10-11 three flying girls crossing one another merged for a few pictures,
+                # and she was lost and found again as another thing every second, her keys learned afresh each time.
+                pass
             else:
-                logger.info("her thing %s goes on as %s", self.number, nearby)
-                self.number = nearby
+                # A missing track cannot hand its old trial scores to a rival.
+                # Nearby visual continuity may retain the measured controls;
+                # otherwise a new independent experiment must establish them.
+                self.identification.reset("established track absent")
+                self._by_thing.clear()
+                self._by_kind.clear()
+                if nearby is None:
+                    self._lost_sight(at)
+                else:
+                    logger.info("her thing %s goes on as %s", self.number, nearby)
+                    self.number = nearby
         # A renderer may answer immediately. Delaying the control label can
         # assign the first movement after a change to the previous key.
         # Use the delivered control and exclude its unsettled motion window.
@@ -785,14 +794,16 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                                    settled=press is not None, position=(thing.x, thing.y), at=at, when=at)
                     self._answering(thing, key, at - began, at)
         self._what_follows_the_pointer(moves, at)
-        if not self.follows_pointer:
+        # Hidden a moment, she is not chosen afresh: another thing's trials would hand it her controls.
+        hidden = self.number is not None and self.number not in moves.things
+        if not self.follows_pointer and not hidden:
             self._decide(moves, at)
         # However she was found (a trial of her keys, her presses moving her kind alike, set back after a loss), whether
         # she is carried by her own going is what her own pushes say, looked at again as they come in.
         if self.number is not None and not self.carried and at - self._carried_checked >= CARRIED_CHECKED_EVERY_S:
             self._carried_checked = at
             self.carried = self._hers.carried()
-        elif self.number not in moves.things:
+        elif self.number not in moves.things and not hidden:
             self.number = self._under_the_pointer(moves, at)
         self._remember_own_thing(moves, at)
         self._what_keys_make(moves, happened, at)

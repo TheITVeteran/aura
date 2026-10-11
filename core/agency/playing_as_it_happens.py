@@ -1410,6 +1410,7 @@ def _counters_without_reading(run: _Run, moves: WhatMoves, hers: WhichIsHers, me
 
 #: How long between two accounts of what kind of game this is.
 SITUATION_EVERY_S = 30.0
+ACCOUNTS_A_GAME = 2
 
 #: Where a thing stands, as where_on_screen names it, inside an account of the game.
 _WHERE_IT_STANDS = re.compile(r" at the (?:(?:top|bottom) )?(?:left|right)\b| at the (?:top|bottom|middle)\b")
@@ -1421,6 +1422,10 @@ def _what_kind_of_game(run: _Run, say: Any, moves: WhatMoves, hers: WhichIsHers,
     from core.agency.what_kind_of_game_this_is import in_a_sentence
 
     if "me" not in run.said or at - run.situation_at < SITUATION_EVERY_S:
+        return
+    # An account of the game a few times a game, not whenever a kind does something new: LIVE 2026-10-11 a flying
+    # shooter had one every thirty seconds, each of things that had bounced or turned back off her.
+    if sum(1 for once in run.said if once.startswith("situation ")) >= ACCOUNTS_A_GAME:
         return
     sentence = in_a_sentence(moves, hers, meeting, physics, run.keys, me=run.hers_description)
     if not sentence or ";" not in sentence:
