@@ -22,15 +22,26 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 16 |
 | Values across them | 85 |
 | Kinds of place they make, multiplied out | 222,953,472,000 |
-| Values with an answer | 71 |
+| Values with an answer | 79 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
 | Values a game needs | 0 to 41, 17.8 on average |
-| Games with an answer for every value they need | 13 |
+| Games with an answer for every value they need | 21 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 14 values with none answers every value the
+place of their own. Answering the 6 values with none answers every value the
 56 need, where the dimensions are independent.
+
+Eight values were answered on 11 October, each by a module shown working in a
+world of its own and then joined to her play: the pull, the clock, more and
+faster and urgency (`core/agency/what_the_place_does_to_her.py`), a thing gone
+for (`core/agency/a_thing_gone_for.py`), meeting by what she is now
+(`core/agency/meeting_by_what_she_is.py`), what comes for her
+(`core/agency/what_comes_for_her.py`) and keys that turn her
+(`core/agency/which_way_she_faces.py`). A way through
+(`core/agency/a_way_through.py`) finds its way in its own world and is joined
+to her play, but in whole play on a world of rooms she has not yet got through
+a gap, so it stays on the list below.
 
 ## Where the dimensions meet
 
@@ -53,16 +64,8 @@ seams are kept to one owner each, so that the answers compose:
 
 | Games | Dimension: value | What answers it |
 |---|---|---|
-| 28 | what the place does: a clock runs down | the time left read from a counter or a bar and the rate it falls, as seconds left |
-| 28 | keeping to it: when it is urgent | the time left against what is left to do, as one urgency that shortens detours |
-| 24 | meeting: by what she is now | what meeting a kind did, kept by her own state when it met: a colour, a power held |
-| 23 | what the place does: a pull | how she moves with no key held, learned per place on the screen, added to every prediction |
-| 20 | what the place does: more and faster | how fast things come and how often, followed over a run, widening the berth she gives them |
-| 18 | keeping to it: a thing gone for | a thing chosen is kept to until it is got, gone, out of reach, or plainly worse than another |
 | 18 | seeing: sound | what a page plays, heard as events, and what each came with (a point, a life lost) |
-| 17 | how others behave: come for her | things that turn toward her, predicted as following her and not as going straight on |
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
-| 9 | what a control does: turns her | keys that turn her and a key that takes her the way she faces, told apart from keys that move her one way |
 | 9 | meeting: pushed to a place | a thing she runs into moves; got to its place by pushing it from its far side |
 | 9 | sides: allies to keep | someone on her side, kept clear of what would cost her through them |
 | 6 | logistics: spend a supply | a meter spent where it does most, and saved where it does least |

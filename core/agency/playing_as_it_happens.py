@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.agency.a_way_through import goes_every_way
 from core.agency.building_up import builds_up
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S, HerBlows
@@ -237,7 +238,9 @@ class _Run:
     #: The way held, where her thing was, and since when, while it stays put under it.
     stuck: tuple[str, float, float, float] | None = None
     #: The place she is making for, the nearest she has got to it, and since when.
-    making_for: tuple[tuple[int, int], float, float] | None = None
+    making_for: tuple[tuple[int, int], float, float, int] | None = None
+    #: The walls she has been stopped by on this screen, and the way round them (core/agency/a_way_through.py).
+    way_through: Any = None
     control_probe_retries: int = 0
     control_attribution: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=128))
     attribution_changes: int = 0
@@ -277,6 +280,16 @@ class _Run:
     reach: Any = None
     #: The tells of each kind of thing, learned from what followed each change in it (core/agency/warning_signs.py).
     signs: Any = None
+    #: What the place does to her whatever she does (core/agency/what_the_place_does_to_her.py), and the thing she is
+    #: going for, kept to until there is a reason to let it go (core/agency/a_thing_gone_for.py).
+    pressures: Any = None
+    gone_for: Any = None
+    #: Where she faces, where her keys turn her and take her the way she faces (core/agency/which_way_she_faces.py),
+    #: and how many trials it has asked for.
+    faces: Any = None
+    facing_trials: int = 0
+    #: The things that come for her, told from those that go their own way (core/agency/what_comes_for_her.py).
+    comes: Any = None
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -456,6 +469,16 @@ class _Choosing:
     #: Where to go when nothing more pressing is chosen: a thing standing still that a key she was told of is for
     #: (core/agency/using_a_control_on_a_thing.py).
     going_to: tuple[float, float] | None = None
+    #: The thing she is going for, kept to (core/agency/a_thing_gone_for.py), and how pressing time is, nought to one
+    #: (core/agency/what_the_place_does_to_her.py).
+    gone_for: Any = None
+    urgency: float = 0.0
+    #: Where she faces, where the place turns her (core/agency/which_way_she_faces.py), and what comes for her
+    #: (core/agency/what_comes_for_her.py).
+    faces: Any = None
+    comes: Any = None
+    #: The walls met on this screen and the way round them (core/agency/a_way_through.py).
+    way_through: Any = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -551,7 +574,7 @@ class _Choosing:
         free = 1 - line
         mine = self.mine
         her_line, her_free = (mine.x, mine.y)[line], (mine.x, mine.y)[free]
-        best = None
+        candidates = []
         for thing in self.others():
             if self.stance(thing) not in (MEET, CLICK) or not thing.moved:
                 continue
@@ -570,9 +593,8 @@ class _Choosing:
                 when, there = imagined
             # The next arrival is urgent even when she cannot get there in
             # time. A distant, reachable arrival must not pull her away from it.
-            rank = when
-            if best is None or rank < best[0]:
-                best = (rank, there, thing)
+            candidates.append((when, there, thing))
+        best = self._kept_to(candidates)
         if best is not None:
             goal = [None, None]
             goal[free] = best[1]
@@ -633,7 +655,7 @@ class _Choosing:
     def _target_anywhere(self) -> tuple[tuple[float | None, float | None], str, Any]:
         mine = self.mine
         speed = max(self.speed(0), self.speed(1))
-        best = None
+        candidates = []
         for thing in self.others():
             stance = self.stance(thing)
             # A still thing she is on already is not somewhere to go: what being on it does, it is doing.
@@ -644,9 +666,10 @@ class _Choosing:
                 px, py = thing.where_at(when)
                 when = math.hypot(px - mine.x, py - mine.y) / speed
             curious = (not thing.moved or not goes_somewhere(thing)) and not self.meeting.known(thing.kind)
-            rank = when * (2.0 if curious else 1.0)
-            if best is None or rank < best[0]:
-                best = (rank, thing.where_at(when), thing)
+            # A thing not yet known is worth a detour to find out what it is; less so as the time runs out.
+            rank = when * ((2.0 + 2.0 * self.urgency) if curious else 1.0)
+            candidates.append((rank, thing.where_at(when), thing))
+        best = self._kept_to(candidates)
         if best is not None:
             return best[1], "meet", best[2]
         aimed = self._aim_a_shot(None)
@@ -658,6 +681,17 @@ class _Choosing:
         if ground is not None:
             return ground, "cover", None
         return (None, None), "wait", None
+
+    def _kept_to(self, candidates: list[tuple[float, Any, Any]]) -> tuple[float, Any, Any] | None:
+        """The candidate gone for: the one she is keeping to, unless there is a reason to let it go
+        (core/agency/a_thing_gone_for.py); the soonest where she keeps to none."""
+        if not candidates:
+            if self.gone_for is not None and self.at is not None:
+                self.gone_for.choose([], self.at)
+            return None
+        if self.gone_for is None or self.at is None:
+            return min(candidates, key=lambda candidate: candidate[0])
+        return self.gone_for.choose(candidates, self.at, urgency=self.urgency)
 
     def _out_of_reach(self, thing: Any) -> bool:
         """A thing standing where she has found she cannot go: behind a wall, up on the scenery."""
@@ -743,7 +777,11 @@ class _Choosing:
             y = min(max(mine.y + dy, low_y), high_y) if high_y >= low_y else mine.y
             box = _moved_box(mine.box(), x - mine.x, y - mine.y, 2.0)
             for thing, away in threats:
-                tx, ty = thing.where_at(after + away)
+                # What comes for her is where she will be, not where its line was taking it.
+                if self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h))):
+                    tx, ty = self.comes.where_at(thing, after + away, x, y)
+                else:
+                    tx, ty = thing.where_at(after + away)
                 if (_boxes_meet(box, _moved_box(thing.box(), tx - thing.x, ty - thing.y, 2.0))
                         or (self.reach is not None and self.reach.within(thing, x, y, (tx, ty)))):
                     total += 1.0 / (after + 0.1)
@@ -775,6 +813,20 @@ class _Choosing:
             gx = gx - offset[0] if gx is not None else None
             gy = gy - offset[1] if gy is not None else None
         mine = self.mine
+        # Round the walls she has met to where she is going, on a floor seen from above: the next place on the way.
+        if (self.way_through is not None and why in ("meet", "cover") and gx is not None and gy is not None
+                and not self.pointing and goes_every_way(self.ways)):
+            tall, wide = self.moves.shape
+            step = self.way_through.next_step(float(mine.x), float(mine.y), gx, gy, wide, tall)
+            if step is not None:
+                gx, gy = step
+        # Where her keys turn her and take her the way she faces, she is turned toward where she is going and then taken
+        # there (core/agency/which_way_she_faces.py): a key's way on the screen says nothing in such a place.
+        if self.faces is not None and not self.pointing and self.faces.turns_her() and (gx is not None or gy is not None):
+            turned = self.faces.key_toward(float(mine.x), float(mine.y), mine.x if gx is None else gx,
+                                           mine.y if gy is None else gy)
+            if turned is not None:
+                return turned, why, aim
         # Where things that matter are on the move, she imagines the next moment under each plan she could follow and
         # does the first part of the best (core/agency/imagining_ahead.py); a body carried on by its own going is
         # steered by where each key takes it a moment ahead, as below.
@@ -893,6 +945,25 @@ async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float) -> 
     run.tried_at = run.held_since
 
 
+#: The most trials a game is given to learn what turns her (core/agency/which_way_she_faces.py).
+FACING_TRIALS = 10
+
+
+async def _a_facing_trial(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing, at: float) -> bool:
+    """A key tried on its own, between goings ahead, where a key has moved her and another moved her nowhere: tried in
+    turn, two keys that turn her cancel or add up and which did what is lost. Whether a trial was made."""
+    if (run.faces is None or choosing.mine is None or hers.follows_pointer or run.facing_trials >= FACING_TRIALS
+            or at - run.tried_at < TRY_A_KEY_S):
+        return False
+    key = run.faces.trial(run.keys)
+    if key is None:
+        return False
+    run.facing_trials += 1
+    await _hold(hands, run, hers, key, at, trying=True)
+    run.tried_at = run.held_since
+    return True
+
+
 async def _click_things(hands: Any, run: _Run, moves: WhatMoves, meeting: WhatMeetingDoes, at: float,
                         *, only_named: bool = False) -> None:
     """With no thing of her own, a click is how she meets things.
@@ -1000,6 +1071,26 @@ async def _point_at(hands: Any, run: _Run, hers: WhichIsHers, moves: WhatMoves, 
         run.pointer_moves += 1
         await hands.point(sx, sy)
         hers.pointed(x, y, time.monotonic())
+
+
+def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes,
+                         at: float) -> None:
+    """What the place does to her whatever she does, taken in and given to the choosing: how she goes with no key held,
+    which is what doing nothing is; how pressing time is; how much faster things come than at first, which widens the
+    berth she gives what costs her (core/agency/what_the_place_does_to_her.py)."""
+    mine = choosing.mine
+    run.pressures.saw(at=at, mine=mine, held=bool(run.held or run.letting_go),
+                      others=[t for t in moves.things.values() if mine is None or t.number != mine.number],
+                      counters=meeting.readouts.current, vitals=meeting.vitals)
+    choosing.gone_for, choosing.urgency = run.gone_for, run.pressures.urgency()
+    choosing.faces, choosing.comes, choosing.way_through = run.faces, run.comes, run.way_through
+    if mine is not None:
+        run.faces.saw(float(mine.vx), float(mine.vy), run.held, at)
+        run.comes.saw(moves.things.values(), mine)
+    # Carried on by her own going, doing nothing is already what her going does; under the pointer, it is staying put.
+    if mine is not None and not getattr(hers, "carried", False) and not choosing.pointing:
+        choosing.rest = run.pressures.pull_at(float(mine.x), float(mine.y))
+    choosing.caution *= math.sqrt(run.pressures.harder(at))
 
 
 def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float) -> str:
@@ -1314,6 +1405,20 @@ async def _play_as_it_happens(
     from core.agency.warning_signs import WarningSigns, read_the_signs
 
     run.signs = keep.get("signs") or WarningSigns()
+    from core.agency.a_thing_gone_for import GoneFor
+    from core.agency.what_the_place_does_to_her import Pressures
+
+    run.pressures = keep.get("pressures") or Pressures()
+    run.gone_for = keep.get("gone_for") or GoneFor()
+    from core.agency.which_way_she_faces import WhichWaySheFaces
+
+    run.faces = keep.get("faces") or WhichWaySheFaces()
+    from core.agency.what_comes_for_her import WhatComesForHer
+
+    run.comes = keep.get("comes") or WhatComesForHer()
+    from core.agency.a_way_through import AWayThrough
+
+    run.way_through = keep.get("way_through") or AWayThrough()
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
     ended = ""
@@ -1336,6 +1441,10 @@ async def _play_as_it_happens(
             run.pictures += 1
             happened = moves.see(picture, at)
             run.leading.saw(happened, at)
+            for gone in (h.get("thing") for h in happened if h.get("what") == "gone"):
+                if gone is not None and gone == run.gone_for.number:
+                    run.gone_for.got(gone, at)
+            run.gone_for.judge_changes(at)
             _where_she_has_come(run, moves, hers, say, at)
             hers.saw(moves, happened, at)
             # A key named for a way moves her; it is taken to fire only where the game's words say it does: LIVE
@@ -1353,6 +1462,7 @@ async def _play_as_it_happens(
             if any(h.get("what") == "new screen" for h in happened):
                 run.covered.clear()
                 run.barred.clear()
+                run.way_through.new_screen()
             if hers.thing(moves) is not None:
                 mine = hers.thing(moves)
                 run.cell = run.cell or max(4.0, mine.w, mine.h)
@@ -1366,6 +1476,7 @@ async def _play_as_it_happens(
                                  reach=run.reach)
             choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
             choosing.caution *= caution_of(situations)
+            _what_the_place_does(run, choosing, moves, hers, meeting, at)
             if rules is not None:
                 choosing.strikes = run.blows.stands_ground(run.blows.keys(rules.fire_keys, hers.makes))
             choosing.going_to = a_place_to_go(run, moves, hers, at, lambda line, once, at=at: _say(run, say, line, at, once=once))
@@ -1417,7 +1528,8 @@ async def _play_as_it_happens(
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
-                 "said_once": run.said, "leading": run.leading})
+                 "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
+                 "faces": run.faces, "comes": run.comes, "way_through": run.way_through})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
@@ -1461,6 +1573,8 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
     if not trying_the_pointer and run.trying < 2 * len(run.keys) and not hers.keys_known(run.keys) and not hers.follows_pointer:
         await _try_the_keys(hands, run, hers, at)
+        return
+    if await _a_facing_trial(hands, run, hers, choosing, at):
         return
     if choosing.mine is not None and hers.follows_pointer:
         await _hold(hands, run, hers, "", at)

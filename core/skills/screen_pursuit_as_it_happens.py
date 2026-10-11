@@ -51,6 +51,14 @@ def begin_run(keep: dict[str, Any]) -> None:
     meeting = keep.get("meeting")
     if meeting is not None:
         meeting.begin_run()
+    # The clock and the speeds of a new attempt are its own; what the place pulls, and how firmly she keeps to a thing
+    # gone for, are the place's.
+    pressures = keep.get("pressures")
+    if pressures is not None:
+        pressures.begin_run()
+    gone_for = keep.get("gone_for")
+    if gone_for is not None:
+        gone_for.number, gone_for.passed_over = None, {}
 
 #: How long the reflexes leave a moving screen alone after finding nothing on
 #: it that answers to her: a title screen that animates is not a game yet.

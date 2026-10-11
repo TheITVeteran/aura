@@ -7,6 +7,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from core.agency.a_way_through import goes_every_way
+
 __all__ = ["NO_NEARER_S", "OUT_OF_REACH_S", "out_of_her_reach"]
 
 
@@ -27,16 +29,33 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
     own size. Where she makes for a place, by whatever ways, and for a while
     gets no nearer to it, that place: LIVE 2026-10-07 her hero went left and
     right under a spot on the wall above it a hundred and forty times.
+
+    Where her keys take her every way over a floor seen from above, what stops
+    her is a wall with ends, not the edge of what she can get to: the cells
+    just ahead are marked a wall and the way round it is found.
     """
     mine, cell = choosing.mine, run.cell
     if mine is None or not cell:
         run.stuck = run.making_for = None
         return
+    tall, wide = choosing.moves.shape
+    # On a floor seen from above, a wall met is gone round (core/agency/a_way_through.py): how near she is is how far
+    # the way round is, a place the walls found shut off is out of her reach, and a wall newly found is getting
+    # somewhere, though it takes her no nearer.
+    through = getattr(run, "way_through", None)
+    through = through if through is not None and goes_every_way(choosing.ways) else None
     (gx, gy), why, _aim = choosing.target()
     if why in ("meet", "cover") and gx is not None and gy is not None:
         place, far = (int(gx // cell), int(gy // cell)), math.hypot(gx - mine.x, gy - mine.y)
-        if run.making_for is None or run.making_for[0] != place or far < run.making_for[1] - 0.25 * cell:
-            run.making_for = (place, far, at)
+        walls = len(through.walls) if through is not None else 0
+        if through is not None and walls:
+            far = through.way_length(float(mine.x), float(mine.y), gx, gy, wide, tall)
+        if math.isinf(far):
+            run.barred.add(place)
+            run.making_for = None
+        elif (run.making_for is None or run.making_for[0] != place or far < run.making_for[1] - 0.25 * cell
+                or walls != run.making_for[3]):
+            run.making_for = (place, far, at, walls)
         elif at - run.making_for[2] >= NO_NEARER_S:
             run.barred.add(place)
             run.making_for = None
@@ -51,7 +70,10 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         return
     if at - run.stuck[3] < OUT_OF_REACH_S:
         return
-    tall, wide = choosing.moves.shape
+    if through is not None:
+        through.stopped(float(mine.x), float(mine.y), way, (float(mine.w), float(mine.h)))
+        run.stuck = None
+        return
     along = 0 if abs(way[0]) >= abs(way[1]) else 1
     step = 1 if way[along] > 0 else -1
     middle, half = (mine.y, mine.h / 2) if along == 0 else (mine.x, mine.w / 2)

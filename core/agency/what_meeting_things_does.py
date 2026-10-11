@@ -309,6 +309,13 @@ class WhatMeetingDoes:
         self.vitals = 1.0
         #: Each kind's colour and size, as the picture last gave them: a kind not yet met is judged as one like it.
         self._looks: dict[int, tuple[tuple[int, int, int], float]] = {}
+        #: What meeting each kind did by what she was when she met it (core/agency/meeting_by_what_she_is.py): the colours
+        #: of her own thing and of what goes with her, and the time of the latest picture.
+        from core.agency.meeting_by_what_she_is import MeetingByWhatSheIs
+
+        self.by_what_she_is = MeetingByWhatSheIs()
+        self._her_colours: list[tuple[int, int, int]] = []
+        self._now = 0.0
 
     # -- verdicts ----------------------------------------------------------
 
@@ -400,6 +407,7 @@ class WhatMeetingDoes:
             if event["what"] == "touched":
                 kept.touch_sum += better
                 kept.touches_settled += 1
+                self.by_what_she_is.settled(event["kind"], event.get("terms", frozenset()), better)
                 if event.get("hard") is not None:
                     kept.hard.append((float(event["hard"]), better))
                     del kept.hard[:-40]
@@ -440,6 +448,8 @@ class WhatMeetingDoes:
         self._looks = {int(kind.number): (tuple(int(c) for c in kind.colour), float(kind.size))
                        for kind in getattr(moves, "kinds", None) or ()} or self._looks
         mine = hers.thing(moves)
+        self._now = at
+        self._her_colours = _her_colours(moves, mine, self._looks)
         self._clicks_that_met(happened, at)
         self._touches(moves, mine, hers, at)
         self._gone(moves, mine, hers, happened, at)
@@ -451,7 +461,11 @@ class WhatMeetingDoes:
         # How hard she met it: her going against its, as they met.
         hard = (math.hypot(float(mine.vx) - float(thing.vx), float(mine.vy) - float(thing.vy))
                 if mine is not None and what == "touched" else None)
-        self._open.append({"what": what, "kind": thing.kind, "at": at, "hard": hard})
+        event = {"what": what, "kind": thing.kind, "at": at, "hard": hard}
+        if what == "touched":
+            event["terms"] = self._what_she_is_to(thing.kind, at)
+            self.by_what_she_is.met(thing.kind, at)
+        self._open.append(event)
         kept = self.evidence[thing.kind]
         if what == "touched":
             kept.touched += 1
@@ -559,6 +573,10 @@ class WhatMeetingDoes:
         clear, so a rule read wrongly is corrected by play, and play does not
         have to pay a life to learn what the rules already said.
         """
+        # A kind whose meetings split by what she was when she met it is met or kept clear of by what she is now.
+        by_her = self.by_what_she_is.stance(kind, self._what_she_is_to(kind, self._now))
+        if by_her is not None:
+            return MEET if by_her == "meet" else AVOID
         kept = self.evidence.get(kind) or self._like_it(kind)
         told = self.told.get(kind)
         if told is not None:
@@ -579,6 +597,14 @@ class WhatMeetingDoes:
         if fixture and kept.touched >= 2 and kept.meet < 0.5:
             return IGNORE
         return MEET
+
+    def _what_she_is_to(self, kind: int, at: float) -> frozenset[str]:
+        """The terms that hold of her for a thing of ``kind`` now (core/agency/meeting_by_what_she_is.py)."""
+        from core.agency.meeting_by_what_she_is import what_she_is
+
+        looks = self._looks.get(kind)
+        colour = looks[0] if looks is not None else (-999, -999, -999)
+        return what_she_is(colour, self._her_colours, self.by_what_she_is.met_lately(at, besides=kind))
 
     def _like_it(self, kind: int) -> _Evidence | None:
         """What was found of the kind most like this one, where this one has not been met: the next block that comes is
@@ -667,3 +693,24 @@ def _a_cost_shown(kept: _Evidence) -> bool:
     dodge the ball.
     """
     return kept.immediate > 0 or kept.passes_settled > 0
+
+
+#: How near, in pixels, and how alike in going, a thing must be to her to go with her: stacked on her, carried by her.
+WITH_HER_PX = 3.0
+WITH_HER_GOING = 25.0
+
+
+def _her_colours(moves: Any, mine: Any, looks: dict[int, tuple[tuple[int, int, int], float]]) -> list[tuple[int, int, int]]:
+    """The colours of her own thing and of the things that go with her: touching her and going as she goes."""
+    if mine is None:
+        return []
+    colours = [looks[mine.kind][0]] if mine.kind in looks else []
+    left, top, right, bottom = mine.box()
+    for thing in getattr(moves, "things", {}).values():
+        if thing.number == mine.number or thing.kind not in looks:
+            continue
+        x1, y1, x2, y2 = thing.box()
+        touching = x1 <= right + WITH_HER_PX and x2 >= left - WITH_HER_PX and y1 <= bottom + WITH_HER_PX and y2 >= top - WITH_HER_PX
+        if touching and math.hypot(float(thing.vx) - float(mine.vx), float(thing.vy) - float(mine.vy)) <= WITH_HER_GOING:
+            colours.append(looks[thing.kind][0])
+    return colours

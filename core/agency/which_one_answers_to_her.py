@@ -132,6 +132,8 @@ class _Speeds:
     moved_at: float = -math.inf
     #: The speeds of each settled press with when each was taken: how much faster it went under the press.
     timed: dict[tuple[str, float], list[tuple[float, float, float]]] = field(default_factory=dict)
+    #: How many of each press's speeds were taken up against something: a press that met a wall says nothing of its key.
+    pinned_in: dict[tuple[str, float], int] = field(default_factory=dict)
 
     def add(self, key: str, vx: float, vy: float, *, press: float | None = None, pinned: bool = False,
             settled: bool = True, position: tuple[float, float] | None = None, at: float | None = None,
@@ -161,6 +163,10 @@ class _Speeds:
             self.by_press.setdefault((key, press), []).append((vx, vy))
             if len(self.by_press) > 80:
                 del self.by_press[next(iter(self.by_press))]
+            if pinned:
+                self.pinned_in[(key, press)] = self.pinned_in.get((key, press), 0) + 1
+                if len(self.pinned_in) > 80:
+                    del self.pinned_in[next(iter(self.pinned_in))]
             if when is not None:
                 self.timed.setdefault((key, press), []).append((when, vx, vy))
                 if len(self.timed) > 80:
@@ -267,7 +273,10 @@ class _Speeds:
         # something else: offline 2026-10-09 a block passing through a runner was followed as her for a moment while
         # she held left, left was learned to move her, and she held it to get out of the way of every block after.
         # Overruled only by presses enough to say so: two of them seen, and fewer than two that moved her alike.
-        presses = [_mean(kept) for (pressed, _began), kept in self.by_press.items() if pressed == key and len(kept) >= 2]
+        # A press made up against a wall is not one that moved her otherwise: offline 2026-10-11 in rooms seen from
+        # above, two presses of left into a wall overruled the one that had moved her, and she never went left again.
+        presses = [_mean(kept) for (pressed, began), kept in self.by_press.items()
+                   if pressed == key and len(kept) >= 2 and 2 * self.pinned_in.get((pressed, began), 0) < len(kept)]
         if math.hypot(*middle) > REALLY_MOVES and len(presses) >= 2:
             alike = [mean for mean in presses
                      if math.hypot(*mean) > REALLY_MOVES and mean[0] * middle[0] + mean[1] * middle[1] > 0]

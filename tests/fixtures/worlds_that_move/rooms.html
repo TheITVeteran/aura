@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Rooms</title></head><body>
+<script src="world.js"></script>
+<script>
+// Rooms seen from above, walls with gaps between them, and a coin at a time somewhere in them. Walking straight at a
+// coin in another room walks into the wall; the way to it is round, through a gap.
+const WALLS = [
+  { x: 150, y: 30, w: 12, h: 200 }, { x: 320, y: 120, w: 12, h: 200 },
+  { x: 0, y: 170, w: 100, h: 12 }, { x: 380, y: 100, w: 100, h: 12 }, { x: 162, y: 230, w: 90, h: 12 },
+];
+const game = {
+  title: "ROOMS", rules: ["Arrow keys to walk.", "Pick up the coins."],
+  reset(world) {
+    this.me = { x: 60, y: 80, w: 16, h: 16 }; this.coins = [];
+  },
+  free(box) { return !WALLS.some((w) => hits(w, box)); },
+  step(dt, world) {
+    const me = this.me, v = 140 * dt;
+    let x = me.x, y = me.y;
+    if (world.held.has("ArrowLeft")) x -= v;
+    if (world.held.has("ArrowRight")) x += v;
+    if (world.held.has("ArrowUp")) y -= v;
+    if (world.held.has("ArrowDown")) y += v;
+    x = Math.max(0, Math.min(world.W - me.w, x)); y = Math.max(30, Math.min(world.H - me.h, y));
+    if (this.free({ x, y: me.y, w: me.w, h: me.h })) me.x = x;
+    if (this.free({ x: me.x, y, w: me.w, h: me.h })) me.y = y;
+    while (!this.coins.length) {
+      // The next coin is in another room than hers, more often than not behind a wall from her.
+      const c = { x: 10 + world.rand() * 450, y: 40 + world.rand() * 260, w: 12, h: 12 };
+      if (this.free({ x: c.x - 6, y: c.y - 6, w: 24, h: 24 }) && Math.hypot(c.x - me.x, c.y - me.y) > 160) this.coins.push(c);
+    }
+    for (const c of this.coins) if (hits(c, me)) { c.gone = true; world.score += 10; }
+    this.coins = this.coins.filter((c) => !c.gone);
+  },
+  backdrop(ctx) {
+    ctx.fillStyle = "#20302a"; ctx.fillRect(0, 0, 480, 320);
+    ctx.fillStyle = "#6c6f5a"; for (const w of WALLS) ctx.fillRect(w.x, w.y, w.w, w.h);
+  },
+  draw(ctx) {
+    ctx.fillStyle = "#ffd700"; for (const c of this.coins) { ctx.beginPath(); ctx.arc(c.x + 6, c.y + 6, 6, 0, 6.3); ctx.fill(); }
+    ctx.fillStyle = "#4aa3ff"; ctx.fillRect(this.me.x, this.me.y, 16, 16);
+  },
+  readouts: scoreAndLives,
+};
+playWorld(game);
+</script></body></html>
