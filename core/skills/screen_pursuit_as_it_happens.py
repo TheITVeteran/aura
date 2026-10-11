@@ -683,6 +683,7 @@ class PlayingAsItHappens:
         _keep_what_she_learned(self.page, self.keep)
         if not stretch.get("sends_from"):
             self.quiet_until, self.quiet_on = time.monotonic() + LEAVE_A_MOVING_MENU_S, self.said_now
+            self.held_to().never_did_it(SEND_WAY, " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")]))
 
     def what_it_came_to(self) -> str:
         """One line on the play, for whoever handed the game over."""

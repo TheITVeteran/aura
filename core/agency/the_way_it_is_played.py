@@ -177,6 +177,15 @@ class HeldTo:
             self.let_go_on[way] = read[-400:]
             self.way = ""
 
+    def never_did_it(self, way: str, read: str) -> None:
+        """A way tried here that never once did what it is for (nothing sent from anywhere) is let go, held to or not,
+        until the place says something new: offline 2026-10-10 a send tried in a world that waited for her sent nothing
+        from forty places, and was tried again each time the world was still."""
+        self.let_go.add(way)
+        self.let_go_on[way] = read[-400:]
+        if self.way == way:
+            self.way = ""
+
     def paying(self) -> bool:
         """Whether the way held to is still being learned, or has shown progress in its latest stretches."""
         if not self.way:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Final
+from typing import Any, Final
 
 __all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over",
            "the_score_in", "what_it_asks_of_a_player"]
@@ -209,8 +209,46 @@ _OBJECTIVE: Final = re.compile(
 _FOR_MAKING: Final = re.compile(
     r"\b((?:create|make|design|build|draw|paint|invent) your own|dress (?:up|him|her|them)|decorate|customi[sz]e|"
     r"mix and match|(?:choose|pick|select|selecting|choosing|picking) your (?:own |favou?rite )(?:\w+ )?\w+s\b|"
-    r"your own (?:character|creation))"
+    r"your own (?:character|creation)|use your imagination|"
+    # "make the craziest, creepiest, or goofiest scenes you can think of": made things, said with how they are to be.
+    r"(?:make|create|design|draw|compose|set up)(?: the| a| an| some)?(?: \w+,?){0,5} (?:scenes?|pictures?|photos?|"
+    r"characters?|creations?|songs?|beats?|tunes?|music|designs?|outfits?|drawings?|comics?|stories|story|"
+    r"masterpieces?|mixes?|looks?)\b)"
 )
+
+
+def _making_surface() -> Any:
+    """The learned surface over the floor above: sentences that set a player to make something rather than win, declared
+    with phrasings the floor gets wrong both ways (core/language/learned_matcher.py)."""
+    from core.language.learned_matcher import LearnedMatcher
+    from core.language.model_features import model_hidden_features
+
+    return LearnedMatcher(
+        name="sets_a_player_to_make",
+        positives=("Create your own character by choosing a head, a body and a costume.",
+                   "Use your imagination to make the craziest scenes you can think of.",
+                   "Mix the beats and make your own song.", "Dress her up for the party in your favourite outfit.",
+                   "Design a monster and watch it come to life.", "Set up the scene and take a photo for the album."),
+        negatives=("Make it to the end of the level before time runs out.", "Collect as many coins as you can.",
+                   "Help Dexter find his missing robot.", "Make the highest score you can.",
+                   "Use the arrow keys to move and space to jump.", "Build a tower as high as you can before it falls."),
+        features=model_hidden_features)
+
+
+MAKING = _making_surface()
+
+
+def _learned_it_makes(text: str) -> bool:
+    """Whether the learned surface has decided a sentence of ``text`` sets a player to make something; never waits."""
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if len(sentence.split()) < 4:
+            continue
+        try:
+            if MAKING.decide_without_waiting(sentence):
+                return True
+        except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
+            return False
+    return False
 
 
 def what_it_asks_of_a_player(words: str) -> str:
@@ -229,7 +267,13 @@ def what_it_asks_of_a_player(words: str) -> str:
         return "win"
     if _FOR_POINTS.search(text):
         return "score"
-    if _FOR_MAKING.search(text):
+    made = _FOR_MAKING.search(text)
+    if made:
+        # What the floor is sure of teaches the surface the sentence it was said in.
+        MAKING.observe(next((part for part in re.split(r"(?<=[.!?])\s+", text) if _FOR_MAKING.search(part)), text),
+                       holds=True)
+        return "make"
+    if _learned_it_makes(text):
         return "make"
     # Set an objective ("Help Dexter find his missing robot"), a player has an end to reach.
     if _OBJECTIVE.search(text):

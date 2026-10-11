@@ -64,25 +64,75 @@ _THROWN = re.compile(r"\b(?:throw|toss)\w*")
 _A_CLICK_THROWS = re.compile(r"\bclick\w*(?:\s+\w+){0,3}\s+to\s+(?:throw|toss|launch|fling)", re.I)
 
 
+def _surface() -> Any:
+    """The learned surface over the floor below: sentences that tell a player to send something by letting go of a press,
+    declared with the phrasings the floor gets wrong both ways (core/language/learned_matcher.py)."""
+    from core.language.learned_matcher import LearnedMatcher
+    from core.language.model_features import model_hidden_features
+
+    return LearnedMatcher(
+        name="sends_by_letting_go",
+        positives=("Pull back and release to launch the ball.", "Click and hold to aim, then release to shoot.",
+                   "Drag the slingshot back, then let go.", "Hold the mouse button to build up power, then let go to putt.",
+                   "The farther you pull back, the harder it flies.", "Drag back to set the angle and power, release to fire."),
+        negatives=("The game was released in 2002 by Cartoon Network.", "The rocket launches when the timer hits zero.",
+                   "Click to throw a snowball at the other team.", "While flying, click and hold to use Glide Power.",
+                   "Use the arrow keys to move and space to jump.", "Drag the stickers onto the scene, then take a photo.",
+                   "Drag each part to where it attaches."),
+        features=model_hidden_features)
+
+
+SENDS_BY_LETTING_GO = _surface()
+
+
 def sends_by_letting_go(told: str) -> bool:
-    """Whether words a thing says of itself speak of sending by a press pulled or held and let go."""
+    """Whether words a thing says of itself speak of sending by a press pulled or held and let go.
+
+    The floor below decides the sentences it is sure of, and teaches the learned surface with each; a sentence the floor
+    passes over is decided by the surface where it has decided one like it, and abstains otherwise.
+    """
     for sentence in re.split(r"(?<=[.!?;])\s+|\n", "\n".join(" ".join(line.lower().split()) for line in told.splitlines())):
-        # A word on its own is a label, not a way of playing: LIVE 2026-10-10 a tunnel racer's start button said
-        # "LAUNCH", and she pulled and let go at a game steered with the arrows.
-        if len(sentence.split()) < 3:
-            continue
-        # "click again to launch the hamster" is a click that sends, made at once; "pull back and release to launch"
-        # is a press let go.
-        clicked = _A_CLICK_THROWS.search(sentence)
-        # Where a word begins: "fling" is not in "shuffling", nor "release" in "unreleased".
-        if any(re.search(rf"\b{re.escape(word)}", sentence) for word in _SENDING_WORDS
-               if not (clicked and word in ("launch", "fling"))):
+        if _the_floor_says_it_sends(sentence):
+            SENDS_BY_LETTING_GO.observe(sentence, holds=True)
             return True
-        if _HELD.search(sentence) and _HELD_TO_SEND.search(sentence):
-            return True
-        if _THROWN.search(sentence) and not clicked:
+        if len(sentence.split()) >= 4 and _learned_it_sends(sentence):
             return True
     return False
+
+
+def _learned_it_sends(sentence: str) -> bool:
+    try:
+        return bool(SENDS_BY_LETTING_GO.decide_without_waiting(sentence))
+    except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def _the_floor_says_it_sends(sentence: str) -> bool:
+    """The floor: a sentence that names, in the forms a player is told them, a way of letting go that sends."""
+    # A word on its own is a label, not a way of playing: LIVE 2026-10-10 a tunnel racer's start button said
+    # "LAUNCH", and she pulled and let go at a game steered with the arrows.
+    if len(sentence.split()) < 3:
+        return False
+    # "click again to launch the hamster" is a click that sends, made at once; "pull back and release to launch"
+    # is a press let go.
+    clicked = _A_CLICK_THROWS.search(sentence)
+    # In the forms a player is told to do it: "release", "releasing", "pull back"; not a word that tells of
+    # something done ("released in 2002", "the rocket launches", "pulled by gravity"): offline 2026-10-10 what was
+    # looked up of a photo game said it was released, and she pulled and let go at it forty times.
+    if any(re.search(_as_told(word), sentence) for word in _SENDING_WORDS
+           if not (clicked and word in ("launch", "fling"))):
+        return True
+    if _HELD.search(sentence) and _HELD_TO_SEND.search(sentence):
+        return True
+    return bool(_THROWN.search(sentence) and not clicked)
+
+
+def _as_told(word: str) -> str:
+    """``word`` as a player is told to do it: itself, or doing it ("pull", "pulling", "release", "releasing")."""
+    if " " in word:
+        return rf"\b{re.escape(word)}\b"
+    doing = f"{word[:-1]}ing" if word.endswith("e") else f"{word}ing"
+    return rf"\b(?:{re.escape(word)}|{re.escape(doing)})\b"
 
 
 async def _let_go(hands: Any, start: tuple[float, float], setting: Setting, way: str) -> None:

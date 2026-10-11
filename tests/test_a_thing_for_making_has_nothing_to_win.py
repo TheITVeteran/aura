@@ -50,3 +50,12 @@ def test_she_says_what_it_is_for_in_its_own_words_and_ends_it_as_played():
     _PLAY_OVER[_address(url)] = NOTHING_TO_WIN
     done = played_first({"url": url}, "play it and win it")
     assert done["done"] and done["why"] == f"Played; {NOTHING_TO_WIN}."
+
+
+def test_an_invitation_to_imagine_and_make_is_read_as_made():
+    # Offline 2026-10-10 a photo game said "Use your imagination to make the craziest, creepiest, or goofiest scenes".
+    said = ("As the gang's photographer, set up and take photos for the scrap book. Use your imagination to make the "
+            "craziest, creepiest, or goofiest scenes you can think of.")
+    assert what_it_asks_of_a_player(said) == "make"
+    assert what_it_asks_of_a_player("Make it to the end of the level to win.") == "win"
+    assert what_it_asks_of_a_player("Make the highest score you can before time runs out.") == "score"
