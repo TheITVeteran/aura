@@ -137,3 +137,40 @@ Games 51 and 53 had no file the archive served when this map was made; what
 they ask is from their names and the museum's categories, and is the least sure
 of the map. On 9 October 2026 the museum's pages for both linked a game file,
 and a browser fetched it.
+
+## The worlds that test each way
+
+Each way is measured in a small world in `tests/fixtures/worlds_that_move`,
+played from its pixels with no knowledge of the world:
+`tools/measure_playing_as_it_happens.py` hands a world to her reflexes alone,
+and `tools/measure_whole_play_on_worlds.py` hands it, from its title screen, to
+the same entry a game on a page is handed to. A world names the games whose
+words it was made from; none of the play code reads a world.
+
+| World | Way it tests | Made from |
+|---|---|---|
+| paddle, bounce | steer (keys, the pointer) | 32 |
+| catch, collect, dodge | steer, counters | 23, 38, 48 |
+| shooter, gallery | shoot, click things | 16, 0, 21 |
+| brawl | strike | 27, 30 |
+| charge | charge | 30, 39 |
+| jump | jump | 14, 41, 43, 50 |
+| lander | carried | 18 |
+| timing | time a press | 44 |
+| held | keys shown | 35 |
+| guard | unseen | 25, 35 |
+| doors | a control used on what it is for | 13, 21 |
+| putt | send: pressed, dragged and let go | 6, 10, 24 |
+| tops | send: aimed and let go | 4 |
+| launch | time a press, with a meter to spend | 36 |
+| foodfight | shoot, led at a walker; duck | 2, 20, 33, 52 |
+| tower | stack, of one colour; cash in | 40, 23 |
+| simon | copy a sequence | 15, 51 |
+| pairs | remember what was shown | (the kind "pairs") |
+| paint | covering ground | 25, 45 |
+| switch | switch | 39, 52, 55 |
+| bump | carried, by a heading; pushing a thing to its place | 9 |
+| steps | carry, to make steps | 45 |
+| pipes | a chain, then a test | 28, 11, 46 |
+| ask | type | 5, 1 |
+| tiles | a grid's rule | 54 |

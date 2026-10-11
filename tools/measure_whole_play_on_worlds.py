@@ -11,6 +11,7 @@ The world's own tally (``window.__world``) is read only afterwards, to say how i
 
     python tools/measure_whole_play_on_worlds.py simon pairs --minutes 3
     python tools/measure_whole_play_on_worlds.py --all --minutes 2 --out report.json
+    python tools/measure_whole_play_on_worlds.py simon --minutes 2 --trace /tmp/traces
 """
 from __future__ import annotations
 
@@ -37,7 +38,9 @@ def every_world() -> list[str]:
     return sorted(path.stem for path in WORLDS.glob("*.html"))
 
 
-async def _one(world: str, seed: int, minutes: float, goal: str) -> dict:
+async def _one(world: str, seed: int, minutes: float, goal: str, trace: Path | None = None) -> dict:
+    import logging
+
     from core.capabilities.phantom_browser import PhantomBrowser
     from core.skills import sovereign_browser_drawing as drawing
 
@@ -54,6 +57,14 @@ async def _one(world: str, seed: int, minutes: float, goal: str) -> dict:
     drawing.PLAY_UNTIL_WON_S = minutes * 60.0
     name, _, extra = world.partition("&")
     address = f"file://{WORLDS / (name + '.html')}?seed={seed}" + (f"&{extra}" if extra else "")
+    # Everything she decided and why, world by world, and the screen she ended on.
+    kept = None
+    if trace is not None:
+        await asyncio.to_thread(trace.mkdir, parents=True, exist_ok=True)
+        kept = logging.FileHandler(trace / f"{name}-{seed}.log", mode="w")
+        kept.setFormatter(logging.Formatter("%(relativeCreated)8.0f %(name)s %(message)s"))
+        logging.getLogger().addHandler(kept)
+        logging.getLogger().setLevel(logging.INFO)
     began = time.monotonic()
     browser = PhantomBrowser(visible=False, browser_type="chromium", principal="owner")
     tally: dict = {}
@@ -71,6 +82,13 @@ async def _one(world: str, seed: int, minutes: float, goal: str) -> dict:
         played = {"error": f"{type(why).__name__}: {why}"}
     finally:
         pursuit._tell = original_tell
+        if kept is not None:
+            try:
+                await browser.page.screenshot(path=str(trace / f"{name}-{seed}-end.png"))
+            except Exception:  # noqa: BLE001 - no last picture is still a result
+                pass
+            logging.getLogger().removeHandler(kept)
+            kept.close()
         await browser.close()
     return {
         "world": world, "seed": seed, "minutes": round((time.monotonic() - began) / 60.0, 1),
@@ -88,12 +106,13 @@ async def main(argv: list[str]) -> list[dict]:
     parser.add_argument("--minutes", type=float, default=3.0)
     parser.add_argument("--goal", default="Play this game and win.")
     parser.add_argument("--out", default="")
+    parser.add_argument("--trace", default="", help="a folder for each world's log of decisions and its last screen")
     args = parser.parse_args(argv)
     os.environ.setdefault("AURA_BROWSER_STEALTH", "0")
     results = []
     for world in every_world() if args.all else args.worlds:
         for seed in args.seeds:
-            result = await _one(world, seed, args.minutes, args.goal)
+            result = await _one(world, seed, args.minutes, args.goal, Path(args.trace) if args.trace else None)
             results.append(result)
             print(json.dumps({k: result.get(k) for k in ("world", "seed", "minutes", "runs", "won", "best_score",
                                                          "stopped_because", "error", "tally")}), flush=True)
