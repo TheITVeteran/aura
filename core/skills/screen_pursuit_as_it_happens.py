@@ -40,14 +40,26 @@ def _a_different_screen(said: str, before: str) -> bool:
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
-def begin_run(keep: dict[str, Any]) -> None:
-    """A new attempt keeps world knowledge and measures its own state."""
+def begin_run(keep: dict[str, Any], game: str = "") -> None:
+    """A new attempt keeps world knowledge and measures its own state. ``game`` is the name the game is kept under
+    (`_this_game`): where it is the game the last attempt was at, unchanged, what she is in it and what her keys do
+    are kept too, and only which thing on the screen she is now is found again.
+
+    A game mended between attempts is another game, and its keys are measured afresh: a paddle whose up key was put
+    right does not go the way it went. But the same game begun again has the keys it had. LIVE 2026-10-11 a lander
+    that is down in five seconds was begun ten times, each time from knowing nothing of herself, and the five seconds
+    went on finding out; and a two-minute game had its keys tried again at the start of each of three runs."""
     from core.agency.how_the_contest_stands import ContestStands
     from core.agency.which_one_answers_to_her import WhichIsHers
 
     contest = keep.get("contest")
     keep["contest"] = ContestStands(wins=contest.wins) if contest is not None else ContestStands()
-    keep["hers"] = WhichIsHers()
+    hers = keep.get("hers")
+    if game and keep.get("hers_in", game) == game and hers is not None and hers.kind is not None:
+        hers.numbered_afresh()
+    else:
+        keep["hers"] = WhichIsHers()
+    keep["hers_in"] = game
     meeting = keep.get("meeting")
     if meeting is not None:
         meeting.begin_run()

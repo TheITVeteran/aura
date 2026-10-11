@@ -346,7 +346,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
 
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
-    from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, begin_run
+    from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, _this_game, begin_run
 
     # What the person said counts as done for each shape of thing: an end reached, a measure bettered, a thing made.
     terms = terms_asked(goal)
@@ -400,7 +400,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             run["ended"] = run["ended"] if run["ended"] in ("won", "lost") else "finished"
             if len(runs) < where_none and time.monotonic() < deadline:
                 _tell(f"{_what_there_is_to_play_for(reflexes)} Run {len(runs)} of {where_none}: {_scored(run)}. Again.")
-                begin_run(keep)
+                begin_run(keep, _this_game(page))
                 continue
             _tell(_the_best_of(runs))
             result["stopped_because"] = PLAYED_FOR_ITS_BEST
@@ -432,7 +432,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
                 # Asked to carry it through to its end, a round that gained nothing is begun again from the top.
                 _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'm starting it again from the top.")
                 band = await _from_the_top(page, band)
-                begin_run(keep)
+                begin_run(keep, _this_game(page))
                 continue
             _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'll leave this one here.")
             result["stopped_because"] = "getting nowhere in it"
@@ -529,7 +529,7 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
                         deadline: float) -> None:
     """A run lost and another begun: how it ended said, the counsel in force judged, and stock taken where she keeps
     losing (core/skills/sovereign_browser_taking_stock.py)."""
-    from core.skills.screen_pursuit_as_it_happens import begin_run
+    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
 
     # The screen's own words the first time; after that, the round counted: six of the same line read as one. And what
     # cost her, by name, where play came to keep clear of it: a person going again says what they will do differently.
@@ -547,7 +547,7 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
         why = stock.due(runs)
         if why:
             await stock.take(why, goal, list(reflexes.words), run["words"], runs, keep, deadline)
-    begin_run(keep)
+    begin_run(keep, _this_game(getattr(reflexes, "page", None)))
 
 
 def _steps_done(keep: dict[str, Any]) -> int:

@@ -53,6 +53,22 @@ def test_a_retry_retains_world_knowledge_without_old_outcomes_or_control_identit
     assert not meeting.read([_region("Opponent 0", 0.6)], 2.0, 0.05)
 
 
+def test_the_same_game_begun_again_keeps_what_she_is_and_what_her_keys_do():
+    # LIVE 2026-10-11 a lander down in five seconds was begun ten times, each from knowing nothing of herself.
+    hers = WhichIsHers()
+    hers.number, hers.kind, hers.last_shape = 9, 3, (4.0, 24.0)
+    for _ in range(12):
+        hers._hers.add("q", 0.0, 100.0)
+    way = hers.way_of("q")
+    assert way is not None
+    keep = {"hers": hers}
+    begin_run(keep, "played as it happens at https://example.org/a-lander")
+    assert keep["hers"] is hers and hers.number is None and hers.kind == 3 and hers.way_of("q") == way
+    # Begun again as another game (mended, or elsewhere), her keys are measured afresh.
+    begin_run(keep, "played as it happens at https://example.org/a-lander (mended)")
+    assert keep["hers"] is not hers and keep["hers"].kind is None and keep["hers"].way_of("q") is None
+
+
 def test_long_world_names_do_not_lose_the_part_that_distinguishes_versions():
     from core.runtime.what_she_learned import named
 
