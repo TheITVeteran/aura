@@ -80,7 +80,7 @@ from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
 from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, ways_carried
-from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT, PART_OF_THE_PLACE
+from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -576,11 +576,12 @@ class _Choosing:
         ]
 
     def stance(self, thing: Any) -> str:
-        # What she has found to be in her way, part of the place or negligible is nothing to go and meet
+        # What she has found to be in her way, or negligible, is nothing to go and meet
         # (core/agency/who_is_who.py): a wall she was stopped by is not worth a detour to touch again.
         if self.who is not None:
             found = self.who.of(thing)
-            if found.sure and found.name in (IN_HER_WAY, PART_OF_THE_PLACE, NEGLIGIBLE) and self.meeting.stance(thing.kind) == MEET:
+            # Not what is only taken for the place, never met: a door is big and still, and is what she is to go to.
+            if found.sure and found.name in (IN_HER_WAY, NEGLIGIBLE) and self.meeting.stance(thing.kind) == MEET:
                 return IGNORE
         # A kind that has cost her from a distance is kept clear of, whatever meeting it has done.
         if self.reach is not None and self.reach.reach(int(thing.kind)) is not None:
@@ -2050,7 +2051,8 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
         if choosing.pointing and rules.a_click_is_a_shot:
             fire = "mouse"
         else:
-            fire = next((key for key in rules.fire_keys if key not in WAYS), None)
+            # Not a key held to charge: tapped, it never builds up, and charging is held and let go of its own accord.
+            fire = next((key for key in rules.fire_keys if key not in WAYS and key not in rules.charge_keys), None)
     window = None if discovering else hers.emission_window(choosing.shot.key, choosing.shot.kind)
     if discovering:
         next_trigger = run.last_click + CLICK_THE_PICTURE_S
