@@ -4,7 +4,7 @@ A game is not one kind of thing. It is a point in a space of independent dimensi
 whose turn it is, who else is in it, how it is seen, what her controls are, what each does to what is hers, what the
 place does to her when she does nothing, how the other things in it behave, what meeting each does, what the end is,
 how she hears how she is doing, what she must remember, what she has to plan and keep to, what she carries and builds,
-what has to be searched. A way of playing (core/agency/ways_of_playing.py) answers one value of one dimension, and
+what has to be searched, what she plays for, and what each thing in it is to her. A way of playing (core/agency/ways_of_playing.py) answers one value of one dimension, and
 works whatever the other dimensions are; so the ways needed are the sum of the values, not the product of them
 (docs/design-docs/THE_DIMENSIONS_OF_A_PLACE_TO_PLAY.md).
 
@@ -201,6 +201,51 @@ DIMENSIONS: dict[str, tuple[Value, ...]] = {
         ("how hard and which way", "a shot's settings searched by where each went", ("send",), ("sending by strength",)),
         ("where a piece goes", "where a falling piece lands best", (), ("stacking", "matching")),
         ("a way through", "a way from here to there round what is in the way", (), ("reaching a place", "locked ways")),
+    ),
+    "motivation": _values(
+        "motivation",
+        ("asked by someone", "a person's ask counts first: to win, to get far, to look round",
+         ("core.language.how_a_game_ended:asks_to_win", "core.agency.what_she_plays_for:WhatSheGoesFor"), ()),
+        ("what the words say to do", "the game's words name the end, and a count to reach",
+         ("play as told", "core.agency.what_she_plays_for:target_in"), ("information shown", "story")),
+        ("a count to reach", "a target: what counts is the chance of getting there",
+         ("core.agency.what_she_plays_for:chance_of_reaching",), ("winning and losing", "getting them all against a clock")),
+        ("a count to raise", "the most: what counts is the count expected by the end",
+         ("counters", "core.agency.what_she_plays_for:count_expected"), ("score", "collecting")),
+        ("self-preservation", "a blow, a life or a hit off a bar, worth the play it would cut short; her care with it",
+         ("core.agency.what_she_plays_for:WhatSheGoesFor",), ("lives", "health", "hazards")),
+        ("threat elimination", "a threat taken out where what it would cost left alone outweighs the time it takes",
+         ("core.agency.what_she_plays_for:WhatSheGoesFor", "shoot", "strike"), ("enemies", "shooting what comes", "a fight at close quarters")),
+        ("someone to beat", "another side's count, and the margin between them",
+         ("core.agency.how_the_contest_stands:ContestStands",), ("a board", "a fight at close quarters")),
+        ("further on", "a next screen, a level, distance gone", ("core.perception.where_in_a_world:WhereInTheWorld",
+                                                                  "a plan to an end"),
+         ("levels", "getting to the way out", "a world going by")),
+        ("finding out", "a thing not yet known, worth what knowing it would be worth", ("core.agency.what_she_plays_for:WhatSheGoesFor",),
+         ("unseen", "power-ups", "locked ways")),
+        ("getting better at it", "what she might or might not manage, practised where a try tells her most",
+         ("core.agency.setting_herself_a_task:what_to_practise",), ("time a press", "aiming")),
+        ("an aim of her own", "nothing counted and no end named: something of her own to do", ("make",),
+         ("making", "something made, nothing won")),
+        ("when it stops paying", "a count that has stopped moving: the ways she knows are spent, said, and the unknown tried",
+         ("core.agency.what_she_plays_for:WhatSheGoesFor",), ("levels", "locked ways")),
+    ),
+    "who is who": _values(
+        "who is who",
+        ("hers", "what answers to her keys, and what goes out from her", ("core.agency.which_one_answers_to_her:WhichIsHers",),
+         ("steering",)),
+        ("a threat", "what has dealt her a blow; suspect where it keeps coming for her or the words warn", ("core.agency.who_is_who:WhoIsWho",),
+         ("enemies", "hazards")),
+        ("a prize", "what meeting raised a count", ("core.agency.who_is_who:WhoIsWho", "counters"), ("collecting", "power-ups")),
+        ("friendly", "on her side: losing it cost her; assumed where it keeps with her", ("core.agency.who_is_who:WhoIsWho",), ("rescue and allies",)),
+        ("friendly competition", "racing her for what she goes for and costing her nothing: beaten by getting there first",
+         ("core.agency.who_is_who:WhoIsWho",), ("keeping something away from whoever is after it",)),
+        ("neutral", "going its own way; meeting it does nothing", ("core.agency.who_is_who:WhoIsWho",), ()),
+        ("in her way", "what stops her and costs nothing", ("core.agency.who_is_who:WhoIsWho", "core.agency.a_way_through:AWayThrough"),
+         ("locked ways",)),
+        ("negligible", "what has had every chance to matter and has not; a spark gone at once", ("core.agency.who_is_who:WhoIsWho",), ()),
+        ("part of the place", "still and doing nothing: it needs no designation", ("core.agency.who_is_who:WhoIsWho",), ()),
+        ("unknown", "seen, with nothing to go on yet; pending for its first moment", ("core.agency.who_is_who:WhoIsWho",), ()),
     ),
 }
 

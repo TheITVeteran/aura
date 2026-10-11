@@ -7,16 +7,16 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from core.agency.a_way_through import goes_every_way
-
 __all__ = ["NO_NEARER_S", "OUT_OF_REACH_S", "out_of_her_reach"]
 
 
 #: How long her thing stays put under a way held before what lies that way is taken to be out of her reach.
 OUT_OF_REACH_S = 0.6
 
-#: How long she makes for a place and gets no nearer before it is taken to be out of her reach.
+#: How long she makes for a place and gets no nearer before it is taken to be out of her reach; how many times as long
+#: where she is going round walls, along a way that turns away from the place before it turns back.
 NO_NEARER_S = 1.5
+WAY_ROUND_PATIENCE = 3.0
 
 
 def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
@@ -43,7 +43,7 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
     # the way round is, a place the walls found shut off is out of her reach, and a wall newly found is getting
     # somewhere, though it takes her no nearer.
     through = getattr(run, "way_through", None)
-    through = through if through is not None and goes_every_way(choosing.ways) else None
+    through = through if through is not None and through.a_floor(choosing.ways) else None
     (gx, gy), why, _aim = choosing.target()
     if why in ("meet", "cover") and gx is not None and gy is not None:
         place, far = (int(gx // cell), int(gy // cell)), math.hypot(gx - mine.x, gy - mine.y)
@@ -56,7 +56,7 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         elif (run.making_for is None or run.making_for[0] != place or far < run.making_for[1] - 0.25 * cell
                 or walls != run.making_for[3]):
             run.making_for = (place, far, at, walls)
-        elif at - run.making_for[2] >= NO_NEARER_S:
+        elif at - run.making_for[2] >= NO_NEARER_S * (WAY_ROUND_PATIENCE if walls else 1.0):
             run.barred.add(place)
             run.making_for = None
     else:
@@ -70,6 +70,10 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         return
     if at - run.stuck[3] < OUT_OF_REACH_S:
         return
+    # What she was stopped by, where it is a thing on the screen, is a thing in her way (core/agency/who_is_who.py).
+    who = getattr(run, "who", None)
+    if who is not None:
+        who.stopped(mine, way, choosing.moves.things.values())
     if through is not None:
         through.stopped(float(mine.x), float(mine.y), way, (float(mine.w), float(mine.h)))
         run.stuck = None

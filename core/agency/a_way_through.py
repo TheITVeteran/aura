@@ -28,23 +28,53 @@ class AWayThrough:
 
     cell: float = 0.0
     walls: set[Cell] = field(default_factory=set)
+    #: Whether she has been seen to go every way on the screen: a floor seen from above, for the rest of the game, though
+    #: a key may be judged afresh for a moment.
+    floor: bool = False
 
     def new_screen(self) -> None:
         self.walls.clear()
+
+    def a_floor(self, ways: dict[str, tuple[float, float]]) -> bool:
+        """Whether this is a floor seen from above: once her keys have taken her every way, it stays one."""
+        self.floor = self.floor or goes_every_way(ways)
+        return self.floor
+
+    def a_wall_at(self, box: tuple[float, float, float, float]) -> None:
+        """A thing she knows is in her way, standing over ``box`` (left, top, right, bottom): every cell it covers."""
+        if not self.cell:
+            return
+        left, top, right, bottom = box
+        for cx in range(int((left + 1) // self.cell), int((right - 1) // self.cell) + 1):
+            for cy in range(int((top + 1) // self.cell), int((bottom - 1) // self.cell) + 1):
+                self.walls.add((cx, cy))
+
+    def ahead_is_a_wall(self, x: float, y: float, way: tuple[float, float], size: tuple[float, float]) -> bool:
+        """Whether going ``way`` from (x, y) runs straight into a wall she knows: what holding that key would do."""
+        if not self.walls or not self.cell or not any(way):
+            return False
+        return bool(self._ahead(x, y, way, size) & self.walls)
+
+    def _ahead(self, x: float, y: float, way: tuple[float, float], size: tuple[float, float]) -> set[Cell]:
+        """The cells just ahead of her going ``way``, across her own breadth."""
+        cell = self.cell or max(8.0, max(size))
+        along = 0 if abs(way[0]) >= abs(way[1]) else 1
+        step = 1 if way[along] > 0 else -1
+        here = [x, y]
+        here[along] += step * (size[along] / 2 + cell / 2)
+        breadth = size[1 - along] / 2
+        cells = set()
+        for offset in (-breadth + 1, 0.0, breadth - 1):
+            spot = list(here)
+            spot[1 - along] += offset
+            cells.add((int(spot[0] // cell), int(spot[1] // cell)))
+        return cells
 
     def stopped(self, x: float, y: float, way: tuple[float, float], size: tuple[float, float]) -> None:
         """She was at (x, y) holding a way (dx, dy) and did not go: the cells just ahead of her that way, across her own
         breadth, are blocked."""
         self.cell = self.cell or max(8.0, max(size))
-        along = 0 if abs(way[0]) >= abs(way[1]) else 1
-        step = 1 if way[along] > 0 else -1
-        here = [x, y]
-        here[along] += step * (size[along] / 2 + self.cell / 2)
-        breadth = size[1 - along] / 2
-        for offset in (-breadth + 1, 0.0, breadth - 1):
-            spot = list(here)
-            spot[1 - along] += offset
-            self.walls.add((int(spot[0] // self.cell), int(spot[1] // self.cell)))
+        self.walls |= self._ahead(x, y, way, size)
 
     def next_step(self, x: float, y: float, to_x: float, to_y: float, wide: float, tall: float) -> tuple[float, float] | None:
         """Where to make for next, on the shortest way from (x, y) to (to_x, to_y) round the walls found: the furthest
@@ -60,8 +90,9 @@ class AWayThrough:
         if not path:
             return None
         furthest = path[0]
+        here = (x / self.cell, y / self.cell)
         for cell in path:
-            if self._clear(start, cell):
+            if self._clear(here, (cell[0] + 0.5, cell[1] + 0.5)):
                 furthest = cell
             else:
                 break
@@ -117,13 +148,19 @@ class AWayThrough:
             at = came[at]
         return path[::-1]
 
-    def _clear(self, a: Cell, b: Cell) -> bool:
-        """Whether the straight line between two cells crosses no wall."""
-        steps = max(abs(b[0] - a[0]), abs(b[1] - a[1])) * 2 or 1
+    def _clear(self, a: tuple[float, float], b: tuple[float, float]) -> bool:
+        """Whether her body, a cell across, goes from ``a`` to ``b`` (in cells, from the corner of the picture) in a
+        straight line without touching a wall: every cell under her at every step of the way is open. A line checked
+        along its middle alone let her side catch a wall's corner on the way to a place a cell up and over."""
+        reach = 0.45
+        steps = max(1, int(math.ceil(max(abs(b[0] - a[0]), abs(b[1] - a[1])) * 4)))
         for i in range(steps + 1):
             t = i / steps
-            if (round(a[0] + (b[0] - a[0]) * t), round(a[1] + (b[1] - a[1]) * t)) in self.walls:
-                return False
+            px, py = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            for cx in {math.floor(px - reach), math.floor(px + reach)}:
+                for cy in {math.floor(py - reach), math.floor(py + reach)}:
+                    if (cx, cy) in self.walls:
+                        return False
         return True
 
 

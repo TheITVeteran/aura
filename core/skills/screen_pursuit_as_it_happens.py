@@ -59,6 +59,11 @@ def begin_run(keep: dict[str, Any]) -> None:
     gone_for = keep.get("gone_for")
     if gone_for is not None:
         gone_for.number, gone_for.passed_over = None, {}
+    # What she plays for begins its counts afresh and keeps what the runs before showed; who is who keeps what each
+    # kind has shown.
+    for kept in (keep.get("plays_for"), keep.get("who")):
+        if kept is not None:
+            kept.begin_run()
 
 #: How long the reflexes leave a moving screen alone after finding nothing on
 #: it that answers to her: a title screen that animates is not a game yet.
@@ -602,6 +607,8 @@ class PlayingAsItHappens:
         pointer_first = (pointer_first or bool(self.keep.get("pointer_named"))) and not acts
         self.keep["named_keys"], self.keep["pointer_named"] = keys, pointer_first
         logger.info("it moves on its own: playing it as it happens with %s%s", keys, " and the pointer" if pointer_first else "")
+        # The person's ask, apart from the screen's words: what she plays for is theirs first.
+        self.keep["asked"] = self.goal
         stretch = await play_as_it_happens(
             self.look, self, keys=keys, seconds=min(STRETCH_S, self.ends_at - now),
             say=_said_while_playing, read_words=recognize_text, keep=self.keep,

@@ -30,7 +30,7 @@ from typing import Any
 
 from core.verify.invariants import invariant
 
-__all__ = ["AVOID", "CLICK", "IGNORE", "MEET", "SHOOT", "STANCES", "Readouts", "WhatMeetingDoes"]
+__all__ = ["AVOID", "CLICK", "IGNORE", "MEET", "SHOOT", "STANCES", "Readouts", "WhatMeetingDoes", "what_a_counter_means"]
 
 MEET, AVOID, SHOOT, IGNORE, CLICK = "meet", "avoid", "shoot", "ignore", "click"
 STANCES = (MEET, AVOID, SHOOT, IGNORE, CLICK)
@@ -92,6 +92,12 @@ def _meaning(label: str) -> str:
         if any(word.startswith(stem) for stem in _UP_IS_GOOD):
             return "up is good"
     return ""
+
+
+def what_a_counter_means(label: str) -> str:
+    """What a counter's words say a change in it means: ``"up is good"``, ``"down is bad"``, ``"neither"``, or ``""``
+    where they say nothing."""
+    return _meaning(label)
 
 
 def readouts_in(regions: list[dict[str, Any]]) -> list[Readout]:

@@ -21,7 +21,10 @@ def _blocked(x: float, y: float) -> bool:
                for left, top, right, bottom in WALLS) or not (0 < x < 480 and 0 < y < 320)
 
 
-def _went(planner: AWayThrough | None, seconds: float = 20.0) -> tuple[bool, float]:
+KEYS = {"left": (-SPEED, 0.0), "right": (SPEED, 0.0), "up": (0.0, -SPEED), "down": (0.0, SPEED)}
+
+
+def _went(planner: AWayThrough | None, seconds: float = 20.0, *, by_keys: bool = False) -> tuple[bool, float]:
     x, y, goal = 100.0, 60.0, (100.0, 290.0)
     at, still_since, last = 0.0, 0.0, (x, y)
     while at < seconds:
@@ -30,6 +33,9 @@ def _went(planner: AWayThrough | None, seconds: float = 20.0) -> tuple[bool, flo
             aim = planner.next_step(x, y, *goal, 480, 320) or goal
         far = math.hypot(aim[0] - x, aim[1] - y) or 1.0
         way = ((aim[0] - x) / far * SPEED, (aim[1] - y) / far * SPEED)
+        if by_keys:
+            # As her play steers: one key at a time, the one that leaves her nearest the place she makes for.
+            way = min(KEYS.values(), key=lambda v: abs(aim[0] - x - v[0] * STEP) + abs(aim[1] - y - v[1] * STEP))
         nx, ny = x + way[0] * STEP, y + way[1] * STEP
         if not _blocked(nx, y):
             x = nx
@@ -55,6 +61,11 @@ def test_making_straight_for_a_place_behind_a_wall_never_gets_there():
 def test_a_way_through_is_found_round_the_walls_met():
     # Each wall is found a cell at a time, by being stopped by it: along two walls of four hundred pixels, 18.6 seconds.
     got, took = _went(AWayThrough())
+    assert got, took
+
+
+def test_a_way_through_is_found_steering_by_one_key_at_a_time():
+    got, took = _went(AWayThrough(), 30.0, by_keys=True)
     assert got, took
 
 

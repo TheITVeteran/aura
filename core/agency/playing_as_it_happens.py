@@ -35,7 +35,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.agency.a_way_through import goes_every_way
 from core.agency.building_up import builds_up
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S, HerBlows
@@ -81,6 +80,7 @@ from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
 from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, ways_carried
+from core.agency.who_is_who import IN_HER_WAY, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -290,6 +290,11 @@ class _Run:
     facing_trials: int = 0
     #: The things that come for her, told from those that go their own way (core/agency/what_comes_for_her.py).
     comes: Any = None
+    #: What she plays for and what each pull is worth in its terms (core/agency/what_she_plays_for.py), what each thing
+    #: is to her (core/agency/who_is_who.py), and how many settled touches of each kind have been told to them.
+    plays_for: Any = None
+    who: Any = None
+    touches_told: dict[int, int] = field(default_factory=dict)
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -479,6 +484,11 @@ class _Choosing:
     comes: Any = None
     #: The walls met on this screen and the way round them (core/agency/a_way_through.py).
     way_through: Any = None
+    #: What she plays for (core/agency/what_she_plays_for.py), who is who (core/agency/who_is_who.py), and the seconds
+    #: left on the clock, where there is one.
+    plays_for: Any = None
+    who: Any = None
+    seconds_left: float | None = None
 
     def __init__(self, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes, keys: list[str],
                  physics: HowThingsMoveHere | None = None, *, next_picture_s: float = 1 / 30,
@@ -638,6 +648,11 @@ class _Choosing:
         for thing in self.others():
             if self.stance(thing) == IGNORE or self.stance(thing) == MEET and self.meeting.known(thing.kind):
                 continue
+            # What is on her side, racing her fairly, doing nothing, or part of the place is not shot at, unless shooting
+            # its kind is what pays (core/agency/who_is_who.py).
+            if (self.who is not None and self.stance(thing) != SHOOT
+                    and self.who.of(thing).name in NEVER_SHOT):
+                continue
             ahead = ((thing.x, thing.y)[along] - (mine.x, mine.y)[along]) * (self.shot.vx, self.shot.vy)[along]
             if ahead <= 0:
                 continue
@@ -666,13 +681,16 @@ class _Choosing:
                 px, py = thing.where_at(when)
                 when = math.hypot(px - mine.x, py - mine.y) / speed
             curious = (not thing.moved or not goes_somewhere(thing)) and not self.meeting.known(thing.kind)
-            # A thing not yet known is worth a detour to find out what it is; less so as the time runs out.
-            rank = when * ((2.0 + 2.0 * self.urgency) if curious else 1.0)
+            # A thing not yet known is worth a detour to find out what it is, by what knowing it is worth
+            # (core/agency/what_she_plays_for.py); less so as the time runs out.
+            rank = when * (self._detour(thing) * (1.0 + self.urgency) if curious else 1.0)
             candidates.append((rank, thing.where_at(when), thing))
         best = self._kept_to(candidates)
+        aimed = self._aim_a_shot(None)
+        if best is not None and aimed is not None and self._worth_taking_out(aimed, best[0]):
+            return aimed
         if best is not None:
             return best[1], "meet", best[2]
-        aimed = self._aim_a_shot(None)
         if aimed is not None:
             return aimed
         if self.going_to is not None:
@@ -681,6 +699,33 @@ class _Choosing:
         if ground is not None:
             return ground, "cover", None
         return (None, None), "wait", None
+
+    def _detour(self, thing: Any) -> float:
+        """How far out of her way a thing not yet known is worth going, as a multiple of the time to it."""
+        if self.plays_for is None or self.at is None:
+            return 2.0
+        alike = sum(1 for other in self.others() if other.kind == thing.kind and other is not thing)
+        return self.plays_for.detour_for_the_unknown(self.at, alike_on_screen=alike, seconds_left=self.seconds_left)
+
+    def _worth_taking_out(self, aimed: tuple[tuple[float | None, float | None], str, Any], meet_rank: float) -> bool:
+        """Whether taking out the threat she can line up a shot on pays more, over the time it takes, than the thing she
+        would go for pays over the time to it (core/agency/what_she_plays_for.py): a threat's worth is the blows it
+        would deal while it stays, by what a blow is worth."""
+        if self.plays_for is None or self.who is None or self.at is None:
+            return False
+        (gx, gy), _why, thing = aimed
+        from core.agency.who_is_who import THREAT
+
+        if thing is None or self.who.of(thing).name != THREAT:
+            return False
+        mine = self.mine
+        lining_up = max(abs(gx - mine.x) / self.speed(0) if gx is not None else 0.0,
+                        abs(gy - mine.y) / self.speed(1) if gy is not None else 0.0)
+        comes = self.comes is not None and self.comes.comes_for_her(thing, max(float(mine.w), float(mine.h)))
+        worth_s = self.plays_for.worth_taking_out_s(thing.kind, comes_for_her=comes, at=self.at,
+                                                    seconds_left=self.seconds_left)
+        # Both in gains a second: the threat's worth over the time to take it out, against one gain over the time to it.
+        return worth_s * self.plays_for.rate(self.at) / max(lining_up, self.next_picture_s) > 1.0 / max(meet_rank, 1e-3)
 
     def _kept_to(self, candidates: list[tuple[float, Any, Any]]) -> tuple[float, Any, Any] | None:
         """The candidate gone for: the one she is keeping to, unless there is a reason to let it go
@@ -814,12 +859,18 @@ class _Choosing:
             gy = gy - offset[1] if gy is not None else None
         mine = self.mine
         # Round the walls she has met to where she is going, on a floor seen from above: the next place on the way.
-        if (self.way_through is not None and why in ("meet", "cover") and gx is not None and gy is not None
-                and not self.pointing and goes_every_way(self.ways)):
+        through = self.way_through if self.way_through is not None and self.way_through.a_floor(self.ways) else None
+        if through is not None and why in ("meet", "cover") and gx is not None and gy is not None and not self.pointing:
             tall, wide = self.moves.shape
-            step = self.way_through.next_step(float(mine.x), float(mine.y), gx, gy, wide, tall)
+            step = through.next_step(float(mine.x), float(mine.y), gx, gy, wide, tall)
             if step is not None:
                 gx, gy = step
+        # A key that runs her straight into a wall she knows is no choice at all.
+        walled = set()
+        if through is not None and through.walls:
+            size = (float(mine.w), float(mine.h))
+            walled = {key for key, way in self.ways.items()
+                      if through.ahead_is_a_wall(float(mine.x), float(mine.y), way, size)}
         # Where her keys turn her and take her the way she faces, she is turned toward where she is going and then taken
         # there (core/agency/which_way_she_faces.py): a key's way on the screen says nothing in such a place.
         if self.faces is not None and not self.pointing and self.faces.turns_her() and (gx is not None or gy is not None):
@@ -835,9 +886,9 @@ class _Choosing:
 
             self.held_now = held
             self.planned = best_plan(self, held, (gx, gy))
-            if self.planned is not None and self.planned.decides:
+            if self.planned is not None and self.planned.decides and self.planned.plan.first not in walled:
                 return self.planned.plan.first, why, aim
-        choices = {"": self.rest, **self.ways}
+        choices = {"": self.rest, **{key: way for key, way in self.ways.items() if key not in walled}}
         moving = choices.get(held, (0.0, 0.0))
         # The old command keeps moving her while the next one is delivered.
         # Its measured delay belongs in the prediction before the new command.
@@ -1091,6 +1142,70 @@ def _what_the_place_does(run: _Run, choosing: _Choosing, moves: WhatMoves, hers:
     if mine is not None and not getattr(hers, "carried", False) and not choosing.pointing:
         choosing.rest = run.pressures.pull_at(float(mine.x), float(mine.y))
     choosing.caution *= math.sqrt(run.pressures.harder(at))
+
+
+def _what_meeting_did(meeting: WhatMeetingDoes, kind: int, kept: Any) -> str | None:
+    """What meeting a kind has settled into: costly, worth getting, nothing, or not yet clear. By the meeting record's
+    own rule, which weighs meeting it against letting it by; and by what touching it did on its own, since a thing that
+    costs her whether she meets it or lets it by (an invader that lands) weighs nothing either way and is no less a
+    threat for that."""
+    touch = kept.touch_sum / kept.touches_settled if kept.touches_settled else None
+    passing = kept.pass_sum / kept.passes_settled if kept.passes_settled else 0.0
+    if (meeting.known(kind) and kept.meet <= -0.6) or (touch is not None and kept.touches_settled >= 2 and touch <= -0.5):
+        return "loss"
+    if (meeting.known(kind) and kept.meet >= 0.5) or (touch is not None and kept.touches_settled >= 2 and touch >= 0.5):
+        return "gain"
+    if touch is not None and kept.touches_settled >= 2 and abs(touch) < 0.2 and abs(passing) < 0.2 and kept.shoot < 0.5:
+        return "nothing"
+    return None
+
+
+def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes,
+                        at: float, say: Callable[[str], Any] | None) -> None:
+    """What she plays for and who is who, taken in and given to the choosing: her care from the stakes, the threats and
+    what taking each out is worth, how far out of her way to go to find out what a thing is, and what she says of them
+    (core/agency/what_she_plays_for.py, core/agency/who_is_who.py)."""
+    goes, who, mine = run.plays_for, run.who, choosing.mine
+    things = list(moves.things.values())
+    # What she sends out is hers as much as what goes with her.
+    sent = {shot.kind for shot in hers.makes.values()}
+    size = max(float(mine.w), float(mine.h)) if mine is not None else 16.0
+    prizes = {kind for kind, kept in who.kinds.items() if kept.gains}
+    who.saw(at, things, mine, prizes=prizes, comes_for_her=lambda thing: run.comes.comes_for_her(thing, size),
+            with_her=lambda thing: goes_with(thing, mine) or thing.kind in sent, shape=moves.shape)
+    for kind, kept in meeting.evidence.items():
+        if kept.touches_settled <= run.touches_told.get(kind, 0):
+            continue
+        run.touches_told[kind] = kept.touches_settled
+        what = _what_meeting_did(meeting, kind, kept)
+        if what is not None:
+            who.met(kind, what)
+            goes.met(kind, what)
+    for kind, kept in meeting.evidence.items():
+        if kept.shoot >= 0.5 and kind not in goes.pays_to_shoot:
+            goes.shot_paid(kind)
+    has_bar = run.bars is not None and any(bar.meaning == "down is bad" for bar in run.bars.bars())
+    blows = len(goes.blows)
+    goes.saw(at, meeting.readouts.current, out_of=meeting.readouts.out_of, vitals=run.vitals if has_bar else None)
+    if len(goes.blows) > blows and mine is not None:
+        kind = who.blow(at, mine, things)
+        if kind is not None and who.kinds[kind].blows:
+            goes.blow_from(kind)
+    goes.saw_threats(at, [(thing.number, thing.kind) for thing, _found in who.threats(things)])
+    # What she has found is in her way stands in the way of every plan to go round it (core/agency/a_way_through.py):
+    # each thing of a kind that stopped her is a wall over all it covers, before she has bumped into the rest of it.
+    for thing in things:
+        if run.way_through.cell and who.of(thing).name == IN_HER_WAY:
+            run.way_through.a_wall_at(thing.box())
+    choosing.seconds_left = run.pressures.seconds_left()
+    choosing.caution *= goes.care(at, choosing.seconds_left)
+    choosing.plays_for, choosing.who = goes, who
+    spent = goes.what_to_say(at)
+    if spent:
+        _say(run, say, spent, at, once="spent")
+    for line in who.to_say([t for t in things if mine is None or t.number != mine.number],
+                           lambda thing: _named(moves, thing.kind, thing)):
+        _say(run, say, line, at, once=line)
 
 
 def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float) -> str:
@@ -1419,6 +1534,13 @@ async def _play_as_it_happens(
     from core.agency.a_way_through import AWayThrough
 
     run.way_through = keep.get("way_through") or AWayThrough()
+    from core.agency.what_she_plays_for import WhatSheGoesFor
+    from core.agency.who_is_who import WhoIsWho
+
+    run.plays_for = keep.get("plays_for") or WhatSheGoesFor()
+    run.plays_for.told(asked=str(keep.get("asked") or ""), words=told)
+    run.who = keep.get("who") or WhoIsWho()
+    run.touches_told = dict(keep.get("touches_told") or {})
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
     ended = ""
@@ -1477,6 +1599,7 @@ async def _play_as_it_happens(
             choosing.signs, choosing.at, choosing.situations = run.signs, at, situations
             choosing.caution *= caution_of(situations)
             _what_the_place_does(run, choosing, moves, hers, meeting, at)
+            _what_she_plays_for(run, choosing, moves, hers, meeting, at, say)
             if rules is not None:
                 choosing.strikes = run.blows.stands_ground(run.blows.keys(rules.fire_keys, hers.makes))
             choosing.going_to = a_place_to_go(run, moves, hers, at, lambda line, once, at=at: _say(run, say, line, at, once=once))
@@ -1529,7 +1652,8 @@ async def _play_as_it_happens(
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
                  "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
-                 "faces": run.faces, "comes": run.comes, "way_through": run.way_through})
+                 "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
+                 "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
@@ -1754,10 +1878,13 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
     if fire is None and discovering and choosing.mine is not None and rules is not None and rules.a_click_is_a_shot:
         # Its words say a click shoots: whether the pointer moves her or aims for her, the shot is a click.
         fire = "mouse"
-    elif fire is None and discovering and choosing.pointing and choosing.mine is not None:
-        if rules is not None and rules.a_click_is_a_shot:
+    elif fire is None and discovering and choosing.mine is not None and rules is not None:
+        # The key its words say fires is fired at a measured pace until what it sends is seen and can be aimed: a shot
+        # too small and quick to be followed (offline 2026-10-11, a two-pixel streak) is never learned by watching for
+        # it, and was never fired again.
+        if choosing.pointing and rules.a_click_is_a_shot:
             fire = "mouse"
-        elif rules is not None:
+        else:
             fire = next((key for key in rules.fire_keys if key not in WAYS), None)
     window = None if discovering else hers.emission_window(choosing.shot.key, choosing.shot.kind)
     if discovering:

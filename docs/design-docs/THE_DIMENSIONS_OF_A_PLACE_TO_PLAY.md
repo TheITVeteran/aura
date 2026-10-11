@@ -19,13 +19,13 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 
 | | |
 |---|---|
-| Dimensions | 16 |
-| Values across them | 85 |
-| Kinds of place they make, multiplied out | 222,953,472,000 |
-| Values with an answer | 79 |
+| Dimensions | 18 |
+| Values across them | 107 |
+| Kinds of place they make, multiplied out | 26,754,416,640,000 |
+| Values with an answer | 101 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
-| Values a game needs | 0 to 41, 17.8 on average |
+| Values a game needs | 0 to 53, 23.4 on average |
 | Games with an answer for every value they need | 21 |
 
 Two of the 56 need the same combination as another game; the rest are each a
@@ -43,9 +43,60 @@ for (`core/agency/a_thing_gone_for.py`), meeting by what she is now
 to her play, but in whole play on a world of rooms she has not yet got through
 a gap, so it stays on the list below.
 
+## What she plays for, and who is who
+
+Two dimensions are about her as much as the place: what she plays for, and
+what each thing in it is to her. Both were added on 11 October.
+
+**Motivation** (`core/agency/what_she_plays_for.py`). One end leads: the
+person's ask, else what the game's words say, else what the screen counts. A
+target to reach, the most to raise, to last, or to find out. Every other pull is
+priced in that end's terms, from her record of the run and the runs before:
+
+- Self-preservation. What she can lose is counted in blows: a hit off a bar, or
+  a life where there is no bar. Blows are taken to come at random at the rate
+  her record shows (a Poisson process), so a blow is worth the play it would
+  cut short. Toward a target it is the chance of getting there it takes away,
+  against what one gain adds. Being hit often does not make a blow cheap, since
+  how often she is hit depends on her care. Her care is that worth against the
+  thirty seconds a life is believed to last, which is what her play's berth was
+  set for. In a race to twenty against a clock, with each gain taken a quick
+  risky way or a slow safe way, care that follows the stakes did as well as care
+  held fixed at every berth tried, and where the fixed berth played too safe to
+  get there in time, it reached the target 89 per cent of the time against none.
+- Threat elimination. A threat left alone deals blows at the rate its kind has
+  dealt them, for as long as threats stay; taking it out is worth that by what a
+  blow is worth, and is done where that comes to more than the time it takes.
+  In six kinds of place, never shooting and always shooting each did less than
+  half as well as the best somewhere; priced from the two runs before, her third
+  run did at least 85 per cent as well as the better of them everywhere, and
+  better than both under a long clock (45 against 34).
+- Finding out. A thing not yet known is worth the value of knowing it, from what
+  the kinds met so far turned out to be.
+- When it stops paying. A count that has stopped moving for much longer than it
+  took to move before is spent: she says so and tries what she does not know.
+
+**Who is who** (`core/agency/who_is_who.py`). Each thing is hers, a threat, a
+prize, friendly, friendly competition, neutral, in her way, negligible, part of
+the place, or unknown, with nothing in the game to say which. The progression is
+the one military symbology standardised (MIL-STD-2525, APP-6): pending, then
+unknown, then assumed friend or suspect on signs, then friend, neutral or
+hostile on its own acts. Everything rests on what play measures: what meeting it
+did to her counts, whether it keeps coming for her, whether it takes the prizes
+she goes for, whether it stopped her, whether a blow came as it went, whether it
+has ever mattered. In a world of every kind of thing, sixty runs of a minute
+each designated every thing rightly but one companion, never lost and just come
+back, which was taken for neutral, as what it had done said; a companion lost
+only once is left as assumed friendly. A thing that goes off the edge of the
+picture as a blow comes got past her, as an invader that lands does, and is a
+threat; one that goes in the middle of the picture as a blow comes was hers to
+keep, and is friendly. Threats and suspects are what threat
+elimination prices; what is friendly, friendly competition, neutral or part of
+the place is never shot at unless shooting its kind is what pays.
+
 ## Where the dimensions meet
 
-Independence fails where two answers read or write the same thing. Four such
+Independence fails where two answers read or write the same thing. Five such
 seams are kept to one owner each, so that the answers compose:
 
 - **Where she will be.** What a control does, what the place does to her and
@@ -56,7 +107,11 @@ seams are kept to one owner each, so that the answers compose:
   things coming faster all feed one urgency, which the choice of what to go for
   reads.
 - **What a thing is to her.** A legend, the words, what meeting did, and her
-  own state feed one stance per kind (`core/agency/what_meeting_things_does.py`).
+  own state feed one stance per kind (`core/agency/what_meeting_things_does.py`),
+  and what each thing is to her is read from the same record
+  (`core/agency/who_is_who.py`), not kept beside it.
+- **What anything is worth.** Care, a detour to find out, and a threat taken
+  out are all priced in the one end that leads (`core/agency/what_she_plays_for.py`).
 - **What she is keeping to.** The way taken up, the plan, and the thing gone
   for are held in one place per game, so one is not dropped by another.
 
