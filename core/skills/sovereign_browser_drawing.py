@@ -224,6 +224,25 @@ def chose_the_drawing(moves: list[tuple[Any, Any]]) -> bool:
     return any(str(getattr(action, "selector", "") or "") == DRAWING for action, _said in moves)
 
 
+#: How long a page's player is given to put up the drawing it plays in, and how often it is asked.
+DRAWING_COMES_UP_S = 15.0
+ASKED_EVERY_S = 0.5
+
+
+async def _where_it_draws(page: Any) -> tuple[float, float, float, float] | None:
+    """Where the page draws, asked again while its player is still putting the drawing up: offline 2026-10-10 a game's
+    page was asked before its player had made its drawing, and she gave it up as a page that no longer draws."""
+    import asyncio
+    import time
+
+    gives_up_at = time.monotonic() + DRAWING_COMES_UP_S
+    while True:
+        band = _the_band(await page.evaluate(_WHERE_IT_DRAWS))
+        if band is not None or time.monotonic() >= gives_up_at:
+            return band
+        await asyncio.sleep(ASKED_EVERY_S)
+
+
 def _the_band(said: Any) -> tuple[float, float, float, float] | None:
     """The page's answer to where it draws, as shares of what it is measured in."""
     try:
@@ -263,7 +282,7 @@ async def _on_the_drawing(browser: Any, goal: str, observation: Mapping[str, Any
     if page is None:
         return {**step, "error": "her browser has no page to play on"}
     try:
-        band = _the_band(await page.evaluate(_WHERE_IT_DRAWS))
+        band = await _where_it_draws(page)
     except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
         record_degradation("sovereign_browser", exc, severity="info", action="ask her page where it draws")
         band = None
