@@ -379,7 +379,8 @@ def recognize_text(image: Any) -> list[dict[str, Any]]:
     try:
         import objc  # noqa: PLC0415
     except ImportError:
-        return []
+        # No Apple Vision (Linux, a container): Tesseract, where it is installed, reads the same runs of text.
+        return _recognized_by_tesseract(image)
     # Drained after every picture. Nothing drains a pool on a thread with no
     # run loop, which is every thread here, so what Vision hands back
     # autoreleased stayed for the life of the process.
@@ -450,6 +451,65 @@ def _recognized(image: Any) -> list[dict[str, Any]]:
     except (AttributeError, RuntimeError, TypeError, ValueError) as why:
         logger.debug("text recognition did not run: %s", why)
         return []
+
+
+#: Below this confidence (Tesseract's 0-100) a word is a smudge read as letters: on a game's title screen the button's
+#: edge came back as "=a" at 42 beside words at 91 and over.
+_LEAST_TESSERACT_CONFIDENCE = 60.0
+
+#: Pixels of margin put around a picture before Tesseract reads it.
+_TESSERACT_MARGIN = 16
+
+
+def _recognized_by_tesseract(image: Any) -> list[dict[str, Any]]:
+    """Every run of text in a BGR picture, read by Tesseract, in the shape Vision gives: one line a run.
+
+    Sparse-text mode, because a window is scattered labels rather than a page. Measured 2026-10-11 on a test world's
+    title and play screens: every word and counter read right, spaces kept, in 0.13 to 0.27 seconds a picture.
+    """
+    try:
+        import pytesseract  # noqa: PLC0415
+    except ImportError:
+        return []
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        tall, wide = image.shape[:2]
+        if not tall or not wide:
+            return []
+        # A margin of the picture's own edge colour around it: Tesseract leaves out a word that touches the border, and
+        # a game's counters sit at its edges ("LIVES 3" ten pixels from the right was not read).
+        rgb = np.pad(image[:, :, ::-1], ((_TESSERACT_MARGIN, _TESSERACT_MARGIN), (_TESSERACT_MARGIN, _TESSERACT_MARGIN), (0, 0)),
+                     mode="edge")
+        found = pytesseract.image_to_data(rgb, output_type=pytesseract.Output.DICT, config="--psm 11")
+    except (OSError, RuntimeError, TypeError, ValueError, AttributeError) as why:
+        # pytesseract raises its own TesseractNotFoundError, an OSError, where the program is not installed.
+        logger.debug("text recognition did not run: %s", why)
+        return []
+    lines: dict[tuple[int, int, int], list[tuple[str, float, int, int, int, int]]] = {}
+    for at, said in enumerate(found.get("text") or []):
+        said = str(said or "").strip()
+        confidence = float(found["conf"][at])
+        if not said or confidence < _LEAST_TESSERACT_CONFIDENCE:
+            continue
+        line = (int(found["block_num"][at]), int(found["par_num"][at]), int(found["line_num"][at]))
+        lines.setdefault(line, []).append((said, confidence, int(found["left"][at]) - _TESSERACT_MARGIN,
+                                           int(found["top"][at]) - _TESSERACT_MARGIN,
+                                           int(found["width"][at]), int(found["height"][at])))
+    regions: list[dict[str, Any]] = []
+    for words in lines.values():
+        left = min(w[2] for w in words)
+        top = min(w[3] for w in words)
+        right = max(w[2] + w[4] for w in words)
+        bottom = max(w[3] + w[5] for w in words)
+        x, y, w, h = left / wide, top / tall, (right - left) / wide, (bottom - top) / tall
+        regions.append({
+            "text": " ".join(word[0] for word in sorted(words, key=lambda word: word[2])),
+            "x": round(x, 5), "y": round(y, 5), "width": round(w, 5), "height": round(h, 5),
+            "center_x": round(x + w / 2.0, 5), "center_y": round(y + h / 2.0, 5),
+            "confidence": round(min(word[1] for word in words) / 100.0, 4),
+        })
+    return regions
 
 
 @dataclass
