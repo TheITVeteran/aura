@@ -87,3 +87,18 @@ def test_what_she_keeps_clear_of_that_went_out_of_sight_is_still_danger_where_it
     staying = choosing.danger_along(lambda after: (0.0, 0.0))
     keeping_ahead = choosing.danger_along(lambda after: (60.0 * after, 0.0))
     assert staying > 0.0 and keeping_ahead < staying                            # it comes out where she stands
+
+
+def test_many_changes_standing_out_at_once_each_need_more_before_they_are_tells_and_are_said_one_at_a_time():
+    """Offline 2026-10-10 five tells were learned in one second from the same few losses, and all five were said."""
+    signs = WarningSigns()
+    signs._by_chance = lambda: 0.1  # what a loss follows by chance does not decide this
+    for kind in range(5):
+        signs.counts[(kind, STOPS)] = (2, 0)
+    assert not any(signs.is_a_tell(kind, STOPS) for kind in range(5))
+    signs.counts[(0, STOPS)] = (4, 0)
+    assert signs.is_a_tell(0, STOPS)
+    signs.counts[(1, STOPS)] = (4, 1)
+    said = signs.news(lambda kind: f"the kind {kind} things")
+    assert said == ["When the kind 0 things stop, harm follows: I'll get clear when I see it."]
+    assert signs.news(lambda kind: f"the kind {kind} things") == ["When the kind 1 things stop, harm follows: I'll get clear when I see it."]

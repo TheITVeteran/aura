@@ -42,6 +42,12 @@ FACING = 0.8
 #: The fewest times a sign must have come before a loss to be a tell.
 FEWEST = 2
 
+#: How many changes may stand out before losses at once and each still be taken at its first few: more than this, and
+#: each needs more before it is read as a tell. Every change in a crowded picture comes before a loss sometime; offline
+#: 2026-10-10 five were learned in one second from the same few losses ("when the cyan eyes stop", "when the brown
+#: things speed up", ...), and she kept clear of all of them.
+CROWDED = 2
+
 
 @dataclass
 class _Seen:
@@ -144,7 +150,10 @@ class WarningSigns:
         if hit < FEWEST:
             return False
         rate = hit / (hit + miss)
-        return rate > 0.5 and rate > self._by_chance()
+        if not (rate > 0.5 and rate > self._by_chance()):
+            return False
+        crowd = sum(1 for h, m in self.counts.values() if h >= FEWEST and h / (h + m) > 0.5)
+        return crowd <= CROWDED or hit >= FEWEST + 1 + (crowd - CROWDED) // 2
 
     def showing(self, thing: Any, at: float) -> bool:
         """Whether a thing showed one of its kind's tells lately enough that what it warns of may still come."""
@@ -163,14 +172,14 @@ class WarningSigns:
         return closing > 0 and apart / closing < within_s
 
     def news(self, name_of: Any) -> list[str]:
-        """What she has newly learned to read, said once each: "When the red ones stop, they hurt: I'll get clear"."""
-        lines = []
-        for (kind, sign) in list(self.counts):
-            if (kind, sign) in self.said or not self.is_a_tell(kind, sign):
-                continue
-            self.said.add((kind, sign))
-            lines.append(f"When {name_of(kind)} {_as_said(sign)}, harm follows: I'll get clear when I see it.")
-        return lines
+        """What she has newly learned to read, said once each and one at a time, the surest first: "When the red ones
+        stop, they hurt: I'll get clear"."""
+        new = [(kind, sign) for (kind, sign) in list(self.counts) if (kind, sign) not in self.said and self.is_a_tell(kind, sign)]
+        if not new:
+            return []
+        kind, sign = max(new, key=lambda pair: (self.counts[pair][0] / sum(self.counts[pair]), self.counts[pair][0]))
+        self.said.add((kind, sign))
+        return [f"When {name_of(kind)} {_as_said(sign)}, harm follows: I'll get clear when I see it."]
 
 
 def read_the_signs(signs: WarningSigns | None, moves: Any, mine: Any, verdicts: list[dict[str, Any]], at: float,
