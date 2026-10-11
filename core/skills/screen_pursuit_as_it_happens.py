@@ -598,14 +598,18 @@ class PlayingAsItHappens:
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
         said = " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")])
-        way = held.choose(ways_asked(said, self.words[-1] if self.words else ""), said)
+        asked = ways_asked(said, self.words[-1] if self.words else "")
+        way = held.choose(asked, said)
         if way == SEND and not self._no_place_for_shots():
             await self._by_shots(now)
             return
         # Played as it happens where it moves on its own, and where it moves for as long as she holds a key.
         if not self.under_her_hand and not await the_world_moves_on_its_own(self.look):
-            # A world that waits for her: words it asks for are typed; where it says to send something, by shots.
-            if not await self._typed_what_it_asks() and SEND not in held.let_go:
+            # A world that waits for her: words it asks for are typed; where it says to send something, by shots. Only
+            # there: LIVE 2026-10-11 a still level select, in a game played as it happens, had three minutes of pulls
+            # and holds let go at it, and nothing sent.
+            if (not await self._typed_what_it_asks() and SEND not in held.let_go and SEND in asked
+                    and not self._no_place_for_shots()):
                 await self._by_shots(now)
             return
         if not self.keep.get("hers") and not self.recalled:

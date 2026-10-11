@@ -95,3 +95,17 @@ def _forget_closer_readings():
     reading_closer._remembered.clear()
     yield
     reading_closer._remembered.clear()
+
+
+@pytest.mark.parametrize("said, chooses", [
+    ("LEVEL SELECT Strike 'Em Out Road Rage Backyard Beatdown", True),
+    ("Character Select", True),
+    ("Select a level", True),
+    ("Selecting the best level takes practice", False),
+])
+def test_a_screen_headed_by_what_is_chosen_on_it_asks_to_choose(said, chooses):
+    """LIVE 2026-10-11 a "LEVEL SELECT" screen was taken for play, and she pulled and let go at its levels for three
+    minutes."""
+    from core.language.a_way_on import asks_to_choose
+
+    assert asks_to_choose(said) is chooses
