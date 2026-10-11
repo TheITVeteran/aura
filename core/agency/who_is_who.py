@@ -93,6 +93,8 @@ WENT_WITHIN_S = 0.5
 #: How many prizes a kind must have taken first to be a rival for sure, and how many losses of it must have cost her
 #: for it to be on her side for sure.
 TAKEN_FOR_SURE = 2
+#: How many times a kind must have done a thing (cost her, counted, stopped her, done nothing) for that to be shown.
+SHOWN_AFTER = 2
 LOST_WITH_FOR_SURE = 2
 
 #: The most a kind's going may be expected by chance in the moment before a blow for the blow to be put to its loss:
@@ -306,24 +308,29 @@ class WhoIsWho:
         if thing.number in self.hers:
             return Designation(HERS, True, "it answers to me")
         kept = self.kinds.get(thing.kind) or _Kind()
+        # Once is a sign, twice is shown: a thing a cost or a gain came with once is taken for what it seemed and played
+        # as such, but is not said for sure until it does so again. LIVE 2026-10-11 a scrolling game had twenty kinds
+        # each said for sure to be a threat, a prize or a rival, every one from a single meeting that came by chance.
         if kept.blows or kept.losses:
-            return Designation(THREAT, True, "it has cost me")
+            return Designation(THREAT, kept.blows + kept.losses >= SHOWN_AFTER,
+                               "it has cost me" if kept.blows + kept.losses >= SHOWN_AFTER else "it seemed to cost me")
         if kept.got_past:
-            return Designation(THREAT, True, "it costs me when it gets past")
+            return Designation(THREAT, kept.got_past >= SHOWN_AFTER, "it costs me when it gets past")
         if kept.lost_with >= LOST_WITH_FOR_SURE:
             return Designation(FRIENDLY, True, "losing it cost me")
         if kept.gains:
-            return Designation(PRIZE, True, "getting it counted")
+            return Designation(PRIZE, kept.gains >= SHOWN_AFTER,
+                               "getting it counted" if kept.gains >= SHOWN_AFTER else "getting it seemed to count")
         if kept.took >= TAKEN_FOR_SURE:
             return Designation(RIVAL, True, "it takes what I'm after, and meeting it costs me nothing")
         if kept.stopped and not kept.losses:
-            return Designation(IN_HER_WAY, True, "it stops me")
+            return Designation(IN_HER_WAY, kept.stopped >= SHOWN_AFTER, "it stops me")
         keeps_with = self._keeps_with(thing.number)
         if kept.nothings:
             if keeps_with:
                 return Designation(FRIENDLY, False, "it keeps with me and does nothing to me")
             if kept.moved:
-                return Designation(NEUTRAL, True, "it goes its own way and meeting it does nothing")
+                return Designation(NEUTRAL, kept.nothings >= SHOWN_AFTER, "it goes its own way and meeting it does nothing")
             return Designation(PART_OF_THE_PLACE, True, "it never moves and meeting it does nothing")
         # One that keeps with her at its own distance is a companion, though its going points at her as a pursuer's does.
         if keeps_with:

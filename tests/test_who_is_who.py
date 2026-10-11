@@ -206,3 +206,19 @@ def test_what_she_has_found_out_is_said_once_each_and_one_at_a_time():
     assert any("friendly competition" in line for line in said), said
     assert any("a threat" in line for line in said), said
     assert len(said) == len(set(said)) and not who.to_say(present, lambda thing: f"kind {thing.kind}")
+
+
+def test_once_is_a_sign_and_twice_is_shown():
+    """LIVE 2026-10-11 a scrolling game had twenty kinds each said for sure to be a threat, a prize or a rival, every one
+    from a single meeting that came by chance. Once, a kind is played as what it seemed and not said; twice, it is."""
+    from core.agency.who_is_who import PRIZE, THREAT, WhoIsWho
+
+    who = WhoIsWho()
+    coin, spike = _thing(1, 7, 50.0, 50.0), _thing(2, 8, 90.0, 50.0)
+    who.met(7, "gain")
+    who.met(8, "loss")
+    assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, False)
+    assert (who.of(spike).name, who.of(spike).sure) == (THREAT, False)
+    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == []
+    who.met(7, "gain")
+    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: getting it counted."]
