@@ -40,6 +40,17 @@ def _a_different_screen(said: str, before: str) -> bool:
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
+async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bool:
+    """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
+    known = reflexes.still_screen
+    if (known is not None and _the_same_screen(known[0], reflexes.said_now)
+            and time.monotonic() - known[1] < STILL_SCREEN_KEPT_S):
+        return False
+    moves = await watched(reflexes.look)
+    reflexes.still_screen = None if moves else (reflexes.said_now, time.monotonic())
+    return moves
+
+
 def _the_same_screen(before: Any, said: Any) -> bool:
     """Whether a screen read now is one read before, a reading a little differently made being the same screen."""
     return (isinstance(before, str) and isinstance(said, str)
@@ -618,7 +629,7 @@ class PlayingAsItHappens:
         # Played as it happens where it moves on its own, and where it moves for as long as she holds a key. Whether a
         # screen moves on its own is watched once a screen, not before every move on it: LIVE-like 2026-10-11 a menu
         # whose figures bobbed in place was watched for three and a half seconds before each of her clicks.
-        if not self.under_her_hand and not await self._it_moves_on_its_own(the_world_moves_on_its_own):
+        if not self.under_her_hand and not await _it_moves_on_its_own(self, the_world_moves_on_its_own):
             # A world that waits for her: words it asks for are typed; where it says to send something, by shots. Only
             # there: LIVE 2026-10-11 a still level select, in a game played as it happens, had three minutes of pulls
             # and holds let go at it, and nothing sent.
@@ -714,15 +725,6 @@ class PlayingAsItHappens:
         if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
             self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
             self.under_her_hand = False
-
-    async def _it_moves_on_its_own(self, watched: Any) -> bool:
-        """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
-        known = self.still_screen
-        if known is not None and _the_same_screen(known[0], self.said_now) and time.monotonic() - known[1] < STILL_SCREEN_KEPT_S:
-            return False
-        moves = await watched(self.look)
-        self.still_screen = None if moves else (self.said_now, time.monotonic())
-        return moves
 
     async def _did_again_what_it_showed(self) -> bool:
         """Where the place's words ask for what it shows to be done again: each showing watched and done again, round
