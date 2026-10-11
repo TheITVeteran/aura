@@ -63,7 +63,14 @@ def test_a_carry_that_worked_is_where_the_chain_goes_on_from():
     here.looked_at(moves, where=where)
     here.pictures = {"tube"}                                                      # the tube is drawn, and named by her eyes
     assert "chains" in here.mechanics_said
-    here.carried(a_carry_of("tube", "the shape at 20% across, 10% down"), changed=True)
+    # A carry extends the chain only with its placement observed (core/perception/observed_transfer.py).
+    from types import SimpleNamespace
+
+    from core.runtime.skill_contract import PredicateState
+
+    carry = a_carry_of("tube", "the shape at 20% across, 10% down")
+    here.carried(carry, changed=True, receipt=SimpleNamespace(move=carry, attempt_id="placed-1",
+                                                              state=PredicateState.SATISFIED, destination_at=(0.2, 0.1)))
     carries = here.carries(here.on_screen)
     assert carries and carries[0] == a_carry_of("tube", "the shape at 25% across, 30% down")
 

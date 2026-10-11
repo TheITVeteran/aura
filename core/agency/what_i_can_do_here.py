@@ -289,14 +289,17 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         A control stays where it is; a readout changes. LIVE 2026-10-03 04:49,
         with the game's clock running, every look read it differently ("TImE
         01:50", "TTE 0152", "TITE 040"), each reading was a control she had
-        never tried, and she clicked the clock again and again.
+        never tried, and she clicked the clock again and again. A way on (Play,
+        Continue, Next) is no readout and is taken at first sight: offline
+        2026-10-10 an instructions screen's "continue" waited a look while she
+        pressed the up arrow at it.
         """
         now = tuple(clickable)
         if where:
             self.where.update({what_is_clicked(name) or name: at for name, at in where.items()})
         self.noticed_taking(now)
         self.saw_looks(looks or {})
-        self.on_screen = tuple(label for label in now if label in self.seen_before)
+        self.on_screen = tuple(label for label in now if label in self.seen_before or _goes_on(label))
         self.seen_before = now
         self.leads.looked(now, says)
 
