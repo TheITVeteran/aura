@@ -22,14 +22,14 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 18 |
 | Values across them | 107 |
 | Kinds of place they make, multiplied out | 26,754,416,640,000 |
-| Values with an answer | 103 |
+| Values with an answer | 104 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
 | Values a game needs | 0 to 53, 23.4 on average |
-| Games with an answer for every value they need | 32 |
+| Games with an answer for every value they need | 36 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 4 values with none answers every value the
+place of their own. Answering the 3 values with none answers every value the
 56 need, where the dimensions are independent.
 
 Eight values were answered on 11 October, each by a module shown working in a
@@ -74,6 +74,18 @@ taking out by what losing the ally would cost her, by how soon it gets there.
 In a world where threats came for her and for an ally walking to and fro,
 played for herself she lost the ally about twenty times in two minutes; keeping
 it, not once, and she was hit no more.
+
+## Spending a supply
+
+Which counter a key spends is found by the counter falling just after the key
+is pressed, press after press; then each press must clear a bar
+(`core/agency/spending_a_supply.py`). The bar is the old answer to spending a
+budget on chances that come over time: of the chances still to come in the time
+left, as often as they have come, only as many as there is supply for, counting
+what refills, are taken, and the bar is the worth that share of them reach. A
+shot's worth is what taking its target out is worth. Ten units over a minute of
+chances took 1,396 spent above the bar against 727 spent on whatever came first;
+where the supply refilled faster than chances came, the two did the same.
 
 ## What she plays for, and who is who
 
@@ -153,7 +165,6 @@ seams are kept to one owner each, so that the answers compose:
 |---|---|---|
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
 | 9 | meeting: pushed to a place | a thing she runs into moves; got to its place by pushing it from its far side |
-| 6 | logistics: spend a supply | a meter spent where it does most, and saved where it does least |
 | 5 | searching: where a piece goes | each place a falling piece could land, judged by what it would clear and leave |
 
 Each is built as a module of its own, shown working in a world of its own

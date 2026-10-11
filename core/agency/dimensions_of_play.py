@@ -196,7 +196,8 @@ DIMENSIONS: dict[str, tuple[Value, ...]] = {
         ("take and use", "a thing taken, then used on another", ("use things",), ("using things",)),
         ("carry to a place", "a thing carried and put down where it goes", ("carry",), ("dragging",)),
         ("give each what it asks", "things served to what asks for them", ("serve",), ("serving",)),
-        ("spend a supply", "a meter or a count spent where it pays most", (), ("fuel", "holding to sustain")),
+        ("spend a supply", "a meter or a count spent where it pays most",
+         ("core.agency.spending_a_supply:SpendingASupply",), ("fuel", "holding to sustain")),
     ),
     "searching": _values(
         "searching",

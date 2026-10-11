@@ -305,8 +305,10 @@ class _Run:
     #: it has been told of.
     sounds: Any = None
     presses_told: int = 0
-    #: What comes for her allies (core/agency/keeping_allies.py).
+    #: What comes for her allies (core/agency/keeping_allies.py), and which key spends which counter and on what
+    #: (core/agency/spending_a_supply.py).
     allies: Any = None
+    supply: Any = None
     #: Each press of a key that strikes without sending anything out, and how far it has paid (how_far_her_blow_reaches.py).
     blows: HerBlows = field(default_factory=HerBlows)
     #: A key held to build something up and let go to use it, and how long a hold has paid (holding_to_charge.py).
@@ -1258,6 +1260,7 @@ def _what_she_plays_for(run: _Run, choosing: _Choosing, moves: WhatMoves, hers: 
         _say(run, say, line, at, once=line)
     threats = [thing for thing, _found in who.threats(things)]
     goes.saw_threats(at, [(thing.number, thing.kind) for thing in threats])
+    run.supply.counted(at, meeting.readouts.current)
     allies = tuple(thing for thing in things if (mine is None or thing.number != mine.number)
                    and who.of(thing).name == FRIENDLY)
     run.allies.saw(threats, allies)
@@ -1629,6 +1632,9 @@ async def _play_as_it_happens(
     from core.agency.keeping_allies import KeepingAllies
 
     run.allies = keep.get("allies") or KeepingAllies()
+    from core.agency.spending_a_supply import SpendingASupply
+
+    run.supply = keep.get("supply") or SpendingASupply()
     run.presses_told = sum(run.input_key_downs.values()) + run.taps
     if keep.get("meeting_with"):
         run.meeting_with = {float(part): list(counts) for part, counts in keep["meeting_with"].items()}
@@ -1745,7 +1751,8 @@ async def _play_as_it_happens(
                  "said_once": run.said, "leading": run.leading, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,
-                 "sounds_heard": run.sounds, "allies": run.allies})
+                 "sounds_heard": run.sounds, "allies": run.allies,
+                 "supply": run.supply})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
@@ -1992,6 +1999,14 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
         next_trigger = max(run.last_click + CLICK_EVERY_S, run.last_trigger_began + window + RESPONSE_S)
     if not fire or fire == run.held or at < next_trigger:
         return
+    # A key that spends a counter of hers spends it where the shot is worth it (core/agency/spending_a_supply.py).
+    if fire != "mouse" and run.supply is not None and not discovering and aim is not None:
+        label = run.supply.spends(fire)
+        if label is not None and not run.supply.spend(at, _worth_of_a_shot(choosing, aim, at),
+                                                      run.supply.last.get(label, 0.0),
+                                                      seconds_left=choosing.seconds_left,
+                                                      refill=run.supply.refills_a_second(label, at)):
+            return
     if fire == "mouse":
         if not hasattr(hands, "click"):
             return
@@ -2013,9 +2028,22 @@ async def _trigger(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing
     if fire == "mouse" and choosing.pointing:
         hers.pointed(run.pointer[0] * wide, run.pointer[1] * tall, delivered)
     hers.tapped(fire, delivered, began=dispatched)
+    if run.supply is not None and fire != "mouse":
+        run.supply.pressed(fire, at)
     run.last_trigger_began = dispatched
     run.last_click = delivered
     run.taps += 1
+
+
+def _worth_of_a_shot(choosing: _Choosing, aim: Any, at: float) -> float:
+    """What a shot at ``aim`` is worth, in seconds of play: what taking it out is worth (core/agency/what_she_plays_for.py),
+    one where nothing prices it."""
+    goes = choosing.plays_for
+    if goes is None or choosing.mine is None:
+        return 1.0
+    size = max(float(choosing.mine.w), float(choosing.mine.h))
+    comes = choosing.comes is not None and choosing.comes.comes_for_her(aim, size)
+    return goes.worth_taking_out_s(aim.kind, comes_for_her=comes, at=at, seconds_left=choosing.seconds_left)
 
 
 def _aimed_with_the_pointer(choosing: _Choosing, aim: Any, run: _Run) -> tuple[int, float] | None:
