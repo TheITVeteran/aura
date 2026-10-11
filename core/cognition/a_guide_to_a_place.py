@@ -751,12 +751,16 @@ _NOT_A_NAME = frozenset("""the a an your you it its them they this that these th
     in on at of to by for from with into onto out off over under again more most less""".split())
 
 
+#: Words that join two verbs of one thing ("avoid or shoot the obstacles"): what follows them is no name.
+_JOINING = frozenset({"or", "and", "nor", "then"})
+
+
 def _a_name(said: str) -> str:
     """A thing's name as a place says it, kept to its last few words and lowered: "Tommy's Lunar Lander" is the lunar
     lander; "" where it is no name ("the arrow keys", "it")."""
     words = re.sub(r"^[A-Za-z]+'s\s+", "", str(said or "").strip()).split()
     words = [w for w in words if w.lower() not in ("the", "your", "a", "an")]
-    if (not words or len(words) > 4 or words[-1].lower() in _NOT_A_NAME or len(words[-1]) < 3
+    if (not words or words[0].lower() in _JOINING or len(words) > 4 or words[-1].lower() in _NOT_A_NAME or len(words[-1]) < 3
             or not any(w.lower() not in _NOT_A_NAME for w in words) or any(w.lower() in _OF_AN_ACT for w in words)):
         return ""
     return " ".join(w.lower() for w in words[-3:])
@@ -900,7 +904,10 @@ def _things_spoken_of(sentence: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for found in _SPOKEN_OF.finditer(sentence or ""):
         words = (found.group(1) or found.group(3) or "").strip().lower().split()
-        if not words or len(words) > 3 or words[0] in _NOT_THINGS or words[-1] in _NOT_THINGS or words[-1].endswith("ing"):
+        # "Avoid or shoot obstacles" is two verbs of one thing, each read where it stands, not a thing called "or shoot
+        # obstacles" (LIVE 2026-10-11 "I'll keep clear of the or shoot obstacles").
+        if not words or words[0] in _JOINING or len(words) > 3 or words[0] in _NOT_THINGS or words[-1] in _NOT_THINGS \
+                or words[-1].endswith("ing"):
             continue
         out.append((found.group(2) or "", " ".join(words)))
     return out
