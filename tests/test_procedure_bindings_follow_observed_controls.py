@@ -116,6 +116,98 @@ def test_a_category_selection_can_reveal_the_next_choice_of_the_same_entity():
     assert rules.step_of('click "Run"') is None
 
 
+@pytest.mark.parametrize("entity", ["component", "font", "chart", "asset"])
+def test_choice_prose_repeated_as_a_heading_cannot_bind_or_complete_the_variable(entity):
+    choose = Frame(f"Click a type of {entity}", act="click things", thing=f"a type of {entity}", using="click")
+    rules = rules_with(choose)
+    heading = f'click "CHOOSE A TYPE OF {entity.upper()}"'
+    assert rules.step_of(heading) is None
+    assert rules.begin(heading, observation(1, [f"CHOOSE A TYPE OF {entity.upper()}"])) is None
+    assert not rules.passed(choose)
+
+
+def test_selector_receipt_excludes_instruction_headings_from_revealed_values():
+    rules, choose, opener, _ = selector_rules()
+    before = observation(1, ["Component Library"])
+    after = observation(2, ["Choose a type of component", "Filters", "Sources"])
+    rules.begin('click "Component Library"', before, step_key=opener.key)
+    rules.tried('click "Component Library"', True, after=after)
+    assert rules.step_of('click "Filters"') is choose
+    assert rules.step_of('click "Choose a type of component"') is None
+
+
+def object_value(name, epoch, identity="a" * 64):
+    return {"text": name, "x": .1, "y": .2, "width": .1, "height": .1,
+            "center_x": .15, "center_y": .25, "role": "object", "source": "measured_pixels",
+            "candidate_id": identity, "container_bbox": [.05, .1, .4, .7], "capture_epoch": str(epoch)}
+
+
+@pytest.mark.parametrize("entity,container", [("component", "library"), ("font", "panel"), ("chart", "menu"), ("asset", "catalog")])
+def test_owned_selector_can_bind_an_anonymous_measured_candidate(entity, container):
+    choose = Frame(f"Choose an item of {entity}", act="click things", thing=f"an item of {entity}")
+    opener = Frame(f"Open the {entity} {container}", act="click things", thing=f"{entity} {container}", order=1)
+    rules = rules_with(choose, opener)
+    name = "the object at 15.00% across, 25.00% down"
+    before = observation(1, [f"{entity} {container}"])
+    after = observation(2, [f"{entity} {container}", name])
+    after["regions"] = [object_value(name, 2)]
+    move = f'click "{entity} {container}"'
+    rules.begin(move, before, step_key=opener.key)
+    rules.tried(move, True, after=after)
+    assert rules.step_of(f'click "{name}"') is choose
+    # Geometry and appearance bind an offered value, without assigning it an entity name or proving placement.
+    assert not rules.passed(choose)
+
+
+@pytest.mark.parametrize("damage", ["missing_extent", "missing_witness", "foreign_capture", "redirected_container", "ambiguous", "shape_only"])
+def test_unguarded_geometry_cannot_become_a_choice_value(damage):
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, []), observation(2, [name])
+    region = object_value(name, 2)
+    after["regions"] = [region]
+    if damage == "missing_extent":
+        region.pop("width")
+    elif damage == "missing_witness":
+        region.pop("candidate_id")
+    elif damage == "foreign_capture":
+        region["capture_epoch"] = "1"
+    elif damage == "redirected_container":
+        region["container_bbox"] = [.5, .5, .1, .1]
+    elif damage == "ambiguous":
+        after["regions"].append(dict(region))
+    elif damage == "shape_only":
+        region["role"] = "shape"
+    assert RevealedChoices.from_effect(before, after, "open", "choose") is None
+
+
+def test_same_position_with_a_replaced_appearance_is_a_new_value_and_invalidates_the_old_binding():
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, [name]), observation(2, [name])
+    before["regions"] = [object_value(name, 1)]
+    after["regions"] = [object_value(name, 2, "b" * 64)]
+    binding = RevealedChoices.from_effect(before, after, "open", "choose")
+    assert binding is not None and binding.offers(f'click "{name}"', after, "choose")
+    current = observation(3, [name])
+    current["regions"] = [object_value(name, 3, "c" * 64)]
+    assert not binding.offers(f'click "{name}"', current, "choose")
+
+
+def test_current_capture_can_keep_the_same_measured_value_without_persistent_identity_claims():
+    from core.cognition.procedure_binding import RevealedChoices
+
+    name = "the object at 15.00% across, 25.00% down"
+    before, after = observation(1, []), observation(2, [name])
+    after["regions"] = [object_value(name, 2)]
+    binding = RevealedChoices.from_effect(before, after, "open", "choose")
+    current = observation(3, [name])
+    current["regions"] = [object_value(name, 3)]
+    assert binding.offers(f'click "{name}"', current, "choose")
+
+
 def test_a_category_selection_cannot_supply_choices_of_another_entity():
     rules, first, opener, _ = selector_rules()
     other = Frame("Choose the type of font", act="click things", thing="the type of font", using="choose", order=1.5)

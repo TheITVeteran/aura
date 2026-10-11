@@ -24,7 +24,8 @@ _OPENS = re.compile(r"\b(?:open|expand|show|browse)\b", re.I)
 _CONTAINER = re.compile(r"\b(?:library|panel|palette|catalog|catalogue|selector|list|menu|browser|chooser)\b", re.I)
 _COMMAND = re.compile(r"^\W*(?:click|press|open|close|skip|delete|remove|test|run|simulate|execute|render|preview|"
                       r"start|clear|reset|undo|redo|back|menu|help|quit|exit|options|settings|pause|save|load|submit|"
-                      r"done|finish|launch|play|next|continue|restart|retry|cancel|show|hide|rotate|turn|flip|zoom)\b", re.I)
+                      r"done|finish|launch|play|next|continue|restart|retry|cancel|show|hide|rotate|turn|flip|zoom|"
+                      r"choose|select|pick)\b", re.I)
 _CONSUMES = re.compile(r"^\W*(?:test|run|simulate|execute|render|preview|evaluate|validate|compile|"
                        r"check\s+(?:my|the)|try\s+(?:it|this)|launch)\b", re.I)
 
@@ -84,7 +85,36 @@ def consumes_artifact(label: str) -> bool:
 
 
 def selection_label(label: str) -> bool:
-    return bool(str(label).strip()) and not str(label).startswith(("the shape at", "the one that stands out", "the middle")) and not _COMMAND.search(label)
+    return bool(str(label).strip()) and not str(label).startswith(("the shape at", "the object at", "the one that stands out", "the middle")) and not _COMMAND.search(label)
+
+
+def _object_witnesses(evidence: dict) -> dict[str, tuple]:
+    """Anonymous choice values retain their measured container, extent and appearance."""
+    found: dict[str, tuple] = {}
+    ambiguous: set[str] = set()
+    for region in (evidence.get("regions") or ())[:128]:
+        if not isinstance(region, dict):
+            continue
+        name, identity = str(region.get("text") or ""), str(region.get("candidate_id") or "")
+        box = tuple(region.get(key) for key in ("x", "y", "width", "height"))
+        container = region.get("container_bbox")
+        if (not name.startswith("the object at") or region.get("role") != "object"
+                or region.get("source") != "measured_pixels" or region.get("capture_epoch") != evidence.get("capture_epoch")
+                or not re.fullmatch(r"[0-9a-f]{64}", identity) or not isinstance(container, (list, tuple))
+                or len(container) != 4
+                or any(type(v) not in (int, float) or not math.isfinite(v) for v in (*box, *container))):
+            continue
+        x, y, width, height = box
+        cx, cy, cw, ch = container
+        if (min(x, y, cx, cy) < 0 or min(width, height, cw, ch) <= 0 or max(x + width, cx + cw) > 1.000001
+                or max(y + height, cy + ch) > 1.000001 or not (cx <= x and cy <= y and x + width <= cx + cw
+                                                                           and y + height <= cy + ch)):
+            continue
+        if name in found:
+            ambiguous.add(name)
+        else:
+            found[name] = (identity, box, tuple(container))
+    return {name: witness for name, witness in found.items() if name not in ambiguous}
 
 
 @dataclass(frozen=True)
@@ -96,9 +126,10 @@ class RevealedChoices:
     moves: frozenset[str]
     opened_by: str
     for_step: str
+    object_witnesses: tuple[tuple[str, tuple], ...] = ()
 
     @classmethod
-    def from_effect(cls, before: dict, after: dict, step_key: str, choice_key: str) -> RevealedChoices | None:
+    def from_effect(cls, before: dict, after: dict, step_key: str, choice_key: str, *, opened_move: str = "") -> RevealedChoices | None:
         from core.agency.what_i_can_do_here import what_is_clicked
 
         surface = str(after.get("surface_id") or "")
@@ -114,16 +145,47 @@ class RevealedChoices:
                 or not math.isfinite(earlier) or not math.isfinite(later) or not earlier < later):
             return None
         introduced = set(after.get("clickable") or ()) - set(before.get("clickable") or ())
-        moves = frozenset(move for move in introduced if (label := what_is_clicked(move)) and selection_label(label))
-        return cls(surface, tuple(bounds), epoch, later, frozenset(sorted(moves)[:128]), step_key, choice_key) if len(moves) >= 2 else None
+        objects = _object_witnesses(after)
+        previous_objects = _object_witnesses(before)
+        introduced.update(move for move in after.get("clickable") or ()
+                          if (label := what_is_clicked(move)) in objects
+                          and objects[label] != previous_objects.get(label))
+        changed_objects = {label: witness for label, witness in objects.items()
+                           if f'click "{label}"' in introduced}
+        containers = {witness[2] for witness in changed_objects.values()}
+        if len(containers) > 1:
+            # A selector cannot own unrelated changes in another panel. Its
+            # measured location may identify one changed group; otherwise abstain.
+            control = what_is_clicked(opened_move)
+            points = []
+            for region in before.get("regions") or ():
+                if isinstance(region, dict) and region.get("text") == control:
+                    point = region.get("center_x"), region.get("center_y")
+                    if all(type(v) in (int, float) and math.isfinite(v) for v in point):
+                        points.append(point)
+            owned = {box for box in containers for px, py in points
+                     if box[0] <= px <= box[0] + box[2] and box[1] <= py <= box[1] + box[3]}
+            changed_objects = {label: witness for label, witness in changed_objects.items()
+                               if len(points) == 1 and len(owned) == 1 and witness[2] in owned}
+        moves = frozenset(move for move in introduced if (label := what_is_clicked(move))
+                          and (selection_label(label) or label in changed_objects))
+        kept = frozenset(sorted(moves)[:128])
+        witnesses = tuple((move, objects[label]) for move in sorted(kept)
+                          if (label := what_is_clicked(move)) in objects)
+        return cls(surface, tuple(bounds), epoch, later, kept, step_key, choice_key, witnesses) if len(moves) >= 2 or witnesses else None
 
     def offers(self, move: str, current: dict, step_key: str) -> bool:
+        from core.agency.what_i_can_do_here import what_is_clicked
+
         at = current.get("capture_at")
+        witnesses = dict(self.object_witnesses)
+        current_objects = _object_witnesses(current) if move in witnesses else {}
         return (current.get("surface_id") == self.surface and tuple(current.get("bounds") or ()) == self.bounds
                 and bool(current.get("capture_epoch")) and self.for_step == step_key
                 and type(at) in (int, float) and math.isfinite(at) and at >= self.capture_at
                 and (current["capture_epoch"] != self.epoch or at == self.capture_at)
-                and move in self.moves and move in (current.get("clickable") or ()))
+                and move in self.moves and move in (current.get("clickable") or ())
+                and (move not in witnesses or current_objects.get(what_is_clicked(move)) == witnesses[move]))
 
 
 @invariant("cognition.choice_bindings_require_observed_current_controls", scope="cognition",

@@ -28,6 +28,7 @@ from typing import Any
 
 from core.perception.what_is_there import Arrangement, Cell, arranged
 from core.runtime.flags import FlagKind, declare
+from core.runtime.skill_contract import PredicateState
 
 _NOTE_READINGS = declare(
     "AURA_NOTE_READINGS",
@@ -292,8 +293,9 @@ def noticed(
     before: dict[str, Any],
     after: dict[str, Any],
     *,
-    worked: bool = True,
+    worked: bool | None = True,
     acting: str = "",
+    response_state: PredicateState | None = None,
 ) -> Responsive:
     """Record what changed between one reading and the next, after she acted.
 
@@ -305,15 +307,27 @@ def noticed(
     ``acting`` names the act, so a run of nothing happening can be told apart
     from a run of ONE THING doing nothing. A caller that does not say leaves
     the verdict on the count alone, which is what it always was.
+
+    ``response_state`` is an independently measured owned response. It can
+    answer even when the words stay fixed; text changes still locate where
+    the response happened. Unknown evidence supplies no learning.
     """
     # Which act she took is a fact about her, and it is recorded whatever the
     # reading could show. Kept only when there were places to compare, a screen
     # that reads as a line of words never had any act counted as tried, so the
     # first untried act was offered again after every press of it.
+    if response_state is not None and not isinstance(response_state, PredicateState):
+        raise TypeError("an owned response must use a predicate state")
+    if response_state is PredicateState.UNKNOWN:
+        return state
+    if response_state is not None:
+        worked = response_state is PredicateState.SATISFIED
+    if worked is None:
+        return state
     if acting:
         state.tried.add(acting)
     was, now = places_and_text(before), places_and_text(after)
-    if not was and not now:
+    if not was and not now and response_state is None:
         return state
     state.acts += 1
     # Something answered only if what changed is not the sort of thing that
@@ -349,6 +363,8 @@ def noticed(
         if idle_seen < max(1, state.idle):
             answered_now = True
             break
+    if response_state is not None:
+        answered_now = response_state is PredicateState.SATISFIED
     if acting:
         state.tried.add(acting)
     if answered_now:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -36,6 +37,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+
+from core.verify.invariants import invariant
 
 logger = logging.getLogger("Aura.Watching")
 
@@ -77,8 +80,18 @@ WATCH_AT_MOST_S = 30.0
 @dataclass
 class _Moment:
     at: float
+    since: float
     cells: np.ndarray  # bool, CELLS[1] x CELLS[0]: which cells changed since the picture before
     share: float  # of the picture that changed
+
+
+@dataclass
+class _ActWindow:
+    sequence: int
+    started: float
+    act: str
+    finished: float | None = None
+    delivered: bool | None = None
 
 
 @dataclass
@@ -89,7 +102,10 @@ class Watching:
     per_second: float = PER_SECOND
     moments: deque[_Moment] = field(default_factory=lambda: deque(maxlen=int(REMEMBERED_S * PER_SECOND)))
     acts: deque[tuple[float, str]] = field(default_factory=lambda: deque(maxlen=200))
+    _windows: deque[_ActWindow] = field(default_factory=lambda: deque(maxlen=200))
+    _act_sequence: int = 0
     _last: np.ndarray | None = None
+    _last_at: float | None = None
     _task: asyncio.Task | None = None
     _watched_until: float = 0.0
 
@@ -119,25 +135,48 @@ class Watching:
                 taken = None
             picture = taken[0] if isinstance(taken, tuple) else taken
             if picture is not None:
-                self.saw(picture, time.monotonic())
+                captured = taken[1] if isinstance(taken, tuple) and len(taken) > 1 else time.monotonic()
+                if type(captured) in (int, float) and math.isfinite(captured):
+                    self.saw(picture, captured)
             await asyncio.sleep(max(0.0, period - (time.monotonic() - began)))
 
     def saw(self, picture: Any, at: float) -> None:
         """One picture of the surface, at ``at``: what changed since the one before, cell by cell."""
         small = _small(picture)
-        if small is None:
+        if (small is None or not math.isfinite(at)
+                or (self._last_at is not None and at <= self._last_at)):
             return
         if self._last is not None and self._last.shape == small.shape:
             changed = np.abs(small - self._last) > PIXEL_CHANGED
+            if changed.ndim == 3:
+                changed = changed.any(axis=2)
             wide, high = CELLS
             rows = np.array_split(changed, high, axis=0)
             cells = np.array([[part.mean() > CELL_CHANGED for part in np.array_split(row, wide, axis=1)] for row in rows])
-            self.moments.append(_Moment(at, cells, float(changed.mean())))
+            self.moments.append(_Moment(at, self._last_at, cells, float(changed.mean())))
         self._last = small
+        self._last_at = at
+
+    def begin_act(self, act: str, at: float | None = None) -> _ActWindow:
+        """Register ownership before input can change the surface."""
+        started = time.monotonic() if at is None else at
+        self._act_sequence += 1
+        window = _ActWindow(self._act_sequence, started, str(act))
+        self._windows.append(window)
+        self.acts.append((started, str(act)))
+        return window
+
+    def finish_act(self, window: _ActWindow, delivered: bool, at: float | None = None) -> None:
+        """Close the input interval without giving uncertain delivery response credit."""
+        finished = time.monotonic() if at is None else at
+        if window.finished is not None or not math.isfinite(finished) or finished < window.started:
+            raise ValueError("an action window needs one ordered completion")
+        window.finished, window.delivered = finished, bool(delivered)
 
     def acted(self, act: str, at: float | None = None) -> None:
         """She did ``act`` to the surface, now."""
-        self.acts.append((time.monotonic() if at is None else at, str(act)))
+        window = self.begin_act(act, at)
+        self.finish_act(window, True, window.started)
 
     # ── reading it ───────────────────────────────────────────────────────
 
@@ -145,27 +184,65 @@ class Watching:
         """The cells that change all the time: part of the picture, not something happening."""
         if not self.moments:
             return np.zeros((CELLS[1], CELLS[0]), dtype=bool)
-        recent = list(self.moments)[-int(20 * self.per_second):]
+        recent = [m for m in list(self.moments)[-int(20 * self.per_second):] if not self._hers(m.at)]
+        if not recent:
+            return np.zeros((CELLS[1], CELLS[0]), dtype=bool)
         return np.mean([m.cells for m in recent], axis=0) > ALWAYS
 
     def _hers(self, at: float) -> bool:
         """Whether a change at ``at`` came soon enough after one of her acts to be its answer."""
-        return any(0.0 <= at - when <= ANSWERS_WITHIN_S for when, _act in self.acts)
+        return any(w.started <= at <= (w.finished if w.finished is not None else at) + ANSWERS_WITHIN_S
+                   for w in self._windows)
 
     def _of_its_own(self, since: float) -> list[_Moment]:
         always = self._always()
         return [m for m in self.moments if m.at >= since and not self._hers(m.at) and (m.cells & ~always).any()]
 
     def answered(self, act_at: float, within_s: float = ANSWERS_WITHIN_S) -> bool | None:
-        """Whether something changed after the act at ``act_at`` that was not already changing; None before the stream has seen enough."""
-        before = [m for m in self.moments if act_at - 3.0 <= m.at < act_at]
-        after = [m for m in self.moments if act_at <= m.at <= act_at + within_s]
-        if not after or not before:
+        """The response within the owned input interval and its bounded aftermath.
+
+        Prior owned changes cannot become autonomous background. A missing or
+        interrupted capture interval supplies no negative response evidence.
+        """
+        window = next((w for w in reversed(self._windows) if w.started == act_at), None)
+        if window is None or window.finished is None or window.delivered is not True:
             return None
-        always = self._always()
-        busy = np.any([m.cells for m in before], axis=0) | always
-        # Changed where it was not already changing, or all at once (a new screen).
-        return any((m.cells & ~busy).any() or m.share > 0.5 for m in after)
+        ends = window.finished + max(0.0, within_s)
+        following = next((w.started for w in self._windows if w.started > act_at), None)
+        before = [m for m in self.moments if act_at - 3.0 <= m.at < act_at]
+        after = [m for m in self.moments if act_at <= m.at <= ends
+                 and (following is None or m.at < following)]
+        gap = max(0.5, 4.0 / max(0.5, self.per_second))
+        if len(before) < 2 or not after or act_at - before[-1].at > gap:
+            return None
+        if any(m.at - m.since > gap for m in before[-2:] + after):
+            return None
+        background = [m.cells for m in self.moments if act_at - 20.0 <= m.at < act_at and not self._hers(m.at)]
+        if len(background) < 2:
+            return None
+        autonomous = [m.cells for m in before if not self._hers(m.at)]
+        busy = np.any(autonomous, axis=0) if autonomous else np.zeros((CELLS[1], CELLS[0]), dtype=bool)
+        busy |= np.mean(background, axis=0) > ALWAYS
+        if any((m.cells & ~busy).any() for m in after):
+            return True
+        # A negative needs the entire interval; the first still frame is early,
+        # and a later action would make the remaining comparison ambiguous.
+        if following is not None and following < ends:
+            return None
+        covered = next((m for m in self.moments if m.at >= ends), None)
+        if covered is None or covered.at - covered.since > gap or covered.at - ends > gap:
+            return None
+        return False
+
+    def answer_window(self) -> dict[str, Any] | None:
+        """Detached timing and delivery evidence for the latest attempted input."""
+        if not self._windows:
+            return None
+        window = self._windows[-1]
+        return {"sequence": window.sequence, "act": window.act,
+                "started": window.started, "finished": window.finished,
+                "delivered": window.delivered, "captured_through": self._last_at,
+                "response_until": None if window.finished is None else window.finished + ANSWERS_WITHIN_S}
 
     def playing_on_its_own(self, now: float | None = None) -> bool:
         """Whether a scene is playing by itself: changes of its own in the last few seconds, in bursts with stillness between.
@@ -234,8 +311,42 @@ class Watching:
 def _small(picture: Any) -> np.ndarray | None:
     pixels = np.asarray(picture, dtype=np.float32)
     if pixels.ndim == 3:
-        pixels = pixels[..., :3].mean(axis=2)
-    if pixels.ndim != 2 or pixels.shape[0] < 2 * CELLS[1] or pixels.shape[1] < 2 * CELLS[0]:
+        pixels = pixels[..., :3]
+    if (pixels.ndim not in (2, 3) or pixels.shape[0] < 2 * CELLS[1] or pixels.shape[1] < 2 * CELLS[0]
+            or (pixels.ndim == 3 and not pixels.shape[2])):
         return None  # smaller than the grid it is measured on: nothing to measure
     step = max(1, int(round(pixels.shape[1] / LOOKED_AT_WIDE)))
     return pixels[::step, ::step]
+
+
+def _response_window_keeps_its_evidence() -> bool:
+    """A repeat response remains owned, while an early still remains unknown."""
+    async def no_picture() -> None:
+        return None
+
+    watching = Watching(take=no_picture)
+    still = np.full((48, 64), 50, dtype=np.uint8)
+    changed = still.copy()
+    changed[16:28, 16:32] = 240
+    for n in range(17):
+        watching.saw(still, 10 + n / 8)
+    first = watching.begin_act("select one", 12.05)
+    watching.saw(changed, 12.125)
+    watching.finish_act(first, True, 12.15)
+    for n in range(2, 16):
+        watching.saw(changed, 12 + n / 8)
+    second = watching.begin_act("select another", 13.95)
+    watching.saw(still, 14.0)
+    watching.finish_act(second, True, 14.05)
+    repeat_owned = watching.answered(second.started) is True
+    latest = watching.begin_act("no response yet", 14.075)
+    watching.saw(still, 14.125)
+    watching.finish_act(latest, True, 14.15)
+    return repeat_owned and watching.answered(latest.started) is None
+
+
+@invariant("perception.action_response_uses_owned_capture_windows", scope="perception",
+           owner="core/perception/watching_it_happen.py", observational=False)
+def _action_response_window_invariant() -> tuple:
+    assert _response_window_keeps_its_evidence(), "an owned response became background or an early still became failure"
+    return ()

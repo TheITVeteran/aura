@@ -266,7 +266,7 @@ def freeze_screen(observation: Mapping[str, Any] | ScreenSnapshot) -> ScreenSnap
     captured = _number(observation.get("capture_at", observation.get("at")))
     epoch = str(observation.get("_capture_epoch") or (f"{captured:.9f}" if captured is not None else ""))
     regions: list[ObservedRegion] = []
-    for collection in ("shapes", "layout"):
+    for collection in ("objects", "shapes", "layout"):
         raw = observation.get(collection) or ()
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
             continue

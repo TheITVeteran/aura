@@ -197,7 +197,7 @@ def _bound_name(name: str, label: str) -> bool:
 
 
 def _drawn_name(name: str) -> bool:
-    return str(name).startswith(("the shape at", "the one that stands out"))
+    return str(name).startswith(("the shape at", "the one that stands out", "the object at"))
 
 
 def _phrase_in(expected: str, shown: str) -> bool:
@@ -471,13 +471,18 @@ class Rules:
         clicked, two = what_is_clicked(move), two_places_of(move)
         matching, contextual = [], []
         for frame in self.steps():
+            if clicked and choice_slot(frame):
+                # A variable's prose can be repeated as a heading. Only an
+                # owned reveal may bind its actual value controls.
+                if (frame is self.next_step() and self.revealed_choices is not None
+                        and self.revealed_choices.offers(move, self.binding_context.evidence, frame.key)):
+                    contextual.append(frame)
+                continue
             control = control_of(frame)
             named = control or frame.thing or (frame.sentence if len(frame.sentence.split()) <= LABEL_WORDS else "")
             if clicked and frame.act in ("click things", "switch", "time a press") and _bound_name(named, clicked):
                 matching.append(frame)
-            elif clicked and frame is self.next_step() and (input_method_only(frame) or
-                    choice_slot(frame) and self.revealed_choices is not None
-                    and self.revealed_choices.offers(move, self.binding_context.evidence, frame.key)):
+            elif clicked and frame is self.next_step() and input_method_only(frame):
                 contextual.append(frame)
             if two is not None and (two.act == CARRY and frame.act == "carry"
                                     or two.act == "use" and frame.act == "use things"
@@ -568,7 +573,7 @@ class Rules:
         needed = self.next_step()
         if frame is not None and needed is not None and (selector_for(frame, needed) or selection_reveals(frame, needed)):
             self.revealed_choices = RevealedChoices.from_effect(
-                receipt.before.evidence, receipt.after.evidence, frame.key, needed.key)
+                receipt.before.evidence, receipt.after.evidence, frame.key, needed.key, opened_move=receipt.attempt.move)
             self.observe_context(receipt.after.evidence)
 
     def seen_before(self) -> bool:
@@ -685,7 +690,7 @@ def read_the_rules_beside(guide: Any, ask: Callable[..., Awaitable[Any]] | None,
     if not sentences:
         return False
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return False
 
@@ -700,7 +705,15 @@ def read_the_rules_beside(guide: Any, ask: Callable[..., Awaitable[Any]] | None,
         if then is not None:
             then(taken)
 
-    rules.asking = loop.create_task(asked())
+    from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+    rules.asking = task = create_guidance_task(asked())
+
+    def release() -> None:
+        if rules.asking is task:
+            rules.asking = None
+
+    retire_when_closed(task, release)
     return True
 
 

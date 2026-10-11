@@ -469,6 +469,8 @@ def _decide_the_next_move_what_true_time(
     from core.cognition.two_ways_out import how_long_it_holds
 
     from .screen_pursuit import logger
+    if attempt.verdict.observed_change is None:
+        return
     # And what was true at the time, so an act that does nothing
     # can become an act that needs something.
     opens.she_tried(
@@ -809,6 +811,16 @@ async def decide_the_next_move(
                 becomes=expected["after"],
                 becomes_holds=lambda after, forecast=expected["after"]: prediction_held(forecast, after),
             )
+        from .screen_step_evidence import owned_response_state
+
+        response_state = owned_response_state(pending, observation)
+        receipt = pending.get("transfer_receipt")
+        if receipt is not None:
+            from core.runtime.skill_contract import PredicateState
+
+            if receipt.state is PredicateState.SATISFIED:
+                response_state = PredicateState.SATISFIED
+        pending["response_state"] = response_state
         attempt = confirm(
             previous,
             pending["before"],
@@ -818,6 +830,7 @@ async def decide_the_next_move(
             toward=success_when,
             seen_before=pending["arranged"],
             seen_after=laid_out,
+            change_state=response_state,
         )
         history.append(attempt)
         if pending["arranged"] is not None and attempt.progressed is not None:
@@ -834,7 +847,8 @@ async def decide_the_next_move(
                         well=bool(attempt.progressed),
                     )
                     repeats.she_saw(kind, previous.chosen.name, laid_out)
-        rose = _decide_the_next_move_world_where_she(expected, far, in_flight, laid_out, observation, pending, previous, responds, carries)
+        rose = (_decide_the_next_move_world_where_she(expected, far, in_flight, laid_out, observation, pending, previous, responds, carries)
+                if attempt.verdict.measured else None)
         if rose is not None:
             reaches.went(rose)
             if rose > 0:
@@ -862,11 +876,14 @@ async def decide_the_next_move(
             # in this world, whoever wrote it down.
             from .screen_step_evidence import trial_context
 
-            can_do.tried(previous.chosen.name, it_was_answered(attempt.verdict.observed_change, observation),
+            answered = (attempt.verdict.observed_change if response_state is not None
+                        else it_was_answered(attempt.verdict.observed_change, observation))
+            can_do.tried(previous.chosen.name, answered,
                          **trial_context(pending, observation, can_do.seen_before))
-            _grade_how_soon_she_came_back(run, previous.chosen.name, attempt.verdict.held, moves)
+            if attempt.verdict.measured:
+                _grade_how_soon_she_came_back(run, previous.chosen.name, attempt.verdict.held, moves)
             _it_did_nothing_from_here(
-                pending, laid_out, previous.chosen.name, it_was_answered(attempt.verdict.observed_change, observation)
+                pending, laid_out, previous.chosen.name, answered
             )
             # And whether the way it was sent reaches the thing at all.
             from .screen_pursuit_surface import it_answered
@@ -874,24 +891,26 @@ async def decide_the_next_move(
             it_answered(
                 target_app or anchor["app"],
                 previous.chosen.name,
-                it_was_answered(attempt.verdict.observed_change, observation),
+                answered,
             )
             # And what stood around it when it did no harm — the two
             # pieces either side of a gap, found by taking things away
             # rather than by being described.
-            _learn_what_made_a_move_safe(
-                attempt=attempt,
-                knows=knows,
-                pending=pending,
-                previous=previous,
-            )
+            if attempt.verdict.measured:
+                _learn_what_made_a_move_safe(
+                    attempt=attempt,
+                    knows=knows,
+                    pending=pending,
+                    previous=previous,
+                )
             _decide_the_next_move_what_true_time(attempt, can_do, confirmed_here, in_the_way, opens, previous, responds)
             if can_do.dead() and not foreseen.get("acts"):
                 foreseen["acts"] = True
                 logger.info("what works here: %s", can_do.says())
         _decide_the_next_move_her_own_move(dropped, looking_at_the_thing, pending, previous, responds)
         if (
-            pending["arranged"] is not None
+            attempt.verdict.measured
+            and pending["arranged"] is not None
             and previous.chosen is not None
             and looking_at_the_thing
             and not responds["state"].nothing_answers()

@@ -313,13 +313,17 @@ def ask_for_a_plan(guide: Any, ask: Callable[..., Awaitable[Any]] | None, *, on_
     if not (has_an_end and has_means):
         return False
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return False
     guide.plan_again_because = ""
 
     async def asked() -> None:
+        from core.cognition.guidance_lifetime import publication_stamp
+
+        stamp = publication_stamp()
         plan = await _a_plan(guide, list(on_screen), again, ask)
+        stamp.check()
         if plan is None or not plan.steps():
             logger.info("her model gave no plan for %r", getattr(guide, "place", ""))
             return
@@ -328,7 +332,15 @@ def ask_for_a_plan(guide: Any, ask: Callable[..., Awaitable[Any]] | None, *, on_
         if tell is not None and plan.said():
             tell(("Changing my plan. " if again else "") + plan.said())
 
-    guide.planning = loop.create_task(asked())
+    from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+    guide.planning = task = create_guidance_task(asked())
+
+    def release() -> None:
+        if guide.planning is task:
+            guide.planning = None
+
+    retire_when_closed(task, release)
     return True
 
 

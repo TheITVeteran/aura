@@ -327,7 +327,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     seeing.began = at if seeing.began is None else seeing.began
     if seeing.avatar_asking is None and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return
         names = [*guide.names.get("me", [])[:2],
@@ -335,9 +335,22 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         frame = np.array(picture)[..., :3]
 
         async def looked() -> None:
-            seeing.avatar = await where_the_avatar_is(frame, names)
+            from core.cognition.guidance_lifetime import question_work
 
-        seeing.avatar_asking = loop.create_task(looked())
+            with question_work() as stamp:
+                avatar = await where_the_avatar_is(frame, names)
+                stamp.check()
+                seeing.avatar = avatar
+
+        from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
+
+        seeing.avatar_asking = task = create_guidance_task(looked())
+
+        def release() -> None:
+            if seeing.avatar_asking is task:
+                seeing.avatar_asking = None
+
+        retire_when_closed(task, release)
         return
     if seeing.avatar is None:
         return

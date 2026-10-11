@@ -316,11 +316,14 @@ def _reading_to_send(picture: Any, reading: dict[str, Any], *, window: Any,
                   max(1, int((crop_bottom - crop_top) * tall))]
     public["bounds"] = bounds
     if wait and (still or public.get("_still_but_unread") is True):
+        from core.perception.drawn_objects import drawn_objects
         from core.perception.how_a_place_looks import look_of
         from core.perception.keys_drawn_on_screen import keys_drawn
         from core.perception.shapes_that_look_pressable import pressable_shapes
 
         public["shapes"] = pressable_shapes(picture, apart_from=public.get("layout") or ())
+        public["objects"] = drawn_objects(picture, writing=public.get("layout") or (),
+                                          capture_epoch=str(public.get("_capture_epoch") or ""))
         for region in public["shapes"]:
             region["look"] = look_of(picture, region)
         public["keys_drawn"] = keys_drawn(picture)

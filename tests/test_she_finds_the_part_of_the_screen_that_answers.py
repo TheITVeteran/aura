@@ -126,7 +126,8 @@ def test_the_loop_reasons_from_the_part_that_answers():
     # `held` was renamed `observed_change`: the same measurement, and the
     # one that grades the move. Read through it_was_answered since
     # e7bd3faaa, which also asks whether the screen answered.
-    assert "worked=it_was_answered(attempt.verdict.observed_change, observation)," in source
+    assert "worked=(it_was_answered(attempt.verdict.observed_change, observation) if response_state is None" in source
+    assert "response_state=response_state," in source
 
 
 def test_a_world_that_has_stopped_answering_is_recognised_without_reading_it():

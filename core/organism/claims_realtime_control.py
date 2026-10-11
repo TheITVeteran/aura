@@ -6,6 +6,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.causal_identification import (
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
+    from core.agency.deliberate_action import _unmeasured_response_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
     from core.agency.which_one_answers_to_her import (
@@ -13,6 +14,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _emissions_require_distinct_input_receipts,
         _fresh_control_experiment_forgets_old_rejections,
     )
+    from core.cognition.guidance_lifetime import _completed_guidance_invariant
     from core.cognition.procedure_binding import _choice_binding_invariant
     from core.cognition.reading_the_rules import _procedure_completion_is_measured
     from core.organism.model_validation import (
@@ -22,10 +24,12 @@ def install_realtime_control_claims(suite: Any) -> None:
         ValidationTest,
         boolean_score,
     )
+    from core.perception.drawn_objects import _object_candidates_invariant
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
+    from core.perception.watching_it_happen import _response_window_keeps_its_evidence
     from core.perception.where_the_words_point import _named_places_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
     from core.runtime.what_she_learned import (
@@ -33,9 +37,27 @@ def install_realtime_control_claims(suite: Any) -> None:
         _retained_structure_invariant,
     )
     from core.runtime.what_stops_it import _stop_listener_lifetime_invariant
-    from core.skills.screen_step_evidence import _construction_readiness_invariant
+    from core.skills.screen_step_evidence import (
+        _construction_readiness_invariant,
+        _response_dispatch_invariant,
+    )
 
     for name, owner, fixture, probe, statement in (
+        ("response_streams_keep_owned_capture_windows", "core/perception/watching_it_happen.py",
+         "tests/test_action_response_windows.py", _response_window_keeps_its_evidence,
+         "Response streams retain delivery intervals and capture timestamps, excluding prior owned changes from background."),
+        ("responses_belong_to_one_delivered_dispatch", "core/skills/screen_step_evidence.py",
+         "tests/test_visual_responses_keep_their_own_dispatch.py", lambda: _response_dispatch_invariant() == (),
+         "Visual responses belong to exactly one delivered input and a fresh observation of the bound surface."),
+        ("unmeasured_responses_are_not_graded", "core/agency/deliberate_action.py",
+         "tests/test_visual_responses_keep_their_own_dispatch.py", lambda: _unmeasured_response_invariant() == (),
+         "Unmeasured responses cannot resolve action episodes or teach success and failure consequences."),
+        ("object_candidates_require_measured_extents", "core/perception/drawn_objects.py",
+         "tests/test_drawn_objects_have_measured_extents.py", lambda: _object_candidates_invariant() == (),
+         "Anonymous object candidates have current measured extents and appearance witnesses, without assumed affordances."),
+        ("completed_guidance_cannot_publish", "core/cognition/guidance_lifetime.py",
+         "tests/test_guidance_lifetime.py", lambda: _completed_guidance_invariant() == (),
+         "Retired guidance operations reject delayed publication while preserving their parent execution owner."),
         ("remembered_labels_require_current_pixels", "core/perception/visual_anchor.py",
          "tests/test_visual_anchor.py", lambda: _remembered_labels_invariant() == (),
          "Remembered control labels require fresh current appearance in the same surface and capture context."),

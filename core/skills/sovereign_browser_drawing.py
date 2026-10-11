@@ -582,6 +582,14 @@ def _one_run_s() -> float:
 
 async def _one_run(page: Any, band: tuple[float, float, float, float], goal: str, url: str,
                    deadline: float, keep: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+    from core.cognition.guidance_lifetime import guidance_work
+
+    async with guidance_work() as guidance:
+        return await _one_run_with_guidance(page, band, goal, url, deadline, keep, guidance)
+
+
+async def _one_run_with_guidance(page: Any, band: tuple[float, float, float, float], goal: str, url: str,
+                               deadline: float, keep: dict[str, Any], guidance: Any) -> tuple[dict[str, Any], Any]:
     """One run of the game: menus by the screen pursuit, play by its reflexes, until the run is over."""
     import time
 
@@ -612,6 +620,7 @@ async def _one_run(page: Any, band: tuple[float, float, float, float], goal: str
             max_seconds=max(1.0, deadline - time.monotonic()),
         )
     finally:
+        await guidance.close()
         THE_GUIDE.reset(guided)
         AS_IT_HAPPENS.reset(quick)
         HER_OWN_PAGE.reset(held)

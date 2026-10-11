@@ -280,6 +280,9 @@ async def carry_out_the_move(
     pending.pop("step_after", None)
     try:
         bind_step(run)
+        window = run.observation.get("answer_window")
+        pending["dispatch_sequence_before"] = window.get("sequence") if isinstance(window, dict) else 0
+        pending["dispatch_started_monotonic"] = time.monotonic()
         if two is not None and two.by_clicks:
             # Taken, then used: a click on the thing, a moment for the screen to answer, and a click on what it is used on.
             arrived = 1 if await _click_what_she_named(run, two.one) and await _after_a_moment(_click_what_she_named(run, two.other)) else 0
@@ -298,6 +301,7 @@ async def carry_out_the_move(
         expected["after"], expected["took"] = None, 0
         raise
     pending["dispatch_completed"] = time.time()
+    pending["dispatch_completed_monotonic"] = time.monotonic()
     _bind_delivered_forecast(expected, arrived)
     if not arrived:
         pending["deliberation"] = None
@@ -347,12 +351,17 @@ async def carry_out_the_move(
         # and every part of her that learns from what happened —
         # which acts do anything, how the thing moves, where it
         # answers her — was being taught from that.
+        from .screen_step_evidence import owned_response_state
+
+        scope = (getattr(run, "drawn", None) or {}).get("where")
         came_to_rest, _ = await _settled_after(
             pending["watched"] or {},
             target_app or anchor["app"],
             arrived=_looks_like(
                 expected["after"], responds["state"], responds["lattice"]
             ),
+            response_state=lambda observation: owned_response_state(pending, observation),
+            **({"over": scope} if scope is not None else {}),
         )
         # Only a reading it actually took. Where every capture timed
         # out it hands back the one it was given, and that is the

@@ -6,11 +6,45 @@ separate facts, including when a plan is replaced while the input is in flight.
 """
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
 from core.runtime.skill_contract import PredicateOperator, PredicateState, SemanticPredicate
 from core.verify.invariants import invariant
+
+
+def owned_response_state(pending: dict[str, Any], observation: dict[str, Any]) -> PredicateState | None:
+    """Bind streamed response evidence to this dispatch window, never an earlier input."""
+    window = observation.get("answer_window")
+    if not isinstance(window, dict):
+        return PredicateState.UNKNOWN if "answer_window" in observation else None
+    before = pending.get("observed_before") or {}
+    epoch = observation.get("_capture_epoch")
+    surface = observation.get("surface_id") or observation.get("scoped_to")
+    before_at, after_at = before.get("capture_at"), observation.get("capture_at")
+    completed = pending.get("dispatch_completed")
+    sequence = window.get("sequence")
+    preceding = pending.get("dispatch_sequence_before")
+    if (not epoch or epoch == before.get("capture_epoch") or not before.get("capture_epoch")
+            or not surface or surface != before.get("surface_id")
+            or list(observation.get("bounds") or ()) != before.get("bounds")
+            or any(type(value) not in (int, float) or not math.isfinite(value)
+                   for value in (before_at, after_at, completed))
+            or not before_at < completed < after_at
+            or type(sequence) is not int or type(preceding) is not int or sequence != preceding + 1):
+        return PredicateState.UNKNOWN
+    start, end = pending.get("dispatch_started_monotonic"), pending.get("dispatch_completed_monotonic")
+    at, finished, captured = window.get("started"), window.get("finished"), window.get("captured_through")
+    if (any(type(value) not in (int, float) or not math.isfinite(value) for value in (start, end, at, finished, captured))
+            or not start <= at <= finished <= end or captured < finished or window.get("delivered") is not True):
+        return PredicateState.UNKNOWN
+    answer = observation.get("answered")
+    if answer is True:
+        return PredicateState.SATISFIED
+    if answer is False:
+        return PredicateState.UNSATISFIED
+    return PredicateState.UNKNOWN
 
 
 def screen_evidence(observation: dict[str, Any], clickable: Any = ()) -> dict[str, Any]:
@@ -22,10 +56,27 @@ def screen_evidence(observation: dict[str, Any], clickable: Any = ()) -> dict[st
         "capture_epoch": str(observation.get("_capture_epoch") or ""),
         "capture_at": observation.get("capture_at"),
         "bounds": list(observation.get("bounds") or ()),
-        "regions": [{key: region.get(key) for key in ("text", "x", "y", "width", "height", "center_x", "center_y")}
-                    for region in (*tuple(observation.get("layout") or ()), *tuple(observation.get("shapes") or ()))
+        "regions": [{key: region.get(key) for key in ("text", "x", "y", "width", "height", "center_x", "center_y",
+                                                     "role", "source", "candidate_id", "container_bbox", "capture_epoch")}
+                    for region in (*tuple(observation.get("objects") or ()), *tuple(observation.get("layout") or ()),
+                                   *tuple(observation.get("shapes") or ()))
                     if isinstance(region, dict)],
     }
+
+
+@invariant("agency.responses_belong_to_one_delivered_dispatch", scope="agency",
+           owner="core/skills/screen_step_evidence.py", observational=False)
+def _response_dispatch_invariant() -> tuple:
+    before = {"surface_id": "editor", "capture_epoch": "a", "capture_at": 1., "bounds": [0, 0, 400, 300]}
+    pending = {"observed_before": before, "dispatch_completed": 2., "dispatch_started_monotonic": 10.,
+               "dispatch_completed_monotonic": 11., "dispatch_sequence_before": 0}
+    after = {"surface_id": "editor", "_capture_epoch": "b", "capture_at": 3., "bounds": [0, 0, 400, 300],
+             "answered": True, "answer_window": {"sequence": 1, "started": 10.1, "finished": 10.9,
+                                                "captured_through": 11.1, "delivered": True}}
+    assert owned_response_state(pending, after) is PredicateState.SATISFIED
+    assert owned_response_state(pending, {**after, "surface_id": "elsewhere"}) is PredicateState.UNKNOWN
+    assert owned_response_state(pending, {**after, "answer_window": {**after["answer_window"], "sequence": 2}}) is PredicateState.UNKNOWN
+    return ()
 
 
 def transfer_effects() -> tuple[SemanticPredicate, ...]:
@@ -180,9 +231,17 @@ def settle_step(pending: dict[str, Any], observation: dict[str, Any], clickable:
                or before.get("clickable") != after.get("clickable")
                or before.get("regions") != after.get("regions")
                or after.get("placement", {}).get("state") == "verified") if fresh else None
+    response = owned_response_state(pending, observation)
+    if (fresh and response is PredicateState.UNKNOWN and intent is None
+            and time.monotonic() - pending.get("verification_started", 0.0) < 3.0):
+        # An early still is not a measured failure. Allow the stream's bounded
+        # response interval to finish before releasing this unobserved trial.
+        return False
+    if fresh and response is not None and intent is None:
+        changed = None if response is PredicateState.UNKNOWN else response is PredicateState.SATISFIED
     if intent is not None and pending["transfer_receipt"].state is PredicateState.UNKNOWN:
         changed = None
-    elif after.get("placement", {}).get("state") != "verified" and changed is not None:
+    elif response is None and after.get("placement", {}).get("state") != "verified" and changed is not None:
         from .screen_pursuit_on_a_page import it_was_answered
 
         changed = it_was_answered(changed, observation)

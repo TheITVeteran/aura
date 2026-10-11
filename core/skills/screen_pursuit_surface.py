@@ -664,7 +664,7 @@ def how_keys_land(app: str) -> str:
     return _HOW_KEYS_LAND.get(str(app or "").strip().lower(), TO_THE_WINDOW)
 
 
-def it_answered(app: str, key: str, changed: bool) -> None:
+def it_answered(app: str, key: str, changed: bool | None) -> None:
     """Whether a key sent to this application changed anything.
 
     Keys addressed to a process are the better way when they land, and an
@@ -679,6 +679,8 @@ def it_answered(app: str, key: str, changed: bool) -> None:
     """
     from core.agency.what_i_can_do_here import ENOUGH_TO_JUDGE
 
+    if changed is None:
+        return
     name = str(app or "").strip().lower()
     if not name:
         return

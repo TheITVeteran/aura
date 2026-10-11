@@ -29,6 +29,8 @@ from typing import Any
 
 from core.cognition.when_the_situation_decides import nothing_to_decide
 from core.runtime.errors import record_degradation
+from core.runtime.skill_contract import PredicateState
+from core.verify.invariants import invariant
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +94,7 @@ class Expectation:
     #: claim about what her own act moves.
     becomes_holds: Any = None
 
-    def check(self, before: str, after: str) -> Verdict:
+    def check(self, before: str, after: str, *, measured_change: bool | None = None) -> Verdict:
         missing: list[str] = []
         lingering: list[str] = []
         after_lower = after.lower()
@@ -102,7 +104,7 @@ class Expectation:
         for needle in self.absent:
             if needle.lower() in after_lower:
                 lingering.append(needle)
-        moved = before.strip() != after.strip()
+        moved = before.strip() != after.strip() if measured_change is None else measured_change
         stuck = self.changed and not moved
         held = not (missing or lingering or stuck)
         return Verdict(
@@ -113,7 +115,7 @@ class Expectation:
             stalled=stuck,
         )
 
-    def check_in(self, before: Any, after: Any) -> Verdict:
+    def check_in(self, before: Any, after: Any, *, measured_change: bool | None = None) -> Verdict:
         """Check the claim against a reading that kept its arrangement.
 
         The same claim, asked of the thing rather than of prose about it. A
@@ -123,7 +125,7 @@ class Expectation:
         """
         from core.perception.what_is_there import holds_in  # noqa: PLC0415
 
-        moved = before.as_text() != after.as_text()
+        moved = before.as_text() != after.as_text() if measured_change is None else measured_change
         ok, why = holds_in(
             after,
             contains=self.contains,
@@ -194,13 +196,16 @@ class Expectation:
 class Verdict:
     """Whether what she expected is what she got."""
 
-    held: bool
-    observed_change: bool
+    held: bool | None
+    observed_change: bool | None
     missing: tuple[str, ...] = ()
     lingering: tuple[str, ...] = ()
     stalled: bool = False
+    measured: bool = True
 
     def why(self) -> str:
+        if not self.measured:
+            return "the action response was not measured"
         if self.held:
             return "as expected"
         parts: list[str] = []
@@ -254,6 +259,8 @@ class Attempt:
     progressed: bool | None = None
 
     def as_evidence(self) -> str:
+        if not self.verdict.measured:
+            return f"{self.option} awaits a measured response ({self.expected})."
         if self.verdict.held and self.progressed:
             return f"{self.option} did what was expected ({self.expected}) and got closer."
         if self.verdict.held and self.progressed is False:
@@ -659,7 +666,7 @@ def choose_without_language(
     tried_at: dict[str, int] = {}
     for position, attempt in enumerate(history):
         tried_at[attempt.option] = position
-        if not attempt.verdict.held:
+        if attempt.verdict.measured and not attempt.verdict.held:
             failed_recently[attempt.option] = failed_recently.get(attempt.option, 0) + 1
 
     scored: list[tuple[float, int, ActionOption]] = []
@@ -768,7 +775,8 @@ def how_far_to_commit(history: Sequence[Attempt], ceiling: int = PLAN_AHEAD) -> 
     commit to less. Most of them broke: one move at a time, because that is
     what the evidence supports.
     """
-    recent = [attempt for attempt in list(history)[-ceiling:] if attempt is not None]
+    recent = [attempt for attempt in list(history)[-ceiling:]
+              if attempt is not None and attempt.verdict.measured]
     if not recent:
         # Nothing measured yet. One move, then find out.
         return 1
@@ -1481,6 +1489,7 @@ def confirm(
     toward: str = "",
     seen_before: Any = None,
     seen_after: Any = None,
+    change_state: PredicateState | None = None,
 ) -> Attempt:
     """Check the prediction against what actually happened, and record it.
 
@@ -1499,11 +1508,16 @@ def confirm(
     # her plans and the record of what her moves lead to both read that
     # verdict as though it were confidence.
     claim = deliberation.expected or deliberation.chosen.expectation
-    if seen_before is not None and seen_after is not None:
-        verdict = claim.check_in(seen_before, seen_after)
+    if change_state is not None and not isinstance(change_state, PredicateState):
+        raise TypeError("a response measurement must use a predicate state")
+    change = None if change_state is None else change_state is PredicateState.SATISFIED
+    if change_state is PredicateState.UNKNOWN:
+        verdict = Verdict(held=None, observed_change=None, measured=False)
+    elif seen_before is not None and seen_after is not None:
+        verdict = claim.check_in(seen_before, seen_after, measured_change=change)
     else:
-        verdict = claim.check(before, after)
-    moved_on = made_progress(before, after, toward)
+        verdict = claim.check(before, after, measured_change=change)
+    moved_on = made_progress(before, after, toward) if verdict.measured else None
     attempt = Attempt(
         option=deliberation.chosen.name,
         expected=claim.describes or "the situation to change",
@@ -1555,7 +1569,7 @@ def _announce_outcome(deliberation: Deliberation, attempt: Attempt, verdict: Ver
 
 
 def _resolve_episode(deliberation: Deliberation, verdict: Verdict, *, spine: Any = None) -> None:
-    if not deliberation.episode_id:
+    if not deliberation.episode_id or not verdict.measured:
         return
     try:
         from core.ontogeny.experience import Outcome, get_experience_spine  # noqa: PLC0415
@@ -1571,6 +1585,25 @@ def _resolve_episode(deliberation: Deliberation, verdict: Verdict, *, spine: Any
         record_degradation("deliberate_action", exc, action="resolve an episode for a move")
 
 
+@invariant("agency.unmeasured_responses_are_not_graded", scope="agency",
+           owner="core/agency/deliberate_action.py", observational=False)
+def _unmeasured_response_invariant() -> tuple:
+    class NoGrade:
+        def resolve(self, *_args: Any) -> None:
+            raise AssertionError("an unmeasured response resolved its episode")
+
+        def record_outcome(self, *_args: Any) -> None:
+            raise AssertionError("an unmeasured response taught a consequence")
+
+    choice = Deliberation("prepare the editor", "a selector", ActionOption('click "Filters"'), episode_id="unmeasured")
+    unknown = Verdict(held=None, observed_change=None, measured=False)
+    _resolve_episode(choice, unknown, spine=NoGrade())
+    _record_consequence(choice, unknown, "a changed clock", graph=NoGrade())
+    assert Expectation().check("same words", "same words", measured_change=True).held is True
+    assert Expectation(contains=("Saved",)).check("same", "same", measured_change=True).held is False
+    return ()
+
+
 def _record_consequence(
     deliberation: Deliberation,
     verdict: Verdict,
@@ -1579,7 +1612,7 @@ def _record_consequence(
     graph: Any = None,
     progressed: bool | None = None,
 ) -> None:
-    if deliberation.chosen is None:
+    if deliberation.chosen is None or not verdict.measured:
         return
     try:
         if graph is None:

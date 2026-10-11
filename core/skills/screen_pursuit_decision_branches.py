@@ -195,6 +195,7 @@ def _decide_the_next_move_learned_same_measurement(
             places_and_text(pending["watched"]),
             places_and_text(observation),
         )
+        response_state = pending.get("response_state")
         noticed(
             responds["state"],
             pending["watched"],
@@ -210,10 +211,12 @@ def _decide_the_next_move_learned_same_measurement(
             # nothing — the control for working out which part of the
             # screen answers to her — so the band stopped settling and
             # nothing downstream of it could form.
-            worked=it_was_answered(attempt.verdict.observed_change, observation),
+            worked=(it_was_answered(attempt.verdict.observed_change, observation) if response_state is None
+                    else attempt.verdict.observed_change),
             # Which act it was, so a run of one thing doing nothing
             # is not read as the world having ended.
             acting=previous.chosen.name if previous.chosen is not None else "",
+            response_state=response_state,
         )
 
 def _decide_the_next_move_part_14(
@@ -755,12 +758,14 @@ def _the_view(laid_out: Any) -> str:
     return str(said()) if callable(said) else ""
 
 
-def _it_did_nothing_from_here(pending: Any, laid_out: Any, key: str, changed: bool) -> None:
+def _it_did_nothing_from_here(pending: Any, laid_out: Any, key: str, changed: bool | None) -> None:
     """Keep which acts have just done nothing from the view she is looking at.
 
     Only while the view stays the same: the moment anything changes, what did
     nothing before may do something now.
     """
+    if changed is None:
+        return
     view = _the_view(laid_out) if laid_out is not None else ""
     if changed or not view:
         pending.pop("did_nothing_from", None)

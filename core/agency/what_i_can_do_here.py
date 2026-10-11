@@ -302,9 +302,11 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
 
     # ── finding out ──────────────────────────────────────────────────────
 
-    def tried(self, key: str, changed: bool, *, before: Mapping[str, Any] | None = None,
+    def tried(self, key: str, changed: bool | None, *, before: Mapping[str, Any] | None = None,
               after: Mapping[str, Any] | None = None, transfer: Any = None) -> None:
         """One input, and whether the world answered it."""
+        if changed is None:
+            return
         name = str(key or "").strip()
         name = name if what_is_clicked(name) is not None or two_places_of(name) else name.lower()
         if not name:

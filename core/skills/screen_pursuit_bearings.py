@@ -299,7 +299,8 @@ def where_to_click(observation: dict[str, Any], label: str) -> tuple[float, floa
     if wanted == THE_PICTURE:
         return (0.5, 0.5)
     layout = [region for region in observation.get("layout") or [] if isinstance(region, dict)]
-    for region in [*(choice for line in layout for choice in _choices_apart(line)), *(observation.get("shapes") or [])]:
+    for region in [*(choice for line in layout for choice in _choices_apart(line)), *(observation.get("shapes") or []),
+                   *(observation.get("objects") or [])]:
         text = " ".join(str((region or {}).get("text") or "").split()).lower()
         if text != wanted:
             continue

@@ -906,7 +906,18 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     from .screen_pursuit import _tell
     from .screen_pursuit_bearings import things_to_click, what_it_says
 
+    if hasattr(can_do, "observe_objects"):
+        can_do.observe_objects(observation)
     clickable, says, paced = things_to_click(observation, drawn_where), what_it_says(observation, drawn_where), MOVES_SAID.get()
+    from core.agency.what_i_can_do_here import a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    objects = getattr(can_do, "manipulation_sources", None) or {}
+    carrying = (getattr(can_do, "carrying_said", False)
+                or (guide is not None and guide.rules.asks_to_carry()))
+    if drawn_where and carrying:
+        clickable = tuple(dict.fromkeys((*clickable, *(a_click_on(name) for name in objects))))
     clickable = _where_the_way_on_was(observation, clickable, says, paced)
     clickable = _what_paused_it(observation, clickable, can_do, paced)
     clickable = _the_place_its_words_name(observation, clickable, can_do)
@@ -931,7 +942,8 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     clickable = tuple(move for move in clickable if _label_of(move) not in bearings.leaving_alone)
     from core.agency.what_i_can_do_here import a_click_on
 
-    looks = {a_click_on(str(region["text"])): region["look"] for region in observation.get("shapes") or ()
+    looks = {a_click_on(str(region["text"])): region["look"]
+             for region in (*(observation.get("shapes") or ()), *(observation.get("objects") or ()))
              if isinstance(region, dict) and region.get("text") and region.get("look")}
     from .screen_pursuit_bearings import where_to_click
 
@@ -1272,7 +1284,9 @@ async def _settled_after(
     *,
     patience: float = 0.0,
     arrived: Callable[[dict[str, Any]], bool] | None = None,
-) -> tuple[dict[str, Any], bool]:
+    response_state: Callable[[dict[str, Any]], Any] | None = None,
+    over: tuple[float, float, float, float] | None = None,
+) -> tuple[dict[str, Any], bool | None]:
     """The screen once it has changed AND stopped changing, and whether it did.
 
     An action that moves a surface is not done when the keystroke returns; it
@@ -1303,6 +1317,7 @@ async def _settled_after(
     # of 29 — under the bar to be trusted, so nothing ever looked ahead, all
     # game, on a board she was reading perfectly.
     from core.perception.where_it_responds import places_and_text  # noqa: PLC0415
+    from core.runtime.skill_contract import PredicateState
 
     from .screen_pursuit import (
         read_screen,
@@ -1337,17 +1352,25 @@ async def _settled_after(
         if first_pause is None:
             first_pause = looked_after
         try:
-            now = await asyncio.wait_for(read_screen(app), timeout=OBSERVE_TIMEOUT_S)
+            reading = read_screen(app, over=over) if over is not None else read_screen(app)
+            now = await asyncio.wait_for(reading, timeout=OBSERVE_TIMEOUT_S)
         except TimeoutError:
             continue
         said = _reading(now)
         at_rest = now.get("settled") is True or bool(now.get("still_but_unread"))
+        measured = response_state(now) if response_state is not None else None
+        if measured is PredicateState.UNKNOWN:
+            early, seen = True, now
+            continue
+        if measured is PredicateState.UNSATISFIED and at_rest:
+            return now, False
+        differs = said != was if measured is None else measured is PredicateState.SATISFIED
         # A reading that was only taken once its pixels had stopped changing
         # is already the second look. Changed and still is finished, and the
         # extra reading used to confirm it cost most of a move. Still apart
         # from a place that would not read is still: the next look would
         # carry that place as unsure too.
-        if said != was and at_rest:
+        if differs and at_rest:
             if not moved:
                 # When the change was first seen; a look that saw it moving
                 # has already said so.
@@ -1359,7 +1382,7 @@ async def _settled_after(
             return now, True
         # Unchanged, or changed and still moving: either way she was early.
         early = True
-        if not moved and said != was:
+        if not moved and differs:
             moved = True
             _answering_took(time.monotonic() - started)
             # Where she foretold the result, recognising it is knowing it has
@@ -1383,11 +1406,11 @@ async def _settled_after(
                         "screen_pursuit", exc, severity="info",
                         action="waited for stillness rather than for what she foretold",
                     )
-        elif moved and said == _reading(seen):
+        elif moved and said == _reading(seen) and (measured is None or now.get("settled") is not False):
             # Changed, and now the same twice running: it has finished.
             return now, True
         seen = now
-    return seen, moved
+    return seen, None if response_state is not None and not moved else moved
 
 
 #: Words a dialog uses when it is asking whether you meant it.

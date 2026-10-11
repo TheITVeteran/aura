@@ -174,10 +174,12 @@ class PlacesNamed:
         task = self.asking.get(place)
         if (task is None or task.done()) and len(self._tasks) < MOST_LOOKS:
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 return None
-            task = loop.create_task(self._look(place, pixels.copy(), identity))
+            from core.cognition.guidance_lifetime import create_guidance_task
+
+            task = create_guidance_task(self._look(place, pixels.copy(), identity))
             self.asking[place] = task
             self._tasks.add(task)
             task.add_done_callback(self._finished)
@@ -190,14 +192,24 @@ class PlacesNamed:
         self._image_key = ""
 
     async def _look(self, place: str, picture: Any, identity: tuple[Any, ...]) -> None:
+        from core.cognition.guidance_lifetime import question_work
+
+        with question_work():
+            await self._look_owned(place, picture, identity)
+
+    async def _look_owned(self, place: str, picture: Any, identity: tuple[Any, ...]) -> None:
+        from core.cognition.guidance_lifetime import publication_stamp
         from core.perception.where_i_am_on_screen import _as_jpeg
 
+        stamp = publication_stamp()
         try:
             image = await asyncio.to_thread(_as_jpeg, picture)
+            stamp.check()
             self._refresh_picture()
             if identity != self.identity:
                 return
             answer = await asyncio.wait_for(self.see(_PROMPT.format(place=place), image), 2 * LOOK_TIMEOUT_S + 5)
+            stamp.check()
         except (RuntimeError, OSError, ValueError, TypeError, TimeoutError) as why:
             logger.info("her eyes could not find %r: %s", place, str(why)[:120])
             return

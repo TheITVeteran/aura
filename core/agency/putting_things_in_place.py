@@ -93,6 +93,9 @@ class PuttingInPlace:
     screen_carried_on: tuple[str, ...] = ()
     #: What the screen reading found drawn on the screen now, by what she calls each: pictures, not writing.
     pictures: set[str] = field(default_factory=set)
+    #: Current measured pickup hypotheses. None retains the standalone legacy
+    #: action-hypothesis API; a live observation always replaces it, even empty.
+    manipulation_sources: dict[str, dict[str, Any]] | None = None
     #: Turns given the part put down last (core/agency/aiming_what_was_placed.py).
     turned_since_placed: int = 0
     #: Delivered transfers and their independently observed current effects.
@@ -106,6 +109,12 @@ class PuttingInPlace:
         from core.perception.where_the_words_point import the_place_named
 
         self.place_named = the_place_named(words) or self.place_named
+
+    def observe_objects(self, observation: dict[str, Any]) -> None:
+        """Replace pickup hypotheses with candidates verified against this capture."""
+        from core.perception.drawn_objects import measured_objects
+
+        self.manipulation_sources = measured_objects(observation)
 
     def carries(self, on_screen: Sequence[str]) -> tuple[str, ...]:
         """Each thing on the screen carried to each other place there, the places marked as the one first, untried
@@ -125,7 +134,9 @@ class PuttingInPlace:
         worth = [move for move in on_screen if what_is_clicked(move) and _not_read_only(move)]
         things = [what_is_clicked(move) or "" for move in worth
                   if not _goes_on(move) and not _A_COMMAND.search(what_is_clicked(move) or "")
-                  and (self.writing_carried or _a_picture(what_is_clicked(move) or "", STANDS_OUT, self.pictures))]
+                  and (self.writing_carried or ((what_is_clicked(move) or "") in self.manipulation_sources
+                       if self.manipulation_sources is not None
+                       else _a_picture(what_is_clicked(move) or "", STANDS_OUT, self.pictures)))]
         # A bin is somewhere a thing is carried to be got rid of, not to be used: it is offered last.
         places = [what_is_clicked(move) or "" for move in worth if not _A_COMMAND.search(what_is_clicked(move) or "")]
         places += [what_is_clicked(move) or "" for move in worth if _A_BIN.search(what_is_clicked(move) or "")]
@@ -162,6 +173,8 @@ class PuttingInPlace:
                     self.placement_states.pop(oldest, None)
                 self.placement_receipts[receipt.attempt_id] = receipt
                 self.placement_states[receipt.attempt_id] = receipt.state
+                if receipt.state is PredicateState.UNKNOWN:
+                    return  # retain the repair obligation without teaching physical nonresponse
             # An unknown effect stays eligible for a bounded new observation or
             # repair. A measured unchanged input is remembered as unresponsive.
             if verified:
