@@ -112,13 +112,19 @@ async def _carry_what_she_named(run: SimpleNamespace, thing: str, place: str) ->
     from .screen_pursuit_surface import carry_normalized
 
     seen = getattr(run, "observation", None) or {}
-    start, end = where_to_click(seen, thing), where_to_click(seen, place)
-    if start is None or end is None:
-        return False
     from core.perception.observed_transfer import bind_transfer, finish_delivery
 
-    intent = bind_transfer(run.key, seen, source=thing, destination=place,
-                           source_at=start, destination_at=end)
+    intent = run.pending.get("prepared_transfer")
+    if intent is not None:
+        if intent.move != run.key or intent.source != thing.casefold() or intent.destination != place.casefold():
+            return False
+        start, end = intent.source_at, intent.destination_at
+    else:
+        start, end = where_to_click(seen, thing), where_to_click(seen, place)
+        if start is None or end is None:
+            return False
+        intent = bind_transfer(run.key, seen, source=thing, destination=place,
+                               source_at=start, destination_at=end)
     started = time.time()
     delivered = False
     try:
@@ -277,6 +283,7 @@ async def carry_out_the_move(
         return False
     pending.pop("transfer_intent", None)
     pending.pop("transfer_receipt", None)
+    pending.pop("prepared_transfer", None)
     pending.pop("step_after", None)
     try:
         bind_step(run)

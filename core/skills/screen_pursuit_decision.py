@@ -574,9 +574,9 @@ async def decide_the_next_move(
         return _left__
 
     band, looking_at_the_thing = await _decide_the_next_move_what_she_looking(anchor, drawn, narrate, observation, responds, target_app)
-    from .screen_step_evidence import settle_step
+    from .screen_step_evidence import current_controls, settle_step
 
-    if not settle_step(pending, observation, things_to_click(observation, drawn.get("where")), can_do):
+    if not settle_step(pending, observation, current_controls(observation, drawn.get("where"), can_do), can_do):
         no_move["because"] = "the delivered effect needs a fresh observation before another input"
         return WAITING
     if await _the_screen_taken_in_while_a_lesson_plays(can_do, observation, drawn.get("where"), narrate, no_move):

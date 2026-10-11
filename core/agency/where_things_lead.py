@@ -41,6 +41,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.cognition.selector_view import SelectorSignature, SelectorView, UnknownSelectorView
+from core.verify.invariants import invariant
+
 __all__ = ["WhereThingsLead", "screen_words"]
 
 #: How much two readings must share, of the words either has, to be one screen.
@@ -52,6 +55,7 @@ FEWEST_WORDS = 2
 
 #: The screens kept for one place, the most visited first.
 MOST_SCREENS = 60
+MOST_SELECTOR_VARIANTS = 8
 
 #: Where a screen with nothing to read is kept.
 WORDLESS = -1
@@ -70,6 +74,8 @@ def _label(act: str) -> str:
 
 def _named(text: str) -> set[str]:
     """The words a thing is named by, for telling whether a label names it ("ROLLERS" and "a roller")."""
+    if str(text or "").startswith(("the object at", "the shape at", "the one that stands out at")):
+        return set()
     return {w.rstrip("s") for w in re.findall(r"[a-z]{3,}", str(text or "").lower()) if w not in _PLAIN}
 
 
@@ -81,6 +87,9 @@ def screen_words(labels: Sequence[str], says: str = "") -> frozenset[str]:
     places: set[str] = set()
     for text in [*labels, says]:
         text = str(text or "")
+        if text.startswith(('click "the object at', 'the object at')):
+            # Anonymous dispatch names are measured geometry, not OCR words.
+            continue
         if text.startswith(('click "the shape at', 'click "the one that stands out at')):
             # Named by where it is, which is not a word on the screen; kept, to the nearest tenth, for a wordless one.
             at = re.findall(r"(\d+)% (?:across|down)", text)
@@ -106,6 +115,10 @@ class WhereThingsLead:
     offered: dict[int, frozenset[str]] = field(default_factory=dict)
     #: "screen|act" -> what the act last brought up on the screen ("shows") and took away ("hides"), by their labels.
     did: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    #: A confirmed selector variant's retained geometry; no capture epoch is a state identity.
+    selector_signatures: dict[int, SelectorSignature] = field(default_factory=dict)
+    #: Nodes with the same OCR state share a family, including its selector variants.
+    families: dict[int, int] = field(default_factory=dict)
     #: This sitting: the screens in the order she first came to them, and where she is.
     _been: list[int] = field(default_factory=list)
     _here: int | None = None
@@ -113,28 +126,43 @@ class WhereThingsLead:
     _labels_before: frozenset[str] = frozenset()
     _labels_now: frozenset[str] = frozenset()
 
-    def which(self, words: frozenset[str]) -> int:
-        """The number of the screen these words are, a new one if no screen she knows is it."""
-        if len(words) < FEWEST_WORDS:
+    def which(self, words: frozenset[str], selector_view: SelectorView | UnknownSelectorView | None = None) -> int | None:
+        """Resolve OCR identity and confirmed selector contents within bounded memory."""
+        if isinstance(selector_view, UnknownSelectorView):
+            return None
+        if len(words) < FEWEST_WORDS and selector_view is None:
             return WORDLESS
         best, share = None, 0.0
         for number, known in enumerate(self.screens):
-            shared = len(words & known) / max(1, len(words | known))
+            shared = len(words & known) / max(1, len(words | known)) if words or known else 1.0
             if shared > share:
                 best, share = number, shared
+        family = self.families.get(best, best) if best is not None and share >= SAME_SCREEN else None
+        signature = selector_view.signature if selector_view is not None else None
         if best is not None and share >= SAME_SCREEN:
-            # Read again, it is known by the words both readings had and any new ones.
-            self.screens[best] = frozenset(self.screens[best] | words) if len(self.screens[best]) < 40 else self.screens[best]
-            return best
+            for number, known in enumerate(self.screens):
+                if self.families.get(number, number) == family and self.selector_signatures.get(number) == signature:
+                    self.screens[number] = frozenset(known | words) if len(known) < 40 else known
+                    return number
+            if signature is not None and sum(self.families.get(number, number) == family
+                                              for number in self.selector_signatures) >= MOST_SELECTOR_VARIANTS:
+                return None
+        if len(self.screens) >= MOST_SCREENS:
+            return None
         self.screens.append(words)
-        return len(self.screens) - 1
+        number = len(self.screens) - 1
+        self.families[number] = family if family is not None else number
+        if signature is not None:
+            self.selector_signatures[number] = signature
+        return number
 
-    def looked(self, labels: Sequence[str], says: str = "") -> None:
+    def looked(self, labels: Sequence[str], says: str = "",
+               selector_view: SelectorView | UnknownSelectorView | None = None) -> None:
         """She looked at a screen: where she is now, and where she was before it."""
-        here = self.which(screen_words(labels, says))
+        here = self.which(screen_words(labels, says), selector_view)
         self._before, self._here = self._here, here
         self._labels_before, self._labels_now = self._labels_now, frozenset(_label(label) for label in labels)
-        if here not in self._been:
+        if here is not None and here not in self._been:
             self._been.append(here)
 
     def acted(self, act: str, changed: bool) -> None:
@@ -277,7 +305,7 @@ class WhereThingsLead:
         lines: list[str] = []
         for key, done in list(self.did.items())[-most:]:
             act = _label(key.split("|", 1)[1])
-            shows = [s for s in done.get("shows") or () if not s.startswith(("the shape at", "the one that stands out"))]
+            shows = [s for s in done.get("shows") or () if not s.startswith(("the shape at", "the object at", "the one that stands out"))]
             drawn = len(done.get("shows") or ()) - len(shows)
             parts = [("brings up " + ", ".join(shows[:6])) if shows else "", f"{drawn} drawn things appear" if drawn else "",
                      ("takes away " + ", ".join(done.get("hides", [])[:4])) if done.get("hides") else ""]
@@ -296,6 +324,9 @@ class WhereThingsLead:
             sum(c.values()) for key, c in self.went.items() if key.startswith(f"{n}|")))[:MOST_SCREENS]
         renumber = {old: new for new, old in enumerate(kept)}
         renumber[WORDLESS] = WORDLESS
+        kept_families = {}
+        for old in kept:
+            kept_families.setdefault(self.families.get(old, old), renumber[old])
         went = {}
         for key, counts in self.went.items():
             screen, act = key.split("|", 1)
@@ -311,6 +342,9 @@ class WhereThingsLead:
             "offered": {str(renumber[n]): sorted(acts)[:40] for n, acts in self.offered.items() if n in renumber},
             "did": {f"{renumber[int(key.split('|', 1)[0])]}|{key.split('|', 1)[1]}": done for key, done in self.did.items()
                     if int(key.split("|", 1)[0]) in renumber},
+            "selector_signatures": {str(renumber[n]): signature.as_memory()
+                                    for n, signature in self.selector_signatures.items() if n in renumber},
+            "families": {str(renumber[n]): kept_families[self.families.get(n, n)] for n in kept},
         }
 
     @classmethod
@@ -318,14 +352,52 @@ class WhereThingsLead:
         if not isinstance(held, dict):
             return cls()
         try:
+            screens = [frozenset(str(w) for w in words) for words in held.get("screens") or []]
+            if len(screens) > MOST_SCREENS:
+                return cls()
+            raw_signatures = held.get("selector_signatures", {})
+            raw_families = held.get("families", {})
+            if not isinstance(raw_signatures, dict) or not isinstance(raw_families, dict):
+                return cls()
+            if (any(not isinstance(n, str) or str(int(n)) != n for n in (*raw_signatures, *raw_families))
+                    or any(type(family) is not int for family in raw_families.values())):
+                return cls()
+            signatures = {int(n): SelectorSignature.from_memory(value) for n, value in raw_signatures.items()}
+            families = {int(n): int(family) for n, family in raw_families.items()}
+            if ((signatures or families) and set(families) != set(range(len(screens)))
+                    or any(signature is None or not 0 <= n < len(screens) for n, signature in signatures.items())
+                    or any(not 0 <= n < len(screens) or not 0 <= family < len(screens) for n, family in families.items())
+                    or any(families.get(family, family) != family for family in families.values())
+                    or len({(families[n], signature) for n, signature in signatures.items()}) != len(signatures)
+                    or any(sum(families.get(n, n) == family for n in signatures) > MOST_SELECTOR_VARIANTS
+                           for family in set(families.values()))):
+                # A damaged visual record must not return as a lexical node.
+                return cls()
             return cls(
-                screens=[frozenset(str(w) for w in words) for words in held.get("screens") or []],
+                screens=screens,
                 went={str(k): {str(h): int(n) for h, n in v.items()} for k, v in (held.get("went") or {}).items()},
                 played={int(n) for n in held.get("played") or []},
                 to={str(k): int(v) for k, v in (held.get("to") or {}).items()},
                 offered={int(k): frozenset(str(a) for a in v) for k, v in (held.get("offered") or {}).items()},
                 did={str(k): {h: [str(x) for x in v.get(h) or []] for h in ("shows", "hides")}
                      for k, v in (held.get("did") or {}).items() if isinstance(v, dict)},
+                selector_signatures=signatures,
+                families=families,
             )
         except (TypeError, ValueError, AttributeError):
             return cls()
+
+
+@invariant("agency.unknown_selector_views_do_not_create_navigation_identity", scope="agency",
+           owner="core/agency/where_things_lead.py", observational=False)
+def _unknown_selector_invariant() -> tuple:
+    from core.cognition.selector_view import UNKNOWN_SELECTOR_VIEW
+
+    leads = WhereThingsLead()
+    labels = ('click "Library"', 'click "Category"')
+    leads.looked(labels)
+    before = leads.as_memory()
+    leads.looked(labels, selector_view=UNKNOWN_SELECTOR_VIEW)
+    leads.acted('click "Category"', True)
+    assert leads._here is None and leads.as_memory() == before
+    return ()

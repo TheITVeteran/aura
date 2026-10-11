@@ -3,9 +3,10 @@
 An end screen says who won in a sentence: "You win!", "The computer wins.",
 "Game over", "Congratulations, you beat level 3", "Try again". Who won is the
 subject of the winning verb. When it is the player ("you", "player") she won;
-when it is anyone else she lost. A screen that names no winner but says the
+when it is an explicit opponent role she lost. A named person has no side until that side is known.
+A screen that names no winner but says the
 game is over, or asks to try again, is a loss, and so is a player with nothing left to lose ("Lives: 0"). Two
-sides' scores written out ("You 5 Computer 3") settle it by the numbers.
+sides' scores written out on a terminal screen ("Game over. You 5 Computer 3") settle it by the numbers.
 
 It abstains when the words do not say, so an unread ending is never reported
 as a win.
@@ -16,22 +17,74 @@ import re
 import unicodedata
 from typing import Any, Final
 
-__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over",
+__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over", "says_play_is_ongoing",
            "the_score_in", "what_it_asks_of_a_player"]
 
 _WINNING: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeated|champion)\b")
-_THE_PLAYER: Final = frozenset({"you", "player", "player 1", "p1", "your", "yours"})
+_RESULT_VERB: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeat|defeats|defeated|champion|"
+                                 r"lose|loses|lost|died|crashed|failed|caught|captured)\b")
+_THE_PLAYER: Final = frozenset({"you", "player", "player 1", "player one", "p1", "your", "yours"})
+_THE_OPPONENT: Final = frozenset({"computer", "cpu", "opponent", "enemy", "rival", "bot", "ai", "com", "away",
+                                "player 2", "player two", "p2", "other player"})
+_THE_TASK: Final = frozenset({"game", "round", "stage", "level", "wave", "mission", "world"})
 #: An end lost, as end screens say it. LIVE 2026-10-09 "Out of Time. You have failed." was read as no end at all.
 _OVER: Final = re.compile(r"\b(game over|you lose|you lost|try again|out of lives|no lives|time'?s up|you died|defeat|"
                           r"(?:you )?(?:have )?failed|mission failed|out of time|time over|you crashed|crash(?:ed)?|"
                           r"(?:you were|you got|you've been) (?:caught|captured)|busted)\b")
 _PRAISED: Final = re.compile(
-    r"\b(congratulations|congrats|well done|you did it|you made it|"
+    r"\b(congratulations|congrats|well done|you did it|you made it|victory|"
     r"(?:level|stage|round|wave|mission|world)\s*\d*\s*(?:complete|completed|clear|cleared|passed|beaten))\b"
 )
 _SIDES: Final = re.compile(r"\b(you|player)\s*:?\s*(\d+)\D{1,24}?\b([a-z]+)\s*:?\s*(\d+)\b")
 #: What a player has of their own to lose, at nothing: "Lives: 0", "health 0", "0 hearts".
-_NOTHING_LEFT: Final = re.compile(r"\b(lives|life|health|hp|hearts|energy|chances|balls left|tries left)\s*:?\s*0\b|\b0\s+(lives|hearts|chances)\b")
+_NOTHING_LEFT: Final = re.compile(r"\b(lives|life|health|hp|hearts|chances|balls left|tries left)\s*:?\s*0\b|\b0\s+(lives|hearts|chances)\b")
+
+#: Current play contradicts a predicted end, even where the board or its counters were misread.
+_ONGOING: Final = re.compile(
+    r"\b(?:your|my|his|her|their|our|the computer'?s|computer'?s|opponent'?s|player(?:\s*\d)?'?s)\s+turn\b|"
+    r"\b(?:it(?:'s| is) )?(?:your|my|his|her|their) move\b|"
+    r"\b(?:game|round|level|mission|match|play)\s+(?:is\s+)?(?:in progress|still running|continues|not over)\b|"
+    r"\bwaiting for (?:the )?(?:computer|opponent|other player)(?:'s)? (?:to )?(?:move|turn)\b|"
+    r"\b(?:resume|continue) (?:the |your )?(?:game|round|match)\b"
+)
+#: A result named as a rule, possibility, denied event or past run does not report this run's end.
+_UNASSERTED: Final = re.compile(
+    r"\b(?:if|when|whenever|unless|until|before|after|once|could|would|should|will|might|may|can|cannot|can't|"
+    r"must|not|never|don't|doesn't|didn't|did not|do not|does not|avoid|prevent)\b|"
+    r"\b(?:to|how to|ways? to|in order to)\s+(?:win|lose|beat|defeat|crash|die)\b|"
+    r"\bfirst\s+(?:(?:player|one|side)\s+)?to\b|"
+    r"\b(?:last|previous|earlier)\s+(?:round|game|run|attempt|match)\b|"
+    r"\b(?:or|otherwise)\s+(?:you|the player|player|the computer|computer)\b"
+)
+#: A subject-free base verb with an object is an action to perform, not a result already achieved.
+_DIRECTIVE_RESULT: Final = re.compile(
+    r"(?:^|:\s*)(?:please\s+)?(?:win|lose|beat|defeat|crash|die)\s+[a-z0-9]+\b"
+)
+
+
+def says_play_is_ongoing(words: str) -> bool:
+    """Whether the current screen asks for a turn or explicitly says play is still going."""
+    # OCR may split one prompt into separate pieces ("YOUR", "TURN TO MAKE A MOVE").
+    for clause in _clauses(str(words or "").replace("\n", " ")):
+        if not _ONGOING.search(clause):
+            continue
+        if re.search(r"\b(?:if|when|whenever|unless|until|before|after|once|will|would|could|might)\b|"
+                     r"\b(?:last|previous|earlier)\s+(?:round|game|run|attempt|match)\b", clause):
+            continue
+        if re.search(r"\bturn\s+(?:is\s+)?(?:over|ended|finished|complete)\b", clause):
+            continue
+        return True
+    return False
+
+
+def _clauses(words: str) -> list[str]:
+    """Separate writing before normalization removes its line breaks."""
+    return [_plain(clause) for clause in re.split(r"[.!?;\n]+", str(words or "")) if clause.strip()]
+
+
+def _asserted(clause: str) -> bool:
+    """Whether an ending named in this clause reports a present fact."""
+    return not (_UNASSERTED.search(clause) or _DIRECTIVE_RESULT.search(clause))
 
 
 def _plain(text: str) -> str:
@@ -42,17 +95,26 @@ def _plain(text: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def _who_won(clause: str) -> str:
-    """The subject of the first winning verb in a clause, or "" where there is none."""
-    found = _WINNING.search(clause)
+def _who_won(clause: str, found: re.Match[str] | None = None) -> str:
+    """The subject of a result verb in a clause, or "" where there is none."""
+    found = found or _RESULT_VERB.search(clause)
     if not found:
         return ""
     before = clause[: found.start()].strip(" ,!.:")
+    before = re.sub(r"\b([a-z]+)'(?:ve|s|re|d)\b", r"\1", before)
     words = re.findall(r"[a-z0-9]+", before)
-    subject = " ".join(words[-2:]) if len(words) >= 2 and words[-2] in ("player",) else (words[-1] if words else "")
+    # Auxiliaries and a nearby score are not the subject ("you have won", "You You 5 win!").
+    while len(words) > 1 and (words[-1] in ("have", "has", "had", "been", "is", "are", "was", "were", "got", "the") or words[-1].isdigit()):
+        if len(words) >= 2 and words[-2] == "player":
+            break
+        words.pop()
+    subject = " ".join(words[-2:]) if len(words) >= 2 and (words[-2] == "player" or words[-2:] == ["other", "player"]) else (words[-1] if words else "")
     if found.group(1) in ("winner", "champion", "victory", "victorious"):
         after = re.findall(r"[a-z0-9]+", clause[found.end():])
-        subject = subject or (after[0] if after and after[0] in ("is",) and len(after) > 1 else "")
+        if not subject or subject == "the":
+            while after and after[0] in ("is", "are", "for", "to", "the"):
+                after.pop(0)
+            subject = " ".join(after[:2]) if len(after) >= 2 and after[0] == "player" else (after[0] if after else "")
     return subject
 
 
@@ -66,31 +128,42 @@ def how_it_ended_in(parts: list[str]) -> str:
     A piece that says who won, or what each side scored, is taken first; a
     screen that only says it is over is read whole.
     """
-    for part in parts:
-        said = _who_it_says_won(_plain(part))
-        if said:
-            return said
-    return how_it_ended(" ".join(parts))
+    words = "\n".join(parts)
+    if says_play_is_ongoing(words):
+        return ""
+    readings = [_who_it_says_won(part) for part in parts]
+    if None in readings:
+        return ""
+    stated = set(readings) - {""}
+    if len(stated) > 1:
+        return ""
+    return next(iter(stated)) if stated else how_it_ended(words)
 
 
-def _who_it_says_won(text: str) -> str:
-    """"won" or "lost" where the words say who won or what each side scored; "" otherwise."""
+def _who_it_says_won(text: str) -> str | None:
+    """The result from explicit roles; None for an unbound participant or conflicting results, "" for no result."""
     if not text:
         return ""
-    sides = _SIDES.search(text)
-    if sides and sides.group(3) not in ("to", "and", "points"):
-        mine, theirs = int(sides.group(2)), int(sides.group(4))
-        if mine != theirs:
-            return "won" if mine > theirs else "lost"
-    for clause in re.split(r"[.!?;\n]+", text):
-        who = _who_won(clause)
-        if not who:
+    if says_play_is_ongoing(text):
+        return ""
+    outcomes = set()
+    for clause in _clauses(text):
+        if not _asserted(clause):
             continue
-        if who in _THE_PLAYER or who.endswith("you"):
-            return "won"
-        if not re.search(r"\b(not|didn't|did not|never)\b", clause):
-            return "lost"
-    return ""
+        for result in _RESULT_VERB.finditer(clause):
+            who = _who_won(clause, result)
+            if not who or who in _THE_TASK:
+                continue
+            if who not in _THE_PLAYER and who not in _THE_OPPONENT:
+                return None
+            player = who in _THE_PLAYER
+            verb = result.group(1)
+            if verb in ("lose", "loses", "lost", "died", "crashed", "failed", "caught", "captured"):
+                player = not player
+            if verb == "defeated" and re.search(r"\b(?:was|were|is|are|been|got)\s*$", clause[:result.start()]):
+                player = not player
+            outcomes.add("won" if player else "lost")
+    return None if len(outcomes) > 1 else next(iter(outcomes)) if outcomes else ""
 
 
 #: What an end screen says over a round, won or lost, as against the rules' words for winning and losing ("defeat the
@@ -103,30 +176,37 @@ _ROUND_OVER: Final = re.compile(
 
 def says_a_round_is_over(words: str) -> bool:
     """Whether writing says a round is over, the way an end screen says it: "GAME OVER", "TRY AGAIN", "Level Complete"."""
-    return bool(_ROUND_OVER.search(_plain(words)))
+    if says_play_is_ongoing(words):
+        return False
+    return bool(how_it_ended(words) or any(_asserted(clause) and _ROUND_OVER.search(clause)
+                                         for clause in _clauses(words)))
 
 
 def how_it_ended(words: str) -> str:
     """"won", "lost", or "" where the words do not say."""
     text = _plain(words)
-    if not text:
+    if not text or says_play_is_ongoing(words):
         return ""
+    clauses = [clause for clause in _clauses(words) if _asserted(clause)]
+    readings = [_who_it_says_won(clause) for clause in clauses]
+    if None in readings:
+        return ""
+    declared = set(readings) - {""}
+    if len(declared) > 1:
+        return ""
+    if declared:
+        return next(iter(declared))
+    terminal = any(_ROUND_OVER.search(clause) or _OVER.search(clause) or _PRAISED.search(clause) for clause in clauses)
     sides = _SIDES.search(text)
-    if sides and sides.group(3) not in ("to", "and", "points"):
+    if terminal and sides and sides.group(3) not in ("to", "and", "points"):
+        if sides.group(3) not in _THE_OPPONENT:
+            return ""
         mine, theirs = int(sides.group(2)), int(sides.group(4))
         if mine != theirs:
             return "won" if mine > theirs else "lost"
-    for clause in re.split(r"[.!?;\n]+", text):
-        who = _who_won(clause)
-        if not who:
-            continue
-        if who in _THE_PLAYER or who.endswith("you"):
-            return "won"
-        if not re.search(r"\b(not|didn't|did not|never)\b", clause):
-            return "lost"
-    if _PRAISED.search(text):
+    if any(_PRAISED.search(clause) for clause in clauses):
         return "won"
-    if _OVER.search(text) or _NOTHING_LEFT.search(text):
+    if any(_OVER.search(clause) or _NOTHING_LEFT.search(clause) for clause in clauses):
         return "lost"
     return ""
 
@@ -286,4 +366,4 @@ def what_it_asks_of_a_player(words: str) -> str:
 
 def declares_a_win(words: str) -> bool:
     """Whether a thing's words name a winner or a win: "You win!", "Winner", "Victory"."""
-    return bool(_WINNING.search(_plain(words)))
+    return how_it_ended(words) == "won"

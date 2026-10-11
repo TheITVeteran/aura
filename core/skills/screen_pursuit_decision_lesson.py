@@ -79,7 +79,8 @@ def _the_lesson_first(valued: dict[str, float], leads: Any = None, can_do: Any =
         for procedure in procedures:
             step = procedure.step_of(move)
             if step is not None and step is to_do[id(procedure)]:
-                value = max(value, best * NEXT_STEP)
+                refined = procedure.refinement_of(move)
+                value = max(value, best * NEXT_STEP * (1.1 if refined is not None else 1.0))
             elif (step is not None and (holding := the_step_that_holds(procedure)) is not None
                   and step.order > holding.order and move not in reach and not procedure.reaches_next(move)):
                 # Dependence is a requirement, including when this is the sole
