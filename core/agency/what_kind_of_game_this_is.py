@@ -101,8 +101,8 @@ def shape_of_a_moving_world(moves: Any, hers: Any, meeting: Any, physics: Any, k
     return Graph(name="a moving world", relations=tuple(relations))
 
 
-#: The most a sentence on what kind of game this is says: what she is, and three more things.
-MOST_PARTS = 4
+#: The most a sentence on what kind of game this is says: what she is, and two more things.
+MOST_PARTS = 3
 
 
 def in_a_sentence(moves: Any, hers: Any, meeting: Any, physics: Any, keys: list[str], *, me: str = "") -> str:
