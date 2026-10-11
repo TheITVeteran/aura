@@ -80,6 +80,78 @@ def test_opening_a_selector_reaches_its_choice_without_claiming_the_choice_was_d
     assert rules.step_of('click "Component Library"') is None
 
 
+@pytest.mark.parametrize("entity,container", [("component", "library"), ("font", "panel"), ("chart", "menu"), ("asset", "catalog")])
+def test_clicking_a_type_is_a_choice_whose_selector_can_be_reached(entity, container):
+    choose = Frame(f"Click a type of {entity}", act="click things", thing=f"a type of {entity}")
+    opener = Frame(f"Open the {entity} {container}", act="click things", thing=f"{entity} {container}", order=1)
+    rules = rules_with(choose, opener)
+    move = f'click "{entity} {container}"'
+    assert rules.reaches_next(move)
+    before = observation(1, [f"{entity} {container}"])
+    after = observation(2, [f"{entity} {container}", "Alpha", "Beta"])
+    rules.begin(move, before, step_key=opener.key)
+    rules.tried(move, True, after=after)
+    assert rules.step_of('click "Alpha"') is choose
+
+
+@pytest.mark.parametrize("quotes", [('"', '"'), ("'", "'"), ("“", "”")])
+def test_a_quoted_control_name_that_mentions_a_type_is_still_literal(quotes):
+    from core.cognition.procedure_binding import choice_slot
+
+    literal = Frame(f'Click {quotes[0]}Type of chart{quotes[1]}', act="click things", thing="Type of chart")
+    assert not choice_slot(literal)
+    assert rules_with(literal).step_of('click "Type of chart"') is literal
+
+
+def test_a_category_selection_can_reveal_the_next_choice_of_the_same_entity():
+    rules, first, opener, _ = selector_rules()
+    second = Frame("Select an option of component", act="click things", thing="an option of component", using="select", order=1.5)
+    rules.frames[second.key] = second
+    before = expose_choices(rules, opener)
+    rules.begin('click "Filters"', before)
+    after = observation(3, ["Component Library", "Filter A", "Filter B", "Run"])
+    rules.tried('click "Filters"', True, after=after)
+    assert rules.passed(first) and rules.next_step() is second
+    assert rules.step_of('click "Filter A"') is second
+    assert rules.step_of('click "Run"') is None
+
+
+def test_a_category_selection_cannot_supply_choices_of_another_entity():
+    rules, first, opener, _ = selector_rules()
+    other = Frame("Choose the type of font", act="click things", thing="the type of font", using="choose", order=1.5)
+    rules.frames[other.key] = other
+    before = expose_choices(rules, opener)
+    rules.begin('click "Filters"', before)
+    after = observation(3, ["Component Library", "Filter A", "Filter B", "Run"])
+    rules.tried('click "Filters"', True, after=after)
+    assert rules.passed(first) and rules.next_step() is other
+    assert rules.step_of('click "Filter A"') is None
+
+
+def test_a_completed_selector_can_be_reopened_for_an_unbound_choice_without_erasing_completion():
+    rules, _, opener, _ = selector_rules()
+    expose_choices(rules, opener)
+    hidden = observation(3, ["Component Library", "Run"])
+    rules.observe_context(hidden)
+    move = 'click "Component Library"'
+    assert rules.reaches_next(move) and rules.step_of(move) is opener
+    token = THE_GUIDE.set(Guide(rules=rules))
+    try:
+        assert admissible_step(move)
+        prioritized = _the_lesson_first({move: 1, 'click "Help"': 1})
+        assert prioritized[move] > prioritized['click "Help"']
+    finally:
+        THE_GUIDE.reset(token)
+    attempt = rules.begin(move, hidden)
+    assert attempt.optional and rules.passed(opener)
+    rules.tried(move, False, after=observation(4, ["Component Library", "Run"]))
+    assert rules.passed(opener)
+    rules.begin(move, observation(4, ["Component Library", "Run"]))
+    after = observation(5, ["Component Library", "Filters", "Sources", "Run"])
+    rules.tried(move, True, after=after)
+    assert rules.passed(opener) and rules.step_of('click "Sources"') is rules.next_step()
+
+
 @pytest.mark.parametrize("damage", ["unchanged", "missing_epoch", "other_surface", "old_time", "missing_pixels_context"])
 def test_unmeasured_or_wrong_context_opening_does_not_bind_choices(damage):
     rules, choose, open_panel, _ = selector_rules()

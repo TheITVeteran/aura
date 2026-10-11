@@ -41,6 +41,7 @@ from core.cognition.procedure_binding import (
     control_of,
     input_method_only,
     opens_choices,
+    selection_reveals,
     selector_for,
 )
 from core.runtime.lockdep import checked_lock
@@ -455,7 +456,7 @@ class Rules:
         """Bind unresolved requirements first, then an available repetition of a confirmed step."""
         matching = self._matching_steps(move)
         return next((f for f in matching if not self.passed(f)),
-                    next((f for f in matching if f.again), None))
+                    next((f for f in matching if f.again or self._opens_needed_choices(f)), None))
 
     def repeat_opportunities(self, offered: Sequence[str]) -> list[Frame]:
         """Confirmed repetitions offered here, independently of the next mandatory requirement."""
@@ -499,11 +500,15 @@ class Rules:
 
     def reaches_next(self, move: str) -> bool:
         """Opening a selector reaches an unbound choice, even when the prose listed the choice first."""
-        needed = self.next_step()
         frame = next((frame for frame in self._matching_steps(move) if opens_choices(frame)), None)
-        return bool(needed is not None and choice_slot(needed) and frame is not None and selector_for(frame, needed)
-                    and (self.revealed_choices is None or not self.revealed_choices.moves &
-                         set(self.binding_context.evidence.get("clickable") or ())))
+        return frame is not None and self._opens_needed_choices(frame)
+
+    def _opens_needed_choices(self, frame: Frame) -> bool:
+        needed = self.next_step()
+        return bool(needed is not None and selector_for(frame, needed)
+                    and (self.revealed_choices is None or not any(
+                        self.revealed_choices.offers(move, self.binding_context.evidence, needed.key)
+                        for move in self.revealed_choices.moves)))
 
     def the_step_to_do(self, offered: Sequence[str], reaching: bool = False) -> Frame | None:
         """The earliest requirement, when offered. Missing prerequisites do not authorize later requirements."""
@@ -518,7 +523,7 @@ class Rules:
         if self.pending_step is not None:
             raise RuntimeError("a procedure step is still awaiting its owned observation")
         frame = self.frames.get(step_key) if step_key is not None else self.step_of(move)
-        if frame is None or self.passed(frame) and not frame.again:
+        if frame is None or self.passed(frame) and not (frame.again or self._opens_needed_choices(frame)):
             return None
         predicates = [*self.effects.get(frame.key, ()), *effects]
         encoded = json.dumps([(p.to_dict() if isinstance(p, SemanticPredicate) else
@@ -536,6 +541,8 @@ class Rules:
         key = receipt.step_key
         if receipt.attempt.optional:
             self.repeat_states[key] = receipt.state
+            if receipt.state == PredicateState.SATISFIED:
+                self._bind_revealed_controls(receipt)
             self.pending_step = None
             return receipt
         self.states[key] = receipt.state
@@ -544,11 +551,7 @@ class Rules:
             self.failed_steps.discard(key)
             self.unanswered_steps.pop(key, None)
             self.unknown_steps.pop(key, None)
-            frame = self.frames.get(key)
-            needed = self.next_step()
-            if frame is not None and needed is not None and selector_for(frame, needed):
-                self.revealed_choices = RevealedChoices.from_effect(receipt.before.evidence, receipt.after.evidence, key, needed.key)
-                self.observe_context(receipt.after.evidence)
+            self._bind_revealed_controls(receipt)
         else:
             self.done.discard(key)
             if receipt.state == PredicateState.UNSATISFIED:
@@ -559,6 +562,14 @@ class Rules:
                 self.unknown_steps[key] = self.unknown_steps.get(key, 0) + 1
         self.pending_step = None
         return receipt
+
+    def _bind_revealed_controls(self, receipt: StepReceipt) -> None:
+        frame = self.frames.get(receipt.step_key)
+        needed = self.next_step()
+        if frame is not None and needed is not None and (selector_for(frame, needed) or selection_reveals(frame, needed)):
+            self.revealed_choices = RevealedChoices.from_effect(
+                receipt.before.evidence, receipt.after.evidence, frame.key, needed.key)
+            self.observe_context(receipt.after.evidence)
 
     def seen_before(self) -> bool:
         """Whether everything this place has shown her she had understood on an earlier visit: a lesson she has seen."""

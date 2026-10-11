@@ -25,6 +25,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
+    from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.where_the_words_point import _named_places_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
     from core.runtime.what_she_learned import (
@@ -35,6 +36,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.screen_step_evidence import _construction_readiness_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("remembered_labels_require_current_pixels", "core/perception/visual_anchor.py",
+         "tests/test_visual_anchor.py", lambda: _remembered_labels_invariant() == (),
+         "Remembered control labels require fresh current appearance in the same surface and capture context."),
         ("choices_require_current_observed_controls", "core/cognition/procedure_binding.py",
          "tests/test_procedure_bindings_follow_observed_controls.py", lambda: _choice_binding_invariant() == (),
          "Choice bindings require an observed selector effect and currently visible choices in its capture context."),

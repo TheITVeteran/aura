@@ -18,6 +18,8 @@ _METHOD_WORDS = frozenset("click clicking clicks press pressing here to open ope
 _INPUT_WORDS = frozenset("click clicking clicks press pressing mouse pointer button buttons left right".split())
 _CHOICE = re.compile(r"\b(?:choose|select|pick)\b", re.I)
 _SLOT = re.compile(r"^(?:(?:the|a|an|any|one)\s+)?(?:type|kind|option|item|template|component|style|entry)\b", re.I)
+_CATEGORY = re.compile(r"^(?:(?:the|a|an|any|one)\s+)?(?:type|kind|style)\s+of\s+\S", re.I)
+_LITERAL = re.compile(r'''["“”]|(?:^|\s)'[^']+'(?=\s|[.,!?;:]|$)''')
 _OPENS = re.compile(r"\b(?:open|expand|show|browse)\b", re.I)
 _CONTAINER = re.compile(r"\b(?:library|panel|palette|catalog|catalogue|selector|list|menu|browser|chooser)\b", re.I)
 _COMMAND = re.compile(r"^\W*(?:click|press|open|close|skip|delete|remove|test|run|simulate|execute|render|preview|"
@@ -49,7 +51,8 @@ def input_method_only(frame: Any) -> bool:
 
 def choice_slot(frame: Any) -> bool:
     return (frame.act == "click things" and not control_of(frame)
-            and bool(_CHOICE.search(f"{frame.using} {frame.sentence}"))
+            and not _LITERAL.search(frame.sentence)
+            and bool(_CHOICE.search(f"{frame.using} {frame.sentence}") or _CATEGORY.search(str(frame.thing or "")))
             and bool(_SLOT.search(str(frame.thing or ""))))
 
 
@@ -58,11 +61,21 @@ def opens_choices(frame: Any) -> bool:
             and bool(_CONTAINER.search(str(frame.thing or ""))))
 
 
+def _choice_subject(choice: Any) -> set[str]:
+    generic = _METHOD_WORDS | frozenset("of one any you your wish want need".split())
+    return {word.rstrip("s") for word in _tokens(_SLOT.sub("", choice.thing, count=1)) - generic}
+
+
 def selector_for(frame: Any, choice: Any) -> bool:
     """A selector exposes the entity the choice names, or an unrestricted option slot."""
-    generic = _METHOD_WORDS | frozenset("of one any you your wish want need".split())
-    subject = {word.rstrip("s") for word in _tokens(_SLOT.sub("", choice.thing, count=1)) - generic}
+    subject = _choice_subject(choice)
     return opens_choices(frame) and choice_slot(choice) and (not subject or subject <= {word.rstrip("s") for word in _tokens(frame.thing)})
+
+
+def selection_reveals(frame: Any, choice: Any) -> bool:
+    """A category selection may expose another choice of that same named entity."""
+    subject = _choice_subject(frame)
+    return choice_slot(frame) and choice_slot(choice) and bool(subject) and subject == _choice_subject(choice)
 
 
 def consumes_artifact(label: str) -> bool:
@@ -116,6 +129,14 @@ class RevealedChoices:
 @invariant("cognition.choice_bindings_require_observed_current_controls", scope="cognition",
            owner="core/cognition/procedure_binding.py", observational=False)
 def _choice_binding_invariant() -> tuple:
+    from core.cognition.reading_the_rules import Frame
+
+    category = Frame("Click a type of component", act="click things", thing="a type of component", using="click")
+    item = Frame("Choose the type of component you wish to use", act="click things",
+                 thing="the type of component you wish to use", using="choose")
+    other = Frame("Choose a type of font", act="click things", thing="a type of font", using="choose")
+    assert choice_slot(category) and selection_reveals(category, item)
+    assert not selection_reveals(category, other)
     before = {"surface_id": "editor", "bounds": [0, 0, 400, 300], "capture_epoch": "a", "capture_at": 1., "clickable": []}
     after = {**before, "capture_epoch": "b", "capture_at": 2., "clickable": ['click "Source"', 'click "Filter"', 'click "Run"']}
     binding = RevealedChoices.from_effect(before, after, "open", "choose")
