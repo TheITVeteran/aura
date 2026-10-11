@@ -29,6 +29,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.drawn_objects import _object_candidates_invariant
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
+    from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
@@ -44,8 +45,15 @@ def install_realtime_control_claims(suite: Any) -> None:
         _response_dispatch_invariant,
     )
     from core.skills.sovereign_browser_drawing import _current_play_veto_invariant
+    from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("relations_require_unique_finite_entities", "core/perception/relations_between_things.py",
+         "tests/test_spatial_relations_require_unique_current_entities.py", lambda: _relations_require_unique_finite_entities() == (),
+         "Spatial completion evidence abstains when object names are ambiguous or their geometry is unmeasured."),
+        ("picked_objectives_require_each_outcome", "core/skills/sovereign_browser_picking.py",
+         "tests/test_picked_objectives_require_each_outcome.py", lambda: _picked_outcomes_invariant() == (),
+         "A collection's completion requires each requested objective rather than each pursuit merely ending."),
         ("current_play_vetoes_predicted_completion", "core/skills/sovereign_browser_drawing.py",
          "tests/test_play_completion_requires_terminal_evidence.py", lambda: _current_play_veto_invariant() == (),
          "Current turn and ongoing-play evidence vetoes an inferred win or loss."),

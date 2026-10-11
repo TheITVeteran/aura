@@ -7,6 +7,7 @@ to an address it names, or to the web's answers to the words it gives.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 import urllib.parse
@@ -43,7 +44,25 @@ def its_archived_copy(url: str) -> str:
     """The same address as the Internet Archive keeps it: the copy a person turns to when a site will not serve them."""
     import time
 
-    return f"https://web.archive.org/web/{time.strftime('%Y')}/{url}"
+    from core.runtime.url_policy import validate_url_shape
+
+    validated, _ = validate_url_shape(url, allow_http=True)
+    if validated is None:
+        return ""
+    parsed = urllib.parse.urlparse(validated)
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    if (parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password
+            or host == "localhost" or host.endswith((".localhost", ".local", ".internal"))):
+        return ""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        if "." not in host:
+            return ""
+    else:
+        if not address.is_global:
+            return ""
+    return f"https://web.archive.org/web/{time.strftime('%Y')}/{validated}"
 
 
 async def the_archived_copy(skill: object, browser: object, url: str) -> str:
@@ -53,8 +72,11 @@ async def the_archived_copy(skill: object, browser: object, url: str) -> str:
     to get past it: the archive is a different place, which serves copies of
     public pages to anyone who asks.
     """
+    verdict = getattr(browser, "_last_verdict", None)
+    if isinstance(verdict, dict) and verdict.get("allowed") is False:
+        return ""
     copy = its_archived_copy(url)
-    if url.startswith("https://web.archive.org/") or not await skill._safe_browse(browser, copy):  # type: ignore[attr-defined]
+    if not copy or url.startswith("https://web.archive.org/") or not await skill._safe_browse(browser, copy):  # type: ignore[attr-defined]
         return ""
     page = getattr(browser, "page", None)
     if page is None or refused(await page.title(), await page.evaluate("document.body ? document.body.innerText : ''")):

@@ -17,7 +17,7 @@ import re
 import unicodedata
 from typing import Any, Final
 
-__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over",
+__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over", "says_an_unresolved_result",
            "says_play_is_ongoing", "the_score_in", "what_it_asks_of_a_player", "what_says_the_game_is_over"]
 
 _WINNING: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeated|champion)\b")
@@ -166,6 +166,21 @@ def _who_it_says_won(text: str) -> str | None:
     return None if len(outcomes) > 1 else next(iter(outcomes)) if outcomes else ""
 
 
+def says_an_unresolved_result(words: str) -> bool:
+    """Whether current result assertions conflict or name a participant whose side is not known.
+
+    An unread screen leaves room for another source of terminal evidence. An explicit unresolved result cannot be
+    replaced by a prediction that silently assigns its named participant to one side.
+    """
+    clauses = [clause for clause in _clauses(words) if _asserted(clause)]
+    readings = [_who_it_says_won(clause) for clause in clauses]
+    if None in readings or len(set(readings) - {""}) > 1:
+        return True
+    sides = _SIDES.search(_plain(words))
+    return bool(sides and sides.group(3) not in _THE_OPPONENT | {"to", "and", "points"} and
+                any(_ROUND_OVER.search(clause) or _OVER.search(clause) or _PRAISED.search(clause) for clause in clauses))
+
+
 #: What an end screen says over a round, won or lost, as against the rules' words for winning and losing ("defeat the
 #: robots", "don't crash"), which are read in play too.
 _ROUND_OVER: Final = re.compile(
@@ -191,8 +206,14 @@ _THE_GAME_OVER: Final = re.compile(
 def what_says_the_game_is_over(words: str) -> str:
     """The words of a screen that say the game is over ("game over", "final score"), in small letters; "" where none
     do. A level finished is not the game over, and is not told here."""
-    found = _THE_GAME_OVER.search(_plain(words))
-    return found.group(1) if found else ""
+    if says_play_is_ongoing(words):
+        return ""
+    for clause in _clauses(words):
+        if _asserted(clause):
+            found = _THE_GAME_OVER.search(clause)
+            if found:
+                return found.group(1)
+    return ""
 
 
 def how_it_ended(words: str) -> str:

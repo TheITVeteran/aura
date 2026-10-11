@@ -12,9 +12,12 @@ no relation, or either thing cannot be found, nothing is measured: that is not a
 """
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+from core.verify.invariants import invariant
 
 __all__ = ["a_relation_in", "holds", "located", "measured"]
 
@@ -51,26 +54,47 @@ def _words(name: str) -> set[str]:
     return {w.rstrip("s") for w in re.findall(r"[a-z]{3,}", str(name or "").lower()) if w not in _COMMON}
 
 
+def _finite_box(values: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(values, (tuple, list)) or len(values) != 4 or any(isinstance(v, bool) for v in values):
+        return None
+    try:
+        box = tuple(float(value) for value in values)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    x, y, width, height = box
+    if (not all(math.isfinite(value) for value in box) or width <= 0 or height <= 0
+            or not math.isfinite(x + width) or not math.isfinite(y + height)):
+        return None
+    return box
+
+
 def located(name: str, regions: Sequence[Mapping[str, Any]]) -> tuple[float, float, float, float] | None:
-    """The box (left, top, width, height) of the region a name names best by its words; None where none does."""
+    """The unique best named region's measured box; missing geometry or tied names remain unknown."""
     wanted = _words(name)
     if not wanted:
         return None
-    best, overlap = None, 0
+    candidates, overlap = [], 0
     for region in regions:
+        if not isinstance(region, Mapping):
+            continue
         shared = len(wanted & _words(str(region.get("text") or "")))
+        if shared < overlap or not shared:
+            continue
+        box = _finite_box([region.get(key) for key in ("x", "y", "width", "height")])
         if shared > overlap:
-            try:
-                box = (float(region["x"]), float(region["y"]), float(region.get("width") or 0.0),
-                       float(region.get("height") or 0.0))
-            except (KeyError, TypeError, ValueError):
-                continue
-            best, overlap = box, shared
-    return best
+            candidates, overlap = [box], shared
+        else:
+            candidates.append(box)
+    # A named candidate whose extent was not measured still competes for the
+    # referent. Dropping it would manufacture certainty about another one.
+    return candidates[0] if len(candidates) == 1 else None
 
 
-def holds(relation: str, a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
-    """Whether ``a`` stands in ``relation`` to ``b``, measured on their boxes; "near" is within the larger's size."""
+def holds(relation: str, a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool | None:
+    """Measure the relation on two finite extents, or return None when it cannot be measured."""
+    a, b = _finite_box(a), _finite_box(b)
+    if a is None or b is None:
+        return None
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     acx, acy, bcx, bcy = ax + aw / 2, ay + ah / 2, bx + bw / 2, by + bh / 2
@@ -87,8 +111,8 @@ def holds(relation: str, a: tuple[float, float, float, float], b: tuple[float, f
         "right of": acx > bx + bw,
         "inside": bx <= acx <= bx + bw and by <= acy <= by + bh,
         "touching": gap <= size * 0.15,
-        "at": ((acx - bcx) ** 2 + (acy - bcy) ** 2) ** 0.5 <= size * 1.5,
-    }.get(relation, False)
+        "at": math.hypot(acx - bcx, acy - bcy) <= size * 1.5,
+    }.get(relation)
 
 
 def measured(sentence: str, regions: Sequence[Mapping[str, Any]]) -> bool | None:
@@ -102,3 +126,16 @@ def measured(sentence: str, regions: Sequence[Mapping[str, Any]]) -> bool | None
     if a is None or b is None or a == b:
         return None
     return holds(how, a, b)
+
+
+@invariant("perception.spatial_relations_require_unique_finite_entities", scope="perception",
+           owner="core/perception/relations_between_things.py", observational=False)
+def _relations_require_unique_finite_entities() -> tuple:
+    inside = {"text": "crate", "x": .15, "y": .15, "width": .1, "height": .1}
+    outside = {"text": "crate", "x": .75, "y": .75, "width": .1, "height": .1}
+    room = {"text": "room", "x": .1, "y": .1, "width": .3, "height": .3}
+    assert measured("the crate is inside the room", [inside, outside, room]) is None
+    assert measured("the crate is inside the room", [outside, inside, room]) is None
+    assert measured("the crate is inside the room", [inside, room]) is True
+    assert measured("the crate is inside the room", [{**inside, "x": math.nan}, room]) is None
+    return ()
