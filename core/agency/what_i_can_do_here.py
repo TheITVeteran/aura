@@ -246,6 +246,15 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
 
         self.told_of_carrying(f"{words} {counsel}")
         self.told_of_using(f"{words} {counsel}")
+        # A place the guide knows is worked by dragging (its words before, or its program) is one where things are
+        # carried, though this screen's words do not say so: offline 2026-10-11 a scrapbook whose program dragged
+        # pictures into a scene, and nothing was ever carried into it.
+        from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+        guide = THE_GUIDE.get()
+        if guide is not None and getattr(guide, "in_play", None) is not None and "dragging" in getattr(guide, "mechanics", {}) \
+                and guide.in_play("dragging"):
+            self.carrying_said = True
         from core.agency.mechanics_she_knows import mechanics_in
 
         self.mechanics_said |= set(mechanics_in(f"{words} {counsel}"))
@@ -275,12 +284,17 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             # instructions said to move the mouse, on its wordless screens).
             from core.cognition.a_guide_to_a_place import _TRUST, PAGE, THE_GUIDE
 
-            controls = getattr(THE_GUIDE.get(), "controls", None) or {}
+            guide = THE_GUIDE.get()
+            controls = getattr(guide, "controls", None) or {}
             # What its words name outranks keys found only in its program: LIVE 2026-10-10 a music maker whose guide
             # said "Controls: the mouse holds and drags" had its arrows pressed on every screen.
             said = {key for key, control in controls.items() if _TRUST.get(getattr(control, "source", ""), 0) >= _TRUST[PAGE]}
-            if said or controls:
-                self.pointer_only = (said or set(controls)) == {"the pointer"}
+            # And what its program does with the pointer (drags, clicks) names the pointer where no word does: offline
+            # 2026-10-11 a scrapbook whose program dragged things with the mouse had its arrows pressed.
+            named = getattr(guide, "pointer_named", None)
+            pointer = "the pointer" in (said or set(controls)) or bool(callable(named) and named())
+            if said or controls or pointer:
+                self.pointer_only = pointer and not (said or set(controls)) - {"the pointer"}
 
     def looked_at(self, clickable: Sequence[str], says: str = "", looks: Mapping[str, tuple[float, ...]] | None = None,
                   where: Mapping[str, tuple[float, float]] | None = None, selector_view: Any = None) -> None:

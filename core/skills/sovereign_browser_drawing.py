@@ -401,7 +401,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         if shape == MADE and (terms.made_once or terms.tell_what_was_made):
             # Made once, and what was made said, as the person asked of a thing with no end and no measure.
             run["ended"] = "finished"
-            _tell(_what_was_made(run, moves))
+            _tell(await _what_was_made_as_seen(page, band, run, moves, list(getattr(reflexes, "words", []) or [])))
             result["stopped_because"] = MADE_AS_ASKED
             break
         nothing_to_win = shape == MEASURE or _for_points_only(reflexes, goal) or _only_a_score(reflexes, run)
@@ -889,6 +889,48 @@ def _the_shape_of(reflexes: Any, run: Mapping[str, Any]) -> str:
 
     return shape_in(" ".join([*getattr(reflexes, "words", []), str(run.get("words") or "")]),
                     a_measure_seen=run.get("score") is not None)
+
+
+#: What her eyes are asked of a thing made: what it shows, in a sentence.
+_WHAT_IT_SHOWS = ("This is a picture someone has just made in a game for making things: a scene, a character, a card, a "
+                  "photo. In one short plain sentence, say what it shows: who or what is in it, and what they are doing. "
+                  'Answer with JSON only: {"shows": "<one sentence>"}')
+
+
+async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, float], run: Mapping[str, Any],
+                                 moves: list[Any], words: list[str]) -> str:
+    """What she made, as her eyes see it at the end, and why, in the thing's own words for what it is for; where her
+    eyes cannot say, as her choices and its last words have it (``_what_was_made``). Offline 2026-10-11 she said of a
+    scrapbook she had put nothing into "I made it: at the end it shows 'PUBLIC LIBRARY'", and why she made it was not
+    said at all."""
+    import io
+
+    from core.perception.her_eyes import look_with_her_eyes
+    from core.perception.where_i_am_on_screen import _as_jpeg
+
+    shows = ""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        size = getattr(page, "viewport_size", None) or {"width": 1280, "height": 800}
+        left, top, right, bottom = band
+        png = await page.screenshot(clip={"x": left * size["width"], "y": top * size["height"],
+                                          "width": (right - left) * size["width"], "height": (bottom - top) * size["height"]})
+        frame = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
+        answer = await look_with_her_eyes(_WHAT_IT_SHOWS, _as_jpeg(frame), max_tokens=80, timeout_s=40.0)
+        found = re.search(r"\{.*\}", answer or "", re.S)
+        shows = " ".join(str(json.loads(found.group(0)).get("shows") or "").split()).rstrip(".") if found else ""
+    except Exception as why:  # noqa: BLE001 - her eyes not answering leaves what her choices say
+        import logging
+
+        logging.getLogger(__name__).info("her eyes could not say what she made: %s", str(why)[:160])
+    if not shows:
+        return _what_was_made(run, moves)
+    asked = _what_it_is_for(words)
+    because = f" I made it that way because it asks to: {asked!r}." if asked else ""
+    return (f"There's nothing to win or score in this one; it's for making things. What I made shows "
+            f"{shows[:1].lower()}{shows[1:]}.{because}")
 
 
 def _what_was_made(run: Mapping[str, Any], moves: list[Any]) -> str:

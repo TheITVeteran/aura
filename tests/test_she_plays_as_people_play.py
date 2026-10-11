@@ -183,3 +183,41 @@ def test_a_place_its_guide_says_is_worked_with_the_mouse_alone_is_not_offered_ke
         assert here.pointer_only and not {"up", "down", "left", "right"} & set(here.available())
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_place_whose_program_drags_with_the_mouse_and_names_no_key_is_worked_by_the_pointer():
+    """Offline 2026-10-11 a scrapbook whose program dragged things with the mouse had its arrows pressed."""
+    from types import SimpleNamespace
+
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = Guide(place="a place")
+    guide.take_in_program(SimpleNamespace(words=[], keys={}, keyed=[], pointer=["moves", "drags"], buttons=[], text=""))
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("")
+        here.looked_at([a_click_on("continue")])
+        here.looked_at([a_click_on("continue")])
+        assert here.pointer_only and not {"up", "down", "left", "right"} & set(here.available())
+    finally:
+        THE_GUIDE.reset(token)
+
+
+def test_a_place_its_guide_knows_is_worked_by_dragging_has_things_carried_though_the_screen_does_not_say_so():
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = Guide(place="a place")
+    guide.take_in(TOLD, ["Drag the pictures into the scene, then take a photo."])
+    assert guide.in_play("dragging")
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=())
+        here.asked_for_by("PUBLIC LIBRARY")
+        here.looked_at([a_click_on("the shape at 85% across, 30% down"), a_click_on("the shape at 40% across, 50% down")])
+        here.looked_at([a_click_on("the shape at 85% across, 30% down"), a_click_on("the shape at 40% across, 50% down")])
+        assert here.carrying_said and any(move.startswith("drag ") for move in here.available())
+    finally:
+        THE_GUIDE.reset(token)
