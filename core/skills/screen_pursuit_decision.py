@@ -165,6 +165,8 @@ def _first_what_goes_on(can_do: Any, telling: dict[str, float]) -> dict[str, flo
 #: How much more a move that does the lesson's next step is worth than the best of the rest, and how much less a move
 #: its rules forbid is.
 NEXT_STEP, FORBIDDEN = 1.5, 0.1
+#: A test of what was made, before anything was: it can show nothing (core/cognition/reading_the_rules.py TRIES_IT).
+NOTHING_MADE_YET = 0.3
 #: An act that gets what the next step needs, against doing a step itself: below doing the next step, above the rest.
 REACHING = 1.35
 
@@ -189,17 +191,22 @@ def _the_lesson_first(valued: dict[str, float], leads: Any = None, can_do: Any =
     # worked, the plan what she is using it for.
     procedures = [p for p in (rules, getattr(guide, "plan", None)) if p is not None]
     reach = _reaching_what_the_next_step_needs(procedures, valued, leads, getattr(guide, "locks", None))
-    # A later step leads only where the next one can neither be done nor reached here: steps are done in their order.
-    # LIVE 2026-10-10 a trap's TEST TRAP, its lesson's last step, was pressed again and again before a part was placed.
-    stuck = {id(p): not reach and not any(p.step_of(m) is p.next_step() for m in valued) for p in procedures}
+    # Only the step to do now leads: the next one, or, where it can neither be done nor reached here, the earliest that
+    # can. LIVE 2026-10-10 a trap's TEST TRAP, its lesson's last step, was pressed again and again before a part was
+    # placed, every later step lifted while an early one ("CLICK TO OPEN") matched nothing.
+    from core.agency.what_i_can_do_here import what_is_clicked
+    from core.cognition.reading_the_rules import tries_what_was_made
+
+    to_do = {id(p): p.the_step_to_do(list(valued), reaching=bool(reach)) for p in procedures}
+    built = bool(getattr(guide, "built", "")) or any((getattr(can_do, "carried_to", None) or {}).values())
     out = {}
     for move, value in valued.items():
         for procedure in procedures:
             step = procedure.step_of(move)
-            if step is not None and step is procedure.next_step():
-                value = max(value, best * NEXT_STEP)
-            elif step is not None and stuck[id(procedure)]:
-                value = max(value, best * 1.2)
+            if step is not None and step is to_do[id(procedure)]:
+                value = max(value, best * (NEXT_STEP if step is procedure.next_step() else 1.2))
+        if not built and tries_what_was_made(what_is_clicked(move) or ""):
+            value *= NOTHING_MADE_YET
         if move in reach:
             value = max(value, best * REACHING * reach[move])
         out[move] = value * (FORBIDDEN if rules.forbids(move) or rules.passes_over_what_it_teaches(move) else 1.0)

@@ -36,8 +36,8 @@ from typing import Any
 
 from core.runtime.lockdep import checked_lock
 
-__all__ = ["ASKS_TO_CARRY", "KEEPS_THE_WORK", "SAYS_WHAT_IT_IS_FOR", "SKIPS_THE_TEACHING", "Frame", "Rules",
-           "keeps_the_work", "read_the_rules_beside", "skips_the_teaching"]
+__all__ = ["ASKS_TO_CARRY", "KEEPS_THE_WORK", "SAYS_WHAT_IT_IS_FOR", "SKIPS_THE_TEACHING", "TRIES_IT", "Frame", "Rules",
+           "keeps_the_work", "read_the_rules_beside", "skips_the_teaching", "tries_what_was_made"]
 
 logger = logging.getLogger("Aura.ReadingTheRules")
 
@@ -58,6 +58,8 @@ _WORD = re.compile(r"[a-z]{3,}")
 _TOKEN = re.compile(r"[a-z0-9']+")
 #: Tries of a step that went unanswered before it is passed over.
 PASSED_OVER_AFTER = 2
+#: The most words a step that names nothing can have and still be a label's own words.
+LABEL_WORDS = 4
 #: Words two names share without being one thing.
 _COMMON = frozenset("the and you your for with from that this into onto any each other another one all".split())
 
@@ -179,6 +181,24 @@ def skips_the_teaching(label: str) -> bool:
     """Whether an option passes over what a place teaches: as the learned surface decides, else as its floor reads."""
     decided = _decided(SKIPS_THE_TEACHING, label)
     return bool(_SKIPS_TEACHING.search(str(label or ""))) if decided is None else decided
+
+
+#: Whether an option runs or tests what was made (TEST TRAP, Run, Simulate, Check my answer): before anything was made it
+#: can show nothing. LIVE 2026-10-10 she pressed a trap game's TEST TRAP again and again with nothing placed.
+TRIES_IT = _surface(
+    "tries_what_was_made",
+    ("TEST TRAP", "Run", "Simulate", "Run the machine", "Check my answer", "Test the circuit", "Play my level",
+     "Try it out", "Launch"),
+    ("DEVICE LIBRARY", "Start over", "Delete", "Turn", "Help", "Next", "Settings", "Choose a type of device",
+     "Edit the trap"),
+)
+_TRIES = re.compile(r"^\W*(?:test|run|simulate|try\s+it|check\s+(?:my|the)|launch)\b", re.IGNORECASE)
+
+
+def tries_what_was_made(label: str) -> bool:
+    """Whether an option runs or tests what was made: as the learned surface decides, else by its first words."""
+    decided = _decided(TRIES_IT, label)
+    return bool(_TRIES.search(str(label or ""))) if decided is None else decided
 
 
 def keeps_the_work(label: str) -> bool | None:
@@ -317,7 +337,10 @@ class Rules:
         for frame in self.steps():
             if self.passed(frame):
                 continue
-            named = " ".join((frame.thing, frame.using))
+            # A step that names nothing it is done to and is itself a label's few words ("CLICK TO OPEN") is done by
+            # the label that says it.
+            named = " ".join((frame.thing, frame.using)).strip() or (
+                frame.sentence if len(frame.sentence.split()) <= LABEL_WORDS else "")
             if clicked and frame.act != "carry" and names_it(named, clicked):
                 return frame
             if two is not None and two.act == CARRY and frame.act == "carry" and (
@@ -355,6 +378,20 @@ class Rules:
         gaps = sorted(b - a for a, b in zip(self.heard_times, self.heard_times[1:], strict=False))
         usual = gaps[len(gaps) // 2] if gaps else 0.0
         return min(WATCH_AT_MOST_S, max(2 * SCENE_ENDS_AFTER_S, 1.5 * usual))
+
+    def the_step_to_do(self, offered: Sequence[str], reaching: bool = False) -> Frame | None:
+        """The step to do now: the earliest not behind her that one of ``offered`` does; none where the next step is being
+        reached for (getting what it uses comes first). A step that can neither be done nor reached here does not hold
+        the rest, but only the earliest that can be done leads: steps are done in their order."""
+        nxt = self.next_step()
+        for frame in self.steps():
+            if self.passed(frame):
+                continue
+            if any(self.step_of(move) is frame for move in offered):
+                return frame
+            if frame is nxt and reaching:
+                return None
+        return None
 
     def forbids(self, move: str) -> bool:
         """Whether a rule says never to do what a move does."""

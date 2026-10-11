@@ -253,3 +253,39 @@ def test_what_she_built_before_this_run_still_makes_keeping_it_worth_more_than_s
     fresh = SimpleNamespace(carried_to={}, quiet_since=set())                 # a new run: nothing carried in it yet
     weighed = DebateCheck().weigh({'click "EDIT THE TRAP"': 1.0, "start over": 1.0}, guide, fresh)
     assert weighed['click "EDIT THE TRAP"'] > weighed["start over"]
+
+
+def test_a_step_that_names_nothing_is_done_by_the_label_that_says_it_and_only_the_step_to_do_leads():
+    from core.skills.screen_pursuit_decision import _the_lesson_first
+
+    guide = Guide(place="a place of devices")
+    lesson = ["CLICK TO OPEN", "Drag a device to any active square.", "Test the trap when you are ready."]
+    guide.rules.hear(lesson)
+    guide.rules.took([Frame(lesson[0], act="click things"),
+                      Frame(lesson[1], act="carry", thing="a device", where="any active square"),
+                      Frame(lesson[2], act="click things", thing="TEST TRAP")])
+    assert guide.rules.step_of('click "CLICK TO OPEN"').sentence == lesson[0]
+    token = THE_GUIDE.set(guide)
+    try:
+        # The first step's label is gone from the screen: the carry, the earliest step she can do, leads; not the test.
+        valued = _the_lesson_first({'drag "the shape at 20% across, 70% down" to "any active square"': 0.3,
+                                    'click "TEST TRAP"': 0.9})
+    finally:
+        THE_GUIDE.reset(token)
+    assert max(valued, key=valued.get) == 'drag "the shape at 20% across, 70% down" to "any active square"', valued
+
+
+def test_a_test_of_what_was_made_is_worth_little_before_anything_was_made():
+    from core.skills.screen_pursuit_decision import _the_lesson_first
+
+    guide = Guide(place="a place of devices")
+    guide.rules.hear(["Open the library."])
+    token = THE_GUIDE.set(guide)
+    try:
+        before = _the_lesson_first({'click "TEST TRAP"': 0.9, 'click "DEVICE LIBRARY"': 0.5})
+        guide.built = "1 part put in place"
+        after = _the_lesson_first({'click "TEST TRAP"': 0.9, 'click "DEVICE LIBRARY"': 0.5})
+    finally:
+        THE_GUIDE.reset(token)
+    assert before['click "TEST TRAP"'] < before['click "DEVICE LIBRARY"']
+    assert after['click "TEST TRAP"'] > after['click "DEVICE LIBRARY"']
