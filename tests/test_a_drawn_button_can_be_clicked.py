@@ -61,3 +61,21 @@ def test_the_words_on_a_drawn_button_no_reading_of_the_screen_made_out_name_it_a
     assert shapes[0]["text"] == "PLAY" and shapes[0]["written_on_it"], [s["text"] for s in shapes]
     assert abs(shapes[0]["center_x"] - 0.875) < 0.05 and abs(shapes[0]["center_y"] - 0.9) < 0.05
     assert where_to_click({"shapes": shapes}, "PLAY") is not None
+
+
+def test_a_button_comes_before_the_title_it_stands_in():
+    """Offline 2026-10-11 a title read as "Coco's Scrambler PLAY" was offered before the PLAY button inside it."""
+    from core.perception.shapes_that_look_pressable import _named_by_their_writing
+
+    pixels = np.full((400, 600, 3), 250, np.uint8)
+    pixels[230:395, 100:590] = (240, 120, 40)                              # the title
+    pixels[340:380, 470:580] = (230, 40, 40)                               # its PLAY button
+
+    def read(patch):
+        patch = np.asarray(patch)
+        return [{"text": "Coco's Scramble PLAY"}] if (patch[..., 1] > 100).mean() > 0.5 else [{"text": "PLAY"}]
+
+    title = {"text": "the shape at 55% across, 80% down", "x": 0.167, "y": 0.575, "width": 0.817, "height": 0.41}
+    button = {"text": "the shape at 85% across, 90% down", "x": 0.783, "y": 0.85, "width": 0.183, "height": 0.1}
+    named = _named_by_their_writing(pixels, [(0.9, title), (0.6, button)], read)
+    assert [region["text"] for _share, region in named] == ["PLAY", "Coco's Scramble PLAY"]
