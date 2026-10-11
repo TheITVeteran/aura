@@ -308,6 +308,8 @@ class Guide:
         the pointer only aiming: LIVE 2026-10-09 the reticle that followed the mouse was taken for her, and the body
         her keys moved was never found."""
         pointer = self.controls.get("the pointer")
+        if self.pointer.get("moves"):
+            return True
         if self.pointer_aims():
             return False
         if pointer is not None:
@@ -316,9 +318,10 @@ class Guide:
         return not worded and any(use in ("steers", "aims", "drags") for use in self.pointer)
 
     def pointer_aims(self) -> bool:
-        """Whether keys move her and the pointer only aims or shoots: her body is found by the keys, not the pointer."""
+        """Whether keys move her and the pointer only aims or shoots: her body is found by the keys, not the pointer.
+        Not where the place's words say the pointer moves her."""
         pointer = self.controls.get("the pointer")
-        return (pointer is not None and pointer.act in _AIMS
+        return (pointer is not None and pointer.act in _AIMS and not self.pointer.get("moves")
                 and any(key in _MOVING for key in self.keys_for_play()))
 
     def in_play(self, name: str) -> bool:
@@ -492,6 +495,12 @@ class Guide:
                 if known is None or _TRUST.get(source, 0) >= _TRUST.get(known.source, 0):
                     self.controls["the pointer"] = Control("the pointer", act or (known.act if known else ""), source, at,
                                                            on=on or (known.on if known else ""))
+                # What the pointer moves is kept apart from what a click does: LIVE 2026-10-11 "USE THE MOUSE TO MOVE
+                # MAC. THEN CLICK TO THROW THE BALL" kept only the throw, the pointer was taken to aim, and Mac was
+                # never moved while the eggs fell.
+                moved = moved_by_the_pointer(sentence)
+                if moved and source != PROGRAM:
+                    self.pointer["moves"] = moved
 
     def _errands_from(self, sentences: list[str]) -> list[str]:
         """What the place's people ask of her: kept, the thing wanted made a thing to get, and each said once."""
@@ -899,6 +908,30 @@ _A_BODY_ACT = ("jump", "flap", "hop", "dash", "boost", "duck", "slide", "flip", 
                "swing", "strike", "flap your wings", "fly up", "rise", "thrust")
 #: The name of the mouse button pressed as a key (core/skills/screen_pursuit_as_it_happens.py presses it so).
 MOUSE_BUTTON = "mouse"
+
+
+#: The pointer said to move a body, and the body: "use the mouse to move Mac", "move the mouse to control your boat",
+#: "Mouse moves Frankie", "steer the boat with the mouse"; not "mouse to aim".
+_POINTER_THEN_MOVES = re.compile(
+    r"\b(?:mouse|pointer|cursor)\s+(?:to\s+)?(?:move|moves|control|controls|steer|steers|guide|guides|drive|drives|fly|"
+    r"flies)\b(?:\s+(?:the\s+|your\s+)?(?P<what>[a-z][\w'-]*))?", re.I)
+_MOVES_WITH_THE_POINTER = re.compile(
+    r"\b(?:move|steer|control|guide|drive|fly)\s+(?:the\s+|your\s+)?(?P<what>[a-z][\w'-]*)\s+(?:with|using|by)\s+"
+    r"(?:the\s+|your\s+)?(?:mouse|pointer|cursor)\b", re.I)
+#: Words after a verb of moving that are no body: where it is moved, or the sentence going on.
+_NO_BODY = frozenset("and then to or with around about left right up down across along so while".split())
+
+
+def moved_by_the_pointer(sentence: str) -> str:
+    """What a sentence says the pointer moves: a body ("mac", "boat"), "you" where it names none, "" where the pointer
+    is not said to move anything. Things moved many at a time ("move the pieces with the mouse") are dragged, not a
+    body."""
+    found = _POINTER_THEN_MOVES.search(sentence or "") or _MOVES_WITH_THE_POINTER.search(sentence or "")
+    if found is None:
+        return ""
+    what = (found.group("what") or "").lower()
+    moved = "you" if not what or what in _NO_BODY else what
+    return "" if moved.endswith("s") and not moved.endswith("ss") else moved
 
 
 def pointer_acts(guide: Any) -> str:

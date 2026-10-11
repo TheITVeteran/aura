@@ -322,3 +322,35 @@ def test_a_drawn_arrow_is_not_the_arrow_keys(said, keys):
     from core.agency.the_controls_a_game_names import controls_named_in
 
     assert controls_named_in(said, keys_without_words=())[0] == keys
+
+
+@pytest.mark.parametrize("said, moves", [
+    ("USE THE MOUSE TO MOVE MAC.", "mac"),
+    ("Move the mouse to control your boat.", "boat"),
+    ("Mouse moves Frankie to catch items before they crash.", "frankie"),
+    ("Use your mouse to steer and click to shoot.", "you"),
+    ("Steer the boat with the mouse.", "boat"),
+    ("WASD to move, mouse to aim and shoot.", ""),
+    ("Move your mouse to aim, then click to release your top.", ""),
+    ("Move the pieces with the mouse.", ""),
+])
+def test_what_the_pointer_moves_is_read_from_the_words_that_tie_it_to_the_pointer(said, moves):
+    from core.cognition.a_guide_to_a_place import moved_by_the_pointer
+
+    assert moved_by_the_pointer(said) == moves
+
+
+def test_a_pointer_that_moves_her_is_not_taken_to_aim_because_a_click_does_something_else():
+    """LIVE 2026-10-11 "USE THE MOUSE TO MOVE MAC. THEN CLICK TO THROW THE BALL" kept only the throw; with up and down
+    in the game's program the pointer was taken to aim, her keys to move her, and Mac was never moved."""
+    from core.cognition.a_guide_to_a_place import Control
+
+    guide = Guide(place="an egg game")
+    guide.controls["up"], guide.controls["down"] = Control("up", "", PROGRAM), Control("down", "", PROGRAM)
+    guide.take_in(SCREEN, "USE THE MOUSE TO MOVE MAC. THEN CLICK TO THROW THE BALL AND CRACK OPEN THE EGGS. "
+                          "PRESS THE SPACE BAR TO JUMP.")
+    assert guide.pointer_named() and not guide.pointer_aims()
+    assert Guide.from_memory(guide.as_memory(), "an egg game").pointer["moves"] == "mac"
+    aiming = Guide(place="a shooter")
+    aiming.take_in(SCREEN, "WASD to move. Mouse to aim and shoot.")
+    assert aiming.pointer_aims() and not aiming.pointer_named()
