@@ -138,7 +138,7 @@ def plural(name: str) -> str:
 
 #: How long between two lines on what a kind of thing is worth, and how many of them a game.
 STANCE_EVERY_S = 6.0
-MOST_STANCES_SAID = 5
+MOST_STANCES_SAID = 3
 
 
 def a_stance_said(run: Any, moves: Any, kind: int, stance: str, at: float, *, met: bool = True) -> str:

@@ -19,6 +19,7 @@ from core.agency.what_comes_for_her import WhatComesForHer
 from core.agency.who_is_who import (
     FRIENDLY,
     IN_HER_WAY,
+    MOST_SAID,
     NEGLIGIBLE,
     NEUTRAL,
     PART_OF_THE_PLACE,
@@ -204,8 +205,8 @@ def test_what_she_has_found_out_is_said_once_each_and_one_at_a_time():
         assert len(one) == 1
         said += one
     assert any("friendly competition" in line for line in said), said
-    assert any("a threat" in line for line in said), said
-    assert len(said) == len(set(said)) and not who.to_say(present, lambda thing: f"kind {thing.kind}")
+    # A few, the best shown: a person names the things that matter, not every one.
+    assert len(said) == MOST_SAID == len(set(said)) and not who.to_say(present, lambda thing: f"kind {thing.kind}")
 
 
 def test_once_is_a_sign_and_twice_is_shown():
@@ -220,6 +221,7 @@ def test_once_is_a_sign_and_twice_is_shown():
     assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, False)
     assert (who.of(spike).name, who.of(spike).sure) == (THREAT, False)
     assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == []
+    who.met(7, "gain")
     who.met(7, "gain")
     assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: getting it counted."]
 
@@ -238,7 +240,7 @@ def test_what_a_kind_did_is_weighed_against_what_it_did_not():
         who.met(4, "nothing")
     assert who.of(bush).name not in (PRIZE, THREAT) and who.of(bat).name not in (PRIZE, THREAT)
     coin = _thing(3, 5, 10.0, 10.0)
-    for what in ("gain", "nothing", "gain"):
+    for what in ("gain", "nothing", "gain", "gain"):
         who.met(5, what)
     assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, True)
     spike = _thing(4, 6, 30.0, 10.0)
