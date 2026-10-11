@@ -454,62 +454,130 @@ def _recognized(image: Any) -> list[dict[str, Any]]:
 
 
 #: Below this confidence (Tesseract's 0-100) a word is a smudge read as letters: on a game's title screen the button's
-#: edge came back as "=a" at 42 beside words at 91 and over.
+#: edge came back as "=a" at 42 beside words at 91 and over. And below this mean confidence a line is the strokes of the
+#: other pass read as words: lines of real words came back at 90 and over, those at 45 and under.
 _LEAST_TESSERACT_CONFIDENCE = 60.0
+_LEAST_LINE_CONFIDENCE = 70.0
 
-#: Pixels of margin put around a picture before Tesseract reads it.
+#: Pixels of margin put around a picture before Tesseract reads it, and the longest a reading is waited for.
 _TESSERACT_MARGIN = 16
+_TESSERACT_TIMEOUT_S = 10.0
+
+#: How much larger a picture is read than it is taken, and the side of the square that finds a stroke of writing by
+#: how it stands out from what is around it: strokes up to about ten pixels wide at the picture's own size.
+_TESSERACT_ENLARGED = 2
+_STROKE_WINDOW = 21
+#: How far a stroke stands out from what is around it, in grey levels, to be writing.
+_STROKE_STANDS_OUT = 60
+
+
+def _tesseract_rows(tsv: str) -> list[dict[str, str]]:
+    """The word rows of Tesseract's tab-separated output, each by its column names; rows with no text left out."""
+    lines = tsv.splitlines()
+    if not lines:
+        return []
+    names = lines[0].split("\t")
+    rows = []
+    for line in lines[1:]:
+        cells = line.split("\t")
+        if len(cells) == len(names):
+            row = dict(zip(names, cells, strict=True))
+            if row.get("text", "").strip() and row.get("conf", "-1") not in ("", "-1"):
+                rows.append(row)
+    return rows
 
 
 def _recognized_by_tesseract(image: Any) -> list[dict[str, Any]]:
-    """Every run of text in a BGR picture, read by Tesseract, in the shape Vision gives: one line a run.
+    """Every run of text in a BGR picture, read by the tesseract program, in the shape Vision gives: one line a run.
 
-    Sparse-text mode, because a window is scattered labels rather than a page. Measured 2026-10-11 on a test world's
-    title and play screens: every word and counter read right, spaces kept, in 0.13 to 0.27 seconds a picture.
+    Writing is found by how its strokes stand out from what is right around them, not by how bright it is: light
+    strokes and dark strokes are each drawn black on white and read in turn, and where both readings put a line in one
+    place the surer one is kept. Read as the picture comes, a game's rules in white over a darkened, patterned book came
+    back as "Then pi order."; read this way, every word of them, and dark counters on a light floor as well. Sparse-text
+    mode, because a window is scattered labels rather than a page.
     """
-    try:
-        import pytesseract  # noqa: PLC0415
-    except ImportError:
+    import shutil  # noqa: PLC0415
+
+    program = shutil.which("tesseract")
+    if program is None:
         return []
     try:
+        import cv2  # noqa: PLC0415
         import numpy as np  # noqa: PLC0415
 
         tall, wide = image.shape[:2]
         if not tall or not wide:
             return []
-        # A margin of the picture's own edge colour around it: Tesseract leaves out a word that touches the border, and
-        # a game's counters sit at its edges ("LIVES 3" ten pixels from the right was not read).
-        rgb = np.pad(image[:, :, ::-1], ((_TESSERACT_MARGIN, _TESSERACT_MARGIN), (_TESSERACT_MARGIN, _TESSERACT_MARGIN), (0, 0)),
-                     mode="edge")
-        found = pytesseract.image_to_data(rgb, output_type=pytesseract.Output.DICT, config="--psm 11")
+        grey = cv2.cvtColor(np.ascontiguousarray(image[:, :, :3]), cv2.COLOR_BGR2GRAY)
+        large = cv2.resize(grey, None, fx=_TESSERACT_ENLARGED, fy=_TESSERACT_ENLARGED, interpolation=cv2.INTER_CUBIC)
+        window = cv2.getStructuringElement(cv2.MORPH_RECT, (_STROKE_WINDOW, _STROKE_WINDOW))
+        lines = []
+        for stands_out in (cv2.MORPH_TOPHAT, cv2.MORPH_BLACKHAT):
+            strokes = cv2.morphologyEx(large, stands_out, window) > _STROKE_STANDS_OUT
+            if strokes.any():
+                lines += _lines_read(program, np.where(strokes, 0, 255).astype(np.uint8))
     except (OSError, RuntimeError, TypeError, ValueError, AttributeError) as why:
-        # pytesseract raises its own TesseractNotFoundError, an OSError, where the program is not installed.
         logger.debug("text recognition did not run: %s", why)
         return []
-    lines: dict[tuple[int, int, int], list[tuple[str, float, int, int, int, int]]] = {}
-    for at, said in enumerate(found.get("text") or []):
-        said = str(said or "").strip()
-        confidence = float(found["conf"][at])
-        if not said or confidence < _LEAST_TESSERACT_CONFIDENCE:
-            continue
-        line = (int(found["block_num"][at]), int(found["par_num"][at]), int(found["line_num"][at]))
-        lines.setdefault(line, []).append((said, confidence, int(found["left"][at]) - _TESSERACT_MARGIN,
-                                           int(found["top"][at]) - _TESSERACT_MARGIN,
-                                           int(found["width"][at]), int(found["height"][at])))
+    kept: list[tuple[float, str, tuple[float, float, float, float]]] = []
+    for confidence, said, box in sorted(lines, key=lambda line: -line[0]):
+        if confidence >= _LEAST_LINE_CONFIDENCE and not any(_mostly_over(box, other) for _c, _s, other in kept):
+            kept.append((confidence, said, box))
     regions: list[dict[str, Any]] = []
-    for words in lines.values():
-        left = min(w[2] for w in words)
-        top = min(w[3] for w in words)
-        right = max(w[2] + w[4] for w in words)
-        bottom = max(w[3] + w[5] for w in words)
-        x, y, w, h = left / wide, top / tall, (right - left) / wide, (bottom - top) / tall
+    for confidence, said, (left, top, right, bottom) in sorted(kept, key=lambda line: (line[2][1], line[2][0])):
+        x, y = left / _TESSERACT_ENLARGED / wide, top / _TESSERACT_ENLARGED / tall
+        w, h = (right - left) / _TESSERACT_ENLARGED / wide, (bottom - top) / _TESSERACT_ENLARGED / tall
         regions.append({
-            "text": " ".join(word[0] for word in sorted(words, key=lambda word: word[2])),
-            "x": round(x, 5), "y": round(y, 5), "width": round(w, 5), "height": round(h, 5),
-            "center_x": round(x + w / 2.0, 5), "center_y": round(y + h / 2.0, 5),
-            "confidence": round(min(word[1] for word in words) / 100.0, 4),
+            "text": said, "x": round(x, 5), "y": round(y, 5), "width": round(w, 5), "height": round(h, 5),
+            "center_x": round(x + w / 2.0, 5), "center_y": round(y + h / 2.0, 5), "confidence": round(confidence / 100.0, 4),
         })
     return regions
+
+
+def _lines_read(program: str, drawn: Any) -> list[tuple[float, str, tuple[float, float, float, float]]]:
+    """The lines Tesseract reads in black writing on white: each line's mean confidence, its words, and its box."""
+    import os  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    import cv2  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+
+    # A margin round it: Tesseract leaves out a word that touches the border, and a game's counters sit at its edges
+    # ("LIVES 3" ten pixels from the right was not read).
+    padded = np.pad(drawn, _TESSERACT_MARGIN, constant_values=255)
+    ok, png = cv2.imencode(".png", padded)
+    if not ok:
+        return []
+    try:
+        # One thread: left to itself the program spreads each reading over every core, and beside a game played on the
+        # same cores a reading took 2.27 seconds instead of 0.21 (measured 2026-10-11, five readings each way).
+        done = subprocess.run([program, "stdin", "stdout", "--psm", "11", "tsv"], input=png.tobytes(), capture_output=True,
+                              timeout=_TESSERACT_TIMEOUT_S, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})
+    except (OSError, subprocess.SubprocessError) as why:
+        logger.debug("text recognition did not run: %s", why)
+        return []
+    words: dict[tuple[str, str, str], list[tuple[str, float, int, int, int, int]]] = {}
+    for row in _tesseract_rows(done.stdout.decode("utf-8", "replace")):
+        confidence = float(row["conf"])
+        if confidence < _LEAST_TESSERACT_CONFIDENCE:
+            continue
+        words.setdefault((row["block_num"], row["par_num"], row["line_num"]), []).append(
+            (row["text"].strip(), confidence, int(row["left"]) - _TESSERACT_MARGIN, int(row["top"]) - _TESSERACT_MARGIN,
+             int(row["width"]), int(row["height"])))
+    lines = []
+    for line in words.values():
+        line.sort(key=lambda word: word[2])
+        box = (min(w[2] for w in line), min(w[3] for w in line), max(w[2] + w[4] for w in line), max(w[3] + w[5] for w in line))
+        lines.append((sum(w[1] for w in line) / len(line), " ".join(w[0] for w in line), box))
+    return lines
+
+
+def _mostly_over(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    """Whether two boxes share most of the smaller one."""
+    wide = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    tall = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return smaller > 0 and wide * tall > 0.3 * smaller
 
 
 @dataclass

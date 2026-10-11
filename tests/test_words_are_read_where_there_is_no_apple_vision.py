@@ -1,4 +1,4 @@
-"""Where Apple's Vision is not installed (Linux, a container), Tesseract reads the words on a screen.
+"""Where Apple's Vision is not installed (Linux, a container), the tesseract program reads the words on a screen.
 
 Without it every counter and every line of a game's rules read as nothing, and her play in a test world on Linux was
 play without a score: what meeting a thing does is learned from the score going up or a life going.
@@ -26,7 +26,6 @@ def _a_screen(lines: list[tuple[str, tuple[int, int]]]):
 
 
 def test_counters_and_a_sentence_are_read_as_runs_where_they_sit():
-    pytest.importorskip("pytesseract")
     if shutil.which("tesseract") is None:
         pytest.skip("no tesseract program here")
     from core.perception.what_the_pixels_show import _recognized_by_tesseract
@@ -43,16 +42,7 @@ def test_counters_and_a_sentence_are_read_as_runs_where_they_sit():
 
 
 def test_no_reader_installed_reads_nothing_rather_than_failing(monkeypatch):
-    import builtins
-
     from core.perception import what_the_pixels_show
 
-    real_import = builtins.__import__
-
-    def without_tesseract(name, *args, **kwargs):
-        if name == "pytesseract":
-            raise ImportError(name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", without_tesseract)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     assert what_the_pixels_show._recognized_by_tesseract(_a_screen([("SCORE 1", (10, 8))])) == []
