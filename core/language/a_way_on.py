@@ -72,8 +72,10 @@ def _plain(label: str) -> str:
     return " ".join(re.sub(r"[^\w' !]+", " ", str(label or "")).split()).strip()
 
 
-#: Ways on of two words, for labels the screen reading got a letter or two wrong, or put a stray mark before or after.
+#: Ways on of two words, for labels the screen reading got a letter or two wrong, or put a stray mark before or after;
+#: and those of them that go on, not back to the start.
 _TWO_WORDS = ("try again", "play again", "play game", "play now", "start game", "new game", "start over")
+_ON = tuple(phrase for phrase in _TWO_WORDS if phrase != "start over")
 
 
 def _letters_apart(one: str, other: str, at_most: int) -> bool:
@@ -141,7 +143,9 @@ def how_much_it_leads_on(label: str) -> float:
         return 1.6
     if " " not in plain and any(_one_letter_off(plain.lower(), word) for word in _ONE_WORD):
         return 1.4
-    if nearly_says(plain):
+    # Starting over is a way back that throws away what was made, not a way on: it is known for one when a run's end
+    # is judged, and is no more to click than any other label (a trap half built kept by "Edit the trap").
+    if nearly_says(plain, _ON):
         return 1.4
     # A short number alone is one to pick, as a level or a page is (core/skills/screen_pursuit_bearings.py
     # `_a_readout`): LIVE 2026-10-08 the one open level of a game was "1", rated a thing to read, and never pressed.
