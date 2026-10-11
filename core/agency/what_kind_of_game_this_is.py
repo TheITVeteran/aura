@@ -41,6 +41,21 @@ def _of_its_own(thing: Any, mine: Any) -> bool:
     return alone >= 3
 
 
+def held_to_one_line(hers: Any, keys: list[str]) -> tuple[bool, bool]:
+    """Her ways of moving, across and up and down, where she is known to be held to one line: the keys of the other way
+    have been tried and moved her not. One way known and the other untried is not a line: LIVE 2026-10-11 a girl flying
+    every way, only "up" yet learned, had a gauge called "the other side"."""
+    across, updown = hers.axes(keys)
+    other = {"up", "down", "w", "s"} if across and not updown else {"left", "right", "a", "d"} if updown and not across \
+        else set()
+    tried = getattr(hers, "tried", lambda _key: 0)
+    return (across, updown) if not any(key in other and tried(key) < TRIED_ENOUGH for key in keys) else (False, False)
+
+
+#: How many times a key is tried before what it does not do is known.
+TRIED_ENOUGH = 4
+
+
 def _the_other_side(moves: Any, mine: Any, axes: tuple[bool, bool] = (False, False)) -> list[Any]:
     """Things that play the other side: alike to hers, going of their own accord, across from her, and, as she is,
     held to one line of moving. Two paddles are two sides; a figure wandering a park beside hers is not: LIVE
@@ -77,7 +92,8 @@ def shape_of_a_moving_world(moves: Any, hers: Any, meeting: Any, physics: Any, k
             relations.append(Relation("moves across", (ME,)))
         if updown:
             relations.append(Relation("moves up and down", (ME,)))
-    other_side = {thing.kind for thing in _the_other_side(moves, mine, hers.axes(keys) if not hers.follows_pointer else (False, False))}
+    other_side = {thing.kind for thing in _the_other_side(moves, mine, held_to_one_line(hers, keys) if not hers.follows_pointer
+                                                          else (False, False))}
     for kind in sorted({thing.kind for thing in moves.things.values() if thing.moved and thing.number != mine.number}):
         name = _kind(kind)
         if kind in other_side:
@@ -127,7 +143,7 @@ def in_a_sentence(moves: Any, hers: Any, meeting: Any, physics: Any, keys: list[
         moving = sorted(hers.keys_that_move_her(keys))
         if moving:
             parts[0] += f", moved by {' and '.join(moving)}"
-    other_side = _the_other_side(moves, mine, hers.axes(keys) if not hers.follows_pointer else (False, False))
+    other_side = _the_other_side(moves, mine, held_to_one_line(hers, keys) if not hers.follows_pointer else (False, False))
     if other_side:
         parts.append(f"the {describe(moves, other_side[0].kind, other_side[0])} across from me is the other side")
     for kind in sorted({thing.kind for thing in moves.things.values() if thing.moved and thing.number != mine.number}):

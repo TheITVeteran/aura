@@ -354,3 +354,10 @@ def test_a_pointer_that_moves_her_is_not_taken_to_aim_because_a_click_does_somet
     aiming = Guide(place="a shooter")
     aiming.take_in(SCREEN, "WASD to move. Mouse to aim and shoot.")
     assert aiming.pointer_aims() and not aiming.pointer_named()
+
+
+def test_what_she_plays_is_named_up_to_the_control_that_does_it():
+    """LIVE 2026-10-11 "Control the girls press [1] to switch" named her "the girls press"."""
+    guide = Guide(place="a flying game")
+    guide.take_in(SCREEN, "Control the girls press to switch. Guide the lander safely onto the pad.")
+    assert guide.names["me"] == ["girls", "lander"]
