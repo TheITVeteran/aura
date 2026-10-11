@@ -36,6 +36,9 @@ class AWayThrough:
     _field: tuple | None = field(default=None, repr=False)
     #: The colours she has been stopped by where no thing stood: the colours of the place's walls.
     wall_colours: list[tuple[int, int, int]] = field(default_factory=list)
+    #: The way she is keeping to, cell by cell to where she is going, and how many walls were known when it was taken.
+    _path: list = field(default_factory=list, repr=False)
+    _path_walls: int = -1
 
     def new_screen(self) -> None:
         self.walls.clear()
@@ -147,7 +150,7 @@ class AWayThrough:
         if start == goal:
             return None
         columns, rows = max(1, int(wide // self.cell) + 1), max(1, int(tall // self.cell) + 1)
-        path = self._shortest(start, goal, columns, rows)
+        path = self._kept_or_new(start, goal, self._shortest(start, goal, columns, rows))
         if not path:
             return None
         furthest = path[0]
@@ -201,6 +204,22 @@ class AWayThrough:
         self._field = (key, far)
         return far
 
+    def _kept_or_new(self, start: Cell, goal: Cell, new: list[Cell]) -> list[Cell]:
+        """The way she is keeping to, while no wall has been found since it was taken, it leads on from where she is,
+        and it is not plainly longer than the shortest. Two ways of about one length, chosen afresh each picture, turn
+        her back and forth between them and she goes neither (offline 2026-10-11, up and down at the foot of a wall).
+        A wall found anywhere, by being stopped or by seeing it, and the way is chosen again."""
+        if self._path and new and self._path[-1] == goal and self._path_walls == len(self.walls):
+            near = [i for i, cell in enumerate(self._path) if max(abs(cell[0] - start[0]), abs(cell[1] - start[1])) <= 1]
+            if near:
+                rest = self._path[near[0]:]
+                rest = rest[1:] if rest[0] == start and len(rest) > 1 else rest
+                if _length([start, *rest]) <= KEEP_TO_A_WAY * _length([start, *new]):
+                    self._path = rest
+                    return rest
+        self._path, self._path_walls = new, len(self.walls)
+        return new
+
     def _at(self, x: float, y: float) -> Cell:
         return int(x // self.cell), int(y // self.cell)
 
@@ -248,6 +267,14 @@ class AWayThrough:
                     if (cx, cy) in self.walls:
                         return False
         return True
+
+
+#: How much longer than the shortest the way she keeps to may be before she takes the shorter.
+KEEP_TO_A_WAY = 1.1
+
+
+def _length(cells: list[Cell]) -> float:
+    return sum(math.dist(a, b) for a, b in zip(cells, cells[1:], strict=False))
 
 
 #: How near, in each of red, green and blue, two colours must be to be one; what share of a cell must be in a wall's
