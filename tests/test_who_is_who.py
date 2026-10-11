@@ -222,3 +222,25 @@ def test_once_is_a_sign_and_twice_is_shown():
     assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == []
     who.met(7, "gain")
     assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: getting it counted."]
+
+
+def test_what_a_kind_did_is_weighed_against_what_it_did_not():
+    """A kind met a dozen times for nothing and once as a count went up is not a prize: it is played and said as what
+    it mostly did."""
+    from core.agency.who_is_who import PRIZE, THREAT, WhoIsWho
+
+    who = WhoIsWho()
+    bush, bat = _thing(1, 3, 50.0, 50.0), _thing(2, 4, 90.0, 50.0)
+    who.met(3, "gain")
+    who.met(4, "loss")
+    for _ in range(12):
+        who.met(3, "nothing")
+        who.met(4, "nothing")
+    assert who.of(bush).name not in (PRIZE, THREAT) and who.of(bat).name not in (PRIZE, THREAT)
+    coin = _thing(3, 5, 10.0, 10.0)
+    for what in ("gain", "nothing", "gain"):
+        who.met(5, what)
+    assert (who.of(coin).name, who.of(coin).sure) == (PRIZE, True)
+    spike = _thing(4, 6, 30.0, 10.0)
+    who.met(6, "loss")
+    assert who.of(spike).name == THREAT
