@@ -138,6 +138,17 @@ LEGEND_WORDS = 6
 SEND_WAY, AS_IT_HAPPENS_WAY = "send", "as it happens"
 
 
+
+def _newly_says_the_game_is_over(observation: dict[str, Any], during: set[str]) -> str:
+    """The words by which the screen says the game is over, where nothing read while she played had them in it."""
+    from core.language.how_a_game_ended import what_says_the_game_is_over
+
+    ending = what_says_the_game_is_over(str(observation.get("text") or ""))
+    if not ending or any(ending in " ".join(str(said).lower().split()) for said in during):
+        return ""
+    return ending
+
+
 @dataclass
 class PlayingAsItHappens:
     """Eyes and hands on the part of her own page that draws, at the speed it goes."""
@@ -452,7 +463,7 @@ class PlayingAsItHappens:
             # The game itself stopped: LIVE-like 2026-10-11 a second game of falling pieces ended on the screen the
             # first had ended on, its PLAY AGAIN no longer new, and she played the end screen for a minute and a half.
             appeared = set(offered)
-        said_over = self._newly_says_the_game_is_over(observation, during)
+        said_over = _newly_says_the_game_is_over(observation, during)
         if said_over and not appeared:
             # The screen says the game is over in words it did not show while she played, whatever way on it offers:
             # LIVE 2026-10-11 a two-minute game ended on "Your final score" over the Play its title had shown, she
@@ -471,16 +482,6 @@ class PlayingAsItHappens:
             logger.info("the run is over: %s", self.over_because)
             return True
         return False
-
-    @staticmethod
-    def _newly_says_the_game_is_over(observation: dict[str, Any], during: set[str]) -> str:
-        """The words by which the screen says the game is over, where nothing read while she played had them in it."""
-        from core.language.how_a_game_ended import what_says_the_game_is_over
-
-        ending = what_says_the_game_is_over(str(observation.get("text") or ""))
-        if not ending or any(ending in " ".join(str(said).lower().split()) for said in during):
-            return ""
-        return ending
 
     def _no_place_for_shots(self) -> bool:
         """Whether the screen is one to be gone on from, not sent into: a way on shown, words that teach the rules, or
