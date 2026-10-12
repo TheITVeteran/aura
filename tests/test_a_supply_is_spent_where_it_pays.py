@@ -56,3 +56,16 @@ def test_the_counter_a_key_spends_is_the_one_that_falls_as_it_is_pressed():
         at += 1.0
     assert spending.spends("space") == "ammo"
     assert spending.spends("left") is None
+
+
+def test_a_key_pressed_often_does_not_spend_what_falls_now_and_then():
+    # Fire pressed four times a second; a life lost now and then, always just after a press.
+    spending, lives, at = SpendingASupply(), 9, 0.0
+    for i in range(80):
+        spending.pressed("space", at)
+        spending.counted(at + 0.05, {"lives": lives})
+        if i % 10 == 9:
+            lives -= 1
+            spending.counted(at + 0.1, {"lives": lives})
+        at += 0.25
+    assert spending.spends("space") is None

@@ -80,7 +80,7 @@ from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
 from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, ways_carried
-from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEGLIGIBLE, NEVER_SHOT
+from core.agency.who_is_who import FRIENDLY, IN_HER_WAY, NEVER_SHOT
 from core.perception.how_things_move_here import HowThingsMoveHere
 from core.perception.what_changed_and_stayed import WhatChangedAndStayed
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX, WhatMoves
@@ -576,12 +576,13 @@ class _Choosing:
         ]
 
     def stance(self, thing: Any) -> str:
-        # What she has found to be in her way, or negligible, is nothing to go and meet
-        # (core/agency/who_is_who.py): a wall she was stopped by is not worth a detour to touch again.
+        # What she has found to be in her way is nothing to go and meet (core/agency/who_is_who.py): a wall she was
+        # stopped by is not worth a detour to touch again. Not what is only taken for the place, never met (a door is
+        # big and still, and is what she is to go to), nor what has not come near her yet (a foe high above is on its
+        # way down, and her beam was held back from it: offline 2026-10-12).
         if self.who is not None:
             found = self.who.of(thing)
-            # Not what is only taken for the place, never met: a door is big and still, and is what she is to go to.
-            if found.sure and found.name in (IN_HER_WAY, NEGLIGIBLE) and self.meeting.stance(thing.kind) == MEET:
+            if found.sure and found.name == IN_HER_WAY and self.meeting.stance(thing.kind) == MEET:
                 return IGNORE
         # A kind that has cost her from a distance is kept clear of, whatever meeting it has done.
         if self.reach is not None and self.reach.reach(int(thing.kind)) is not None:
