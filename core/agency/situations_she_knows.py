@@ -154,6 +154,19 @@ SITUATIONS: tuple[Situation, ...] = (
         elsewhere="getting to a page or setting through a series of screens",
     ),
     Situation(
+        "steering something somewhere",
+        # Brought somewhere by her steering, in time: a lander onto its pad, a car into its space, a boat through its
+        # rings. Offline 2026-10-11 "Use the keys to guide Tommy's Lunar Lander safely onto the landing platform" put
+        # her in no situation, and the lander crashed on each try while she pressed one key every few seconds.
+        _said(r"\b(?:guide|steer|drive|fly|pilot|land|park|navigate|manoeuvre|maneuver)\b (?:[\w'’]+ ){0,5}?(?:to|into|onto|"
+              r"through|safely|softly|gently|around|past|across|between|in its|in the)\b"),
+        ("Use the arrow keys to guide Tommy's lunar lander safely onto the landing platform!",
+         "Park each car in its space without hitting the others.", "Drive the boat through all the rings."),
+        ("Use your arrow keys to move the tiles.", "Click on the doors.", "Catch the falling eggs."),
+        ways=("steer",), heading_for_her=AVOID, caution=1.5,
+        elsewhere="bringing a process to a target state without overshooting",
+    ),
+    Situation(
         "pressing at the right moment",
         _said(r"\b(?:when|as soon as|once) (?:the |it |they )?\w+ (?:lines? up|is over|reaches|hits|passes|is in)|"
               r"\b(?:at the right (?:moment|time)|in time with|on the beat|right timing)\b"),
@@ -312,7 +325,7 @@ def prior_stance(situations: Sequence[Situation], thing: Any, mine: Any) -> str:
 #: The situations played in time: what comes, falls or runs out comes whether she is ready or not.
 PLAYED_IN_TIME = frozenset({"catching what falls", "keeping clear of what comes", "keeping something away from whoever is after it",
                             "holding on until the end", "getting them all against a clock", "shooting what comes",
-                            "pressing at the right moment", "a fight at close quarters"})
+                            "pressing at the right moment", "a fight at close quarters", "steering something somewhere"})
 
 
 def played_in_time(situations: Sequence[Situation]) -> bool:

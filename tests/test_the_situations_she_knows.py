@@ -87,3 +87,14 @@ def test_a_mechanic_its_words_show_reaches_the_ways_she_chooses_from_and_one_its
         assert SEND in ways_asked("A screen with nothing to say.")
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_steering_something_somewhere_is_played_in_time_and_moving_tiles_is_not():
+    """Offline 2026-10-11 "Use the keys to guide Tommy's Lunar Lander safely onto the landing platform" put her in no
+    situation, and the lander crashed on each try while she pressed one key every few seconds."""
+    from core.agency.situations_she_knows import played_in_time, situations_in
+
+    for said in ("Use the … keys to guide TOMMY'S Lunar Lander safely onto the landing platform!",
+                 "Park each car in its space without hitting the others.", "Drive the boat through all the rings."):
+        assert played_in_time(situations_in(said)), said
+    assert not played_in_time(situations_in("Use your arrow keys to move the tiles."))
