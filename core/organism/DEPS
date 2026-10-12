@@ -33,6 +33,7 @@ include_rules = [
     "+core.perception.where_the_words_point",
     # The pure offline readiness canary checks eligibility without dispatching input.
     "+core.skills.screen_step_evidence",
+    "+core.skills.current_words_before_play", # Pure canary for current words before real-time control.
     # The completion claim probes the actual browser-play adjudication seam.
     "+core.skills.sovereign_browser_drawing",
     # The collection claim probes that each picked objective's outcome is required, at the picking seam.

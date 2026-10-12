@@ -1770,7 +1770,11 @@ async def looked_at_as_it_happens(look: Any) -> dict[str, Any]:
     reflexes = AS_IT_HAPPENS.get()
     played_before = reflexes.played_at if reflexes is not None else 0.0
     if reflexes is not None:
-        await reflexes.while_it_moves()
+        from core.skills.current_words_before_play import read_current_words
+
+        fresh = await read_current_words(reflexes, goes_on=_it_goes_on_without_her(reflexes))
+        if fresh is None or not reflexes.run_is_over(fresh):
+            await reflexes.while_it_moves()
     seen = await look()
     if reflexes is None:
         return seen

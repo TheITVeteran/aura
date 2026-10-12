@@ -46,6 +46,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _retained_structure_invariant,
     )
     from core.runtime.what_stops_it import _stop_listener_lifetime_invariant
+    from core.skills.current_words_before_play import _current_play_words_invariant
     from core.skills.screen_step_evidence import (
         _construction_readiness_invariant,
         _creation_completion_invariant,
@@ -58,6 +59,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("current_play_words_require_a_measured_frame", "core/skills/current_words_before_play.py",
+         "tests/test_current_words_precede_play_interpretation.py", lambda: _current_play_words_invariant() == (),
+         "Fast play handoff reads use current measured words; empty, old and future frames cannot remove a menu."),
         ("control_trials_keep_their_measurement_time", "core/agency/giving_a_trial_time.py",
          "tests/test_a_control_trial_gets_time_to_answer.py", lambda: _control_trial_time_invariant() == (),
          "A control trial retains its finite measurement interval while input and observation identity remain unchanged."),
