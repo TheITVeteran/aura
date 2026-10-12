@@ -92,3 +92,9 @@ def test_a_place_understood_to_be_worked_otherwise_has_no_arrows_guessed_nor_its
         assert _keys_of_play(guide, "") == ["space"]
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_clock_said_as_what_loses_is_a_place_that_goes_on_without_her():
+    """Offline 2026-10-11 a corridor of doors said only that "Out of Time" loses, and was taken for a place that waits."""
+    understood = _understood("Click on the doors. Out of Time! You have failed.")
+    assert understood.me.value == how.POINTS and understood.goes_on_without_her()

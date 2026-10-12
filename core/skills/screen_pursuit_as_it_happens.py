@@ -192,6 +192,41 @@ def _apart(a: str, b: str) -> int:
     return row[-1]
 
 
+def a_hand_among_things() -> bool:
+    """Whether she understands herself to be a hand among things in the place before her (core/agency/how_a_game_works.py):
+    what answers the pointer there is what she plays with, and is looked for however the place goes on."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import POINTS, understood
+
+    return understood(guide).me.value == POINTS
+
+
+async def _searched_the_places(reflexes: Any, now: float) -> bool:
+    """Where she is a hand among things against a clock, and many places on the screen answer the pointer, each is
+    opened in turn, fast, and what each held kept (core/agency/searching_among_places.py); whether it was. Offline
+    2026-10-11 a corridor of eighteen doors was opened one every five to fourteen seconds and the clock ran out."""
+    from core.agency.searching_among_places import AT_LEAST, search_the_places
+
+    places = list(getattr(reflexes, "answer_the_pointer", ()) or ())
+    if len(places) < AT_LEAST or reflexes.way_on_shown or not a_hand_among_things() or not _it_goes_on_without_her(reflexes):
+        return False
+    search = reflexes.keep.setdefault("searching", {"held": {}, "paired": set(), "said": False})
+    if not search["said"]:
+        search["said"] = True
+        _said_while_playing("There's a clock and many places alike: opening each in turn, quickly, and keeping in mind what "
+                            "is behind each.")
+    done = await search_the_places(reflexes.look, reflexes, places, seconds=min(STRETCH_S, reflexes.ends_at - now),
+                                   held=search["held"], paired=search["paired"])
+    if done.get("ended") == "the screen turned over":
+        search["held"], search["paired"] = {}, set()
+    reflexes.played_at = time.monotonic()
+    return bool(done.get("opened") or done.get("pairs"))
+
+
 def _made_by_placing(can_do: Any) -> bool:
     """Whether what is made here is made by carrying things into place, so that only placed work, measured, shows it
     made (core/skills/screen_step_evidence.py): things have been carried, or are said to be, or she understands herself
@@ -917,6 +952,9 @@ class PlayingAsItHappens:
         # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py); a well with a piece
         # coming down it is played by where each piece lands best (core/agency/playing_a_well.py). Neither is looked for
         # where the place's words say it is played some other way.
+        # Many places alike to open against a clock are opened in turn, fast (core/agency/searching_among_places.py).
+        if not coming and await _searched_the_places(self, now):
+            return
         otherwise = coming or _played_neither_by_turns_nor_by_pieces(self)
         if not otherwise and await _played_a_board(self, now):
             return

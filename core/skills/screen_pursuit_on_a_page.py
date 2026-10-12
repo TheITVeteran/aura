@@ -107,13 +107,18 @@ class OnAPage:
         seen.setdefault("ok", True)
         _what_the_stream_shows(seen, self.watching)
         # Whether what is read is a screen of play in a place played in time, for whoever waits on it to come to rest.
-        from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_screen_of_play_in_time
+        from .screen_pursuit_as_it_happens import (
+            AS_IT_HAPPENS,
+            a_hand_among_things,
+            a_screen_of_play_in_time,
+        )
 
         reflexes = AS_IT_HAPPENS.get()
         labels = [str(r.get("text") or "") for r in seen.get("layout") or () if isinstance(r, dict)]
         if reflexes is not None:
             reflexes.play_in_sight = a_screen_of_play_in_time(reflexes, labels)
-        if not getattr(reflexes, "play_in_sight", False):
+        # Where she is a hand among things, what answers the pointer is what she plays with, clock or none.
+        if not getattr(reflexes, "play_in_sight", False) or a_hand_among_things():
             await self._where_the_pointer_turns(seen, over)
         return seen
 

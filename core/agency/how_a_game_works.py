@@ -336,4 +336,5 @@ def _whether_it_waits(how: HowItWorks, said: str) -> None:
 #: Words that say a thing will not wait for her: what falls, lands or gets away before she acts, a clock running out.
 _HURRIED = re.compile(r"\bbefore (?:they|it|the \w+|time) (?:\w+ away|falls?|lands?|hits? the|reach(?:es)? the|escapes?|"
                       r"runs? out|crash(?:es)?|explodes?|disappears?|vanish(?:es)?)\b|\bas (?:fast|quickly) as (?:you|possible)\b|\bhurry\b|"
-                      r"\bin (?:\d+|sixty|thirty|ninety) seconds\b", re.I)
+                      r"\bin (?:\d+|sixty|thirty|ninety) seconds\b|\bout of time\b|\btime'?s up\b|\btime runs out\b|"
+                      r"\b(?:beat|against) the clock\b", re.I)
