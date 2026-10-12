@@ -78,6 +78,16 @@ def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
     return how.me.value == MAKES or how.counts.value == "make"
 
 
+def worked_by_typing(keep: dict[str, Any], guide: Any, named: Any) -> str:
+    """How a place of questions and answers that she has answered by typing is worked, whatever moves on its screen
+    after: by typing what it asks; '' for anywhere else, a game that only asked her name before play among them, and
+    for a screen that names keys of its own. Offline 2026-10-12 a riddler's answer screen played its animation, was
+    taken for play, and arrows were pressed at it for thirty-six seconds, twice, while the answer it gave went unread."""
+    if not keep.get("typed") or named or guide is None:
+        return ""
+    return "typing what it asks" if "questions" in (getattr(guide, "mechanics", None) or {}) else ""
+
+
 def _keys_of_play(guide: Any, read: str) -> list[str]:
     """The keys the guide knows play is worked by; where she understands surely that nothing of hers is moved by keys
     (core/agency/how_a_game_works.py), not those its program alone listens for: offline 2026-10-11 a game whose words
@@ -1059,6 +1069,7 @@ class PlayingAsItHappens:
             return
         # What its lesson asks is said by the place itself, and outweighs a key a screen happened to name.
         done_by = done_by or said_not_steered(guide) or done_by_its_lesson(guide)
+        done_by = done_by or worked_by_typing(self.keep, guide, named)
         if done_by and not coming:
             # Nothing it says names a control for moving, and what it is says it is done by another way: what moves on
             # it is left moving, and the screen is acted on as a screen (core/cognition/what_this_place_is.py).

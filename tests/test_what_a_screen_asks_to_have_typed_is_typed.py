@@ -325,3 +325,18 @@ def test_a_choice_that_only_lights_up_is_a_choice_made():
     assert here.choosing_here
     here.tried(a_click_on("1 Player"), changed=False)
     assert here.chose_here
+
+
+def test_a_place_of_questions_she_has_answered_by_typing_is_not_played_with_keys_when_its_screen_moves():
+    """Offline 2026-10-12 a riddler's answer screen played its animation, was taken for play, and arrows were pressed at
+    it for thirty-six seconds, twice, while the answer it gave went unread."""
+    from types import SimpleNamespace
+
+    from core.skills.screen_pursuit_as_it_happens import worked_by_typing
+
+    asks = SimpleNamespace(mechanics={"questions": object()})
+    a_game = SimpleNamespace(mechanics={"avoiding": object()})
+    assert worked_by_typing({"typed": "Aura"}, asks, []) == "typing what it asks"
+    assert worked_by_typing({"typed": "Aura"}, a_game, []) == ""          # a game that only asked her name first
+    assert worked_by_typing({}, asks, []) == ""                           # nothing typed yet
+    assert worked_by_typing({"typed": "Aura"}, asks, ["space"]) == ""     # its screen names a key to press
