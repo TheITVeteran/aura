@@ -196,6 +196,7 @@ class _Run:
     #: Whether the visible instructions give the pointer a separate trigger.
     pointer_trigger: bool = False
     taps: int = 0
+    clicks: int = 0
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
     legend: tuple[Any, ...] = ()
     said_at: float = -math.inf
@@ -545,7 +546,7 @@ async def _click_things(hands: Any, run: _Run, moves: WhatMoves, meeting: WhatMe
     if 0.0 <= sx <= 1.0 and 0.0 <= sy <= 1.0:
         await hands.click(sx, sy)
         meeting.clicked(thing, at)
-        run.last_click = at
+        run.last_click, run.clicks = at, run.clicks + 1
         if run.leading is not None and lead != CLICK_LANDS_S:
             run.leading.aimed(thing.number, at, lead)
 
@@ -577,7 +578,7 @@ async def _click_the_picture(hands: Any, run: _Run, moves: WhatMoves, at: float)
         return
     x, y = run.clicks_pay.where(run.gains, run.losses)
     await hands.click(x, y)
-    run.last_click = at
+    run.last_click, run.clicks = at, run.clicks + 1
 
 
 async def _try_the_pointer(hands: Any, run: _Run, hers: WhichIsHers, moves: WhatMoves, at: float) -> None:
@@ -1450,7 +1451,7 @@ async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say
         _say(run, say, "Nothing here follows the mouse; I'm timing each click to where the moving thing is, and keeping "
              "to the places where a click has paid.", at, once="timing")
         await hands.click(0.5, 0.5)
-        run.last_click = at
+        run.last_click, run.clicks = at, run.clicks + 1
     else:
         key = run.keys[0]
         _say(run, say, f"Nothing here moves when I press {key}; I'm timing each press to where the moving thing is, "
@@ -1672,7 +1673,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     tall, wide = moves.shape
     x, y = target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
     await hands.click(min(1.0, max(0.0, x / max(1, wide))), min(1.0, max(0.0, y / max(1, tall))))
-    run.last_click = at
+    run.last_click, run.clicks = at, run.clicks + 1
 
 
 #: The parts of her thing she imagines meeting a thing with, from one end
@@ -1846,6 +1847,9 @@ def _what_it_came_to(run: _Run, moves: WhatMoves, hers: WhichIsHers, meeting: Wh
         "counters": dict(meeting.readouts.values),
         "observations": dict(run.observation_sources),
         "input_key_downs": dict(run.input_key_downs),
+        # What she did with the pointer and how often she tapped, for whoever watches how she played.
+        "clicks": run.clicks,
+        "taps": run.taps,
         "responsive_pictures": run.responsive_pictures,
         "control_probe_retries": run.control_probe_retries,
         "control_attribution": list(run.control_attribution),

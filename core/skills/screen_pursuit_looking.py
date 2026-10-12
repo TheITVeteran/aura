@@ -1289,7 +1289,8 @@ def _how_long_to_wait() -> float:
     from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_screen_of_play_in_time
 
     reflexes = AS_IT_HAPPENS.get()
-    if getattr(reflexes, "under_her_hand", False) or a_screen_of_play_in_time(reflexes):
+    if (getattr(reflexes, "under_her_hand", False) or getattr(reflexes, "play_in_sight", False)
+            or a_screen_of_play_in_time(reflexes)):
         return GOING_ON_ANSWERS_S
     longest = max(_ANSWERS) if _ANSWERS else _ANSWERING_TOOK["longest"]
     return max(1.0, longest * 2) if longest else 4.0

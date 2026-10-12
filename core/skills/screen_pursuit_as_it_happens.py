@@ -224,6 +224,8 @@ class PlayingAsItHappens:
     ending_parts: list[str] = field(default_factory=list)
     #: Something went on going while she held a key: a world that waits for her and moves under her hand.
     under_her_hand: bool = False
+    #: Whether the screen last read is one of play in a place played in time (`a_screen_of_play_in_time`).
+    play_in_sight: bool = False
     #: Screens this run reached that the game had not shown her before, told apart by their words.
     new_screens: int = 0
     #: Her bearings on the last screen she took in (core/cognition/her_bearings.py).
@@ -793,7 +795,7 @@ class PlayingAsItHappens:
         if (stretch.get("runtime_checks") or {}).get("violations"):
             self.over_because = "runtime contract violated"
         _keep_what_she_learned(self.page, self.keep)
-        logger.info("a stretch played as it happened: %s", {k: stretch.get(k) for k in ("seconds", "ended", "hers", "keys_that_move_her", "pictures_a_second", "learned", "gains", "losses", "new_views", "views_along")})
+        logger.info("a stretch played as it happened: %s", {k: stretch.get(k) for k in ("seconds", "ended", "hers", "keys_that_move_her", "pictures_a_second", "learned", "gains", "losses", "new_views", "views_along", "input_key_downs", "clicks", "taps")})
         if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
             self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
             self.under_her_hand = False
@@ -1263,6 +1265,14 @@ async def looked_at_as_it_happens(look: Any) -> dict[str, Any]:
     reflexes.read(seen)
     seen = await _waited_out_while_made_ready(reflexes, look, seen)
     await reflexes.read_a_legend()
+    # A screen of play in a place played in time is played the moment it is seen, not after a move has been decided on
+    # it and made: offline 2026-10-11 the pursuit clicked a food fight's corner to see what it did, two seconds of a
+    # ten-second round, before play began.
+    if reflexes.played_at <= played_before and a_screen_of_play_in_time(reflexes) and not reflexes.run_is_over(seen):
+        await reflexes.while_it_moves()
+        if reflexes.played_at > played_before:
+            seen = await look()
+            reflexes.read(seen)
     # Held to a way that may still pay, she plays on with it: the pursuit is given the screen when the run is over, a
     # menu is up, or the way has had its turn and got nowhere (core/agency/the_way_it_is_played.py).
     while reflexes.goes_on_playing(seen, played_before):

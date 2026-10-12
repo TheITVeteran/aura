@@ -41,3 +41,52 @@ def test_a_screen_of_play_in_a_place_played_in_time_is_neither_swept_nor_waited_
         assert looking._how_long_to_wait() == looking.GOING_ON_ANSWERS_S
     finally:
         AS_IT_HAPPENS.reset(token)
+
+
+def test_a_screen_of_play_in_time_is_played_the_moment_it_is_seen():
+    """Offline 2026-10-11 the pursuit clicked a food fight's corner to see what it did, two seconds of a ten-second
+    round, before play began on the next look."""
+    import asyncio
+    import math
+    import time
+
+    from core.skills.screen_pursuit_as_it_happens import AS_IT_HAPPENS, looked_at_as_it_happens
+
+    class _Reflexes:
+        words = ["TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. DODGE FOOD BY PRESSING THE SPACE BAR."]
+        keep: dict = {}
+        way_on_shown = False
+        played_at = 0.0
+        ends_at = math.inf
+        moves = 0
+
+        async def while_it_moves(self):
+            self.moves += 1
+            if self.moves >= 2:      # the first, before the look, still had the menu in mind
+                self.played_at = time.monotonic()
+
+        def read(self, seen):
+            pass
+
+        async def read_a_legend(self):
+            pass
+
+        def run_is_over(self, seen):
+            return False
+
+        def goes_on_playing(self, seen, before):
+            return False
+
+    looks = []
+
+    async def look():
+        looks.append(1)
+        return {"ok": True, "text": "YOU JOHNNY MENU"}
+
+    reflexes = _Reflexes()
+    token = AS_IT_HAPPENS.set(reflexes)
+    try:
+        asyncio.run(looked_at_as_it_happens(look))
+    finally:
+        AS_IT_HAPPENS.reset(token)
+    assert reflexes.moves == 2 and len(looks) == 2
