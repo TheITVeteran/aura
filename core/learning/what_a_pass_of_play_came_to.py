@@ -40,6 +40,7 @@ _AS_ASKED = re.compile(r"it's for making things\. What I made shows|it answers w
                        r"That.s \d runs|Run \d of \d: scored [1-9]")
 _STRETCH = re.compile(r"a stretch played as it happened: (\{.*?\})(?:\n|$)")
 _SAID = re.compile(r"saying out loud: (.*)")
+_OUT_OF_TIME = re.compile(r"I've given this one its share of the time[^\n]*")
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,9 @@ def levels_in(pass_dir: str | Path) -> dict[int, HowFar]:
             played = played or bool(kept.get("pictures_a_second"))
             gains += int(kept.get("gains") or 0)
             ended.append(str(kept.get("ended") or ""))
-        said = " ".join([*(result.get("said") or []), *_SAID.findall(text)])
+        # What she says of how far she got as her time runs out is not doing what was asked: the runs of a game that
+        # can be won, told as her time ends, are not the best of three asked of a game that only keeps a score.
+        said = _OUT_OF_TIME.sub("", " ".join([*(result.get("said") or []), *_SAID.findall(text)]))
         runs = tuple(str(run) for run in result.get("runs") or ())
         if result.get("won"):
             level = WON

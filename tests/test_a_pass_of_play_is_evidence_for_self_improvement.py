@@ -84,3 +84,10 @@ def test_the_latest_pass_is_what_the_self_improvement_loop_evaluates(tmp_path):
     loop = Loop()
     assert recorded(loop, first, held_out=set()) == 1 and loop.signals[0][1] == "gained but did not do what was asked"
     assert second.exists()
+
+
+def test_how_far_she_got_told_as_her_time_ran_out_is_not_doing_what_was_asked(tmp_path):
+    played = _a_pass(tmp_path / "p1", {1: ({"runs": ["lost", "lost"]}, STRETCH % 2 + "x saying out loud: \"I've given this "
+                                           "one its share of the time, and I leave it here. That's 2 runs. My best was run 1, "
+                                           "with 3.\"\n")})
+    assert levels_in(played)[1].level == GAINED
