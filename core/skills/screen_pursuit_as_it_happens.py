@@ -563,7 +563,8 @@ class PlayingAsItHappens:
         labels = [" ".join(str(r.get("text") or "").split()) for r in observation.get("layout") or () if isinstance(r, dict)]
         self.said_now = said
         # Where the pointer turns into a hand on this screen: what answers a click, for what sends what she types.
-        self.answer_the_pointer = [(float(r["center_x"]), float(r["center_y"])) for r in observation.get("shapes") or ()
+        self.answer_the_pointer = [(float(r["center_x"]), float(r["center_y"]))
+                                   for r in [*(observation.get("shapes") or ()), *(observation.get("layout") or ())]
                                    if isinstance(r, dict) and r.get("answers_the_pointer") and "center_x" in r]
         if said and (not self.words or self.words[-1] != said):
             # A screen not taken in before, glanced at as a whole, beside her play (core/perception/what_a_scene_is.py).

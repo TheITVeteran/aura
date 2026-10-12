@@ -129,10 +129,14 @@ class OnAPage:
         else:
             places = await where_the_pointer_turns(self.page, over)
             self._swept = (words, places)
-        there = [(float(r.get("center_x", -1)), float(r.get("center_y", -1)))
-                 for r in [*(seen.get("shapes") or []), *(seen.get("layout") or [])] if isinstance(r, dict)]
+        regions = [r for r in [*(seen.get("shapes") or []), *(seen.get("layout") or [])] if isinstance(r, dict)]
         for x, y in places:
-            if any(abs(x - a) < 0.05 and abs(y - b) < 0.05 for a, b in there):
+            # Where a thing already read stands there, it is that thing which answers the pointer.
+            standing = [r for r in regions if abs(x - float(r.get("center_x", -1))) < 0.05
+                        and abs(y - float(r.get("center_y", -1))) < 0.05]
+            for region in standing:
+                region["answers_the_pointer"] = True
+            if standing:
                 continue
             seen.setdefault("shapes", []).append({"text": f"the one that stands out at {round(x * 100)}% across, "
                                                           f"{round(y * 100)}% down", "center_x": x, "center_y": y,
