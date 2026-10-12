@@ -206,6 +206,28 @@ def abandon_bound_step(pending: dict[str, Any], move: str) -> None:
         pending.pop("prepared_transfer", None)
 
 
+def current_work_is_measured(can_do: Any, observation: dict[str, Any]) -> bool:
+    """Revalidate retained work on this capture before using it for completion."""
+    from core.agency.putting_things_in_place import PuttingInPlace
+
+    if not isinstance(can_do, PuttingInPlace):
+        return False
+    can_do.observe_placements(observation, independent=True)
+    return can_do.placed_count() > 0
+
+
+@invariant("agency.creation_completion_requires_current_work", scope="agency",
+           owner="core/skills/screen_step_evidence.py", observational=False)
+def _creation_completion_invariant() -> tuple:
+    from core.agency.what_i_can_do_here import WhatWorksHere
+
+    remembered = WhatWorksHere(carried_to={'drag "part" to "canvas"': True},
+                               did_something={'click "Next background"': 500})
+    assert not current_work_is_measured(remembered, {"text": "An account says it was made"})
+    assert not current_work_is_measured(None, {"text": "Create your own scene"})
+    return ()
+
+
 def artifact_ready_for(move: str, can_do: Any = None) -> bool:
     """A construction task's execution controls need currently measured work, including unmatched controls."""
     from core.agency.what_i_can_do_here import what_is_clicked

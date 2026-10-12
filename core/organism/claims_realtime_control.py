@@ -44,6 +44,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.runtime.what_stops_it import _stop_listener_lifetime_invariant
     from core.skills.screen_step_evidence import (
         _construction_readiness_invariant,
+        _creation_completion_invariant,
         _response_dispatch_invariant,
     )
     from core.skills.sovereign_browser_drawing import (
@@ -53,6 +54,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("creation_completion_requires_current_work", "core/skills/screen_step_evidence.py",
+         "tests/test_creation_completion_needs_current_work.py", lambda: _creation_completion_invariant() == (),
+         "Construction-based making completion requires independently reobserved placed work; navigation and historical activity cannot establish it."),
         ("visual_probe_misses_require_current_pixels", "core/perception/visual_probe_cache.py",
          "tests/test_visual_probe_misses_require_current_pixels.py", lambda: _visual_probe_miss_invariant() == (),
          "A failed visual probe suppresses repeated work only for matching measured pixels and interpretation inputs within its lifetime."),

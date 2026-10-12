@@ -137,14 +137,12 @@ ANSWER_WITHIN_S = 20.0
 
 #: How long she tries out a thing whose own words set her to make something, not to win: it has no end of its own.
 TRYING_OUT_S = 90.0
-#: How many of her acts must have changed it for a thing for making to have had something made in it, and the longest
-#: she goes on trying to make something in one that will not change.
-CHANGES_MADE_AT_LEAST = 5
+#: The longest an attempt at making continues without measured current work.
 TRYING_OUT_MOST_S = 240.0
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
-MAKING_STALLED = "nothing made before the making task's time ran out"
+MAKING_STALLED = "no created work was verified before the making attempt's time ran out"
 
 #: Words that say a screen teaches how to play: it is read and gone on from, not played on. LIVE 2026-10-09 a game's
 #: putter lesson ("HOW TO USE THE PUTTER: 1. Click on your ball...") drew its "next" in letters she could not read, and
@@ -475,20 +473,25 @@ class PlayingAsItHappens:
         del seen[:-60]
         self.new_screens += 1
 
-    def run_is_over(self, observation: dict[str, Any]) -> bool:
+    def run_is_over(self, observation: dict[str, Any], *, can_do: Any = None) -> bool:
         """Whether she has played, and the screen now offers a way to start again it did not offer at first."""
         if self.over_because:
             return True
         from core.language.how_a_game_ended import what_it_asks_of_a_player
 
-        # A thing for making has no end of its own: a person tries it out a while and is done with it, once they have made
-        # something in it. Offline 2026-10-11 a scrapbook's photo was taken for made after ninety seconds of arrows
-        # pressed and a menu clicked, nothing put in its scene: the time is had, and enough of her acts change it.
+        # Menus and backgrounds can change without producing work. Use the
+        # same current occupancy evidence that permits construction controls.
         if self.for_making_since is None and what_it_asks_of_a_player(" ".join(self.words)) == "make":
             self.for_making_since, self.made_before = time.monotonic(), self.acts_that_changed
         if self.for_making_since is not None:
             making = time.monotonic() - self.for_making_since
-            if making >= TRYING_OUT_S and self.acts_that_changed - self.made_before >= CHANGES_MADE_AT_LEAST:
+            if making >= TRYING_OUT_S and can_do is not None:
+                from core.skills.screen_step_evidence import current_work_is_measured
+
+                made = current_work_is_measured(can_do, observation)
+            else:
+                made = False
+            if made:
                 self.over_because = MADE_NOT_WON
                 return True
             if making >= TRYING_OUT_MOST_S:
@@ -1235,10 +1238,10 @@ async def _waited_out_while_made_ready(reflexes: PlayingAsItHappens, look: Any, 
     return seen
 
 
-def a_handed_over_run_is_over(observation: dict[str, Any], made: int = 0) -> bool:
+def a_handed_over_run_is_over(observation: dict[str, Any], made: int = 0, *, can_do: Any = None) -> bool:
     """A run played and over ends a hand-over; what follows belongs to whoever handed it over. ``made`` is how many of
     her acts so far changed what was on the screen."""
     reflexes = AS_IT_HAPPENS.get()
     if reflexes is not None:
         reflexes.acts_that_changed = made
-    return reflexes is not None and reflexes.run_is_over(observation)
+    return reflexes is not None and reflexes.run_is_over(observation, can_do=can_do)

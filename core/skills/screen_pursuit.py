@@ -1068,7 +1068,7 @@ async def pursue_on_screen(
     def satisfied(observation: dict[str, Any]) -> bool:
         from .screen_pursuit_as_it_happens import a_handed_over_run_is_over
 
-        if a_handed_over_run_is_over(observation, made=sum(can_do.did_something.values())):
+        if a_handed_over_run_is_over(observation, made=sum(can_do.did_something.values()), can_do=can_do):
             return True
         # A layout is met on the board, which the decision reads and says.
         if pending.get("the_layout_is_made"):

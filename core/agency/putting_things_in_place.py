@@ -189,13 +189,13 @@ class PuttingInPlace:
                 self.turned_since_placed = 0
                 self.chain_ends_at = receipt.destination_at
 
-    def observe_placements(self, observation: dict[str, Any]) -> None:
+    def observe_placements(self, observation: dict[str, Any], *, independent: bool = False) -> None:
         """Revalidate retained occupants; an edit or reset cannot leave stale build credit."""
         from core.perception.observed_transfer import revalidate_placement
 
         epoch = str(observation.get("_capture_epoch") or "")
         for attempt_id, receipt in self.placement_receipts.items():
-            if epoch and epoch == receipt.after_epoch:
+            if not independent and epoch and epoch == receipt.after_epoch:
                 self.placement_states[attempt_id] = receipt.state
             else:
                 self.placement_states[attempt_id] = revalidate_placement(receipt, observation)

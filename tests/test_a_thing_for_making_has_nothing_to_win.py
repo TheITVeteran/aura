@@ -12,7 +12,7 @@ import time
 import pytest
 
 from core.language.how_a_game_ended import what_it_asks_of_a_player
-from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, TRYING_OUT_S, PlayingAsItHappens
+from core.skills.screen_pursuit_as_it_happens import TRYING_OUT_S, PlayingAsItHappens
 from core.skills.sovereign_browser_drawing import (
     _PLAY_OVER,
     NOTHING_TO_WIN,
@@ -37,16 +37,15 @@ def test_its_own_words_say_whether_it_is_won_scored_or_made():
 
 def test_a_thing_for_making_is_over_once_she_has_tried_it_out_and_made_something_in_it():
     """Offline 2026-10-11 a scrapbook's photo was taken for made after ninety seconds of arrows and a menu clicked."""
-    from core.skills.screen_pursuit_as_it_happens import CHANGES_MADE_AT_LEAST, TRYING_OUT_MOST_S
+    from core.skills.screen_pursuit_as_it_happens import TRYING_OUT_MOST_S
 
     reflexes = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="win it", ends_at=time.monotonic() + 600)
     reflexes.words = ["KND NUMBUH GENERATOR", MAKER]
     assert not reflexes.run_is_over({"text": MAKER})
     reflexes.for_making_since = time.monotonic() - TRYING_OUT_S - 1
     assert not reflexes.run_is_over({"text": MAKER})                  # its time had, but nothing made in it yet
-    reflexes.acts_that_changed = reflexes.made_before + CHANGES_MADE_AT_LEAST
-    assert reflexes.run_is_over({"text": MAKER})
-    assert reflexes.over_because == MADE_NOT_WON
+    reflexes.acts_that_changed = reflexes.made_before + 500
+    assert not reflexes.run_is_over({"text": MAKER})                 # menus changed; no artifact witness
     stuck = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="win it", ends_at=time.monotonic() + 600)
     stuck.words = ["KND NUMBUH GENERATOR", MAKER]
     stuck.run_is_over({"text": MAKER})
