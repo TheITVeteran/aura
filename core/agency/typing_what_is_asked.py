@@ -226,6 +226,11 @@ async def _sent_by_the_button_beside(look: Callable[[], Awaitable[Any]], hands: 
     shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(after[0])
               if not _holds(shape, field)]
     near = sorted((math.dist(place, field), place) for place in shapes if 0.03 < math.dist(place, field) <= SENDER_WITHIN)
+    # Where the pointer turns into a hand is surer than how a thing looks: offline 2026-10-11 a machine's GO, bright
+    # letters drawn over others, was no shape that looked pressable, and the pointer turned into a hand over it.
+    hands_over = [place for place in getattr(hands, "answer_the_pointer", ()) or ()
+                  if 0.03 < math.dist(place, field) <= SENDER_WITHIN]
+    near = sorted((math.dist(place, field), place) for place in hands_over) or near
     if not near:
         return sent
     await hands.click(*near[0][1])

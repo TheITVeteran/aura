@@ -355,6 +355,8 @@ class PlayingAsItHappens:
     ending_parts: list[str] = field(default_factory=list)
     #: Something went on going while she held a key: a world that waits for her and moves under her hand.
     under_her_hand: bool = False
+    #: The places on the screen last read where the pointer turns into a hand.
+    answer_the_pointer: list[tuple[float, float]] = field(default_factory=list)
     #: Whether the screen last read is one of play in a place played in time (`a_screen_of_play_in_time`).
     play_in_sight: bool = False
     #: Screens this run reached that the game had not shown her before, told apart by their words.
@@ -560,6 +562,9 @@ class PlayingAsItHappens:
         said = " ".join(str(observation.get("text") or "").split())
         labels = [" ".join(str(r.get("text") or "").split()) for r in observation.get("layout") or () if isinstance(r, dict)]
         self.said_now = said
+        # Where the pointer turns into a hand on this screen: what answers a click, for what sends what she types.
+        self.answer_the_pointer = [(float(r["center_x"]), float(r["center_y"])) for r in observation.get("shapes") or ()
+                                   if isinstance(r, dict) and r.get("answers_the_pointer") and "center_x" in r]
         if said and (not self.words or self.words[-1] != said):
             # A screen not taken in before, glanced at as a whole, beside her play (core/perception/what_a_scene_is.py).
             from core.cognition.a_guide_to_a_place import THE_GUIDE

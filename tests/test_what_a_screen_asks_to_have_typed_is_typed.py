@@ -184,3 +184,29 @@ def test_what_sends_what_was_typed_is_not_the_box_it_was_typed_into(monkeypatch)
     hands = _Hands()
     sent = asyncio.run(typing._sent_by_the_button_beside(look, hands, (0.64, 0.36), "return"))
     assert hands.clicked == [(0.64, 0.5)] and "0.64" in sent
+
+
+def test_where_the_pointer_turns_into_a_hand_beside_the_box_is_what_sends_it(monkeypatch):
+    """Offline 2026-10-11 a machine's GO, bright letters drawn over others, was no shape that looked pressable, and the
+    pointer turned into a hand over it."""
+    import numpy as np
+
+    from core.agency import typing_what_is_asked as typing
+
+    monkeypatch.setattr("core.perception.shapes_that_look_pressable.pressable_shapes",
+                        lambda picture: [{"center_x": 0.63, "center_y": 0.15, "width": 0.2, "height": 0.05}])
+    picture = np.zeros((40, 40, 3), dtype=np.uint8)
+
+    async def look():
+        return (picture, 0.0)
+
+    class _Hands:
+        answer_the_pointer = [(0.62, 0.5)]
+        clicked: list = []
+
+        async def click(self, x, y):
+            self.clicked.append((x, y))
+
+    hands = _Hands()
+    asyncio.run(typing._sent_by_the_button_beside(look, hands, (0.64, 0.36), "return"))
+    assert hands.clicked == [(0.62, 0.5)]
