@@ -63,6 +63,9 @@ _WHITESPACE = " \t\n\r"
 _DIGITS = "0123456789"
 _HEX_DIGITS = "0123456789abcdefABCDEF"
 _MASK_CACHE_BYTES = 32 * 1024 * 1024
+#: Machine JSON may format its structure, but cannot idle on formatting forever.
+MAX_JSON_SPACING = 8
+_QUOTED_MODES = {_STRING, _STRING_ESC, _STRING_UNICODE, _OBJ_KEY, _KEY_ESC, _KEY_UNICODE}
 
 
 @dataclass(frozen=True)
@@ -326,13 +329,26 @@ def _vocabulary_for(tokenizer: Any) -> _Vocabulary:
     return vocabulary
 
 
-def allowed_token_ids(vocabulary: _Vocabulary, state: JsonState) -> list[int]:
+def _advance_with_spacing(state: JsonState, text: str, spacing: int) -> tuple[JsonState, int] | None:
+    """Bound consecutive structural whitespace while preserving string contents."""
+    for char in text:
+        spacing = spacing + 1 if state.mode not in _QUOTED_MODES and char in _WHITESPACE else 0
+        if spacing > MAX_JSON_SPACING:
+            return None
+        state = step(state, char)
+        if state is None:
+            return None
+    return state, spacing
+
+
+def allowed_token_ids(vocabulary: _Vocabulary, state: JsonState, *, spacing: int | None = None) -> list[int]:
     """Every token whose text the automaton accepts from ``state``, whole."""
     allowed: list[int] = []
     for token_id, text in enumerate(vocabulary.texts):
         if not text:
             continue
-        if feed(state, text) is not None:
+        permitted = feed(state, text) if spacing is None else _advance_with_spacing(state, text, spacing)
+        if permitted is not None:
             allowed.append(token_id)
     if is_complete(state) or state.mode == _DONE:
         allowed.extend(sorted(vocabulary.ends))
@@ -367,19 +383,19 @@ def enforce_json(
         raise ValueError(f"require must be any, object or array, not {require!r}")
 
     vocabulary = _vocabulary_for(tokenizer)
-    masks: OrderedDict[tuple[tuple[str, tuple[str, ...], str, str, int], str], Any] = OrderedDict()
+    masks: OrderedDict[tuple[tuple[str, tuple[str, ...], str, str, int], str, int], Any] = OrderedDict()
     mask_bytes = 0
     opening = JsonState(literal="" if require == "any" else require)
-    state = {"json": opening, "seen": 0, "enforcing": after_token is None, "refused": 0}
+    state = {"json": opening, "seen": 0, "enforcing": after_token is None, "refused": 0, "spacing": 0}
     prompt: list[int] | None = None
     history: list[int] = []
 
-    def mask_for(json_state: JsonState, dtype: Any) -> Any:
+    def mask_for(json_state: JsonState, dtype: Any, spacing: int) -> Any:
         nonlocal mask_bytes
-        key = (json_state.cache_key(), str(dtype))
+        key = (json_state.cache_key(), str(dtype), spacing)
         found = masks.get(key)
         if found is None:
-            ids = allowed_token_ids(vocabulary, json_state)
+            ids = allowed_token_ids(vocabulary, json_state, spacing=spacing)
             found = mx.full((vocabulary.size,), -mx.inf, dtype=dtype)
             if ids:
                 found[mx.array(ids)] = 0.0
@@ -408,6 +424,7 @@ def enforce_json(
             state["json"] = opening
             state["enforcing"] = after_token is None
             state["seen"] = len(prompt)
+            state["spacing"] = 0
         history = token_ids
         # Catch up on tokens produced since the last call.
         while state["seen"] < produced:
@@ -420,7 +437,7 @@ def enforce_json(
             text = vocabulary.texts[token_id] if 0 <= token_id < vocabulary.size else ""
             if token_id in vocabulary.ends:
                 continue
-            advanced = feed(state["json"], text) if text else state["json"]
+            advanced = _advance_with_spacing(state["json"], text, state["spacing"]) if text else (state["json"], state["spacing"])
             if advanced is None:
                 # A token this processor did not allow got through — a
                 # sampler bypass, or a tokenizer whose decode differs from
@@ -432,11 +449,11 @@ def enforce_json(
                     state["seen"], text,
                 )
                 return logits
-            state["json"] = advanced
+            state["json"], state["spacing"] = advanced
         if not state["enforcing"]:
             return logits
         width = logits.shape[-1]
-        mask = mask_for(state["json"], logits.dtype)
+        mask = mask_for(state["json"], logits.dtype, state["spacing"])
         if width != vocabulary.size:
             # A model whose logits are wider than its tokenizer pads the tail;
             # those ids are never allowed.
