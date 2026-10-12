@@ -401,7 +401,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         if shape == MADE and (terms.made_once or terms.tell_what_was_made):
             # Made once, and what was made said, as the person asked of a thing with no end and no measure.
             run["ended"] = "finished"
-            _tell(await _what_was_made_as_seen(page, band, run, moves, list(getattr(reflexes, "words", []) or [])))
+            _tell(await _what_was_made_as_seen(page, band, run, moves, list(getattr(reflexes, "words", []) or []), keep))
             result["stopped_because"] = MADE_AS_ASKED
             break
         nothing_to_win = shape == MEASURE or _for_points_only(reflexes, goal) or _only_a_score(reflexes, run)
@@ -898,7 +898,7 @@ _WHAT_IT_SHOWS = ("This is a picture someone has just made in a game for making 
 
 
 async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, float], run: Mapping[str, Any],
-                                 moves: list[Any], words: list[str]) -> str:
+                                 moves: list[Any], words: list[str], keep: Mapping[str, Any] | None = None) -> str:
     """What she made, as her eyes see it at the end, and why, in the thing's own words for what it is for; where her
     eyes cannot say, as her choices and its last words have it (``_what_was_made``). Offline 2026-10-11 she said of a
     scrapbook she had put nothing into "I made it: at the end it shows 'PUBLIC LIBRARY'", and why she made it was not
@@ -925,6 +925,12 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         import logging
 
         logging.getLogger(__name__).info("her eyes could not say what she made: %s", str(why)[:160])
+    typed = str((keep or {}).get("typed") or "")
+    if typed:
+        # A thing that answers what is put to it: what she asked, and what it answered, as it shows it.
+        answered = shows or str(run.get("words") or "")[:160]
+        return (f"There's nothing to win or score in this one; it answers what you ask it. I asked it {typed!r}, and "
+                f"it answered: {answered[:1].lower()}{answered[1:]}.")
     if not shows:
         return _what_was_made(run, moves)
     asked = _what_it_is_for(words)

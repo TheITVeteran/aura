@@ -108,3 +108,42 @@ def test_what_she_made_is_said_as_her_eyes_see_it_and_why_in_its_own_words(monke
     said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": "NEW PHOTO"}, [], words))
     assert "shows scooby and shaggy hiding behind a bookshelf" in said.lower()
     assert "because it asks to" in said and "craziest" in said
+
+
+@pytest.mark.parametrize(("words", "asks"), [
+    ('Instructions 1. Try to type only "Yes" or "No" questions. 2. Don\'t forget to click "Ask."', "make"),
+    ("Ask the Magic 8 ball any question", "make"),
+    ("Answer the questions to win the quiz", "win"),
+    ("Type your name and press enter to begin the race", ""),
+])
+def test_a_thing_that_answers_what_is_asked_of_it_is_played_once_as_one_for_making_is(words, asks):
+    """Offline 2026-10-11 a fortune-teller asked "Will I win?" was played as it happened until its time ran out, and
+    what it answered was never said."""
+    assert what_it_asks_of_a_player(words) == asks
+
+
+def test_what_a_thing_that_answers_said_is_told_with_what_she_asked_it(monkeypatch):
+    import asyncio
+
+    import core.perception.her_eyes as eyes
+    import core.skills.sovereign_browser_drawing as drawing
+
+    class _Page:
+        viewport_size = {"width": 100, "height": 100}
+
+        async def screenshot(self, clip):
+            import io
+
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.new("RGB", (100, 100), (20, 20, 20)).save(out, format="PNG")
+            return out.getvalue()
+
+    async def seen(prompt, image, **_kw):
+        return '{"shows": "Swami Shaggy saying Like, no way, man!"}'
+
+    monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [],
+                                                      {"typed": "Will I win?"}))
+    assert "I asked it 'Will I win?'" in said and "it answered: swami shaggy saying like, no way" in said.lower()

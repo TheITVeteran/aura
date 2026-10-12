@@ -820,6 +820,9 @@ class PlayingAsItHappens:
         done = await type_what_is_asked(asked, self.look, recognize_text, self, goal=self.goal,
                                         answer=_an_answer_she_has, say=_said_while_playing)
         logger.info("typed what the screen asks for: %s", done)
+        if done.get("typed"):
+            # What she put to it, for saying what it answered: a thing asked once has its question and its answer.
+            self.keep["typed"] = str(done["typed"])
         return bool(done.get("typed"))
 
     async def _by_shots(self, now: float) -> None:

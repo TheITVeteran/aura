@@ -327,6 +327,9 @@ _FOR_MAKING: Final = re.compile(
     r"\b((?:create|make|design|build|draw|paint|invent) your own|dress (?:up|him|her|them)|decorate|customi[sz]e|"
     r"mix and match|(?:choose|pick|select|selecting|choosing|picking) your (?:own |favou?rite )(?:\w+ )?\w+s\b|"
     r"your own (?:character|creation)|use your imagination|"
+    # A thing that answers what is put to it is played once as one for making is: asked, and its answer told.
+    r"type (?:in )?(?:only )?(?:your |a |any )?(?:\W?yes\W? or \W?no\W? )?questions?|"
+    r"ask (?:\w+ ){0,4}(?:a|any|your) (?:\W?yes\W? or \W?no\W? )?questions?|"
     # "make the craziest, creepiest, or goofiest scenes you can think of": made things, said with how they are to be.
     r"(?:make|create|design|draw|compose|set up)(?: the| a| an| some)?(?: \w+,?){0,5} (?:scenes?|pictures?|photos?|"
     r"characters?|creations?|songs?|beats?|tunes?|music|designs?|outfits?|drawings?|comics?|stories|story|"
