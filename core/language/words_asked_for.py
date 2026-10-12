@@ -28,7 +28,9 @@ WORDS = "words"
 _ASKED: tuple[tuple[str, re.Pattern[str]], ...] = (
     (NAME, re.compile(r"\b(?:enter|type|write|put|fill in|give)\s+(?:in\s+)?(?:your|a|the)\s+(?:first\s+|player\s+|user\s*)?name\b"
                       # A drawn heading read with a stray letter on its front ("FYOUR NAME HERE") still asks for a name.
-                      r"|\b[a-z]?your name\b|\bname here\b|\bname\s*:", re.I)),
+                      r"|\b[a-z]?your name\b|\bname here\b|\bname\s*:"
+                      # Or a thing made to be named: offline 2026-10-12 an alien builder's "NAME YOUR ALIEN" asked nothing.
+                      r"|\bname (?:your|this|my) [a-z]+", re.I)),
     (CODE, re.compile(r"\b(?:enter|type)\s+(?:the|a|your|this|in)?\s*(?:secret\s+)?(?:code|password|pin)\b"
                       r"|\b(?:code|password)\s*:", re.I)),
     (QUESTION, re.compile(r"\b(?:type|ask|enter|write)\s+(?:in\s+)?(?:your|a|any)\s+(?:yes(?:\s+or\s+|\s*/\s*)no\s+)?question"

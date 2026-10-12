@@ -23,6 +23,7 @@ def test_what_each_screen_asks_for_is_read_off_its_words():
     assert words_asked_for("Use the arrow keys to move. Collect the stars.") is None
     # A drawn heading read with a stray letter on its front (offline 2026-10-11 the Riddler's "FYOUR NAME HERE").
     assert words_asked_for("FYOUR NAME HERE ETRYCOAIN GOUR SECRET DENTLTY").kind == NAME
+    assert words_asked_for("RANDOMIZE NAME YOUR ALIEN ATOMIC SAVE TO THE GALLERY").kind == NAME
 
 
 def test_she_types_her_name_a_question_or_an_answer_she_has_and_nothing_she_does_not():
