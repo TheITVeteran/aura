@@ -45,10 +45,16 @@ def install_realtime_control_claims(suite: Any) -> None:
         _construction_readiness_invariant,
         _response_dispatch_invariant,
     )
-    from core.skills.sovereign_browser_drawing import _current_play_veto_invariant
+    from core.skills.sovereign_browser_drawing import (
+        _current_play_veto_invariant,
+        _stalled_making_invariant,
+    )
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("stalled_making_is_not_completion", "core/skills/sovereign_browser_drawing.py",
+         "tests/test_making_timeout_does_not_make_an_artifact.py", lambda: _stalled_making_invariant() == (),
+         "An unchanged making task's timeout ends its attempt without establishing a produced artifact."),
         ("receipts_keep_terminal_effect_flags", "core/runtime/action_executor.py",
          "tests/test_external_completion_keeps_its_terminal_outcome.py", lambda: _terminal_effect_flags_invariant() == (),
          "Post-action receipt flags preserve the durable transaction's effect and reconciliation outcome."),

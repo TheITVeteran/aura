@@ -52,6 +52,9 @@ def test_a_thing_for_making_is_over_once_she_has_tried_it_out_and_made_something
     stuck.run_is_over({"text": MAKER})
     stuck.for_making_since = time.monotonic() - TRYING_OUT_MOST_S - 1
     assert stuck.run_is_over({"text": MAKER})                         # one that will not change is left in time
+    from core.skills.screen_pursuit_as_it_happens import MAKING_STALLED
+
+    assert stuck.over_because == MAKING_STALLED
 
 
 def test_she_says_what_it_is_for_in_its_own_words_and_ends_it_as_played():

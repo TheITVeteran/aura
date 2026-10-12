@@ -144,6 +144,7 @@ TRYING_OUT_MOST_S = 240.0
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
+MAKING_STALLED = "nothing made before the making task's time ran out"
 
 #: Words that say a screen teaches how to play: it is read and gone on from, not played on. LIVE 2026-10-09 a game's
 #: putter lesson ("HOW TO USE THE PUTTER: 1. Click on your ball...") drew its "next" in letters she could not read, and
@@ -487,9 +488,11 @@ class PlayingAsItHappens:
             self.for_making_since, self.made_before = time.monotonic(), self.acts_that_changed
         if self.for_making_since is not None:
             making = time.monotonic() - self.for_making_since
-            if making >= TRYING_OUT_MOST_S or (making >= TRYING_OUT_S
-                                               and self.acts_that_changed - self.made_before >= CHANGES_MADE_AT_LEAST):
+            if making >= TRYING_OUT_S and self.acts_that_changed - self.made_before >= CHANGES_MADE_AT_LEAST:
                 self.over_because = MADE_NOT_WON
+                return True
+            if making >= TRYING_OUT_MOST_S:
+                self.over_because = MAKING_STALLED
                 return True
         if not any(stretch.get("pictures") for stretch in self.stretches):
             return False

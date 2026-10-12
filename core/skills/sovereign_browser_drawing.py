@@ -348,7 +348,12 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
 
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
-    from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, _this_game, begin_run
+    from core.skills.screen_pursuit_as_it_happens import (
+        MADE_NOT_WON,
+        MAKING_STALLED,
+        _this_game,
+        begin_run,
+    )
 
     # What the person said counts as done for each shape of thing: an end reached, a measure bettered, a thing made.
     terms = terms_asked(goal)
@@ -396,6 +401,12 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         violations = [v for s in reflexes.stretches for v in (s.get("runtime_checks") or {}).get("violations", [])]
         if violations:
             result["runtime_violations"] = violations
+            break
+        if reflexes.over_because == MAKING_STALLED:
+            result["stopped_because"] = MAKING_STALLED
+            result["completed"] = False
+            run["ended"], run["reached_end"] = "", False
+            _tell("I could not finish making something here; I have not verified a result to show.")
             break
         shape = MADE if reflexes.over_because == MADE_NOT_WON else _the_shape_of(reflexes, run)
         if shape == MADE and (terms.made_once or terms.tell_what_was_made):
@@ -486,6 +497,8 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     complete = complete or ((fulfilled_measure or result.get("stopped_because") == MADE_AS_ASKED) and not result.get("runtime_violations"))
     if measure_mode:
         complete = bool(fulfilled_measure and not result.get("runtime_violations"))
+    if result.get("stopped_because") == MAKING_STALLED:
+        complete = False
     scores = [r["score"] for r in finished_runs if r.get("score") is not None]
     return {
         **step,
@@ -795,6 +808,24 @@ def _measure_runs_count_invariant() -> tuple:
         runs = [{"reached_end": True, "score": 120} for _ in range(count)]
         runs += [{"reached_end": False, "score": 9999} for _ in range(5)]
         assert _measure_runs_are_done(runs, 3) is (count >= 3)
+    return ()
+
+
+@invariant("agency.stalled_making_is_not_completion", scope="agency",
+           owner="core/skills/sovereign_browser_drawing.py", observational=False)
+def _stalled_making_invariant() -> tuple:
+    import time
+
+    from core.skills.screen_pursuit_as_it_happens import (
+        MAKING_STALLED,
+        TRYING_OUT_MOST_S,
+        PlayingAsItHappens,
+    )
+
+    run = PlayingAsItHappens(None, (0, 0, 1, 1), "make one", time.monotonic() + 60)
+    run.words, run.for_making_since = ["Create your own card."], time.monotonic() - TRYING_OUT_MOST_S - 1
+    assert run.run_is_over({"text": "CARD EDITOR"})
+    assert run.over_because == MAKING_STALLED
     return ()
 
 
