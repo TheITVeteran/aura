@@ -142,3 +142,45 @@ def test_the_box_drawn_under_the_words_that_ask_is_clicked_first_in_its_middle()
                 "center_x": 0.41, "center_y": 0.375}]
     first = places_to_type(words_asked_for("Enter your name."), regions, picture)[0]
     assert abs(first[0] - 275 / 600) < 0.03 and abs(first[1] - 183 / 400) < 0.02, first
+
+
+def test_a_place_that_answers_what_was_typed_on_the_screen_that_asked_is_done_and_one_that_leads_on_is_not():
+    """Offline 2026-10-11 a secret-identity machine answered her name and offered to try again; she pressed TRY AGAIN
+    and wiped the answer, having taken it for no more than a way to start again. A golf game that took a player's name
+    and went on to its course had answered nothing."""
+    from core.skills.screen_pursuit_as_it_happens import _answered_since_typed
+
+    machine = {"typed": "Aura", "typed_kind": "a name", "typed_on": "YOUR NAME HERE GO YOUR SECRET IDENTITY",
+               "typed_asked_by": "YOUR NAME HERE"}
+    answered = _answered_since_typed(machine, {"text": "YOUR NAME HERE Aura TRY AGAIN YOUR SECRET IDENTITY THE PUZZLE MASTER"})
+    assert "PUZZLE MASTER" in answered
+    assert not _answered_since_typed(machine, {"text": "YOUR NAME HERE Aura GO YOUR SECRET IDENTITY"}), "nothing new yet"
+    golf = {"typed": "Aura", "typed_kind": "a name", "typed_on": "Player 1 Enter your name OK",
+            "typed_asked_by": "Enter your name"}
+    assert not _answered_since_typed(golf, {"text": "HOLE 1 PAR 3 STROKES 0 Click on your ball and drag back"})
+
+
+def test_what_sends_what_was_typed_is_not_the_box_it_was_typed_into(monkeypatch):
+    """Offline 2026-10-11 the shape "beside" a name was the box the name was in, and its GO, a line below, was never
+    pressed."""
+    import numpy as np
+
+    from core.agency import typing_what_is_asked as typing
+
+    shapes = [{"center_x": 0.63, "center_y": 0.35, "width": 0.4, "height": 0.1},
+              {"center_x": 0.64, "center_y": 0.5, "width": 0.08, "height": 0.06}]
+    monkeypatch.setattr("core.perception.shapes_that_look_pressable.pressable_shapes", lambda picture: shapes)
+    picture = np.zeros((40, 40, 3), dtype=np.uint8)
+
+    async def look():
+        return (picture, 0.0)
+
+    class _Hands:
+        clicked: list = []
+
+        async def click(self, x, y):
+            self.clicked.append((x, y))
+
+    hands = _Hands()
+    sent = asyncio.run(typing._sent_by_the_button_beside(look, hands, (0.64, 0.36), "return"))
+    assert hands.clicked == [(0.64, 0.5)] and "0.64" in sent

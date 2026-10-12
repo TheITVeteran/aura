@@ -112,6 +112,33 @@ def _what_play_showed_of_how_it_works(stretch: dict[str, Any]) -> None:
         _said_while_playing(now.replace("As I understand it:", "Now I understand it better:", 1))
 
 
+#: The fewest words of the language, new on the screen that asked, for what she typed to have been answered.
+NEW_WORDS_AN_ANSWER = 2
+
+
+def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> str:
+    """What a place answered to what she typed into it, where it answered on the screen that asked: the words that
+    asked still on it, and words of the language on it that were not, nor what she typed. A place that took her name
+    and went on to another screen (its game) has answered nothing: the words that asked are gone. Offline 2026-10-11 a
+    secret-identity machine answered her name, offered to try again, and she pressed TRY AGAIN and wiped the answer,
+    having taken it for no more than a way to start again. The screen's words where it answered, else ""."""
+    import re
+
+    from core.language.words_of_the_language import the_word
+
+    typed, before, asked_by = keep.get("typed"), keep.get("typed_on"), str(keep.get("typed_asked_by") or "")
+    if not typed or before is None:
+        return ""
+    now = " ".join(str(observation.get("text") or "").split())
+    words_now = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", now)}
+    asking = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", asked_by)}
+    if not asking or len(asking & words_now) < 0.5 * len(asking):
+        return ""
+    seen = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", f"{before} {typed}")}
+    new = {w for w in words_now - seen if the_word(w) is not None}
+    return now if len(new) >= NEW_WORDS_AN_ANSWER else ""
+
+
 def _made_by_placing(can_do: Any) -> bool:
     """Whether what is made here is made by carrying things into place, so that only placed work, measured, shows it
     made (core/skills/screen_step_evidence.py): things have been carried, or are said to be, or she understands herself
@@ -600,6 +627,7 @@ class PlayingAsItHappens:
         """Whether she has played, and the screen now offers a way to start again it did not offer at first."""
         if self.over_because:
             return True
+        self.keep["answered"] = self.keep.get("answered") or _answered_since_typed(self.keep, observation)
         if self.keep.get("answered"):
             # A question put to a thing that answers questions, and answered, is the thing done once.
             self.over_because, self.ending_words = MADE_NOT_WON, str(self.keep["answered"])
@@ -977,6 +1005,8 @@ class PlayingAsItHappens:
             # once is answered: offline 2026-10-11 a name typed and left in its box was typed into again, "AuAurara".
             tries[asked.kind] = 2
             self.keep["typed"] = str(done["typed"])
+            self.keep["typed_kind"], self.keep["typed_on"] = str(done.get("kind") or ""), self.words[-1]
+            self.keep["typed_asked_by"] = asked.asked_by
             if done.get("kind") == QUESTION:
                 self.keep["answered"] = await _what_it_answered(self.look, recognize_text)
         return bool(done.get("typed"))

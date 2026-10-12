@@ -221,12 +221,25 @@ async def _sent_by_the_button_beside(look: Callable[[], Awaitable[Any]], hands: 
     a, b = (np.asarray(seen[0])[:, :, :3].astype(np.int16) for seen in (before, after))
     if a.shape != b.shape or (np.abs(a - b).max(axis=2) > 40).mean() > SCREEN_CHANGED:
         return sent
-    shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(after[0])]
+    # Not the box typed into: offline 2026-10-11 the shape "beside" a name was the box the name was in, and its GO, a
+    # line below, was never pressed by it.
+    shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(after[0])
+              if not _holds(shape, field)]
     near = sorted((math.dist(place, field), place) for place in shapes if 0.03 < math.dist(place, field) <= SENDER_WITHIN)
     if not near:
         return sent
     await hands.click(*near[0][1])
     return f"the control beside it at {near[0][1]}"
+
+
+def _holds(shape: dict[str, Any], place: tuple[float, float]) -> bool:
+    """Whether a shape's box holds a place: the box itself, not a control beside it."""
+    try:
+        x, y = float(shape["center_x"]), float(shape["center_y"])
+        half_w, half_h = float(shape.get("width", 0.0)) / 2, float(shape.get("height", 0.0)) / 2
+    except (KeyError, TypeError, ValueError):
+        return False
+    return abs(place[0] - x) <= half_w and abs(place[1] - y) <= half_h
 
 
 def _shows(written: str, text: str) -> bool:
