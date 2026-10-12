@@ -58,3 +58,24 @@ def test_a_way_on_read_right_a_moment_ago_is_what_a_misreading_in_its_place_says
                         {"text": "Score 120", "center_x": 0.74, "center_y": 0.85}]}
     _ways_on_read_right_before(playing, later)
     assert [region["text"] for region in later["layout"]] == ["Start", "BLEADELS", "Score 120"]
+
+
+def test_a_start_over_read_in_two_and_a_warning_of_loss_are_read_as_what_they_are():
+    """Offline 2026-10-12 an alien builder's START OVER, its two words set one above the other, was read as START and
+    pressed twenty times, each time asking "ARE YOU SURE? YOU WILL LOSE ALL CURRENT PROGRESS ON YOUR ALIEN"."""
+    from core.language.a_way_on import how_much_it_leads_on
+    from core.skills.screen_pursuit_as_it_happens import _starting_over_read_whole
+
+    builder = {"text": "VIEW GALLERY START OVER I'M DONE!",
+               "layout": [{"text": "START", "center_x": 0.74, "center_y": 0.9}, {"text": "OVER", "center_x": 0.74, "center_y": 0.94},
+                          {"text": "I'M DONE!", "center_x": 0.88, "center_y": 0.9}]}
+    _starting_over_read_whole(builder)
+    assert [region["text"] for region in builder["layout"]] == ["START OVER", "OVER", "I'M DONE!"]
+    assert how_much_it_leads_on("I'M DONE!") > 1.0 > how_much_it_leads_on("START OVER")
+    warned = {"text": "ARE YOU SURE? YOU WILL LOSE ALL CURRENT PROGRESS ON YOUR ALIEN. CANCEL OK",
+              "layout": [{"text": "CANCEL", "center_x": 0.55, "center_y": 0.6}, {"text": "OK", "center_x": 0.66, "center_y": 0.6}]}
+    _starting_over_read_whole(warned)
+    assert [region["text"] for region in warned["layout"]] == ["CANCEL"]
+    plain = {"text": "LEVEL COMPLETE OK", "layout": [{"text": "OK", "center_x": 0.5, "center_y": 0.6}]}
+    _starting_over_read_whole(plain)
+    assert [region["text"] for region in plain["layout"]] == ["OK"]

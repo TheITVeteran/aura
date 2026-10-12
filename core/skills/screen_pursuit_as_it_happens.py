@@ -1319,6 +1319,38 @@ WAY_ON_KEPT_S = 30.0
 WAY_ON_SAME_PLACE = 0.03
 
 
+#: Words that ask whether she is sure of something that loses what she has; and the controls that agree and decline.
+_A_WARNING = re.compile(r"\bare you sure\b|\b(?:lose|erase|delete|clear|reset)\s+(?:all\s+)?(?:your\s+|the\s+|current\s+)*"
+                        r"(?:progress|work|changes|data|game|alien|save[ds]?)\b|\breally\s+want\s+to\s+quit\b", re.I)
+_AGREES = re.compile(r"^\W*(?:ok(?:ay)?|yes|sure|confirm|quit|delete|erase|reset)\W*$", re.I)
+_DECLINES = re.compile(r"^\W*(?:cancel|no|back|keep\s+playing|go\s+back|never\s*mind)\W*$", re.I)
+
+
+def _starting_over_read_whole(observation: dict[str, Any]) -> None:
+    """A "START" read alone with an "OVER" (or "AGAIN") just under or beside it is the one control "START OVER", a way
+    back that throws away what was made, not a way on: offline 2026-10-12 an alien builder's START OVER, its two words
+    set one above the other, was read as START, pressed twenty times, and each time asked whether to lose the alien."""
+    import math
+
+    layout = [region for region in observation.get("layout") or () if isinstance(region, dict) and "center_x" in region]
+    # A screen that asks whether she is sure, warning what will be lost, is not agreed to: a player out to finish keeps
+    # what is made and the game going. Its agreeing controls are left out of what she can press, and the way back
+    # stays. Offline 2026-10-12 "ARE YOU SURE? YOU WILL LOSE ALL CURRENT PROGRESS ON YOUR ALIEN. CANCEL OK".
+    said = " ".join(str(observation.get("text") or "").split())
+    if _A_WARNING.search(said) and any(_DECLINES.match(" ".join(str(r.get("text") or "").split())) for r in layout):
+        observation["layout"] = [region for region in observation.get("layout") or ()
+                                 if not (isinstance(region, dict) and _AGREES.match(" ".join(str(region.get("text") or "").split())))]
+    for region in layout:
+        if " ".join(str(region.get("text") or "").split()).lower() not in ("start", "begin"):
+            continue
+        place = (float(region["center_x"]), float(region["center_y"]))
+        for other in layout:
+            word = " ".join(str(other.get("text") or "").split()).lower()
+            if word in ("over", "again", "over!") and math.dist(place, (float(other["center_x"]), float(other["center_y"]))) <= 0.06:
+                region["text"] = f"{region['text']} {other.get('text')}"
+                break
+
+
 def _ways_on_read_right_before(reflexes: PlayingAsItHappens, observation: dict[str, Any]) -> None:
     """A way on read right a moment ago ("Start") is what a misreading in the same place now says ("tarit"), and the
     look's layout says so. Offline 2026-10-12 a title's small "start" was read once, then otherwise at every look, and in
@@ -1330,6 +1362,7 @@ def _ways_on_read_right_before(reflexes: PlayingAsItHappens, observation: dict[s
 
     now = time.monotonic()
     kept = [way for way in reflexes.keep.get("ways_on_read") or () if now - way[3] <= WAY_ON_KEPT_S]
+    _starting_over_read_whole(observation)
     for region in observation.get("layout") or ():
         if not isinstance(region, dict) or "center_x" not in region or "center_y" not in region:
             continue

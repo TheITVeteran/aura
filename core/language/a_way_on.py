@@ -32,6 +32,9 @@ _GOES_ON = re.compile(
     r"(?:try|play|retry|replay|restart|next)(?:\s+(?:this|the|that|your))?\s+(?:level|round|stage|game|hole|race|course|"
     r"mission|track|puzzle|page|room|day|night|wave)(?:\s+again)?\s*[>»!.]*|"
     r"enter|let'?s\s+go|ready|i'?m\s+ready|yes|accept|done|new\s+game|easy|normal|1\s*player|one\s+player|"
+    # A thing made is finished by saying it is: offline 2026-10-12 an alien builder's "I'M DONE!" rated no way on, and
+    # its "START OVER" was pressed instead, twenty times.
+    r"i'?m\s+done|all\s+done|i'?m\s+finished|finish(?:ed)?|that'?s\s+it|"
     r"(?:click|press|tap)\s+(?:here\s+)?to\s+(?:play|start|begin|continue)|(?:press|hit)\s+(?:any\s+key|space|enter|start))$",
     re.IGNORECASE,
 )
