@@ -359,6 +359,8 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     from core.perception.where_i_am_on_screen import where_the_avatar_is, which_thing_is_shown
 
     seeing.began = at if seeing.began is None else seeing.began
+    if _no_body_of_hers(run, guide):
+        return
     if seeing.avatar_asking is None and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
         try:
             asyncio.get_running_loop()
@@ -414,6 +416,19 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     answered = presses is not None and presses.moves_anything(ANSWERED_BY_PX)
     if not known and tried and answered and at - seeing.began >= AVATAR_TAKEN_AFTER_S and not hers.follows_pointer:
         hers.seen_to_be_her(thing, at, what)
+
+
+#: The keys that move a body about.
+_MOVING_KEYS = frozenset({"up", "down", "left", "right", "w", "a", "s", "d"})
+
+
+def _no_body_of_hers(run: Any, guide: Any) -> bool:
+    """Whether the place puts no body of hers in the picture: a click is her shot, no key she has moves anything, and
+    nothing is said to follow the pointer. Her eyes are not asked which one is her there: offline 2026-10-11 a food
+    fight seen over a table had its opponent said to be her ("That looks like me: the muscular man")."""
+    keys = set(getattr(run, "keys", ()) or ())
+    moves = (getattr(guide, "pointer", None) or {}).get("moves")
+    return bool(getattr(run, "pointer_trigger", False)) and not keys & _MOVING_KEYS and not moves
 
 
 def _the(what: str) -> str:

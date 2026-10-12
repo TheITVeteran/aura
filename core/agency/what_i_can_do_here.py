@@ -240,6 +240,8 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
     #: The keys the guide knows the place is worked with, where it knows and no arrow is among them: no other key is
     #: tried to see what it does.
     keys_known: frozenset[str] | None = None
+    #: Whether a screen or the guide has named the pointer as a way the place is worked.
+    pointer_said: bool = False
     where: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     def asked_for_by(self, words: str, clickable: Sequence[str] = (), drawn: Sequence[str] = (), counsel: str = "") -> None:
@@ -280,7 +282,8 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         # A screen that names no controls keeps what the game's own screens said before it: LIVE 2026-10-08 the rules
         # said "click your mouse button to start", and on the game's wordless screen after them she pressed arrows.
         if keys or pointer:
-            self.pointer_only = pointer and not keys
+            self.pointer_only, self.pointer_said = pointer and not keys, self.pointer_said or pointer
+            self._the_guess_answered(set(keys), pointer, said_here=True)
         else:
             # Where the screen names none, what the guide to the place holds of its controls: only the pointer, and no
             # key, is a place worked with the mouse (LIVE 2026-10-10 "Going down", "Going left" in a boat game whose
@@ -297,14 +300,25 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             named = getattr(guide, "pointer_named", None)
             pointer = "the pointer" in (said or set(controls)) or bool(callable(named) and named())
             if said or controls or pointer:
-                self.pointer_only = pointer and not (said or set(controls)) - {"the pointer"}
-            # The arrows offered where nothing names the keys are a guess. Where the guide knows how the place is
-            # worked and no arrow moves anything in it (nor a set of WASD), they are not pressed: offline 2026-10-11 a
-            # mini-golf game worked with the mouse, return and s had its arrows pressed on every screen.
-            known = set(controls)
-            arrows = {"up", "down", "left", "right"}
-            if (known or pointer) and not known & arrows and len(known & set("wasd")) < 3 and set(self.told) <= arrows:
-                self.told, self.keys_known = (), frozenset(known - {"the pointer"})
+                self.pointer_only, self.pointer_said = pointer and not (said or set(controls)) - {"the pointer"}, pointer
+            self._the_guess_answered(set(controls), pointer)
+
+    def _the_guess_answered(self, known: set[str], pointer: bool, *, said_here: bool = False) -> None:
+        """The arrows offered where nothing names the keys are a guess. Where how the place is worked is known (the
+        keys it names, the pointer) and no arrow moves anything in it (nor a set of WASD), they are not pressed, and
+        what it is known to be worked with is offered instead: offline 2026-10-11 a mini-golf game worked with the
+        mouse, return and s had its arrows pressed on every screen; and a food fight whose rules said "take aim with
+        your mouse and click to throw" and "dodge food by pressing the space bar" had each arrow pressed and watched on
+        its first screen of play while the other side threw, and the round was lost before she threw once. A screen
+        names both for this (``said_here``): one that names only the pointer is clicked, and keeps the guess for the
+        next. Where keys that move are named, the arrows are what is pressed again."""
+        arrows = {"up", "down", "left", "right"}
+        if known & arrows or len(known & set("wasd")) >= 3:
+            if self.keys_known is not None:
+                self.told, self.keys_known = COMMITS_TO_NOTHING, None
+            return
+        if (known and pointer if said_here else known or pointer) and set(self.told) <= arrows:
+            self.told, self.keys_known = (), frozenset(known - {"the pointer"})
 
     def looked_at(self, clickable: Sequence[str], says: str = "", looks: Mapping[str, tuple[float, ...]] | None = None,
                   where: Mapping[str, tuple[float, float]] | None = None, selector_view: Any = None) -> None:
@@ -462,6 +476,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             and (self.keys_known is None or key in self.keys_known)
         ]
         wider += [click for click in self.on_screen if click not in dead and click not in wider and _not_read_only(click)]
+        wider += self._known_to_be_worked_with(dead, wider)
         if wider and set(wider) != set(self.told) and not self.said_it_differs:
             self.said_it_differs = True
             logger.info(
@@ -470,6 +485,16 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
                 ", ".join(wider),
             )
         return tuple(wider)
+
+    def _known_to_be_worked_with(self, dead: set[str], offered: list[str]) -> list[str]:
+        """Where the guess the arrows are has been answered, the keys the place is known to be worked with, and the
+        picture clicked where it is worked with the pointer: a place known to be worked with the mouse and space was
+        left nothing to try at all on its wordless screen of play (offline 2026-10-11)."""
+        if self.keys_known is None:
+            return []
+        known = [key for key in sorted(self.keys_known) if key not in dead and key not in offered]
+        picture = a_click_on(THE_PICTURE)
+        return known + ([picture] if self.pointer_said and picture not in dead and picture not in offered else [])
 
     def still_finding_out(self) -> bool:
         """Whether anything is left to try."""

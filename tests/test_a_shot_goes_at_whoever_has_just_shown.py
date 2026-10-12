@@ -40,6 +40,16 @@ def test_whoever_has_just_shown_is_thrown_at_before_what_goes_across() -> None:
     assert what_the_shot_goes_at([just_shown], 10.0, not_numbers=(2,)) is None
 
 
+def test_a_speck_redrawn_is_no_one_showing_and_someone_standing_after_moving_is_thrown_at() -> None:
+    """Offline 2026-10-11 a food fight's opponent ran to and fro, and each throw went at a speck of the counter redrawn
+    as her bar went down: what has just shown is someone only near the size of what moves."""
+    runner = _thing(1, 200, 150, vx=80.0, born=1.0, size=2700.0)
+    speck = _thing(2, 40, 10, born=9.8, size=20.0)
+    assert what_the_shot_goes_at([runner, speck], 10.0).number == 1
+    standing = SimpleNamespace(**{**vars(_thing(3, 220, 150, born=1.0, size=2700.0)), "moved": True})
+    assert what_the_shot_goes_at([standing, speck], 10.0).number == 3
+
+
 def test_a_thing_that_grows_is_coming_at_her() -> None:
     assert comes_at_her([_thing(1, 0, 0, sizes=(100, 110, 125, 150, 180))])
     assert not comes_at_her([_thing(1, 0, 0, sizes=(100, 100, 101, 100, 100))])
@@ -79,3 +89,13 @@ def test_it_is_pressed_when_something_comes_at_her_and_the_throw_still_made() ->
     hands = _a_turn([_thing(2, 300, 120, born=9.2), _thing(5, 320, 300, born=8.0, sizes=(100, 120, 150, 190, 240))])
     assert hands.taps == ["space"]
     assert len(hands.clicks) == 1
+
+
+def test_where_a_click_is_her_shot_and_nothing_moves_her_there_is_no_body_of_hers_to_look_for() -> None:
+    """Offline 2026-10-11 a food fight's opponent was said to be her: "That looks like me: the muscular man"."""
+    from core.agency.naming_what_she_sees import _no_body_of_hers
+
+    assert _no_body_of_hers(SimpleNamespace(pointer_trigger=True, keys=["space"]), SimpleNamespace(pointer={}))
+    assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=True, keys=["w", "a", "s", "d"]), SimpleNamespace(pointer={}))
+    assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=True, keys=[]), SimpleNamespace(pointer={"moves": "mac"}))
+    assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=False, keys=["space"]), SimpleNamespace(pointer={}))

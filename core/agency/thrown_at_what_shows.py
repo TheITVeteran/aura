@@ -15,7 +15,7 @@ import math
 from collections.abc import Collection, Iterable
 from typing import Any
 
-__all__ = ["JUST_SHOWN_S", "comes_at_her", "what_the_shot_goes_at"]
+__all__ = ["A_FIGURE", "JUST_SHOWN_S", "comes_at_her", "what_the_shot_goes_at"]
 
 #: How long after it comes into sight a thing is one that has just shown, in seconds: about as long as one stays up.
 JUST_SHOWN_S = 1.5
@@ -27,16 +27,26 @@ GROWN = 1.3
 OVER = 4
 
 
+#: The least a thing that has just shown is, as a share of the biggest thing that has moved, to be someone showing and
+#: not a bit of the picture redrawn (a bar going down, a sparkle).
+A_FIGURE = 0.25
+
+
 def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Collection[int] = (),
                           not_kinds: Collection[int] = ()) -> Any | None:
     """The thing to send the shot at: the biggest of those that have just shown and stand where they showed; where
-    none has, the biggest of those going somewhere; None where there is neither. ``not_numbers`` and ``not_kinds``
-    are left out: her own thing, and the kinds her own presses bring out."""
+    none has, the biggest of those going somewhere; and where nothing goes, the biggest that has moved, standing for a
+    moment; None where there is none of these. What has just shown is someone only where it is near the size of what
+    moves: offline 2026-10-11 a food fight's opponent ran to and fro the whole round, and each throw went at a speck of
+    the counter redrawn as her bar went down. ``not_numbers`` and ``not_kinds`` are left out: her own thing, and the
+    kinds her own presses bring out."""
     mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds]
+    figures = [thing for thing in mine if getattr(thing, "moved", False) or math.hypot(thing.vx, thing.vy) > GOING]
+    least = A_FIGURE * max((float(thing.size) for thing in figures), default=0.0)
     shown = [thing for thing in mine if at - float(getattr(thing, "born", at)) <= JUST_SHOWN_S
-             and math.hypot(thing.vx, thing.vy) <= GOING]
+             and math.hypot(thing.vx, thing.vy) <= GOING and float(thing.size) >= least]
     going = [thing for thing in mine if math.hypot(thing.vx, thing.vy) > GOING]
-    for lot in (shown, going):
+    for lot in (shown, going, figures):
         if lot:
             return max(lot, key=lambda thing: float(thing.size))
     return None

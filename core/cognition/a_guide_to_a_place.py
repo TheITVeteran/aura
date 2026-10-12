@@ -848,9 +848,23 @@ _TO_ANY = re.compile(rf"\bto ((?!(?:the|a|an|your|be|it|them|go|get)\b)[a-z]{{3,
                      rf"((?!{_NOT_AN_OBJECT})[a-z]+(?:\s+(?!{_NOT_AN_OBJECT})[a-z]+)?))?", re.I)
 
 
+#: An act said to be done by a control ("dodge food by pressing the space bar", "jump by hitting up"): the act, and what
+#: it is done to, come before it, at the start of what is said.
+_DONE_BY = re.compile(r"(?:^|[.!?:;,]\s*)(?:(?:you|then|and|also|simply|just|can|must)\s+)*([a-z]{3,})\b((?:\s+(?!by\b)"
+                      r"[a-z']+){0,3}?)\s+by\s+(?:pressing|hitting|tapping|clicking|holding|using|pushing)\b", re.I)
+
+
 def _the_act_and_what_on(sentence: str) -> tuple[str, str]:
     """What a control is said to do, and what to, where its words say: ("open", "doors"); ("jump", ""). Where the thing
-    is named before the act and the act says "them" ("Click on the doors to open them"), the thing named before."""
+    is named before the act and the act says "them" ("Click on the doors to open them"), the thing named before. An act
+    said to be done by pressing comes before any other: offline 2026-10-11 "HOW TO PLAY THE FOOD FIGHT: DODGE FOOD BY
+    PRESSING THE SPACE BAR" gave space to playing, and it was no key of play."""
+    done_by = _DONE_BY.search(sentence or "")
+    if done_by:
+        # What the control is used on, where it says ("by clicking on the ghosts"), before what the act is done to.
+        at = re.match(r"\s*(?:on|at)\s+(?:the |a |an |your |any |all )?([a-z]+(?:\s+[a-z]+)?)", sentence[done_by.end():], re.I)
+        on = (at.group(1) if at else re.sub(r"^(?:the|a|an|your|any|all)\s+", "", done_by.group(2).strip())).lower()
+        return done_by.group(1).lower(), "" if not on or re.match(_NOT_AN_OBJECT, on) or on in _NOT_WHAT_ON else on
     known = _the_act(sentence)
     if known:
         after = re.search(rf"\bto {re.escape(known)}\b\s+(?:the |a |an |your |any |all )?((?!{_NOT_AN_OBJECT})[a-z]+"

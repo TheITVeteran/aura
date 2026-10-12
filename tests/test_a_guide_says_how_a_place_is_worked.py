@@ -370,3 +370,16 @@ def test_two_verbs_of_one_thing_name_no_thing_after_or():
     guide.take_in(SCREEN, "Avoid or shoot obstacles; such as walls, mines and electricity beams.")
     assert "or shoot obstacles" not in guide.things and all(
         not name.startswith("or ") for names in guide.names.values() for name in names)
+
+
+def test_an_act_done_by_pressing_a_key_is_what_the_key_does():
+    """Offline 2026-10-11 "HOW TO PLAY THE FOOD FIGHT: DODGE FOOD BY PRESSING THE SPACE BAR" gave space to playing, and
+    space was no key of play."""
+    guide = Guide(place="a food fight")
+    guide.take_in(SCREEN, "TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. HOW TO PLAY THE FOOD FIGHT: DODGE FOOD BY "
+                          "PRESSING THE SPACE BAR.")
+    assert (guide.controls["space"].act, guide.controls["space"].on) == ("dodge", "food")
+    assert guide.controls["the pointer"].act == "throw" and guide.keys_for_play() == ["space"]
+    ghosts = Guide(place="a haunted house")
+    ghosts.take_in(SCREEN, "Score points by clicking on the ghosts.")
+    assert (ghosts.controls["the pointer"].act, ghosts.controls["the pointer"].on) == ("score", "ghosts")

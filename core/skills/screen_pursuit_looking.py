@@ -1283,8 +1283,19 @@ def _how_long_to_wait() -> float:
     changed nothing took 105 seconds before she moved again, on a game that
     answers in under a second.
     """
+    # A world found going on under her hand never comes to rest, and is not waited on to: offline 2026-10-11 a food
+    # fight's first round went on for twelve seconds after an arrow was pressed, watched for a rest that never came,
+    # and was lost before she threw once.
+    from .screen_pursuit_as_it_happens import AS_IT_HAPPENS
+
+    if getattr(AS_IT_HAPPENS.get(), "under_her_hand", False):
+        return GOING_ON_ANSWERS_S
     longest = max(_ANSWERS) if _ANSWERS else _ANSWERING_TOOK["longest"]
     return max(1.0, longest * 2) if longest else 4.0
+
+
+#: How long a world that goes on under her hand is given to answer a move.
+GOING_ON_ANSWERS_S = 0.6
 
 
 def _answering_took(seconds: float) -> None:

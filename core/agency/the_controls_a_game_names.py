@@ -174,7 +174,8 @@ def controls_named_in(text: str, *, keys_without_words: Sequence[str] = ("up", "
             keys.extend(key for key in meant if key not in keys)
     keys.extend(key for key in keys_named_in(lowered) if key not in keys)
     keys.extend(key for key in _letter_keys(str(text or ""), during_play=during_play) if key not in keys)
-    pointer = any(word in words or word + "s" in words for word in _POINTER_WORDS)
+    # Its forms too: "score points by clicking on the ghosts", "aiming" (offline 2026-10-11).
+    pointer = any(form in words for word in _POINTER_WORDS for form in (word, word + "s", word + "ing", word + word[-1] + "ing"))
     if not keys:
         keys = list(keys_without_words)
     return keys, pointer

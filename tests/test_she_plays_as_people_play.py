@@ -233,7 +233,7 @@ def test_a_scrap_of_a_misread_label_is_not_said_as_a_name(label, said):
 
 def test_arrows_nobody_named_are_not_pressed_where_the_guide_knows_the_place_is_worked_otherwise():
     """Offline 2026-10-11 a mini-golf game worked with the mouse, return and s had its arrows pressed."""
-    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.agency.what_i_can_do_here import THE_PICTURE, WhatWorksHere, a_click_on
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
     guide = Guide(place="a place")
@@ -245,6 +245,19 @@ def test_arrows_nobody_named_are_not_pressed_where_the_guide_knows_the_place_is_
         here.looked_at([a_click_on("Choose")])
         here.looked_at([a_click_on("Choose")])
         assert not {"up", "down", "left", "right"} & set(here.available())
+    finally:
+        THE_GUIDE.reset(token)
+    # A screen that names the pointer and a key that moves nothing answers the guess too, and what it names is offered
+    # (offline 2026-10-11 a food fight's arrows were each pressed and watched while the other side threw).
+    fight = Guide(place="a third place")
+    fight.take_in(TOLD, ["Take aim with your mouse and click to throw.", "Dodge food by pressing the space bar."])
+    token = THE_GUIDE.set(fight)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. DODGE FOOD BY PRESSING THE SPACE BAR.")
+        assert here.told == () and not {"up", "down", "left", "right"} & set(here.available())
+        here.asked_for_by("YOU JOHNNY MENU")
+        assert set(here.available()) == {"space", a_click_on(THE_PICTURE)}
     finally:
         THE_GUIDE.reset(token)
     walker = Guide(place="another place")
