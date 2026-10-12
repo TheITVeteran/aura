@@ -404,6 +404,7 @@ def _visual_motion_claims() -> tuple:
     from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
+    from core.perception.position_from_the_same_points import _point_path_invariant
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.translation_from_visible_support import _translation_support_invariant
@@ -411,6 +412,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("point_paths_keep_their_original_visible_marks", "core/perception/position_from_the_same_points.py",
+         "tests/test_a_point_path_keeps_its_original_marks.py", lambda: _point_path_invariant() == (),
+         "A path measured from points retains original named marks, current owned pixels and coherent displacement; lost or replacement marks end the path."),
         ("secondary_inputs_end_independent_body_observations", "core/agency/inputs_while_measuring_control.py",
          "tests/test_inputs_while_measuring_control.py", lambda: _single_input_interval_invariant() == (),
          "Another delivered action ends the isolated control interval; measured prefixes remain intact and later mixed motion cannot extend them."),

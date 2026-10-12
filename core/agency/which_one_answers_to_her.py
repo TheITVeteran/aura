@@ -42,6 +42,7 @@ from core.agency.controls_ready_for_the_motion_model import has_a_measured_respo
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.what_follows_the_pointer import FollowsThePointer
 from core.perception.parts_when_things_touch import same_colour_mix
+from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import motion_status, motion_was_measured
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX
 from core.verify import invariant
@@ -860,12 +861,12 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                     continue
                 if trying:
                     self._by_thing[thing.number].add(key, thing.vx, thing.vy, press=press,
-                                                   settled=press is not None, position=(thing.x, thing.y), when=at)
+                                                   settled=press is not None, position=measured_position(thing), when=at)
                     self._by_kind[thing.kind].add(key, thing.vx, thing.vy, press=press,
                                                  settled=press is not None)
                 if thing.number == self.number and at >= self._beside_until:
                     self._hers.add(key, thing.vx, thing.vy, pinned=self._pinned(thing), press=press,
-                                   settled=press is not None, position=(thing.x, thing.y), at=at, when=at)
+                                   settled=press is not None, position=measured_position(thing), at=at, when=at)
                     self._answering(thing, key, at - began, at)
         self._what_follows_the_pointer(moves, at)
         # Hidden a moment, she is not chosen afresh: another thing's trials would hand it her controls.

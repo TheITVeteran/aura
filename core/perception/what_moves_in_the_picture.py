@@ -185,6 +185,9 @@ class Thing:
     motion_evidence: str = "direct"
     boundary: Any = field(default=None, repr=False, compare=False)
     motion_path: deque = field(default_factory=lambda: deque(maxlen=40), repr=False)
+    #: The path of continuing visible marks has its own origin; the detection box keeps its own middle.
+    motion_position: tuple[float, float] | None = None
+    point_pose: Any = field(default=None, repr=False, compare=False)
 
     @property
     def size(self) -> float:
@@ -772,12 +775,22 @@ class WhatMoves:
         return distance + looks
 
     def _moved(self, thing: Thing, blob: dict[str, Any], at: float) -> None:
+        from core.perception.position_from_the_same_points import position_from_points
+
         dt = max(1e-3, at - thing.seen)
         x0, y0 = _measured(thing)
         points = self._point_motion.get(thing.number)
         followed = points is not None and points.before == thing.seen and points.at == at
+        had_point_path = thing.motion_position is not None
+        point_path = position_from_points(thing, blob, points, at)
         thing.motion_evidence = translation_status(thing, blob, at, points)
-        observed = seen_going(thing.motion_evidence)
+        observed = seen_going(thing.motion_evidence) and not had_point_path
+        if point_path is not None:
+            x0, y0 = point_path[0]
+            observed, thing.motion_evidence = True, "points"
+        elif had_point_path:
+            # Ending a point path cannot jump straight into the box's different coordinate origin.
+            thing.motion_evidence = "unavailable"
         if not observed or thing.motion_measured_at != thing.seen:
             thing.motion_path.clear()
         if observed and not thing.motion_path:
@@ -791,8 +804,11 @@ class WhatMoves:
         thing.boundary = blob.get("boundary")
         thing.seen, thing.still = at, False
         thing.path.append((at, thing.x, thing.y))
+        thing.motion_position = point_path[1] if point_path is not None else None
         if observed:
-            thing.motion_path.append((at, thing.x, thing.y))
+            position = thing.motion_position or (thing.x, thing.y)
+            vx, vy = (position[0] - x0) / dt, (position[1] - y0) / dt
+            thing.motion_path.append((at, *position))
             thing.vx, thing.vy = _speed_from_its_path(thing.motion_path, at, (vx, vy), (vx, vy))
         elif followed and math.hypot(vx * dt, vy * dt) <= POINTS_KEEP_UP_PX:
             # Its box a pixel or two from where it was, the points on it say how it went: a box drifts, they do not.
@@ -1054,11 +1070,13 @@ class WhatMoves:
             kept = self.things if number in self.things else self.pending
             thing = kept[number]
             if self._still_there(thing, small):
+                had_point_path = thing.motion_position is not None
+                thing.point_pose, thing.motion_position = None, None
                 thing.x, thing.y = _measured(thing)
                 thing.still = True
-                if thing.motion_measured_at != thing.seen:
+                if had_point_path or thing.motion_measured_at != thing.seen:
                     thing.motion_path.clear()
-                thing.motion_measured_at = at if 0 < at - thing.seen <= .35 else None
+                thing.motion_measured_at = at if not had_point_path and 0 < at - thing.seen <= .35 else None
                 thing.motion_evidence = "measured" if thing.motion_measured_at == at else "unavailable"
                 if thing.motion_measured_at is None:
                     thing.motion_path.clear()

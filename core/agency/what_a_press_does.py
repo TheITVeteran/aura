@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import (
     matching_support,
     motion_status,
@@ -146,7 +147,8 @@ class WhatAPressDoes:
             seen = getattr(thing, "seen", None)
             observed = (born is not None and seen is not None and math.isfinite(float(born))
                         and math.isfinite(float(seen)) and 0 <= at - float(seen) <= .25)
-            self.watching.append(_Watch(key, int(thing.number), int(thing.kind), at, float(thing.x), float(thing.y),
+            x, y = measured_position(thing)
+            self.watching.append(_Watch(key, int(thing.number), int(thing.kind), at, x, y,
                                         drift, max(float(thing.w), float(thing.h), 1.0),
                                         hers=hers is not None and int(thing.number) == hers, let_go=not key,
                                         epoch=epoch, independent=independent, born=born, observed=observed,
@@ -208,8 +210,9 @@ class WhatAPressDoes:
                     continue
                 watch.needs_anchor = False
                 watch.observed = watch.eligible
-            dx = float(thing.x) - watch.x - watch.drift[0] * after
-            dy = float(thing.y) - watch.y - watch.drift[1] * after
+            x, y = measured_position(thing)
+            dx = x - watch.x - watch.drift[0] * after
+            dy = y - watch.y - watch.drift[1] * after
             watch.measured_segment.append((after, dx, dy))
             # Settling describes the learned behavior. The delivered trial
             # still needs observations, including measured lack of response,

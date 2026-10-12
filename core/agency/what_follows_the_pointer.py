@@ -13,6 +13,7 @@ import logging
 import math
 from typing import Any
 
+from core.perception.position_from_the_same_points import measured_position
 from core.perception.translation_from_visible_support import motion_was_measured
 from core.verify import invariant
 
@@ -114,7 +115,7 @@ class FollowsThePointer:
                 seen.clear()
                 if self._sighted == identity:
                     self._sighted = None
-            seen.append((at, thing.x, thing.y))
+            seen.append((at, *measured_position(thing)))
             del seen[:-60]
         self._looked += 1
         if self._looked % 4:
@@ -172,7 +173,7 @@ class FollowsThePointer:
         pairs = self._since_believed
         if pairs and not 0 < at - pairs[-1][0] <= .35:
             pairs.clear()
-        pairs.append((at, mine.x, mine.y))
+        pairs.append((at, *measured_position(mine)))
         del pairs[:-60]
         self._looked += 1
         if len(pairs) < 30 or self._looked % 4:

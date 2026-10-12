@@ -34,6 +34,7 @@ include_rules = [
     "+core.perception.activity_in_the_picture", # Pure check of visible activity and covered quiet intervals.
     "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.
     "+core.perception.points_that_keep_their_motion", # Pure checks of visible point identity and bounded lifetime.
+    "+core.perception.position_from_the_same_points", # Pure check of original marks supporting a measured path.
     "+core.perception.reading_again_after_loss", # Pure checks of measured loss and bounded request renewal.
     "+core.perception.the_whole_patch_around_a_visible_corner", # Pure check of connected support around initial foreground seeds.
     "+core.perception.translation_from_visible_support", # Pure check of measured translation before learning controls.
