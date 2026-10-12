@@ -237,6 +237,9 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
     #: The mechanics this place's words, and what she found out before she began, have spoken of
     #: (core/agency/mechanics_she_knows.py); and where each thing she can click is, as shares of the screen.
     mechanics_said: set[str] = field(default_factory=set)
+    #: The keys the guide knows the place is worked with, where it knows and no arrow is among them: no other key is
+    #: tried to see what it does.
+    keys_known: frozenset[str] | None = None
     where: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     def asked_for_by(self, words: str, clickable: Sequence[str] = (), drawn: Sequence[str] = (), counsel: str = "") -> None:
@@ -295,6 +298,13 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             pointer = "the pointer" in (said or set(controls)) or bool(callable(named) and named())
             if said or controls or pointer:
                 self.pointer_only = pointer and not (said or set(controls)) - {"the pointer"}
+            # The arrows offered where nothing names the keys are a guess. Where the guide knows how the place is
+            # worked and no arrow moves anything in it (nor a set of WASD), they are not pressed: offline 2026-10-11 a
+            # mini-golf game worked with the mouse, return and s had its arrows pressed on every screen.
+            known = set(controls)
+            arrows = {"up", "down", "left", "right"}
+            if (known or pointer) and not known & arrows and len(known & set("wasd")) < 3 and set(self.told) <= arrows:
+                self.told, self.keys_known = (), frozenset(known - {"the pointer"})
 
     def looked_at(self, clickable: Sequence[str], says: str = "", looks: Mapping[str, tuple[float, ...]] | None = None,
                   where: Mapping[str, tuple[float, float]] | None = None, selector_view: Any = None) -> None:
@@ -449,6 +459,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             return told + goes_on
         wider = list(told) + [
             key for key in worth_trying(self.told) if key not in dead and key not in told
+            and (self.keys_known is None or key in self.keys_known)
         ]
         wider += [click for click in self.on_screen if click not in dead and click not in wider and _not_read_only(click)]
         if wider and set(wider) != set(self.told) and not self.said_it_differs:
