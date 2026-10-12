@@ -196,6 +196,14 @@ def _along(line: np.ndarray, x: int, step: int) -> int:
             return x
 
 
+def _the_picture_shook(runs: list[tuple[Bar, tuple[int, int] | None]]) -> bool:
+    """Whether two strips or more went whole, each its own length, the same way in one picture: the picture moved."""
+    shifts = [run[0] - bar.start for bar, run in runs
+              if run is not None and abs(run[0] - bar.start) >= CHANGED_BY and abs(run[1] - bar.end) >= CHANGED_BY
+              and abs((run[1] - run[0]) - (bar.end - bar.start)) < CHANGED_BY]
+    return len(shifts) >= 2 and max(shifts) - min(shifts) <= CHANGED_BY
+
+
 @dataclass
 class BarsOnTheScreen:
     """Strips followed from picture to picture, and the ones that have shown they are bars."""
@@ -203,6 +211,8 @@ class BarsOnTheScreen:
     strips: list[Bar] = field(default_factory=list)
     looked_at: float = -math.inf
     shape: tuple[int, int] = (0, 0)
+    #: The one bar with no words that has been said to be what she has left: one is told, not every strip that runs down.
+    said_unnamed: str = ""
 
     def bars(self) -> list[Bar]:
         return [bar for bar in self.strips if bar.is_a_bar]
@@ -220,15 +230,16 @@ class BarsOnTheScreen:
             self.looked_at = at
             self._take_in(_strips(picture))
         changes: list[dict[str, Any]] = []
-        for bar in list(self.strips):
-            run = _run_of(picture, bar)
+        runs = [(bar, _run_of(picture, bar)) for bar in list(self.strips)]
+        shaken = _the_picture_shook(runs)
+        for bar, run in runs:
             if run is None:
                 bar.missing_since = bar.missing_since or at
                 if not bar.is_a_bar and at - bar.missing_since > MISSING_S:
                     self.strips.remove(bar)
                 continue
             bar.missing_since = 0.0
-            change = self._went(bar, run, at)
+            change = self._went(bar, run, at, shaken)
             since = bar.levels[-1][0] if bar.levels else at
             bar.levels.append((at, run[1] - run[0]))
             del bar.levels[:-120]
@@ -247,7 +258,7 @@ class BarsOnTheScreen:
             self.strips = bars + [s for s in self.strips if not s.is_a_bar][-(MOST_STRIPS - len(bars)):]
 
     @staticmethod
-    def _went(bar: Bar, run: tuple[int, int], at: float) -> tuple[float, float] | None:
+    def _went(bar: Bar, run: tuple[int, int], at: float, shaken: bool = False) -> tuple[float, float] | None:
         """Whether a strip's run changed at one end only, the other staying put, having held its level first: how full
         it was and is."""
         start, end = run
@@ -256,8 +267,10 @@ class BarsOnTheScreen:
             bar.steady_since = at
         if moved_start and moved_end:
             # Both ends went: the strip moved, or something crossed it. Not a bar's change; and where it went whole, the
-            # same length, the picture went with it (a screen that shakes as she is hit), which says nothing against it.
-            if abs((end - start) - (bar.end - bar.start)) >= CHANGED_BY:
+            # same length, with others going the same way at once, the picture went with it (a screen that shakes as she
+            # is hit), which says nothing against it. A strip that goes on its own is scenery: offline 2026-10-12 five
+            # strips of a game's scenery, let off for going whole, were each said to be what she had left.
+            if abs((end - start) - (bar.end - bar.start)) >= CHANGED_BY or not shaken:
                 bar.unsteady += 1
             bar.start, bar.end, bar.steady_since = start, end, at
             return None

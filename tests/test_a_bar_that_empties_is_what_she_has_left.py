@@ -381,3 +381,26 @@ def test_in_a_contest_the_bar_named_for_the_other_side_falling_is_hers_gaining()
     assert what_a_bar_measures(Bar(row=10, thick=6, colour=(200, 0, 0), start=100, end=220), boss, 320, 200)[1] == "down is good"
     alone = [{"text": "HEALTH", "center_x": 0.03, "center_y": 0.05}]
     assert what_a_bar_measures(hers, alone, 320, 200) == ("HEALTH", "down is bad")
+
+
+def test_of_the_bars_with_no_words_one_is_said_to_be_what_she_has_left(monkeypatch):
+    """Offline 2026-10-12 five strips of one game were each said to be what she had left."""
+    from types import SimpleNamespace
+
+    import core.agency.what_she_has_left as left
+    from core.agency.playing_as_it_happens import _read_the_bars, _Run
+    from core.agency.what_meeting_things_does import WhatMeetingDoes
+
+    def falling(_bars, _picture, at, _regions, _place):
+        for where in ("the bar at the top", "the bar at the middle", "the bar at the top"):
+            yield {"what": "loss", "at": at, "since": at - 1, "counter": where, "by": -1}
+
+    monkeypatch.setattr(left, "bars_read", falling)
+    run = _Run(keys=["left"], began=0.0, last_moving=0.0)
+    run.regions_read = []
+    meeting = WhatMeetingDoes()
+    moves = SimpleNamespace(shape=(160, 240), things={}, share=lambda x, y: (x / 240, y / 160))
+    hers = SimpleNamespace(thing=lambda _moves: None, kind=1, follows_pointer=False)
+    said: list[str] = []
+    _read_the_bars(run, meeting, hers, moves, None, 5.0, said.append)
+    assert len(said) == 1 and said[0].startswith("The bar at the top goes down") and run.losses == 3
