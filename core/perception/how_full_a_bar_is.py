@@ -48,6 +48,15 @@ THICKEST = 0.08
 CHANGED_BY = 2
 CHANGES_TO_BE_A_BAR = 3
 
+#: The widest break, in read pixels, between two runs of a bar's colour that still leaves them one bar: the line between
+#: the cells of a bar drawn in cells, as health is drawn in hearts or segments. Offline 2026-10-12 a food fight's two
+#: bars of five cells each were never found, each cell too short to be a strip, and she never knew she was being hit.
+DIVIDER = 3
+
+#: How long a strip not found where it was is still looked for there: a screen that shakes when she is hit takes every
+#: bar with it for a moment.
+MISSING_S = 1.0
+
 #: How long a bar holds its level before a change counts, in seconds: a bar stands at a level between changes, where a
 #: run of sky, sand or water changes as things cross it or as it ripples. LIVE 2026-10-09 three strips of a beach scene,
 #: each held for a tenth of a second, were taken for bars going down.
@@ -79,6 +88,8 @@ class Bar:
     #: The words beside it, and what a change in them means ("up is good", "down is bad", "neither", "").
     label: str = ""
     meaning: str = ""
+    #: Since when it has not been found where it was (0 while it is).
+    missing_since: float = 0.0
 
     @property
     def is_a_bar(self) -> bool:
@@ -104,16 +115,16 @@ def _strips(picture: np.ndarray) -> list[Bar]:
     for y in range(1, tall - 1, 2):
         breaks = np.flatnonzero(~same_as_left[y])
         edges = np.append(breaks, wide)
-        for a, b in zip(edges[:-1], edges[1:], strict=True):
+        for a, b in _runs_across_dividers(rows[y], list(zip(edges[:-1], edges[1:], strict=True))):
             length = int(b - a)
             if not SHORTEST * wide <= length <= LONGEST * wide:
                 continue
-            colour = rows[y, a:b].mean(axis=0)
+            colour = np.median(rows[y, a:b], axis=0)
             thick, reach = 1, {-1: y, 1: y}
             for step in (-1, 1):
                 yy = y + step
                 while 0 <= yy < tall and thick <= THICKEST * tall:
-                    if np.abs(rows[yy, a:b] - colour).max(axis=1).mean() > ONE_COLOUR:
+                    if np.median(np.abs(rows[yy, a:b] - colour).max(axis=1)) > ONE_COLOUR:
                         break
                     thick += 1
                     reach[step] = yy
@@ -127,6 +138,31 @@ def _strips(picture: np.ndarray) -> list[Bar]:
             # Followed along its middle row, where a bar's colour is surest and a box is clicked.
             found.append(Bar((reach[-1] + reach[1]) // 2, thick, tuple(int(c) for c in colour), int(a), int(b), longest=length))
     return found
+
+
+def _runs_across_dividers(row: np.ndarray, runs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Each run of one colour along a row, and with them the runs made by joining runs of a colour across the narrow
+    lines between them (DIVIDER): the cells of a bar drawn in cells, read as the bar."""
+    out = list(runs)
+    i = 0
+    while i < len(runs):
+        a, b = runs[i]
+        colour = row[a:b].mean(axis=0)
+        j, end = i + 1, b
+        while j < len(runs):
+            gap_end = j
+            while gap_end < len(runs) and runs[gap_end][0] - end <= DIVIDER and runs[gap_end][1] - runs[gap_end][0] <= DIVIDER:
+                gap_end += 1
+            if gap_end >= len(runs) or runs[gap_end][0] - end > DIVIDER:
+                break
+            na, nb = runs[gap_end]
+            if np.abs(row[na:nb].mean(axis=0) - colour).max() > ONE_COLOUR:
+                break
+            end, j = nb, gap_end + 1
+        if end != b:
+            out.append((a, end))
+        i += 1
+    return out
 
 
 def _run_of(picture: np.ndarray, bar: Bar) -> tuple[int, int] | None:
@@ -144,13 +180,20 @@ def _run_of(picture: np.ndarray, bar: Bar) -> tuple[int, int] | None:
         if not nearby:
             return None
         seed = nearby[0]
-    start = seed
-    while start > 0 and line[start - 1]:
-        start -= 1
-    end = seed + 1
-    while end < wide and line[end]:
-        end += 1
-    return start, end
+    return _along(line, seed, -1), _along(line, seed, 1) + 1
+
+
+def _along(line: np.ndarray, x: int, step: int) -> int:
+    """How far a bar's colour runs from ``x`` one way, across the narrow lines between its cells."""
+    wide = len(line)
+    while True:
+        for jump in range(1, DIVIDER + 2):
+            nx = x + step * jump
+            if 0 <= nx < wide and line[nx]:
+                x = nx
+                break
+        else:
+            return x
 
 
 @dataclass
@@ -180,9 +223,11 @@ class BarsOnTheScreen:
         for bar in list(self.strips):
             run = _run_of(picture, bar)
             if run is None:
-                if not bar.is_a_bar:
+                bar.missing_since = bar.missing_since or at
+                if not bar.is_a_bar and at - bar.missing_since > MISSING_S:
                     self.strips.remove(bar)
                 continue
+            bar.missing_since = 0.0
             change = self._went(bar, run, at)
             since = bar.levels[-1][0] if bar.levels else at
             bar.levels.append((at, run[1] - run[0]))
@@ -210,9 +255,11 @@ class BarsOnTheScreen:
         if not bar.steady_since:
             bar.steady_since = at
         if moved_start and moved_end:
-            # Both ends went: the strip moved, or something crossed it. Not a bar's change.
+            # Both ends went: the strip moved, or something crossed it. Not a bar's change; and where it went whole, the
+            # same length, the picture went with it (a screen that shakes as she is hit), which says nothing against it.
+            if abs((end - start) - (bar.end - bar.start)) >= CHANGED_BY:
+                bar.unsteady += 1
             bar.start, bar.end, bar.steady_since = start, end, at
-            bar.unsteady += 1
             return None
         if not moved_start and not moved_end:
             return None

@@ -339,3 +339,28 @@ def test_where_no_body_of_hers_is_in_the_picture_nothing_answering_does_not_end_
     assert play._nothing_answers(run, WhichIsHers(), meeting, 40.0) == "nothing here answers to me while it moves"
     monkeypatch.setattr(play, "_how_it_stands", lambda _run, _at: (True, True))
     assert not play._nothing_answers(run, WhichIsHers(), meeting, 40.0)
+
+
+def _cells(full: int, shift: int = 0) -> np.ndarray:
+    """A bar of five cells with a dark line between each, ``full`` of them still coloured, on a picture that a hit can
+    shake sideways by ``shift``."""
+    picture = np.full((192, 320, 3), (240, 220, 170), np.uint8)
+    left = 60 + shift
+    picture[6:14, left - 2:left + 72] = (150, 70, 20)                       # its outline
+    for cell in range(5):
+        x = left + cell * 14
+        picture[7:13, x:x + 12] = (250, 150, 30) if cell < full else (255, 255, 255)
+    return picture
+
+
+def test_a_bar_drawn_in_cells_is_read_through_the_lines_between_them_and_a_shake_does_not_lose_it():
+    """Offline 2026-10-12 a food fight's bars of five cells each were never found, and the screen shook at every hit."""
+    bars, changes, at = BarsOnTheScreen(), [], 0.0
+    for full in (5, 4, 3, 2, 1):
+        for step in range(10):
+            at += 0.1
+            changes += bars.read(_cells(full, shift=40 if step == 0 else 0), at)
+    found = bars.bars()
+    assert len(found) == 1 and found[0].anchored == "start"
+    assert changes and all(c["to"] < c["from"] for c in changes)
+    assert round(found[0].full, 1) == 0.2
