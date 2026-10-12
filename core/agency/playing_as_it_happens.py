@@ -1896,14 +1896,16 @@ def _said_it_is_over(run: _Run) -> str:
     """Writing read in play that says a round is over ("TRY AGAIN", "GAME OVER") and was not there as it began: the
     stretch hands the screen back. LIVE 2026-10-09 an end screen's stars twinkled, and she played on at it for half a
     minute."""
-    from core.language.how_a_game_ended import says_a_round_is_over
+    from core.language.how_a_game_ended import says_a_round_is_over, what_says_the_game_is_over
 
     # What the first reading of the stretch found was there as it began, however long that reading took.
     first = min((when for when, _said in run.words_read), default=run.began)
     began = max(run.began + OVER_READ_AFTER_S, first + 0.5)
     there = {said for when, said in run.words_read if when < began}
     for when, said in run.words_read[-12:]:
-        if when >= began and said not in there and says_a_round_is_over(said):
+        # A round over, or the game: offline 2026-10-12 a racer's "Your final score" came up mid-stretch, and she played
+        # on at it for a minute and a half until her time ran out.
+        if when >= began and said not in there and (says_a_round_is_over(said) or what_says_the_game_is_over(said)):
             run.over_read_at = min(run.over_read_at, when)
             return SAID_IT_IS_OVER
     return ""

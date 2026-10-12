@@ -149,7 +149,7 @@ class HowItWorks:
         if self.me.value:
             parts.append(f"I'm {self.me.value}")
         if self.inputs:
-            parts.append("; ".join(f"{key} to {act}" for key, act in list(self.inputs.items())[:3]))
+            parts.append("; ".join(_a_control_said(key, act) for key, act in list(self.inputs.items())[:3]))
         if self.tempo.value:
             parts.append(self.tempo.value)
         if self.against.value:
@@ -163,6 +163,14 @@ class HowItWorks:
         """What she does not know yet of how it works, as questions her play is to answer."""
         asked = {"me": "what I am in it", "tempo": "whether it waits for me", "counts": "what counts"}
         return [question for axis, question in asked.items() if not getattr(self, axis).known(SAID_SURE)]
+
+
+def _a_control_said(key: str, act: str) -> str:
+    """A control and what it does, as said: "space to jump", and where the place said what it does ("increases forward
+    speed"), "right increases forward speed", not "right to increases forward speed"."""
+    first = act.split()[0] if act.split() else ""
+    does = first.endswith("s") and not first.endswith(("ss", "us", "is")) and len(first) > 3
+    return f"{key} {act}" if does else f"{key} to {act}"
 
 
 def understood(guide: Any, also: str = "") -> HowItWorks:

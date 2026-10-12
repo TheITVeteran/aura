@@ -451,9 +451,14 @@ async def use_controls_on_things(hands: Any, run: Any, moves: Any, hers: Any, ha
         if say is not None and (control.key, spot.name) not in using.worked:
             what = f" {control.on}" if control.on else ""
             how = "clicking it" if pointer else f"pressing {control.key}"
+            first = control.act.split()[0] if control.act.split() else ""
+            does = first.endswith("s") and not first.endswith(("ss", "us", "is")) and len(first) > 3
+            said = f"{control.act}{what}" if does else f"is to {control.act}{what}"
             say(f"There's {_a(spot.name)} {'there' if pointer else 'next to me'}. "
-                f"{'A click' if pointer else control.key.capitalize()} is to {control.act}{what}, so I'm {how}.",
-                f"using:{control.key}:{spot.name}")
+                f"{'A click' if pointer else control.key.capitalize()} {said}, so I'm {how}.",
+                # Once a control, not once a thing: offline 2026-10-12 a racer had "There's a bomb next to me ... so I'm
+                # pressing shift" said of nine kinds of thing in a minute.
+                f"using:{control.key}")
         return True
     return False
 
