@@ -11,7 +11,7 @@ with a known one when the benchmark's own grader says so.
 
 Development and test problems never mix. For a BBEH task the test problems
 are its 20 in BBEH Mini and the development problems are its other 180; for a
-Natural Plan kind and for CRUXEval's output prediction, the problems are
+Natural Plan kind, CRUXEval's output prediction and LiveCodeBench's execution set, the problems are
 ordered by a hash of their id and the first half is development.
 
 Usage:
@@ -54,10 +54,10 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     """The kind's development or test problems as the G09 harness poses them, with their truths."""
     from tools.run_g09_organ import BBEH_SUFFIX
 
-    if kind == "cruxeval":
+    if kind in ("cruxeval", "lcb"):
         from tools.run_g09_organ import LOADERS
 
-        tasks = sorted(LOADERS["cruxeval"](), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
+        tasks = sorted(LOADERS[kind](), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
         half = tasks[: len(tasks) // 2] if part == "development" else tasks[len(tasks) // 2:]
         return [{"key": t["id"], "problem": t["request"], "truth": t["truth"], "answer_text": t["truth"]["output"]}
                 for t in half]
@@ -71,10 +71,16 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     keys = development if part == "development" else test
     if kind == "trip":
         truth = lambda v: {"cities": v["cities"], "durations": v["durations"]}  # noqa: E731
+    elif kind == "meeting":
+        truth = lambda v: {"constraints": v["constraints"], "dist_matrix": v["dist_matrix"],  # noqa: E731
+                           "golden_plan": v["golden_plan"]}
     else:
         truth = lambda v: v["golden_plan"]  # noqa: E731
+    # A meeting plan is stored as its steps; the benchmark's own examples write them after "SOLUTION:".
+    shown = (lambda v: "SOLUTION:" + " ".join(v["golden_plan"])) if kind == "meeting" else (  # noqa: E731
+        lambda v: v["golden_plan"])
     return [{"key": f"{kind}:{key}", "problem": data[key]["prompt_5shot"], "truth": truth(data[key]),
-             "answer_text": data[key]["golden_plan"]} for key in keys]
+             "answer_text": shown(data[key])} for key in keys]
 
 
 def test_ids(domain: str) -> set[str]:
@@ -85,8 +91,8 @@ def test_ids(domain: str) -> set[str]:
         kinds = ["calendar"]
     elif domain == "trip":
         kinds = ["trip"]
-    elif domain == "cruxeval":
-        kinds = ["cruxeval"]
+    elif domain in ("cruxeval", "meeting", "lcb"):
+        kinds = [domain]
     else:
         raise ValueError(f"no development and test split is defined for {domain}")
     return {row["key"] for kind in kinds for row in problems(kind, "test")}
@@ -94,11 +100,19 @@ def test_ids(domain: str) -> set[str]:
 
 def grader_for(kind: str):
     """Whether a procedure's returned answer is right, by the benchmark's own grader."""
-    from tools.run_g09_organ import grade_bbeh, grade_cruxeval, grade_planning, grade_trip
+    from tools.run_g09_organ import (
+        grade_bbeh,
+        grade_cruxeval,
+        grade_lcb,
+        grade_meeting,
+        grade_planning,
+        grade_trip,
+    )
 
     if kind.startswith("bbeh_"):
         return lambda returned, truth: grade_bbeh(f"The answer is: {returned}", truth)[0]
-    grade = {"calendar": grade_planning, "trip": grade_trip, "cruxeval": grade_cruxeval}[kind]
+    grade = {"calendar": grade_planning, "trip": grade_trip, "cruxeval": grade_cruxeval, "meeting": grade_meeting,
+             "lcb": grade_lcb}[kind]
     return lambda returned, truth: grade(returned, truth)[0]
 
 

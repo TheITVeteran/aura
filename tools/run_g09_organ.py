@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval")
+DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb")
 BENCH = Path("~/.aura/benchmarks").expanduser()
 #: EvalPlus's own request for a chat model.
 CODE_REQUEST = ("Please provide a self-contained Python script that solves the following problem "
@@ -198,9 +198,49 @@ def _cruxeval_tasks() -> list[dict[str, Any]]:
             for row in rows]
 
 
+def _meeting_tasks() -> list[dict[str, Any]]:
+    data = json.loads((BENCH / "g09/natural-plan/meeting_planning.json").read_text(encoding="utf-8"))
+    return [{"id": f"meeting:{key}", "request": value["prompt_5shot"],
+             "truth": {"constraints": value["constraints"], "dist_matrix": value["dist_matrix"],
+                       "golden_plan": value["golden_plan"]},
+             "group": f"people={value['num_people']}"} for key, value in data.items()]
+
+
+def _lcb_prompt(code: str, call: str) -> str:
+    """LiveCodeBench's chain-of-thought execution prompt (prompts/code_execution.make_cot_output_prompt), restated;
+    its Claude-style protocol sends this text alone."""
+    return (
+        "You are given a Python function and an assertion containing an input to the function. Complete the "
+        "assertion with a literal (no unsimplified expressions, no function calls) containing the output when "
+        "executing the provided code on the given input, even if the function is incorrect or incomplete. Do NOT "
+        "output any extra information. Execute the program step by step before arriving at an answer, and provide "
+        "the full assertion with the correct output in [ANSWER] and [/ANSWER] tags, following the examples.\n\n"
+        "[PYTHON]\ndef performOperation(s):\n    s = s + s\n    return \"b\" + s + \"a\"\n"
+        "assert performOperation(s = \"hi\") == ??\n[/PYTHON]\n[THOUGHT]\nLet's execute the code step by step:\n\n"
+        "1. The function performOperation is defined, which takes a single argument s.\n"
+        "2. The function is called with the argument \"hi\", so within the function, s is initially \"hi\".\n"
+        "3. Inside the function, s is concatenated with itself, so s becomes \"hihi\".\n"
+        "4. The function then returns a new string that starts with \"b\", followed by the value of s (which is "
+        "now \"hihi\"), and ends with \"a\".\n"
+        "5. The return value of the function is therefore \"bhihia\".\n[/THOUGHT]\n"
+        "[ANSWER]\nassert performOperation(s = \"hi\") == \"bhihia\"\n[/ANSWER]\n\n"
+        f"[PYTHON]\n{code}\nassert {call} == ??\n[/PYTHON]\n[THOUGHT]\n"
+    )
+
+
+def _lcb_tasks() -> list[dict[str, Any]]:
+    import pandas as pd
+
+    frame = pd.read_parquet(BENCH / "g09/lcb-execution/data/test-00000-of-00001.parquet")
+    return [{"id": f"lcb:{row['id']}", "request": _lcb_prompt(row["code"], row["input"]),
+             "truth": {"code": row["code"], "input": row["input"], "output": row["output"]},
+             "group": str(row["difficulty"])} for _, row in frame.iterrows()]
+
+
 LOADERS = {"math": _math_tasks, "code": _code_tasks, "planning": _planning_tasks,
            "knowledge": _knowledge_tasks, "transfer": _transfer_tasks, "bbeh": _bbeh_tasks,
-           "trip": _trip_tasks, "aime": _aime_tasks, "cruxeval": _cruxeval_tasks}
+           "trip": _trip_tasks, "aime": _aime_tasks, "cruxeval": _cruxeval_tasks,
+           "meeting": _meeting_tasks, "lcb": _lcb_tasks}
 
 
 def sample(tasks: list[dict[str, Any]], count: int, seed: int, excluded: set[str]) -> list[dict[str, Any]]:
@@ -430,9 +470,103 @@ def grade_cruxeval(text: str, truth: dict[str, str]) -> tuple[bool, str]:
     return bool(outcome.ok and outcome.returncode == 0 and outcome.sandboxed), answer[:120]
 
 
+def _meeting_score(steps: list[str], truth: dict[str, Any]) -> int:
+    """Natural Plan's validator_from_text (evaluate_meeting_planning.py), restated: meetings the plan fits in,
+    walking it step by step until a step is invalid."""
+    import ast
+    import datetime
+
+    def clock(text: str) -> datetime.datetime:
+        return datetime.datetime.strptime(text, "%I:%M%p")
+
+    constraints, distances = truth["constraints"], truth["dist_matrix"]
+    constraints = ast.literal_eval(constraints) if isinstance(constraints, str) else constraints
+    distances = ast.literal_eval(distances) if isinstance(distances, str) else distances
+    location, now = constraints[0][0], clock(constraints[0][1])
+    people = {name: {"location": where, "start": clock(times.split("to")[0].strip()),
+                     "end": clock(times.split("to")[1].strip()), "minutes": minutes}
+              for name, where, times, minutes in constraints[1:]}
+    met, score = set(), 0
+    for step in steps:
+        try:
+            if step.startswith("You start"):
+                continue
+            if step.startswith("You travel"):
+                destination = step.split("travel to ")[1].split(" in")[0].strip()
+                now += datetime.timedelta(minutes=distances[location][destination])
+                location = destination
+            elif step.startswith("You wait"):
+                until = clock(step.split("wait until ")[1].split(".")[0].strip())
+                if until <= now:
+                    raise ValueError("backwards in time")
+                now = until
+            elif step.startswith("You meet"):
+                person = step.split("meet ")[1].split(" for")[0].strip()
+                if person in met:
+                    raise ValueError("met twice")
+                met.add(person)
+                done = now + datetime.timedelta(minutes=people[person]["minutes"])
+                if location == people[person]["location"] and now >= people[person]["start"] \
+                        and done <= people[person]["end"]:
+                    score += 1
+                    now = done
+                else:
+                    raise ValueError("invalid meeting")
+            else:
+                raise ValueError("unknown step")
+        except (ValueError, KeyError, IndexError):
+            break
+    return score
+
+
+def grade_meeting(text: str, truth: dict[str, Any]) -> tuple[bool, str]:
+    """Natural Plan's meeting accuracy: the plan after "SOLUTION:", split at full stops, scores as many
+    meetings as the golden plan does."""
+    plan = text[text.find("SOLUTION:") + len("SOLUTION:"):].strip() if "SOLUTION:" in text else text
+    steps = [step.strip() for step in plan.split(".") if step.strip()]
+    got, want = _meeting_score(steps, truth), _meeting_score(list(truth["golden_plan"]), truth)
+    return got == want, f"{got}/{want}"
+
+
+#: LiveCodeBench's imports for an execution check (evaluation/utils_execute.BASE_IMPORTS).
+LCB_BASE_IMPORTS = """from itertools import accumulate, chain, combinations, count, permutations, product, groupby, islice, repeat
+from copy import deepcopy
+from string import ascii_lowercase
+from math import floor, log2, log10, sqrt, comb, gcd, ceil, inf, isqrt
+from collections import defaultdict, deque, Counter
+from bisect import bisect, bisect_left, bisect_right, insort
+from heapq import heappush, heappop, heapify, merge
+from functools import reduce, cache, lru_cache
+from random import randrange, shuffle
+from operator import itemgetter, sub
+from re import search as re_search  # Assuming 're' refers to a regex search
+from os.path import commonprefix
+from typing import List, Tuple, Dict, Set, Optional, Union, Any, Callable, Iterable, Iterator, Generator"""
+
+
+def grade_lcb(text: str, truth: dict[str, str]) -> tuple[bool, str]:
+    """LiveCodeBench's execution scoring, restated: extract_execution_code (cot) and evaluate_score, the check
+    run here in her OS sandbox."""
+    from core.sandbox.untrusted_python import run_untrusted_script
+
+    answer = text
+    if "[ANSWER]" in answer:
+        answer = answer.split("[ANSWER]")[1].strip()
+    if "==" in answer:
+        answer = answer.split("==")[1].strip()
+    answer = answer.split("[/ANSWER]")[0].strip() if "[/ANSWER]" in answer else answer.split("\n")[0].strip()
+    answer = answer.strip()
+    if not answer or truth["input"] in answer:
+        return False, answer[:120]
+    outcome = run_untrusted_script(f"{LCB_BASE_IMPORTS}\n{truth['code']}\nassert {truth['output']} == {answer}",
+                                   timeout_s=3.0, require_boundary=True, source="g09_grader")
+    return bool(outcome.ok and outcome.returncode == 0 and outcome.sandboxed), answer[:120]
+
+
 GRADERS = {"math": grade_math, "code": grade_code, "planning": grade_planning,
            "knowledge": grade_knowledge, "transfer": grade_transfer, "bbeh": grade_bbeh,
-           "trip": grade_trip, "aime": grade_math, "cruxeval": grade_cruxeval}
+           "trip": grade_trip, "aime": grade_math, "cruxeval": grade_cruxeval,
+           "meeting": grade_meeting, "lcb": grade_lcb}
 
 
 # ── The run ────────────────────────────────────────────────────────────────
