@@ -48,6 +48,8 @@ from .screen_pursuit_decision_steps import (  # noqa: F401  (re-exported: they w
     _narrate_a_fresh_plan,
     _read_where_she_is_aiming,
     _report_the_progress_made,
+    marked_down,
+    remember_the_pick,
 )
 
 if TYPE_CHECKING:  # the return annotation only; the runtime import
@@ -1417,7 +1419,7 @@ async def decide_the_next_move(
             ends_at=ends_at, began=began, began_at=began_at,
         )
         # And whether this world has learned what she keeps doing.
-        ahead, available = _mark_down_what_she_keeps_doing(run, ahead, available, moves, narrate)
+        ahead, available = marked_down(run, ahead, available, moves, narrate, observation)
         # What she is aiming at, where it names a number or a band.
         #
         # "More is better" is true of some goals and quietly false of many:
@@ -1818,7 +1820,7 @@ async def decide_the_next_move(
         pacing["brief"],
         made is not None,
     )
-    _a_click_begins_another_screen(key)
+    _a_click_begins_another_screen(key, run, observation)
 
     async def act() -> bool:
         """Lifted to screen_pursuit_acting.py; the scope is handed over per call."""
@@ -1885,10 +1887,13 @@ from core.skills.screen_pursuit_decision_branches import (  # noqa: E402
 )
 
 
-def _a_click_begins_another_screen(key: str) -> None:
+def _a_click_begins_another_screen(key: str, run: Any = None, observation: Any = None) -> None:
     """A click (PLAY, TRY AGAIN, NEXT) begins another screen: what play left alone on the one before is not on it.
     LIVE 2026-10-11 a lander game's title, moving and answering to nothing, was left alone for a while; PLAY began the
-    game with the same few words on it, the leaving alone held, and the lander fell to the ground unplayed, four times."""
+    game with the same few words on it, the leaving alone held, and the lander fell to the ground unplayed, four times.
+    And the act chosen is kept with the screen's words, for whether it changed them to be judged next time."""
+    if run is not None and observation is not None:
+        remember_the_pick(run, key, observation)
     if not str(key).startswith("click"):
         return
     from core.skills.screen_pursuit_as_it_happens import AS_IT_HAPPENS

@@ -580,6 +580,46 @@ def _grade_how_soon_she_came_back(run: Any, act: str, held: bool, moves: Sequenc
     wears.it_went(name, held, made[:last])
 
 
+#: How much a click is worth each time again after it was chosen on a screen and left the screen's words as they were.
+CHANGED_NOTHING_BY = 0.6
+
+
+def _the_screens_words(observation: Mapping[str, Any]) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]{4,}", str(observation.get("text") or "").lower()))
+
+
+def set_aside_what_changed_nothing(run: Any, ahead: Any, observation: Mapping[str, Any]) -> Any:
+    """A click chosen again on a screen whose words the last choice of it left as they were is worth less each time,
+    so another gets its turn. Offline 2026-10-12 an alien builder's corner button was pressed six times running, its
+    worth the same each time, while I'M DONE! waited one place below it."""
+    if not ahead:
+        return ahead
+    words, last = _the_screens_words(observation), getattr(run, "last_pick", None)
+    futile: dict[str, int] = getattr(run, "changed_nothing", None) or {}
+    if last is not None:
+        name, before = last
+        same = len(words & before) >= 0.8 * max(1, min(len(words), len(before)))
+        if same:
+            futile[name] = futile.get(name, 0) + 1
+        else:
+            futile.clear()
+    run.changed_nothing = futile
+    return {name: (value - abs(value) * (1 - CHANGED_NOTHING_BY ** futile.get(name, 0)) if name.startswith("click") else value,
+                   why) for name, (value, why) in ahead.items()}
+
+
+def marked_down(run: Any, ahead: Any, available: list[Any], moves: Sequence[Mapping[str, Any]], narrate: bool,
+                observation: Mapping[str, Any]) -> tuple[Any, list[Any]]:
+    """What each act is worth once what changed nothing here and what the world has learned of her are taken off."""
+    return _mark_down_what_she_keeps_doing(run, set_aside_what_changed_nothing(run, ahead, observation), available,
+                                           moves, narrate)
+
+
+def remember_the_pick(run: Any, key: Any, observation: Mapping[str, Any]) -> None:
+    """The act chosen, and the screen's words it was chosen on, for `set_aside_what_changed_nothing` to judge."""
+    run.last_pick = (str(key), _the_screens_words(observation))
+
+
 def _mark_down_what_she_keeps_doing(
     run: Any,
     ahead: Any,
