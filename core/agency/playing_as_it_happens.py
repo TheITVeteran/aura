@@ -221,6 +221,8 @@ class _Run:
     pointer_trigger: bool = False
     taps: int = 0
     clicks: int = 0
+    #: When her last few shots were made, by the pictures' clock: what comes into sight just after one is that shot.
+    shots_at: list[float] = field(default_factory=list)
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
     legend: tuple[Any, ...] = ()
     said_at: float = -math.inf
@@ -1696,13 +1698,14 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     # At whoever has just shown, before whatever is going across (core/agency/thrown_at_what_shows.py).
     target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
                                    not_kinds={made.kind for made in hers.makes.values()},
-                                   against_someone=_against_someone())
+                                   against_someone=_against_someone(), shots_at=getattr(run, "shots_at", ()))
     if target is None:
         return
     tall, wide = moves.shape
     x, y = target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
     await hands.click(min(1.0, max(0.0, x / max(1, wide))), min(1.0, max(0.0, y / max(1, tall))))
     run.last_click, run.clicks = at, getattr(run, "clicks", 0) + 1
+    run.shots_at = [*getattr(run, "shots_at", ())[-5:], at]
 
 
 #: The parts of her thing she imagines meeting a thing with, from one end

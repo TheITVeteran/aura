@@ -133,3 +133,11 @@ def test_words_that_put_someone_on_the_other_side_are_understood() -> None:
     gallery = Guide(place="a gallery")
     gallery.take_in(SCREEN, "Click on the targets as they pop up.")
     assert not understood(gallery).against_someone()
+
+
+def test_what_comes_out_just_after_her_own_shot_is_that_shot_and_not_thrown_after() -> None:
+    """Offline 2026-10-11 she threw after her own ball as it rose, and not at the eggs coming down."""
+    ball = _thing(1, 100, 40, vy=-90.0, born=9.6, size=60.0)
+    egg = _thing(2, 160, 60, vy=30.0, born=8.0, size=300.0)
+    assert what_the_shot_goes_at([ball, egg], 10.0, shots_at=(9.3,)).number == 2
+    assert what_the_shot_goes_at([ball], 10.0, shots_at=(9.3,)) is None

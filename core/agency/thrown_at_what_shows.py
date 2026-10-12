@@ -33,7 +33,8 @@ A_FIGURE = 0.25
 
 
 def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Collection[int] = (),
-                          not_kinds: Collection[int] = (), against_someone: bool = False) -> Any | None:
+                          not_kinds: Collection[int] = (), against_someone: bool = False,
+                          shots_at: Collection[float] = ()) -> Any | None:
     """The thing to send the shot at: the biggest of those that have just shown and stand where they showed; where
     none has, the biggest of those going somewhere; and where nothing goes, the biggest that has moved, standing for a
     moment; None where there is none of these. What has just shown is someone only where it is near the size of what
@@ -42,8 +43,10 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
     kinds her own presses bring out."""
     # What grows is coming at her, to be got out of the way of, not thrown at: offline 2026-10-11 her throws went at the
     # food flying at her face.
+    # And what came out just after one of her own shots (``shots_at``, when she made them) is her shot in flight:
+    # offline 2026-10-11 she threw after her own ball as it rose, and not at the eggs coming down.
     mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds
-            and not _growing(thing)]
+            and not _growing(thing) and not _her_shot(thing, shots_at)]
     # Someone gets about; a thing that only sways where it hangs (a lamp, a flag, a sign) is part of the room: offline
     # 2026-10-11 throws went at a swinging lamp while the opponent ran to and fro below it.
     about = [thing for thing in mine if _gets_about(thing)]
@@ -67,6 +70,15 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
 #: How long a thing has been in sight to have been there all along, and how lately it must have been seen to be there now.
 THERE_ALL_ALONG_S = 2.0
 SEEN_JUST_NOW_S = 0.3
+
+
+#: How soon after a shot of hers a thing that comes into sight is that shot.
+SHOT_SHOWS_WITHIN_S = 0.8
+
+
+def _her_shot(thing: Any, shots_at: Collection[float]) -> bool:
+    born = float(getattr(thing, "born", -1e9))
+    return any(0.0 <= born - shot <= SHOT_SHOWS_WITHIN_S for shot in shots_at)
 
 
 def _growing(thing: Any) -> bool:
