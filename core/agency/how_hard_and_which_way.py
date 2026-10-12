@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["HOLD", "PULL", "Setting", "Shot", "Shots"]
+__all__ = ["HOLD", "PULL", "Setting", "Shot", "Shots", "first_settings"]
 
 #: The two ways of sending: a press pulled some way and let go, and a press held some time and let go.
 PULL = "pull"
@@ -49,6 +49,11 @@ SENT_LATELY = 8
 FIRST_PULLS = ((0.15, 0.0), (0.0, 0.15), (-0.15, 0.0), (0.0, -0.15))
 FIRST_HOLDS = (0.3, 0.9)
 
+#: How long the first pull is where there is a place to send the thing to: straight back from that place, as a sling,
+#: a cue and a putter are drawn, and then straight at it. Shorter than a pull made blind: one that goes the right way
+#: at once ought not to go clean past.
+FIRST_PULL_WITH_AN_AIM = 0.1
+
 #: How near, as a share of the picture, a thing must end to the place aimed at for the shot to have got there.
 NEAR_ENOUGH = 0.04
 
@@ -57,6 +62,18 @@ NEAR_ENOUGH = 0.04
 DRAWN_EACH_TIME = 4
 NARROWED_ROUND = 2
 LEAST_SPREAD = 0.02
+
+#: How many times in a row a setting that got there is tried with nothing counted before it is doubted.
+SAME_TO_NO_END = 3
+
+#: How nearly along the line of its pull (the cosine between them) a shot must have gone to count in full for what a
+#: pull does, and how much one counts that went wider.
+ALONG_ITS_LINE = 0.9
+WIDE_OF_ITS_LINE_COUNTS = 0.2
+
+#: How much the plain rule (a pull carries a thing along its own line, the same every way) counts against the shots
+#: themselves, as a share of what they weigh.
+THE_PLAIN_RULE_COUNTS = 0.25
 
 #: How much the fit leans toward no change at all, as a share of how much the shots themselves weigh: enough that two
 #: shots close together do not make a line that sends the next to the edge of the picture.
@@ -93,19 +110,43 @@ class Shot:
     ended_at: tuple[float, float] | None
     gained: int = 0
     aimed_at: tuple[float, float] | None = None
+    #: Where what was sent set off from: a ball struck where it lies sets off from a new place each time.
+    began_at: tuple[float, float] | None = None
+    #: Whether what was sent was afterwards seen lying where it stopped, or was nowhere to be seen.
+    lies_in_sight: bool = False
+    gone_from_sight: bool = False
 
     @property
     def got_there(self) -> bool:
+        """Whether the shot did what it was for: something was counted, or what was sent ended where it was aimed and
+        is not lying there in plain sight (it went in, or under, or was taken). A ball lying beside a hole has not gone in: offline 2026-10-12 one stopped a
+        fortieth of the picture short, and she said she had the measure of it."""
         if self.gained > 0:
             return True
-        if self.ended_at is None or self.aimed_at is None:
+        if self.ended_at is None or self.aimed_at is None or self.lies_in_sight:
             return False
-        return math.dist(self.ended_at, self.aimed_at) <= NEAR_ENOUGH
+        # A thing gone from sight is placed by where it was last followed, short of where it went in: it got there
+        # from twice as far.
+        return math.dist(self.ended_at, self.aimed_at) <= (2 if self.gone_from_sight else 1) * NEAR_ENOUGH
+
+
+def first_settings(way: str, aim: tuple[float, float] | None = None,
+                   start: tuple[float, float] | None = None) -> list[tuple[float, ...]]:
+    """The first settings of a way, as numbers: where there is a place to send the thing to and a place it is, a pull
+    straight back from there and one straight at it come before the pulls made blind."""
+    if way != PULL:
+        return [(held,) for held in FIRST_HOLDS]
+    pulls = list(FIRST_PULLS)
+    if aim is not None and start is not None and math.dist(aim, start) > 1e-6:
+        far = math.dist(aim, start)
+        back = ((start[0] - aim[0]) / far * FIRST_PULL_WITH_AN_AIM, (start[1] - aim[1]) / far * FIRST_PULL_WITH_AN_AIM)
+        pulls = [back, (-back[0], -back[1]), *pulls]
+    return pulls
 
 
 @dataclass
 class Shots:
-    """The shots of one way of sending from one place, and the next setting to try."""
+    """The shots of one way of sending, and the next setting to try."""
 
     way: str = PULL
     tried: list[Shot] = field(default_factory=list)
@@ -155,12 +196,16 @@ class Shots:
 
     def next_setting(self, aim: tuple[float, float] | None, start: tuple[float, float] | None = None) -> Setting:
         """The setting to try next: toward ``aim`` where there is a place to aim at, else the search for what pays."""
-        firsts = [Setting.of(self.way, numbers) for numbers in (FIRST_PULLS if self.way == PULL else [(h,) for h in FIRST_HOLDS])]
+        firsts = [Setting.of(self.way, numbers) for numbers in first_settings(self.way, aim, start)]
         untried = [setting for setting in firsts if setting not in {shot.setting for shot in self.tried}]
         landed = [shot for shot in self.tried if shot.ended_at is not None]
         measure = self.the_measure
-        if measure is not None and (aim is None or self._still_aimed(aim)):
+        if measure is not None and not self._tried_to_no_end(measure) and (aim is None or self._still_aimed(aim, start)):
             return measure
+        if aim is not None and start is not None and self.way == PULL and landed:
+            solved = self._by_what_a_pull_does(aim, landed, start)
+            if solved is not None:
+                return solved
         if aim is not None and len(landed) >= 2:
             solved = self._toward(aim, landed, start)
             if solved is not None:
@@ -169,9 +214,61 @@ class Shots:
             return untried[0]
         return self._searched()
 
-    def _still_aimed(self, aim: tuple[float, float]) -> bool:
+    def _tried_to_no_end(self, measure: Setting) -> bool:
+        """Whether the setting that got there has since been tried again and again with nothing counted for it: it
+        ends near enough to look right, and is not right. An invented field scored only a ball that stopped in its
+        mark, and thirty shots in a row stopped just short of it, each one "there"."""
+        lately = self.tried[-SAME_TO_NO_END:]
+        return len(lately) == SAME_TO_NO_END and all(shot.setting == measure and shot.gained <= 0 for shot in lately)
+
+    def _still_aimed(self, aim: tuple[float, float], start: tuple[float, float] | None = None) -> bool:
+        """Whether the shot that last got there was the same shot as this one: to the same place, and from it."""
         last = next((shot for shot in reversed(self.tried) if shot.got_there), None)
-        return last is not None and (last.aimed_at is None or math.dist(last.aimed_at, aim) <= NEAR_ENOUGH)
+        if last is None or (last.aimed_at is not None and math.dist(last.aimed_at, aim) > NEAR_ENOUGH):
+            return False
+        return start is None or last.began_at is None or math.dist(last.began_at, start) <= NEAR_ENOUGH
+
+    def _by_what_a_pull_does(self, aim: tuple[float, float], landed: list[Shot], start: tuple[float, float]) -> Setting | None:
+        """The pull that carries the thing from ``start`` to ``aim``, from how far and which way each pull so far
+        carried it from where it then lay.
+
+        What anyone takes for granted of a thing pulled back and let go is where this begins: it goes along the line of
+        the pull, one way or the other, as far in proportion, and the same whichever way it is pulled. One shot gives
+        that one number. More shots, pulled other ways, show where the place departs from it (a slope seen from the
+        side, where a pull up the picture carries half as far as one across), and the fit follows them as far as they
+        go and keeps to the plain rule where they say nothing. Fitted the plain way, two shots along one line said
+        nothing of the line across it, and the least noise in where they ended sent the third the wrong way entirely:
+        an invented field, 2026-10-12, a ball pulled away from its mark fifteen times running.
+
+        Shots that went wide of their own line met something on the way, and count for little. Shots that carried the
+        thing nearest to as far as it now has to go count for most, for the rule is only straight near where it was
+        measured.
+        """
+        pulls = np.array([shot.setting.numbers(PULL) for shot in landed], dtype=float)
+        carried = np.array([np.subtract(shot.ended_at, shot.began_at or start) for shot in landed], dtype=float)
+        want = np.subtract(aim, start).astype(float)
+        long, far = np.linalg.norm(pulls, axis=1), np.linalg.norm(carried, axis=1)
+        told = (long > 1e-6) & (far > 1e-6)
+        if not told.any():
+            return None
+        pulls, carried, long, far = pulls[told], carried[told], long[told], far[told]
+        on_its_line = np.abs((pulls * carried).sum(axis=1)) / (long * far)
+        weights = np.where(on_its_line >= ALONG_ITS_LINE, 1.0, WIDE_OF_ITS_LINE_COUNTS) / (0.05 + np.linalg.norm(carried - want, axis=1))
+        weights = weights / weights.sum()
+        for_each = float((weights * (pulls * carried).sum(axis=1)).sum() / (weights * long * long).sum())
+        if abs(for_each) < 1e-3:
+            return None
+        weighed = pulls * weights[:, None]
+        gram = weighed.T @ pulls
+        lean = THE_PLAIN_RULE_COUNTS * float(np.trace(gram)) / 2.0
+        try:
+            does = np.linalg.solve(gram + lean * np.eye(2), weighed.T @ carried + lean * for_each * np.eye(2))
+            pull = np.linalg.solve(does.T, want)
+        except np.linalg.LinAlgError:
+            pull = want / for_each
+        if not np.all(np.isfinite(pull)):
+            pull = want / for_each
+        return Setting.of(PULL, pull)
 
     def _toward(self, aim: tuple[float, float], landed: list[Shot], start: tuple[float, float] | None = None) -> Setting | None:
         """The setting a straight-line fit of where shots ended, against their settings, says ends at ``aim``.
@@ -183,13 +280,17 @@ class Shots:
         """
         settings = np.array([shot.setting.numbers(self.way) for shot in landed])
         ended = np.array([shot.ended_at for shot in landed], dtype=float)
+        target = np.array(aim, dtype=float)
         if start is not None:
-            # Letting go with no pull, or no hold, sends nothing: what would be sent stays where the press was.
+            # How far each shot carried the thing from where it set off, and how far this one has to: a ball struck
+            # where it lies is somewhere new each time, and what a pull does to it is the same from anywhere. Letting
+            # go with no pull, or no hold, carries it nowhere.
+            ended = ended - np.array([shot.began_at or start for shot in landed], dtype=float)
+            target = target - np.array(start, dtype=float)
             settings = np.vstack([settings, np.zeros((1, settings.shape[1]))])
-            ended = np.vstack([ended, np.array([start], dtype=float)])
+            ended = np.vstack([ended, np.zeros((1, 2))])
         if len({tuple(row) for row in settings}) < 2:
             return None
-        target = np.array(aim, dtype=float)
         distance = np.linalg.norm(ended - target, axis=1)
         weights = 1.0 / (0.05 + distance)
         weights = weights / weights.sum()

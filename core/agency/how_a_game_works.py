@@ -49,6 +49,7 @@ __all__ = [
     "how_it_works",
     "seen_going_on_by_itself",
     "seen_to_answer",
+    "seen_to_send",
     "understood",
 ]
 
@@ -203,6 +204,13 @@ def seen_to_answer(guide: Any, by: str) -> None:
         answer.held_to(FOLLOWS, SEEN_SURE, "something followed my pointer")
     else:
         answer.held_to(STEERED, SEEN_SURE, "something moved when I pressed the keys")
+
+
+def seen_to_send(guide: Any) -> None:
+    """That a thing went when she pressed it, pulled and let go, kept on the guide: she is someone who sends."""
+    seen = _seen(guide)
+    if seen is not None:
+        seen.setdefault("me", Answer()).held_to(SENDS, SEEN_SURE, "a thing went when I pressed it, pulled back and let go")
 
 
 def _seen(guide: Any) -> dict[str, Answer] | None:

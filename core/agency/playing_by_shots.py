@@ -24,11 +24,11 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from core.agency.how_hard_and_which_way import HOLD, PULL, Setting, Shot, Shots
+from core.agency.how_hard_and_which_way import HOLD, PULL, Setting, Shot, Shots, first_settings
 
 logger = logging.getLogger("Aura.PlayingByShots")
 
-__all__ = ["play_by_shots", "sends_by_letting_go"]
+__all__ = ["hers_is_in_sight", "play_by_shots", "sends_by_letting_go"]
 
 #: What a press that changed the whole screen is said to have sent: nothing, it was a button.
 NAVIGATED: Any = object()
@@ -42,8 +42,16 @@ WATCHED_FOR_S = 6.0
 STOPPED_BELOW = 6.0
 STOPPED_FOR_S = 0.4
 
-#: How many steps a pull is made in, so the page sees a drag and not a jump.
+#: How many steps a pull is made in, so the page sees a drag and not a jump, and how long it is held at its end.
 PULL_STEPS = 8
+HELD_AT_FULL_PULL_S = 0.07
+
+#: How long a thing sent may be out of sight before it is taken to have gone for good: a ball rolls behind a post, or
+#: over something of its own colour, and comes out the other side.
+BACK_IN_SIGHT_WITHIN_S = 0.8
+
+#: How near its start, as a share of the picture's width, a thing sets off that is the thing she pressed.
+SETS_OFF_FROM_THERE = 0.08
 
 #: Words that say a thing is sent by a press pulled or held and let go. Not "drag": a thing dragged is carried to a
 #: place and stays there (core/agency/putting_things_in_place.py); LIVE 2026-10-09 "click and drag it into place"
@@ -175,6 +183,8 @@ async def _let_go(hands: Any, start: tuple[float, float], setting: Setting, way:
                 share = step / PULL_STEPS
                 await hands.point(start[0] + setting.across * share, start[1] + setting.down * share)
                 await asyncio.sleep(0.015)
+            # Held a moment at its full length: a place that reads the pull once a frame has to see it there.
+            await asyncio.sleep(HELD_AT_FULL_PULL_S)
         else:
             await asyncio.sleep(setting.held_s)
     finally:
@@ -193,16 +203,24 @@ def _went_on_after(thing: Any, since: float) -> bool:
 
 async def _where_it_went(look: Callable[[], Awaitable[Any]], moves: Any, let_go_at: float,
                          read_words: Callable[[Any], list[dict[str, Any]]] | None, counters: Any,
-                         going_already: frozenset[int] = frozenset()) -> tuple[tuple[float, float] | None, int]:
-    """Watch after a shot: the thing that set off first after the letting go, followed until it stops or goes; where,
-    as shares of the picture, and what was counted meanwhile.
+                         going_already: frozenset[int] = frozenset(),
+                         start: tuple[float, float] | None = None) -> tuple[Any, int, tuple[float, float] | None]:
+    """Watch after a shot until what it set going has come to rest: where the last thing still going was last seen, as
+    shares of the picture; what was counted meanwhile; and, where that thing went out of sight still going, where the
+    watch had it by then.
 
     A thing already going before she pressed was not sent by her: LIVE 2026-10-09 a title's word bobbing on its
-    own was taken for what her press sent, and she went on shooting at it.
+    own was taken for what her press sent, and she went on shooting at it. What a letting go sets going is not always
+    the thing sent, nor at once: offline 2026-10-12 a putter swung for a second and more before it struck the ball,
+    she had stopped watching after one, and she was pressing the next thing while her ball rolled away. So the watch
+    lasts while anything the act set going is still going, and what it follows is whichever of those is going now:
+    the club, and then the ball.
     """
-    sent: int | None = None
+    followed: int | None = None
     last: tuple[float, float] | None = None
-    slow_since: float | None = None
+    went_out_at: tuple[float, float] | None = None
+    stirred_at = let_go_at
+    lost_at: float | None = None
     gained = 0
     read_at = 0.0
     while True:
@@ -212,30 +230,29 @@ async def _where_it_went(look: Callable[[], Awaitable[Any]], moves: Any, let_go_
         picture, at = seen
         happened = moves.see(picture, at)
         if any(event.get("what") == "new screen" for event in happened):
-            # The whole screen changed under the press: a button was pressed, not a thing sent.
-            return NAVIGATED, gained
+            # The whole screen changed under the press: a button was pressed, not a thing sent. After something was
+            # sent it is what came of the shot (the next hole, the round's end), and the shot ended where it was seen.
+            return (last if followed is not None else NAVIGATED), gained, went_out_at
         tall, wide = moves.shape
-        if sent is None and at - let_go_at <= SETS_OFF_WITHIN_S:
-            setting_off = [thing for thing in moves.things.values()
-                           if math.hypot(thing.vx, thing.vy) > 2 * STOPPED_BELOW and thing.number not in going_already
-                           and _went_on_after(thing, let_go_at)]
-            if setting_off:
-                sent = max(setting_off, key=lambda thing: math.hypot(thing.vx, thing.vy)).number
-        if sent is not None:
-            thing = moves.things.get(sent)
-            if thing is None:
-                gone = next((h for h in happened if h.get("what") == "gone" and h.get("thing") == sent), None)
-                if gone is not None:
-                    last = (float(gone["last_visible"][0]) / max(1, wide), float(gone["last_visible"][1]) / max(1, tall))
+        going = _set_going_by_it(moves, let_go_at, going_already, start, followed)
+        if going:
+            thing = max(going, key=lambda one: math.hypot(one.vx, one.vy))
+            now_at = (thing.x / max(1, wide), thing.y / max(1, tall))
+            if thing.number != followed:
+                logger.debug("after the letting go, a thing sets off at %s", now_at)
+            followed, lost_at, stirred_at, went_out_at, last = thing.number, None, at, None, now_at
+        elif followed is not None and followed not in moves.things and lost_at is None:
+            # Out of sight is not gone: a ball rolls behind a post and comes out the other side. Where the watch had
+            # it going by then is kept apart from where it was last seen whole, for whoever can tell which to go by.
+            gone = next((h for h in happened if h.get("what") == "gone" and h.get("thing") == followed), None)
+            if gone is not None:
+                went_out_at = last
+                last = (float(gone["last_visible"][0]) / max(1, wide), float(gone["last_visible"][1]) / max(1, tall))
+            lost_at = at
+        if lost_at is not None:
+            if at - lost_at > BACK_IN_SIGHT_WITHIN_S:
                 break
-            last = (thing.x / max(1, wide), thing.y / max(1, tall))
-            if math.hypot(thing.vx, thing.vy) < STOPPED_BELOW:
-                slow_since = slow_since if slow_since is not None else at
-                if at - slow_since >= STOPPED_FOR_S:
-                    break
-            else:
-                slow_since = None
-        elif at - let_go_at > SETS_OFF_WITHIN_S:
+        elif at - stirred_at > (STOPPED_FOR_S if followed is not None else SETS_OFF_WITHIN_S):
             break
         if read_words is not None and counters is not None and at - read_at >= 0.5:
             read_at = at
@@ -243,7 +260,24 @@ async def _where_it_went(look: Callable[[], Awaitable[Any]], moves: Any, let_go_
                 gained += int(verdict["by"]) if verdict["what"] == "gain" else 0
         if at - let_go_at > WATCHED_FOR_S:
             break
-    return last, gained
+    return last, gained, went_out_at
+
+
+def _set_going_by_it(moves: Any, let_go_at: float, going_already: frozenset[int],
+                     start: tuple[float, float] | None, followed: int | None) -> list[Any]:
+    """The things going now that the letting go set going: not going before it, and gone on going after it. Those
+    that set off from where she pressed, where any did: a club swung beside a ball is faster than the ball."""
+    going = [thing for thing in moves.things.values() if thing.number not in going_already
+             and math.hypot(thing.vx, thing.vy) > (STOPPED_BELOW if thing.number == followed else 2 * STOPPED_BELOW)
+             and _went_on_after(thing, let_go_at)]
+    if not going or start is None:
+        return going
+    tall, wide = moves.shape
+    pressed = (start[0] * wide, start[1] * tall)
+    from_there = [thing for thing in going
+                  if math.dist(next(((x, y) for at, x, y in thing.path if at >= let_go_at), (thing.x, thing.y)),
+                               pressed) <= SETS_OFF_FROM_THERE * wide]
+    return from_there or going
 
 
 def _a_way_on_shown(picture: Any, read_words: Callable[[Any], list[dict[str, Any]]] | None) -> str:
@@ -263,49 +297,78 @@ def _a_way_on_shown(picture: Any, read_words: Callable[[Any], list[dict[str, Any
     return ""
 
 
-#: The width a picture is looked over at for small round things, and how much of it one may cover; and the finer look
-#: after it, for a ball a few pixels across (offline 2026-10-11 a golf ball sat on its tee three pixels wide at the
-#: first look, and she pressed every other round thing on the course).
-ROUND_THINGS_WIDTH = 300
-ROUND_THINGS_SIZES = (0.0002, 0.008)
-FINER_WIDTH = 600
-FINER_SIZES = (0.00005, 0.008)
+#: How many places are tried for what sends, the likeliest first.
+PLACES_TRIED = 24
+
+#: How near two places are, as a share of the picture, that are one place.
+ONE_PLACE = 0.03
+
+#: How like in colour (0 to 1) a thing must be to what she sent before to be that thing again, and to the marker by
+#: her name to be marked by it.
+THE_SAME_PAINT = 0.7
+MARKED_BY = 0.5
+
+#: How many shots in a row may send nothing before what sends is looked for afresh.
+MISSES_BEFORE_LOOKING_AGAIN = 3
+
+#: How long after a thing of hers went from sight it, or another, is waited for before the place is left to say what
+#: comes next. A thing taken up and carried off is set down again: offline 2026-10-12 a saucer over a golf course
+#: lifted her ball, and three seconds on she was pressing the veins of an eyeball that were its colour.
+ANOTHER_WITHIN_S = 8.0
+
+#: How far apart in width a thing may be from the one she sent and still be it: the finder's sizes come in steps of
+#: about a third, and a thing is found a step either side of itself from one look to the next.
+THE_SAME_SIZE = 1.7
+
+#: The ways a stretch ends after which a thing struck where it lies is somewhere of the next screen's choosing.
+_HERS_IS_ELSEWHERE_AFTER = ("what she sent got there", "what she sent has gone from sight", "the screen changed",
+                            "nothing of hers is in sight")
+
+#: What sight says became of the thing she pressed.
+RESTS, GONE, THERE, UNSEEN = "it lies somewhere new", "it is gone from sight", "one is where she pressed", "sight cannot say"
+
+#: How often her thing is looked for while it comes to rest, how near sightings are that are one resting place, and
+#: how many in a row must agree. Offline 2026-10-12 a ball still rolling the last of its way, a hundredth of the picture
+#: between two looks, was taken to lie where it was, and the next press was at where it had been.
+RESTS_LOOKED_EVERY_S = 0.3
+AT_REST_WITHIN = 0.004
+SIGHTINGS_AT_REST = 3
+
+#: How near where she pressed a thing still is that has not moved at all. A short putt moves a ball less than the
+#: breadth of one place, and it has moved.
+NOT_MOVED_WITHIN = 0.006
 
 
-def _round_things(picture: Any) -> list[tuple[float, float]]:
-    """Small, round, solid things that stand out from what is round them, as shares of the picture: what is sent is
+def _things_on(picture: Any, marker: Any = None) -> list[Any]:
+    """The small things that stand out on the picture (core/perception/things_that_stand_out.py): what is sent is
     nearly always one (a ball, a top, a bird, a ball of laundry). LIVE 2026-10-09 a putt game's ball, sat on its tee,
-    was never among the places she pressed: what stood out there were a heading and the middle of the picture. Those of
-    the first look first, then those only a finer look finds.
-    """
-    first = _round_things_at(picture, ROUND_THINGS_WIDTH, ROUND_THINGS_SIZES)
-    finer = [place for place in _round_things_at(picture, FINER_WIDTH, FINER_SIZES)
-             if all(math.dist(place, other) > 0.02 for other in first)]
-    return [*first, *finer]
+    was never among the places she pressed; offline 2026-10-11 it was still not, as wide as the window it was looked
+    for through, and she pressed sixty other things. Not what is drawn on the marker by her name: that is a legend,
+    and no thing of the field's."""
+    from core.perception.things_that_stand_out import things_that_stand_out
+
+    try:
+        things = things_that_stand_out(picture)
+    except (ValueError, TypeError, IndexError, MemoryError) as why:
+        logger.info("the small things on the picture could not be looked for: %s", why)
+        return []
+    return [thing for thing in things if not marker.holds(thing.place)] if marker else things
 
 
-def _round_things_at(picture: Any, width: int, sizes: tuple[float, float]) -> list[tuple[float, float]]:
-    import numpy as np
+def _her_marker(picture: Any, her_name: str, read_words: Callable[[Any], list[dict[str, Any]]] | None) -> Any:
+    """The marker drawn beside the name she gave (core/perception/the_marker_by_a_name.py), or None."""
+    if not her_name or read_words is None:
+        return None
+    from core.perception.the_marker_by_a_name import the_marker_by
 
-    from core.perception.picture_arithmetic import median, pieces, shrink
-
-    pixels = np.asarray(picture)
-    tall, wide = pixels.shape[:2]
-    small = shrink(pixels, width, max(1, round(tall * width / wide))) if wide > width else pixels
-    high, across = small.shape[:2]
-    around = median(small, 11)
-    stands = np.abs(small.astype(np.int16) - around.astype(np.int16)).max(axis=2) > 50
-    count, _labels, stats, centres = pieces(stands)
-    found = []
-    for label in range(1, count):
-        x, y, w, h, area = (int(v) for v in stats[label])
-        share = area / (high * across)
-        if not sizes[0] <= share <= sizes[1] or not 0.6 <= w / max(1, h) <= 1.6:
-            continue
-        if area < 0.6 * w * h:
-            continue
-        found.append((share, (round(float(centres[label][0]) / across, 4), round(float(centres[label][1]) / high, 4))))
-    return [place for _share, place in sorted(found)]
+    try:
+        marker = the_marker_by(her_name, read_words(picture), picture)
+    except (ValueError, TypeError, IndexError, KeyError) as why:
+        logger.info("the marker by her name could not be read: %s", why)
+        return None
+    if marker:
+        logger.info("beside her name (%s) the place draws %s", her_name, marker.colours)
+    return marker or None
 
 
 def _what_the_place_is_worked_with(moves: Any) -> list[tuple[float, float]]:
@@ -326,21 +389,194 @@ def _what_the_place_is_worked_with(moves: Any) -> list[tuple[float, float]]:
     return found[:3]
 
 
-def _places_to_send_from(picture: Any, keep: dict[str, Any]) -> list[tuple[float, float]]:
-    """Where a press might send something from: where it did before, else what stands out on the picture, largest first;
-    never where a press changed the whole screen, which is a button."""
+def _places_to_send_from(picture: Any, keep: dict[str, Any], *, things: Sequence[Any] | None = None,
+                         marker: Any = None, worked_with: Sequence[tuple[float, float]] = (),
+                         not_from: Sequence[tuple[float, float]] = (),
+                         chosen: Sequence[int] | None = None) -> list[tuple[float, float]]:
+    """Where a press might send something from, the likeliest first: where it did before; a thing painted like what
+    she sent before; a thing painted like the one she chose when the place asked her to choose; a thing painted like
+    the marker by her name; what the reading of the place says she works with; then whatever stands out, what stands
+    out most first. Never where a press changed the whole screen, which is a button, nor where shots have just sent
+    nothing, nor the marker itself, which is a legend."""
     from core.perception.shapes_that_look_pressable import pressable_shapes
+    from core.perception.the_marker_by_a_name import how_like_the_marker
+    from core.perception.things_that_stand_out import alike_in_colour
 
+    things = _things_on(picture, marker) if things is None else things
+    sent_before = keep.get("sends_what")
     known = keep.get("sends_from")
     buttons = [tuple(place) for place in keep.get("navigates_from") or ()]
-    places: list[tuple[float, float]] = [tuple(known)] if known else []
+
+    def hers(thing: Any) -> float:
+        if sent_before is not None and alike_in_colour(thing.colour, tuple(sent_before)) >= THE_SAME_PAINT:
+            return 3.0
+        picked = alike_in_colour(thing.colour, tuple(chosen)) if chosen is not None else 0.0
+        if picked >= MARKED_BY:
+            return 1.0 + picked
+        marked = how_like_the_marker(thing.colour, marker) if marker else 0.0
+        return marked if marked >= MARKED_BY else 0.0
+
+    likely = sorted((thing for thing in things if hers(thing) > 0.0), key=lambda thing: -hers(thing))
+    others = [thing for thing in things if hers(thing) == 0.0]
     shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(picture)]
-    for place in [*_round_things(picture), *shapes]:
-        if all(math.dist(place, other) > 0.05 for other in places):
+    places: list[tuple[float, float]] = []
+    for place in [*([tuple(known)] if known else []), *(thing.place for thing in likely), *worked_with,
+                  *(thing.place for thing in others), *shapes, (0.5, 0.5)]:
+        if all(math.dist(place, other) > ONE_PLACE for other in places):
             places.append(place)
-    if all(math.dist((0.5, 0.5), other) > 0.05 for other in places):
-        places.append((0.5, 0.5))
-    return [place for place in places if all(math.dist(place, button) > 0.05 for button in buttons)]
+    return [place for place in places if all(math.dist(place, shut) > 0.05 for shut in buttons)
+            and all(math.dist(place, shut) > ONE_PLACE for shut in not_from)][:PLACES_TRIED]
+
+
+def _tries_to_find_what_sends(places: Sequence[tuple[float, float]], ways: Sequence[str],
+                              aim: tuple[float, float] | None) -> list[tuple[tuple[float, float], str, Setting]]:
+    """The tries that find what sends, in order: every place once before any place twice. One pull at each, then one
+    long hold at each, then the other pull and the short hold. Offline 2026-10-11 four tries at a place before the next
+    took a minute and a half to come round fifteen places, and the game's clock is the same clock."""
+    tries = []
+    for way, which in ((PULL, 0), (HOLD, 1), (PULL, 1), (HOLD, 0)):
+        if way not in ways:
+            continue
+        for place in places:
+            numbers = first_settings(way, aim, place)
+            tries.append((place, way, Setting.of(way, numbers[min(which, len(numbers) - 1)])))
+    return tries
+
+
+def _what_is_at(things: Sequence[Any], place: tuple[float, float]) -> Any:
+    """The thing that stands out at ``place``, or None where what is there is no such thing."""
+    there = [thing for thing in things if math.dist(thing.place, place) <= max(ONE_PLACE, thing.wide)]
+    return min(there, key=lambda thing: math.dist(thing.place, place)) if there else None
+
+
+def _in(box: Sequence[float], place: tuple[float, float]) -> bool:
+    left, top, right, bottom = box
+    return left <= place[0] <= right and top <= place[1] <= bottom
+
+
+def _painted_like(things: Sequence[Any], painted: Sequence[int], wide: float | None = None) -> list[Any]:
+    """The things painted like ``painted`` and, where the width of the thing meant is known, about as wide."""
+    from core.perception.things_that_stand_out import alike_in_colour
+
+    return [thing for thing in things if alike_in_colour(thing.colour, tuple(painted)) >= THE_SAME_PAINT
+            and (not wide or max(thing.wide, wide) <= THE_SAME_SIZE * min(thing.wide, wide))]
+
+
+def _where_hers_is(things: Sequence[Any], keep: dict[str, Any],
+                   not_from: Sequence[tuple[float, float]] = ()) -> tuple[float, float] | None:
+    """Where to press this turn, or None where that is not known. A thing sent from a place that stays put (a sling,
+    a tee a new ball is set on) is pressed there again. A thing struck where it lies is one thing, and is pressed
+    where it lies now: the thing painted like it nearest where the last shot left it, on whatever screen it is.
+    Offline 2026-10-11 she would have putted a ball once and pressed its empty tee ever after."""
+    known, painted = keep.get("sends_from"), keep.get("sends_what")
+    if painted is None or not keep.get("lies_where_struck"):
+        return tuple(known) if known is not None else None
+    like = [thing for thing in _painted_like(things, painted, keep.get("sends_wide"))
+            if all(math.dist(thing.place, shut) > ONE_PLACE for shut in not_from)]
+    if not like:
+        return None
+    near = keep.get("rests_at") or known
+    return (min(like, key=lambda thing: math.dist(thing.place, tuple(near))) if near is not None else like[0]).place
+
+
+def hers_is_in_sight(picture: Any, keep: dict[str, Any], her_name: str = "",
+                     read_words: Callable[[Any], list[dict[str, Any]]] | None = None) -> bool:
+    """Whether the one thing she has been sending in this place, struck where it lies, is on ``picture``: a new hole, a
+    new table, another go. Not its picture on the marker by her name."""
+    painted = (keep or {}).get("sends_what")
+    if painted is None or not keep.get("lies_where_struck"):
+        return False
+    return bool(_painted_like(_things_on(picture, _her_marker(picture, her_name, read_words)), painted,
+                              keep.get("sends_wide")))
+
+
+async def _what_became_of_it(look: Callable[[], Awaitable[Any]], before: Sequence[Any],
+                             painted: Sequence[int] | None, start: tuple[float, float],
+                             marked: Callable[[Any], Any] | None = None,
+                             as_wide: float | None = None) -> tuple[str, tuple[float, float] | None]:
+    """What became of the thing she pressed, by sight, and where it is where sight can say: RESTS at a place, where it
+    is no longer where she pressed it and one thing of its paint lies where none was; GONE, where nothing of its paint
+    is anywhere new and none is where she pressed; THERE, where one is where she pressed it, the same or another put
+    in its place; UNSEEN where sight cannot say. A ball a few pixels wide is too small for the watch to follow and
+    plain to find lying still, and a ball that stopped behind a post is where it is found, not where it was lost."""
+    if painted is None:
+        return UNSEEN, None
+    # The others of its paint, where they were: what she pressed is not one of them.
+    others = [thing for thing in _painted_like(before, painted, as_wide) if math.dist(thing.place, start) > ONE_PLACE]
+    sightings: list[tuple[float, float]] = []
+    began: float | None = None
+    looked_at = -math.inf
+    while True:
+        seen = await look()
+        if seen is None:
+            return UNSEEN, None
+        began = seen[1] if began is None else began
+        if seen[1] - began > WATCHED_FOR_S:
+            return UNSEEN, None
+        if seen[1] - looked_at < RESTS_LOOKED_EVERY_S:
+            continue    # the pictures' own clock, not hers: sightings a moment apart that agree are a thing at rest
+        looked_at = seen[1]
+        like = _painted_like(_things_on(seen[0], marked(seen[0]) if marked is not None else None), painted, as_wide)
+        if any(math.dist(thing.place, start) <= NOT_MOVED_WITHIN for thing in like):
+            return THERE, None
+        new = [thing for thing in like if all(math.dist(thing.place, other.place) > ONE_PLACE for other in others)]
+        if len(new) != 1:
+            return (UNSEEN if new else GONE), None
+        sightings.append(new[0].place)
+        lately = sightings[-SIGHTINGS_AT_REST:]
+        if len(lately) == SIGHTINGS_AT_REST and all(math.dist(place, lately[-1]) <= AT_REST_WITHIN for place in lately):
+            return RESTS, lately[-1]
+
+
+def _where_it_ended(became: tuple[str, tuple[float, float] | None], last: tuple[float, float] | None,
+                    went_out_at: tuple[float, float] | None) -> tuple[float, float] | None:
+    """Where a shot ended, from what the watch followed and what sight found afterwards. Where the thing lies in
+    sight, there. Where it is gone from sight for good, where the watch had it going as it went: a ball lost at a
+    hole's edge ended in the hole. Else where the watch last saw it whole: a thing lost beside something and then put
+    back where it began went no further than it was seen to."""
+    how, rests = became
+    if how == RESTS:
+        return rests
+    if how == GONE and last is not None:
+        return went_out_at or last
+    return last
+
+
+async def _hers_shows_again(look: Callable[[], Awaitable[Any]], painted: Sequence[int],
+                            marked: Callable[[Any], Any] | None, as_wide: float | None = None) -> bool:
+    """Whether a thing painted like hers is on the picture, now or within a few seconds: another to send."""
+    began: float | None = None
+    looked_at = -math.inf
+    while True:
+        seen = await look()
+        if seen is None:
+            return False
+        began = seen[1] if began is None else began
+        if seen[1] - looked_at >= RESTS_LOOKED_EVERY_S:
+            looked_at = seen[1]
+            if _painted_like(_things_on(seen[0], marked(seen[0]) if marked is not None else None), painted, as_wide):
+                return True
+        if seen[1] - began > ANOTHER_WITHIN_S:
+            return False
+
+
+async def _a_look_with_the_first_over(look: Callable[[], Awaitable[Any]], moves: Any) -> Any:
+    """A picture, taken once the watch's first look at this screen is over and what stays put on it is known."""
+    seen = await look()
+    while seen is not None:
+        moves.see(seen[0], seen[1])
+        if moves.has_looked:
+            break
+        seen = await look()
+    return seen
+
+
+def _the_way_that_sends(keep: dict[str, Any], shots_by_way: dict[str, Shots], ways: Sequence[str]) -> str:
+    """The way that sent from where she presses: the one kept, else the one that has sent lately, else the first."""
+    kept = keep.get("sends_by")
+    if kept in ways:
+        return str(kept)
+    return next((way for way in ways if way in shots_by_way and shots_by_way[way].sends_anything), ways[0])
 
 
 async def play_by_shots(
@@ -351,14 +587,20 @@ async def play_by_shots(
     keep: dict[str, Any] | None = None,
     say: Callable[[str], Any] | None = None,
     read_words: Callable[[Any], list[dict[str, Any]]] | None = None,
-    aim_at: Callable[[Any], tuple[float, float] | None] | None = None,
+    aim_at: Callable[[Any, tuple[float, float] | None], tuple[float, float] | None] | None = None,
     ways: Sequence[str] = (PULL, HOLD),
+    her_name: str = "",
+    chosen: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Send things by letting go of a press, shot after shot, for ``seconds``; doing better each time.
 
     ``hands`` has ``press(x, y)``, ``point(x, y)`` and ``release()``, places as shares of the picture. ``aim_at``
-    says, of what ``look`` shows, where a thing sent ought to end up, or None where nothing says. ``keep`` carries what
-    she found out (where a press sends from, which way of letting go sends, the shots) into the next stretch.
+    says, of what ``look`` shows and of where her thing is on it (or None), where a thing sent ought to end up, or None
+    where nothing says. ``her_name`` is the
+    name she gave the place, where she gave one: what it draws beside that name marks which thing is hers. ``chosen``
+    is the paint of the thing she took where the place asked her to choose one: the thing painted like it is hers. ``keep``
+    carries what she found out (where a press sends from, what the thing sent is painted like, which way of letting go
+    sends, the shots) into the next stretch.
     """
     from core.agency.what_meeting_things_does import Readouts
     from core.perception.what_moves_in_the_picture import WhatMoves
@@ -367,7 +609,6 @@ async def play_by_shots(
     began = time.monotonic()
     counters = Readouts()
     shots_by_way: dict[str, Shots] = keep.setdefault("shots", {})
-    taken = 0
     said: set[str] = set()
 
     def tell(line: str) -> None:
@@ -378,81 +619,118 @@ async def play_by_shots(
     seen = await look()
     if seen is None:
         return {"shots": 0, "ended": "the picture could not be taken"}
-    places = _places_to_send_from(seen[0], keep)
-    # The way that has sent lately first, and the others behind it, never left out.
-    order = sorted(ways, key=lambda w: not (w in shots_by_way and shots_by_way[w].sends_anything))
     # One watch of the picture for all the shots, so what stays put is known before anything is sent.
     moves = WhatMoves(kinds=keep.get("kinds"))
     moves.see(seen[0], seen[1])
-    looked_for_what_it_is_worked_with = False
-    gains = 0
+    marker: Any = None
+
+    def marked(picture: Any) -> Any:
+        return _her_marker(picture, her_name, read_words)
+
+    to_try: list[tuple[tuple[float, float], str, Setting]] | None = None
+    sent_nothing: list[tuple[float, float]] = []
+    taken = gains = misses = sent = 0
     ended = "out of time"
     while time.monotonic() - began < seconds:
-        if keep.get("sends_from") is None and not places:
-            ended = "nothing sends anything"
-            break
-        start = tuple(keep.get("sends_from") or places[0])
-        way = order[0]
-        shots = shots_by_way.setdefault(way, Shots(way=way))
-        seen = await look()
+        seen = await _a_look_with_the_first_over(look, moves)
         if seen is None:
             ended = "the picture could not be taken"
             break
-        moves.see(seen[0], seen[1])
-        while not moves.has_looked:
-            seen = await look()
-            if seen is None:
+        # The marker by her name is read on every screen: it is on the course's plate and on the card of scores, in two
+        # places. Offline 2026-10-12 the ball drawn by her name on a scorecard was taken for her ball, and pressed.
+        marker = _her_marker(seen[0], her_name, read_words)
+        things = [thing for thing in _things_on(seen[0], marker)
+                  if not any(_in(box, thing.place) for box in keep.get("markers_at") or ())]
+        hers = _where_hers_is(things, keep, sent_nothing)
+        aim = aim_at(seen[0], hers) if aim_at is not None else None
+        if hers is None and keep.get("lies_where_struck") and keep.get("sends_what") is not None:
+            # She knows what she sends here, and it is not on this screen: nothing else is pressed to find out.
+            ended = "nothing of hers is in sight"
+            break
+        if hers is None:
+            if to_try is None:
+                places = _places_to_send_from(seen[0], keep, things=things, marker=marker, not_from=sent_nothing,
+                                              worked_with=_what_the_place_is_worked_with(moves), chosen=chosen)
+                to_try = _tries_to_find_what_sends(places, ways, aim)
+            if not to_try:
+                ended = "nothing sends anything"
                 break
-            moves.see(*seen)
-        if seen is None:
-            ended = "the picture could not be taken"
-            break
-        if not looked_for_what_it_is_worked_with:
-            # Once the first look is over and its things are known: what the place is worked with first.
-            looked_for_what_it_is_worked_with = True
-            worked_with = _what_the_place_is_worked_with(moves)
-            places = worked_with + [p for p in places if all(math.dist(p, q) > 0.05 for q in worked_with)]
-            start = tuple(keep.get("sends_from") or places[0])
-        aim = aim_at(seen[0]) if aim_at is not None else None
-        setting = shots.next_setting(aim, start)
+            start, way, setting = to_try.pop(0)
+        else:
+            start, way = hers, _the_way_that_sends(keep, shots_by_way, ways)
+            setting = shots_by_way.setdefault(way, Shots(way=way)).next_setting(aim, start)
+        pressed = _what_is_at(things, start)
+        painted, as_wide = (pressed.colour, pressed.wide) if pressed is not None else (None, None)
         going = frozenset(n for n, thing in moves.things.items() if math.hypot(thing.vx, thing.vy) > STOPPED_BELOW)
         await _let_go(hands, start, setting, way)
         # When it was let go, on the pictures' own clock: the time of the last picture before it, and the act's length.
-        let_go_at = seen[1] + (setting.held_s if way == HOLD else PULL_STEPS * 0.015)
-        ended_at, gained = await _where_it_went(look, moves, let_go_at, read_words, counters, going_already=going)
+        let_go_at = seen[1] + (setting.held_s if way == HOLD else PULL_STEPS * 0.015 + HELD_AT_FULL_PULL_S)
+        ended_at, gained, went_out_at = await _where_it_went(look, moves, let_go_at, read_words, counters,
+                                                             going_already=going, start=start)
         if ended_at is NAVIGATED:
             # LIVE 2026-10-09 a press on a game's rules screen went back to its title, the title's moving into place was
             # taken for a thing sent, and every shot after it pressed START.
-            keep.setdefault("navigates_from", []).append(start)
-            if keep.get("sends_from") is not None and math.dist(tuple(keep["sends_from"]), start) <= 0.05:
-                keep["sends_from"] = None
+            # Not where what she pressed was her own thing, known by its paint: a putt from the lip drops at once, and
+            # the screen that follows is the next hole's.
+            if not (hers is not None and painted is not None and keep.get("lies_where_struck")):
+                keep.setdefault("navigates_from", []).append(start)
+                if keep.get("sends_from") is not None and math.dist(tuple(keep["sends_from"]), start) <= 0.05:
+                    keep["sends_from"] = None
             ended = "the screen changed"
             break
         keep["kinds"] = moves.kinds
-        shot = Shot(setting=setting, ended_at=ended_at, gained=gained, aimed_at=aim)
-        shots.took(shot)
+        became = await _what_became_of_it(look, things, painted, start, marked, as_wide)
+        ended_at = _where_it_ended(became, ended_at, went_out_at)
+        shot = Shot(setting=setting, ended_at=ended_at, gained=gained, aimed_at=aim, began_at=start,
+                    lies_in_sight=became[0] == RESTS, gone_from_sight=became[0] == GONE)
         taken += 1
         gains += max(0, gained)
-        logger.info("shot %d (%s from %s, %s): ended at %s, gained %d; %s", taken, way, start, setting, ended_at, gained, shots.how_it_goes())
+        logger.info("shot %d (%s from %s, %s): ended at %s (%s), gained %d, aimed at %s", taken, way, start, setting,
+                    ended_at, became[0], gained, aim)
         after = await look()
         way_on = _a_way_on_shown(after[0] if after else None, read_words)
         if way_on:
             ended = f"the screen offers a way on ({way_on})"
             break
-        if ended_at is None and not shots.sends_anything and len(shots.tried) >= 2:
-            # Two tries of one way from one place, and nothing sent lately: the other way, then the next place. A place
-            # that sent once long ago is given up like any other: what sends now is what is being found.
-            order = order[1:] + order[:1]
-            if all(shots_by_way.get(w) is not None and len(shots_by_way[w].tried) >= 2 and not shots_by_way[w].sends_anything for w in order):
-                places = [place for place in places if math.dist(place, start) > 0.05]
-                keep["sends_from"] = None
-                shots_by_way.clear()
-                order = list(ways)
+        if became[0] == GONE and painted is not None and not await _hers_shows_again(look, painted, marked, as_wide):
+            # What she sent is gone and nothing of hers is left to send: the place has the next word (the next hole,
+            # a count, a way on), and whoever handed this over reads it.
+            if ended_at is not None:
+                sent += 1
+                shots_by_way.setdefault(way, Shots(way=way)).took(shot)
+            ended = "what she sent got there" if shot.got_there else "what she sent has gone from sight"
+            break
+        if ended_at is None:
+            if hers is None:
+                continue
+            shots_by_way[way].took(shot)
+            misses += 1
+            if misses >= MISSES_BEFORE_LOOKING_AGAIN:
+                # What sent before sends nothing now: where it is, is found again. What a pull does to it is kept.
+                logger.info("%d shots from %s sent nothing: finding what sends afresh", misses, start)
+                sent_nothing.append(start)
+                keep["sends_from"], to_try, misses = None, None, 0
             continue
-        if ended_at is not None and keep.get("sends_from") is None:
-            keep["sends_from"] = start
+        misses, sent = 0, sent + 1
+        if marker and all(math.dist(marker.where[:2], box[:2]) > ONE_PLACE for box in keep.setdefault("markers_at", [])):
+            # A screen she sent something on is a screen of play, and the plate her name is on there stays where it is.
+            keep["markers_at"].append(tuple(marker.where))
+        if hers is None:
+            to_try = None
             tell("Pressing there and letting go sends it; now finding how hard and which way.")
+        keep["sends_from"], keep["sends_by"] = start, way
+        if painted is not None:
+            keep["sends_what"], keep["sends_wide"] = painted, as_wide
+        if became[0] in (RESTS, THERE):
+            # Seen lying somewhere new, it is one thing struck where it lies; one where she pressed, it is sent from a
+            # place that stays put.
+            keep["lies_where_struck"] = became[0] == RESTS
+        keep["rests_at"] = ended_at if became[0] == RESTS else None
+        shots_by_way.setdefault(way, Shots(way=way)).took(shot)
         if shot.got_there:
             tell("That's the measure of it.")
-    return {"shots": taken, "gains": gains, "ended": ended, "sends_from": keep.get("sends_from"),
+    if keep.get("lies_where_struck") and ended in _HERS_IS_ELSEWHERE_AFTER:
+        # The next screen puts her thing somewhere of its own: where it was pressed on this one says nothing of that.
+        keep["sends_from"] = keep["rests_at"] = None
+    return {"shots": taken, "sent": sent, "gains": gains, "ended": ended, "sends_from": keep.get("sends_from"),
             "how_it_goes": {way: shots.how_it_goes() for way, shots in shots_by_way.items()}}

@@ -14,6 +14,7 @@ Nothing here knows a game: it knows pastimes, as anyone does.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -71,12 +72,23 @@ MOUTH_SIZES = (0.0003, 0.02)
 MOUTH_WIDER = (0.8, 3.5)
 #: The width it is looked for at.
 MOUTH_LOOKED_AT = 320
+#: How near what is to be sent a dark thing may be and not be where it goes; how nearly a mouth fills the ellipse its
+#: box holds; and by how much the best of several must beat the next to be taken for the mouth.
+NOT_WHERE_IT_IS = 0.06
+A_MOUTH_FILLS = 0.85
+PLAINLY_MORE_A_MOUTH = 0.08
 
 
-def where_it_goes(pastime: Pastime | None, picture: Any) -> tuple[float, float] | None:
+def where_it_goes(pastime: Pastime | None, picture: Any,
+                  apart_from: tuple[float, float] | None = None) -> tuple[float, float] | None:
     """Where on ``picture`` what the pastime is played with is to be sent, as shares, where its look can be found: the
-    one dark mouth on a course. None where the pastime names nothing to find, or the picture shows none, or more than
-    one: guessing between two holes is no aim."""
+    dark mouth on a course. None where the pastime names nothing to find, or the picture shows none, or shows several
+    that cannot be told apart: guessing between two holes is no aim.
+
+    Of several dark things, the mouth is the one drawn as a mouth: a filled ellipse, wider than tall as a round hole is
+    from aslant. And it is not where the thing to be sent already is (``apart_from``): offline 2026-10-12 a second
+    hole's tee, a dark mat with the ball on it, was as dark as the hole, and with two dark things she aimed at neither.
+    """
     if pastime is None or pastime.toward_looks != DARK_MOUTH:
         return None
     from core.perception.picture_arithmetic import pieces, shrink
@@ -97,5 +109,12 @@ def where_it_goes(pastime: Pastime | None, picture: Any) -> tuple[float, float] 
             continue
         if area < 0.6 * w * h or x == 0 or y == 0 or x + w >= across or y + h >= high:
             continue  # not solid, or running off the picture: a shadow, a frame, the dark of the sky
-        found.append((round(float(centres[label][0]) / across, 4), round(float(centres[label][1]) / high, 4)))
-    return found[0] if len(found) == 1 else None
+        place = (round(float(centres[label][0]) / across, 4), round(float(centres[label][1]) / high, 4))
+        if apart_from is not None and math.dist(place, apart_from) <= NOT_WHERE_IT_IS:
+            continue
+        # How nearly it fills the ellipse its box holds: 1 for an ellipse, less for a mat, a sign, a patch of shade.
+        found.append((1.0 - abs(1.0 - area / (math.pi / 4.0 * w * h)), place))
+    found.sort(reverse=True)
+    if len(found) == 1 or (len(found) > 1 and found[0][0] >= A_MOUTH_FILLS and found[0][0] - found[1][0] >= PLAINLY_MORE_A_MOUTH):
+        return found[0][1]
+    return None

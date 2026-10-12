@@ -83,10 +83,10 @@ def test_a_thing_already_going_before_the_press_was_not_sent_by_it():
     async def look():
         return (None, next(clock))
 
-    went, _gained = asyncio.run(_where_it_went(look, moves, 0.0, None, None, going_already=frozenset({7})))
+    went, _gained, _went_out_at = asyncio.run(_where_it_went(look, moves, 0.0, None, None, going_already=frozenset({7})))
     assert went is None
     clock = iter(i * 0.1 for i in range(200))
-    went, _gained = asyncio.run(_where_it_went(look, moves, 0.0, None, None))
+    went, _gained, _went_out_at = asyncio.run(_where_it_went(look, moves, 0.0, None, None))
     assert went is not None
 
 

@@ -94,7 +94,7 @@ def test_she_finds_the_pull_that_sends_the_ball_into_the_place_it_scores():
     world = _World()
     keep: dict = {}
     result = asyncio.run(play_by_shots(world.look, world, seconds=25.0, keep=keep, read_words=world.words,
-                                       aim_at=lambda _picture: world.hole, ways=(PULL,)))
+                                       aim_at=lambda _picture, _hers: world.hole, ways=(PULL,)))
     assert keep.get("sends_from") is not None and math.dist(keep["sends_from"], world.home) < 0.06, keep.get("sends_from")
     assert world.score >= 1, result
 

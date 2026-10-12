@@ -92,11 +92,17 @@ def to_keep(keep: dict[str, Any]) -> dict[str, Any]:
     if keep.get("meeting_with"):
         held["meeting_with"] = {str(part): counts for part, counts in keep["meeting_with"].items()}
     shots = keep.get("by_shots") or {}
-    if shots.get("sends_from"):
-        # Where a press sends something from, and the setting that last got there, by each way of letting go.
+    if shots.get("sends_from") or shots.get("sends_what") is not None:
+        # Where a press sends something from, and the setting that last got there, by each way of letting go; and of a
+        # thing struck where it lies, what it is painted like and how wide it is, which is how it is known again.
         measures = {way: [found.across, found.down, found.held_s]
                     for way, tried in (shots.get("shots") or {}).items() if (found := tried.the_measure) is not None}
-        held["by_shots"] = {"sends_from": list(shots["sends_from"]), "measures": measures}
+        held["by_shots"] = {"sends_from": list(shots["sends_from"]) if shots.get("sends_from") else [],
+                            "measures": measures}
+        if shots.get("sends_what") is not None:
+            held["by_shots"].update({"what": [int(v) for v in shots["sends_what"]],
+                                     "wide": float(shots.get("sends_wide") or 0.0), "by": str(shots.get("sends_by") or ""),
+                                     "lies": bool(shots.get("lies_where_struck"))})
     if isinstance(keep.get("watched"), dict):
         # What a recording of someone playing it showed (core/perception/watching_someone_play.py).
         held["watched"] = keep["watched"]
@@ -117,7 +123,13 @@ def _shots_kept_from(held: dict[str, Any]) -> dict[str, Any]:
         tried = Shots(way=way)
         tried.took(Shot(Setting(float(across), float(down), float(held_s)), ended_at=None, gained=1))
         shots[way] = tried
-    return {"sends_from": tuple(held["sends_from"]), "shots": shots}
+    kept: dict[str, Any] = {"sends_from": tuple(held["sends_from"]) if held.get("sends_from") else None, "shots": shots}
+    if isinstance(held.get("what"), list) and len(held["what"]) == 3:
+        kept.update({"sends_what": tuple(int(v) for v in held["what"]), "sends_wide": float(held.get("wide") or 0.0) or None,
+                     "lies_where_struck": bool(held.get("lies"))})
+        if held.get("by"):
+            kept["sends_by"] = str(held["by"])
+    return kept
 
 
 def kept_from(held: dict[str, Any]) -> dict[str, Any]:
@@ -131,7 +143,8 @@ def kept_from(held: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(held, dict):
         return keep
     held = validate_indexed_state(held, indexed_tables=INDEXED_TABLES)
-    if isinstance(held, dict) and isinstance(held.get("by_shots"), dict) and held["by_shots"].get("sends_from"):
+    if isinstance(held, dict) and isinstance(held.get("by_shots"), dict) and (
+            held["by_shots"].get("sends_from") or held["by_shots"].get("what")):
         keep["by_shots"] = _shots_kept_from(held["by_shots"])
     if isinstance(held, dict) and isinstance(held.get("watched"), dict):
         keep["watched"] = held["watched"]

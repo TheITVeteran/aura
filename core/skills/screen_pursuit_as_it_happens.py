@@ -319,6 +319,14 @@ LEFT_ALONE_AT_MOST_S = 180.0
 
 #: How often what the page draws is looked at for a board of two sides in turns, in seconds.
 BOARD_LOOKED_FOR_EVERY_S = 3.0
+
+#: How often the one thing she has been sending in a place is looked for on its screen.
+HERS_LOOKED_FOR_EVERY_S = 2.0
+
+#: How many of the things a screen offers are tried before the choice is left to the pursuit, and how long the screen
+#: is given to take one in.
+CHOICES_TRIED = 3
+AFTER_A_CHOICE_S = 0.8
 #: How many of a place's screens of words are kept for what its board's rules are.
 WORDS_KEPT = 60
 
@@ -363,6 +371,11 @@ def asks_to_choose(said: str) -> bool:
     from core.language.a_way_on import asks_to_choose as asks
 
     return asks(said)
+
+
+def _lays_out_a_choice(said: str) -> bool:
+    """Whether a screen that also offers a way on is still one to choose on first: its words are mostly the asking."""
+    return len(said.split()) <= 12
 
 
 #: The fewest words a screen that is not plainly rules must have to be read for a legend.
@@ -853,6 +866,13 @@ class PlayingAsItHappens:
         # pursuit, however its scenery moves (core/agency/the_controls_a_game_names.py the_pointer_only_clicks).
         only_clicks = the_pointer_only_clicks(said)
         in_time = (_played_in_time(said) or _it_goes_on_without_her(self)) and not only_clicks
+        # What her own acts have shown outweighs what the place's last screens say: where she has been sending one
+        # thing of hers in this place, struck where it lies, and it is in sight again, it is sent again. Offline
+        # 2026-10-12 she holed a golf ball on the first hole, and on the second, its tee in plain sight, clicked shapes
+        # "to see what they do" for a minute: the putter's instructions were six screens behind her.
+        if now < self.ends_at and not self.way_on_shown and await _hers_to_send_is_in_sight(self, now):
+            await self._by_shots(now, said, shown_by_her_acts=True)
+            return
         # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
         # a game played without one (a food fight seen from behind the player's own eyes) goes.
         if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
@@ -862,6 +882,11 @@ class PlayingAsItHappens:
         # field's caret blinked, the screen was taken for one that moves on its own, and its GO was clicked for five
         # minutes with no name in the field.
         if await self._typed_what_it_asks():
+            return
+        # And a screen that asks her to take one of the things it lays out has one taken, before anything is pressed to
+        # see what it does: offline 2026-10-12 "Choose a ball. Pick your favorite color!" stood over nine balls for a
+        # minute and a half while she pressed return, space and the sign.
+        if await _chose_what_it_asks(self):
             return
         # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
         # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
@@ -887,7 +912,7 @@ class PlayingAsItHappens:
         asked = ways_asked(said, self.words[-1] if self.words else "")
         way = held.choose(asked, said)
         if way == SEND and not self._no_place_for_shots():
-            await self._by_shots(now)
+            await self._by_shots(now, said)
             return
         # Played as it happens where it moves on its own, and where it moves for as long as she holds a key. Whether a
         # screen moves on its own is watched once a screen, not before every move on it: LIVE-like 2026-10-11 a menu
@@ -902,7 +927,7 @@ class PlayingAsItHappens:
             # and holds let go at it, and nothing sent.
             if (not await self._typed_what_it_asks() and SEND not in held.let_go and SEND in asked
                     and not self._no_place_for_shots()):
-                await self._by_shots(now)
+                await self._by_shots(now, said)
             return
         if not self.keep.get("hers") and not self.recalled:
             self.recalled = True
@@ -1078,30 +1103,40 @@ class PlayingAsItHappens:
                 self.keep["answered"] = await _what_it_answered(self.look, recognize_text)
         return bool(done.get("typed"))
 
-    async def _by_shots(self, now: float) -> None:
-        """Shots, where the place's words speak of sending a thing by a press pulled or held and let go.
+    async def _by_shots(self, now: float, said: str = "", shown_by_her_acts: bool = False) -> None:
+        """Shots, where the place's words speak of sending a thing by a press pulled or held and let go, or her own
+        shots here have shown it.
 
         Not on a screen that offers a way on: a menu is gone through by its labels, whatever the game is played by
         once it begins. LIVE 2026-10-09 two games' menus ("Enter Code or Play", a title's START) were shot at.
         """
+        from core.agency.how_a_game_works import seen_to_send
         from core.agency.playing_by_shots import play_by_shots, sends_by_letting_go
+        from core.cognition.a_guide_to_a_place import THE_GUIDE as _THE_GUIDE
         from core.perception.what_the_pixels_show import recognize_text
 
-        told = "\n".join([*(_without_labels(said, self.labels_seen) for said in self.words[-6:]),
+        # Everything the place has said of how it is played, as whoever chose this way read it, and its last screens.
+        told = "\n".join([said, *(_without_labels(line, self.labels_seen) for line in self.words[-6:]),
                           str(self.keep.get("counsel") or "")])
-        if not sends_by_letting_go(told) or now < self.quiet_until or self._no_place_for_shots():
+        if not shown_by_her_acts and (not sends_by_letting_go(told) or now < self.quiet_until):
+            return
+        if self._no_place_for_shots():
             return
         logger.info("it waits for her to send something: playing it by shots")
         shots = self.keep.setdefault("by_shots", {})
         stretch = await play_by_shots(self.look, self, seconds=min(STRETCH_S, self.ends_at - now), keep=shots,
-                                      say=_said_while_playing, read_words=recognize_text, aim_at=_where_it_goes(told))
+                                      say=_said_while_playing, read_words=recognize_text, aim_at=_where_it_goes(told),
+                                      her_name=_her_name_here(self),
+                                      chosen=(self.keep.get("chose") or {}).get("colour"))
         logger.info("shots played: %s", stretch)
         record = {"pictures": stretch.get("shots", 0), "gains": stretch.get("gains", 0), "losses": 0,
                   "seconds": time.monotonic() - now, "ended": stretch.get("ended"), "by_shots": stretch}
         self.stretches.append(record)
         self._judge(SEND_WAY, record)
         _keep_what_she_learned(self.page, self.keep)
-        if not stretch.get("sends_from"):
+        if stretch.get("sent"):
+            seen_to_send(_THE_GUIDE.get())
+        elif not stretch.get("sends_from") and not shots.get("lies_where_struck"):
             self.quiet_until, self.quiet_on = time.monotonic() + LEAVE_A_MOVING_MENU_S, self.said_now
             self.held_to().never_did_it(SEND_WAY, " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")]))
 
@@ -1170,7 +1205,83 @@ def _where_it_goes(told: str) -> Any:
     if pastime is None or not pastime.toward_looks:
         return None
     logger.info("a place of %s: what she sends goes to the %s", pastime.name, pastime.toward)
-    return lambda picture: where_it_goes(pastime, picture)
+    return lambda picture, hers=None: where_it_goes(pastime, picture, hers)
+
+
+async def _chose_what_it_asks(reflexes: PlayingAsItHappens) -> bool:
+    """Where the screen's words ask her to choose and it lays things out to choose among, one is taken
+    (core/agency/choosing_among_what_is_shown.py) and what she took is kept: it is hers from then on. Each thing
+    once at most, a few times for one screen. Whether she took one."""
+    import asyncio
+
+    import numpy as np
+
+    from core.agency.choosing_among_what_is_shown import (
+        the_one_to_take,
+        what_is_offered,
+        what_she_took,
+    )
+    from core.perception.what_the_pixels_show import recognize_text
+
+    said = reflexes.words[-1] if reflexes.words else ""
+    if not asks_to_choose(said) or reflexes.way_on_shown and not _lays_out_a_choice(said):
+        return False
+    tried: list[Any] = reflexes.keep.setdefault("choices_tried", {}).setdefault(said[:80], [])
+    if len(tried) >= CHOICES_TRIED:
+        return False
+    seen = await reflexes.look()
+    if seen is None:
+        return False
+    picture = np.asarray(seen[0])
+    try:
+        words = await asyncio.to_thread(recognize_text, np.ascontiguousarray(picture[:, :, 2::-1]))
+        # The screen in front of her now, not the one its words were last read from: offline 2026-10-12 a ball was
+        # chosen, and on the hole's card that followed she "chose" a word of its name.
+        if not asks_to_choose(" ".join(str(region.get("text") or "") for region in words)):
+            return False
+        taken = the_one_to_take(what_is_offered(picture, words, said), tried)
+    except _A_FAULT_OF_HERS as why:
+        logger.info("what the screen offers could not be made out: %s", why)
+        return False
+    if taken is None:
+        return False
+    tried.append(taken)
+    _said_while_playing(f"It asks me to choose: I'm taking {what_she_took(taken)}.")
+    logger.info("a choice asked (%r): taking %s", said[:60], taken)
+    await reflexes.click(*taken.place)
+    reflexes.keep["chose"] = {"colour": taken.colour, "label": taken.label, "asked": said[:120]}
+    reflexes.played_at = time.monotonic()
+    await asyncio.sleep(AFTER_A_CHOICE_S)
+    return True
+
+
+def _her_name_here(reflexes: PlayingAsItHappens) -> str:
+    """The name she gave the place, where she gave one: what it draws beside that name marks which thing is hers."""
+    from core.language.words_asked_for import NAME
+
+    return str(reflexes.keep.get("typed") or "") if reflexes.keep.get("typed_kind") == NAME else ""
+
+
+async def _hers_to_send_is_in_sight(reflexes: PlayingAsItHappens, now: float) -> bool:
+    """Whether the one thing she has been sending in this place is on the screen now; looked for every few seconds,
+    and only where she has sent one."""
+    from core.agency.playing_by_shots import hers_is_in_sight
+    from core.perception.what_the_pixels_show import recognize_text
+
+    shots = reflexes.keep.get("by_shots") or {}
+    if shots.get("sends_what") is None or not shots.get("lies_where_struck"):
+        return False
+    if now - float(reflexes.keep.get("hers_looked_for_at", -1e9)) < HERS_LOOKED_FOR_EVERY_S:
+        return False
+    reflexes.keep["hers_looked_for_at"] = now
+    seen = await reflexes.look()
+    if seen is None:
+        return False
+    try:
+        return hers_is_in_sight(seen[0], shots, _her_name_here(reflexes), recognize_text)
+    except _A_FAULT_OF_HERS as why:
+        logger.info("her own thing could not be looked for: %s", why)
+        return False
 
 
 def _logged_leaving_alone(reflexes: PlayingAsItHappens, now: float) -> None:
@@ -1498,6 +1609,12 @@ async def looked_at_as_it_happens(look: Any) -> dict[str, Any]:
         if reflexes.played_at > played_before:
             seen = await look()
             reflexes.read(seen)
+    # And a screen that asks her to choose among things it shows is answered the moment it is read, as a person
+    # answers it, not after a move has been made on it to see what it does.
+    words = getattr(reflexes, "words", None)
+    if words and asks_to_choose(words[-1]) and await _chose_what_it_asks(reflexes):
+        seen = await look()
+        reflexes.read(seen)
     # Held to a way that may still pay, she plays on with it: the pursuit is given the screen when the run is over, a
     # menu is up, or the way has had its turn and got nowhere (core/agency/the_way_it_is_played.py).
     while reflexes.goes_on_playing(seen, played_before):
