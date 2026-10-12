@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 
 from core.perception.boundary_support_for_translation import boundaries_agree, visible_boundary
-from core.perception.translation_from_visible_support import translation_status
+from core.perception.translation_from_visible_support import seen_going, translation_status
 from core.verify import invariant
 
 __all__ = ["Kind", "Thing", "WhatMoves", "what_happened"]
@@ -179,9 +179,10 @@ class Thing:
     #: How soon it will arrive, by how fast the points on it spread (core/perception/what_the_points_on_a_thing_say.py):
     #: inf where they are not spreading, None where too few were followed to say.
     closing_s: float | None = None
-    #: Current translation evidence is separate from a detected or predicted box.
+    #: Current translation evidence is separate from a detected or predicted box: "direct" where the thing was told,
+    #: not tracked (core/perception/translation_from_visible_support.py).
     motion_measured_at: float | None = None
-    motion_evidence: str = "unavailable"
+    motion_evidence: str = "direct"
     boundary: Any = field(default=None, repr=False, compare=False)
     motion_path: deque = field(default_factory=lambda: deque(maxlen=40), repr=False)
 
@@ -355,6 +356,10 @@ def what_happened(kind: str, thing: Thing, at: float) -> dict[str, Any]:
 
 def _boxes_overlap(a: tuple, b: tuple) -> bool:
     return max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
+
+
+#: How far a box may go between two pictures for the points followed on it to say better than the box how it went.
+POINTS_KEEP_UP_PX = 6.0
 
 
 class WhatMoves:
@@ -769,8 +774,10 @@ class WhatMoves:
     def _moved(self, thing: Thing, blob: dict[str, Any], at: float) -> None:
         dt = max(1e-3, at - thing.seen)
         x0, y0 = _measured(thing)
-        thing.motion_evidence = translation_status(thing, blob, at, self._point_motion.get(thing.number))
-        observed = thing.motion_evidence == "measured"
+        points = self._point_motion.get(thing.number)
+        followed = points is not None and points.before == thing.seen and points.at == at
+        thing.motion_evidence = translation_status(thing, blob, at, points)
+        observed = seen_going(thing.motion_evidence)
         if not observed or thing.motion_measured_at != thing.seen:
             thing.motion_path.clear()
         if observed and not thing.motion_path:
@@ -787,8 +794,15 @@ class WhatMoves:
         if observed:
             thing.motion_path.append((at, thing.x, thing.y))
             thing.vx, thing.vy = _speed_from_its_path(thing.motion_path, at, (vx, vy), (vx, vy))
+        elif followed and math.hypot(vx * dt, vy * dt) <= POINTS_KEEP_UP_PX:
+            # Its box a pixel or two from where it was, the points on it say how it went: a box drifts, they do not.
+            # Gone further than they keep up with, the box is surer.
+            thing.vx, thing.vy = points.dx / dt, points.dy / dt
         else:
-            thing.vx, thing.vy = 0.0, 0.0
+            # Unproved is not still: what is learned from its going waits for proof, how fast it comes at her does not.
+            # Offline 2026-10-12, read as still wherever its going was unproved, 96 of every 100 things seen crossing a
+            # food fight's picture were taken to be standing still.
+            thing.vx, thing.vy = _speed_from_its_path(thing.path, at, (vx, vy), (thing.vx, thing.vy))
         thing.sizes.append(thing.size)
         thing.dims.append((thing.w, thing.h))
         _settled_size(thing)
@@ -867,6 +881,7 @@ class WhatMoves:
             blob["colour"], blob["patch"], born=at, seen=at,
             support=blob.get("support"),
             boundary=blob.get("boundary"),
+            motion_evidence="unavailable",
         )
         thing.kind = self._kind_for(thing.look, thing.size, thing.colour)
         before = _back_in_sight(self, thing, at)

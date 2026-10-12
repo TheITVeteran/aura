@@ -43,7 +43,24 @@ def translation_status(thing: Any, blob: dict, at: float, points: Any = None) ->
                 and not matching_support(thing, blob)):
             return "unavailable"
         return "measured"
-    return "measured" if matching_support(thing, blob) else "unavailable"
+    if matching_support(thing, blob):
+        return "measured"
+    # Its look changed only where both looks were there to compare: pixels not had are not pixels changed.
+    seen_both = (_sample(getattr(thing, "patch", None), getattr(thing, "support", None)) is not None
+                 and _sample(blob.get("patch"), blob.get("support")) is not None)
+    return LOOK_CHANGED if seen_both else "unavailable"
+
+
+#: A box gone whole from one place to another, both edges with it, whose pixels are not the ones it had: a thing seen
+#: going while its look changes, as anything drawn in turns does (a walk, a flap, a spin). Its going is seen, not
+#: proved by its outline: offline 2026-10-12, with only a matching outline taken for going, 96 of every 100 things seen
+#: crossing a food fight's picture were taken to be standing still.
+LOOK_CHANGED = "its look changed"
+
+
+def seen_going(status: str) -> bool:
+    """Whether a status is a thing seen going: its outline carried along, or its look changing as it went."""
+    return status in ("measured", LOOK_CHANGED)
 
 
 def translation_is_observed(thing: Any, blob: dict, at: float, points: Any = None) -> bool:
@@ -81,9 +98,21 @@ def _sample(patch: Any, support: Any) -> tuple[np.ndarray, np.ndarray] | None:
     return patch[ys[:, None], xs, :3], core[ys[:, None], xs]
 
 
+#: How a thing's going is known where nothing tracked it from pixels: it was told where it is, as a world that says
+#: where its things are does, and that is its going measured.
+DIRECT = "direct"
+
+
+def told_directly(thing: Any) -> bool:
+    """Whether a thing's going was told, not tracked from pixels."""
+    return getattr(thing, "motion_evidence", DIRECT) == DIRECT
+
+
 def motion_was_measured(thing: Any, at: float) -> bool:
-    """Pixel tracks expose their motion timestamp; direct state observations use their own timestamp."""
-    return getattr(thing, "seen", at) == at and getattr(thing, "motion_measured_at", at) == at
+    """Pixel tracks expose their motion timestamp; things told directly, and direct state observations, use their own
+    timestamp. Offline 2026-10-12 every thing a world told directly was taken for one whose going was never measured,
+    and nothing it did under any key was learned from."""
+    return getattr(thing, "seen", at) == at and (told_directly(thing) or getattr(thing, "motion_measured_at", at) == at)
 
 
 def motion_status(thing: Any, at: float) -> str:

@@ -29,7 +29,12 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
-from core.perception.translation_from_visible_support import matching_support, motion_status
+from core.perception.translation_from_visible_support import (
+    matching_support,
+    motion_status,
+    motion_was_measured,
+    told_directly,
+)
 from core.verify import invariant
 
 __all__ = ["PressTrajectory", "WhatAPressDoes"]
@@ -123,7 +128,7 @@ class WhatAPressDoes:
         self._pressed_at[key] = at
         self.watching = [w for w in self.watching if w.key != key]
         for thing in list(things)[:WATCHED]:
-            if hasattr(thing, "motion_path") and thing.motion_measured_at != thing.seen:
+            if not motion_was_measured(thing, getattr(thing, "seen", at)):
                 continue
             # A thing seen too few times to know how it goes on is not watched: its own going would be read as the
             # press's (LIVE-like 2026-10-10, a block just come on at the edge, sliding at the runner, read as moved by
@@ -366,7 +371,7 @@ def _going_on(thing: Any) -> tuple[float, float]:
 
 
 def _motion_history(thing: Any) -> list:
-    if hasattr(thing, "motion_path"):
+    if hasattr(thing, "motion_path") and not told_directly(thing):
         return list(thing.motion_path) if thing.motion_measured_at == thing.seen else []
     return list(getattr(thing, "path", ()) or ())
 
