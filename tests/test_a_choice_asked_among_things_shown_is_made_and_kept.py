@@ -143,3 +143,13 @@ def test_on_her_page_a_screen_that_asks_her_to_choose_has_one_taken_and_kept(mon
     # A screen that asks for nothing is left alone.
     playing.words = ["HOW TO PLAY Use the arrow keys to move"]
     assert not asyncio.run(reflexes._chose_what_it_asks(playing)) and len(clicked) == 1
+
+
+def test_of_how_hard_it_is_to_be_the_easiest_is_taken():
+    """Offline 2026-10-12 a parking game asked to choose a difficulty; a person out to win takes the beginner's road."""
+    from core.agency.choosing_among_what_is_shown import Offered, the_one_to_take
+
+    offered = [Offered((0.3, 0.5), None, "ADVANCED"), Offered((0.5, 0.5), None, "INTERMEDIATE"),
+               Offered((0.7, 0.5), None, "BEGINNER")]
+    assert the_one_to_take(offered).label == "BEGINNER"
+    assert the_one_to_take([Offered((0.3, 0.5), None, "Tokyo"), Offered((0.6, 0.5), None, "Paris")]).label == "Tokyo"

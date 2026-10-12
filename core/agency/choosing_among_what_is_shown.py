@@ -199,13 +199,19 @@ def _how_much_colour(colour: tuple[int, int, int]) -> float:
 
 def the_one_to_take(offered: Sequence[Offered], not_these: Sequence[Offered] = ()) -> Offered | None:
     """Which of the things offered she takes, leaving out any already tried to no end: of things told by their paint,
-    the one with the most colour in it; of things named, the first."""
+    the one with the most colour in it; of things named, the easiest where they are how hard it is to be (a person out
+    to win takes the beginner's road first), else the first."""
     left = [one for one in offered if all(math.dist(one.place, tried.place) > 0.02 for tried in not_these)]
     if not left:
         return None
     if all(one.colour is not None for one in left):
         return max(left, key=lambda one: _how_much_colour(one.colour))
-    return left[0]
+    easiest = [one for one in left if _EASIEST.search(one.label or "")]
+    return easiest[0] if easiest else left[0]
+
+
+#: The names of the easiest of the ways a place offers to be played.
+_EASIEST = re.compile(r"^\W*(?:beginner|easy|easiest|novice|rookie|junior|kids?|casual|simple|level 1|1)\W*$", re.I)
 
 
 def what_she_took(taken: Offered) -> str:

@@ -181,6 +181,13 @@ _CHOOSE = re.compile(r"\b(?:please )?(?:select|choose|pick) (?:a |an |the |your 
                      # Or the same with its space misread: offline 2026-10-12 a heading with a sparkle drawn on it read
                      # "CHOOSETYOUR CHARACTER", and the two characters under it were left unchosen.
                      r"|\b(?:select|choose|pick)\w?your\b"
+                     # Or with what is chosen named bare: offline 2026-10-12 "choose difficulty" over BEGINNER, INTERMEDIATE
+                     # and ADVANCED was not taken to ask anything, and its heading was clicked thirty times.
+                     r"|\b(?:select|choose|pick)\s+(?:level|stage|world|character|player|mode|map|track|song|difficulty|"
+                     r"team|car|ball|side|hero|skill|speed)s?\b"
+                     # Or with the choices named in a row: offline 2026-10-12 "Choose Ed, Edd, or Eddy" was taken for
+                     # play, and the three of them were pulled and let go at for three and a half minutes.
+                     r"|\b(?:select|choose|pick)\s+[\w'.]+(?:\s*,\s*[\w'.]+)*\s*,?\s*or\s+[\w'.]+"
                      # Or a screen headed by what is chosen on it: LIVE 2026-10-11 a "LEVEL SELECT" screen was taken for
                      # play, and she pulled and let go at its levels for three minutes.
                      r"|\b(?:level|stage|world|character|player|mode|map|track|song|difficulty|team)\s+"

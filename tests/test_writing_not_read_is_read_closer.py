@@ -103,6 +103,9 @@ def _forget_closer_readings():
     ("Select a level", True),
     ("Selecting the best level takes practice", False),
     ("CHOOSETYOUR CHARACTER", True),          # its space misread under a sparkle drawn on it (offline 2026-10-12)
+    ("choose difficulty BEGINNER INTERMEDIATE ADVANCED", True),     # what is chosen named bare (offline 2026-10-12)
+    ("Choose Ed, Edd,or Eady", True),          # the choices named in a row, misread (offline 2026-10-12)
+    ("Choose Billy or Mandy", True),
     ("Choose yourself a snack", False),
 ])
 def test_a_screen_headed_by_what_is_chosen_on_it_asks_to_choose(said, chooses):

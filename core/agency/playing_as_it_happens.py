@@ -195,6 +195,8 @@ class _Run:
     countering: str = ""
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
+    #: The one she last threw at, against someone: where it was, when, and how big.
+    thrown_at: tuple[float, float, float, float] | None = None
     #: When her thing was last seen to go, and how many presses of the keys that move it she had made by then.
     answered: tuple[float, int] = (-math.inf, 0)
     last_moving: float = 0.0
@@ -1671,6 +1673,7 @@ def _what_is_known_of(meeting: WhatMeetingDoes, thing: Any) -> str:
 #: How often she fires while still finding which thing is hers, by a key the words named for it or a click that throws.
 FIRE_WHILE_FINDING_S = 0.35
 THROW_WHILE_FINDING_S = 0.6
+THROW_AT_SOMEONE_S = 0.2
 #: How often at most the key for getting out of the way is pressed at something coming at her.
 GOT_OUT_OF_THE_WAY_EVERY_S = 0.5
 
@@ -1684,7 +1687,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     shooter holding one arrow at a time to see what moved, and never fired. A press of the fire key moves nothing, so
     the finding goes on as before, and what each press brings out beside her is how she learns it fires.
     """
-    from core.agency.thrown_at_what_shows import comes_at_her, what_the_shot_goes_at
+    from core.agency.thrown_at_what_shows import comes_at_her
 
     if rules is None:
         return
@@ -1704,19 +1707,45 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         run.last_trigger_began = time.monotonic()
         await hands.tap(away[0])
         run.taps += 1
-    if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < THROW_WHILE_FINDING_S:
+    against = _against_someone()
+    # Against someone, as fast as the place takes throws: offline 2026-10-12 a food fight was lost each round throwing
+    # every 0.6 s at the opponent, and won throwing at him five times a second, the place taking what it would.
+    every = THROW_AT_SOMEONE_S if against else THROW_WHILE_FINDING_S
+    if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < every:
         return
-    # At whoever has just shown, before whatever is going across (core/agency/thrown_at_what_shows.py).
-    target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
-                                   not_kinds={made.kind for made in hers.makes.values()},
-                                   against_someone=_against_someone(), shots_at=getattr(run, "shots_at", ()))
-    if target is None:
+    aimed = _where_to_throw(run, moves, hers, at, against)
+    if aimed is None:
         return
     tall, wide = moves.shape
-    x, y = target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
-    await hands.click(min(1.0, max(0.0, x / max(1, wide))), min(1.0, max(0.0, y / max(1, tall))))
+    await hands.click(min(1.0, max(0.0, aimed[0] / max(1, wide))), min(1.0, max(0.0, aimed[1] / max(1, tall))))
     run.last_click, run.clicks = at, getattr(run, "clicks", 0) + 1
     run.shots_at = [*getattr(run, "shots_at", ())[-5:], at]
+
+
+def _where_to_throw(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: float, against: bool) -> tuple[float, float] | None:
+    """Where a throw goes, in the picture's own pixels: at whoever has just shown, before whatever is going across
+    (core/agency/thrown_at_what_shows.py), led where it goes; against someone, at the one last thrown at, found again
+    where it was though the eye has lost it and found it under another number. Offline 2026-10-12 a food fight's
+    opponent, turning and crouching, was found afresh every few looks, taken each time for her own throw just come
+    into sight, and nineteen asks in twenty found no one to throw at."""
+    from core.agency.thrown_at_what_shows import what_the_shot_goes_at, where_the_one_thrown_at_is
+
+    target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
+                                   not_kinds={made.kind for made in hers.makes.values()},
+                                   against_someone=against, shots_at=getattr(run, "shots_at", ()))
+    if target is not None:
+        if against:
+            run.thrown_at = (target.x, target.y, at, float(target.size))
+        return target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
+    if not against:
+        return None
+    found = where_the_one_thrown_at_is(moves.things.values(), getattr(run, "thrown_at", None), at, moves.shape[1])
+    if found is None:
+        return None
+    x, y, seen = found
+    if seen is not None:
+        run.thrown_at = (x, y, at, float(seen.size))
+    return x, y
 
 
 #: The parts of her thing she imagines meeting a thing with, from one end

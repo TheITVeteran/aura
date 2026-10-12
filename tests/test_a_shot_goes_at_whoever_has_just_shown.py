@@ -141,3 +141,39 @@ def test_what_comes_out_just_after_her_own_shot_is_that_shot_and_not_thrown_afte
     egg = _thing(2, 160, 60, vy=30.0, born=8.0, size=300.0)
     assert what_the_shot_goes_at([ball, egg], 10.0, shots_at=(9.3,)).number == 2
     assert what_the_shot_goes_at([ball], 10.0, shots_at=(9.3,)) is None
+
+
+def test_against_someone_she_throws_as_fast_as_the_place_takes_throws(monkeypatch) -> None:
+    """Offline 2026-10-12 a food fight was lost each round throwing every 0.6 s at the opponent, and won throwing at him
+    five times a second."""
+    rules = WhatTheRulesSaid.read(FOOD_FIGHT)
+    opponent = SimpleNamespace(**{**vars(_thing(1, 120, 70, vx=40.0, born=1.0, size=2700.0)), "moved": True, "seen": 10.0,
+                                  "path": deque([(t, 80 + 6 * t, 70) for t in range(10)])})
+
+    def thrown(against: bool) -> int:
+        monkeypatch.setattr(play, "_against_someone", lambda: against)
+        hands, run = _Hands(), SimpleNamespace(held="", last_trigger_began=-10.0, taps=0, last_click=-10.0)
+        hers = SimpleNamespace(number=None, makes={}, tapped=lambda *a, **k: None)
+        for step in range(10):                                     # two seconds, a look about every fifth of a second
+            at = 10.0 + 0.21 * step
+            opponent.seen = at
+            moves = SimpleNamespace(things={1: opponent}, shape=(400, 600))
+            asyncio.run(play._fire_while_finding_herself(hands, run, hers, moves, rules, at))
+        return len(hands.clicks)
+
+    assert thrown(True) >= 9
+    assert thrown(False) <= 4
+
+
+def test_the_one_thrown_at_is_found_again_where_it_was_under_another_number() -> None:
+    """Offline 2026-10-12 a food fight's opponent, turning and crouching, was found afresh every few looks, taken each
+    time for her own throw just come into sight, and nineteen asks in twenty found no one to throw at."""
+    from core.agency.thrown_at_what_shows import where_the_one_thrown_at_is
+
+    last = (300.0, 200.0, 10.0, 2700.0)
+    again = _thing(9, 320, 205, born=10.3, size=2500.0)            # the same one, found again under another number
+    elsewhere = _thing(4, 50, 60, born=1.0, size=2600.0)
+    x, y, seen = where_the_one_thrown_at_is([elsewhere, again], last, 10.4, 600)
+    assert (x, y) == (320, 205) and seen is again
+    assert where_the_one_thrown_at_is([elsewhere], last, 10.4, 600)[:2] == (300.0, 200.0)   # out of sight: where it was
+    assert where_the_one_thrown_at_is([elsewhere, again], last, 11.5, 600) is None          # too long ago to be there still

@@ -351,6 +351,9 @@ CHANGES_MADE_AT_LEAST = 5
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
+#: How many stretches in a row may end on a still screen, with nothing to show, before a place played in time is left to
+#: the pursuit a while all the same.
+STILL_STRETCHES_AT_MOST = 3
 #: How long a question put to a thing is given to be answered before the answer is read off the screen.
 ANSWER_SHOWS_S = 2.5
 MAKING_STALLED = "no created work was verified before the making attempt's time ran out"
@@ -876,7 +879,8 @@ class PlayingAsItHappens:
             return
         # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
         # a game played without one (a food fight seen from behind the player's own eyes) goes.
-        if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
+        if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown and not _stuck_still(self))
+                or now >= self.ends_at):
             _logged_leaving_alone(self, now)
             return
         # A screen that asks for words typed is answered before it is played or gone on from: offline 2026-10-11 a name
@@ -919,7 +923,7 @@ class PlayingAsItHappens:
             return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
-        asked = ways_asked(said, self.words[-1] if self.words else "")
+        asked = _ways_asked_in_this_game(self, ways_asked(said, self.words[-1] if self.words else ""))
         way = held.choose(asked, said)
         if way == SEND and not self._no_place_for_shots():
             await self._by_shots(now, said)
@@ -1028,9 +1032,7 @@ class PlayingAsItHappens:
             self.over_because = "runtime contract violated"
         _keep_what_she_learned(self.page, self.keep)
         logger.info("a stretch played as it happened: %s", {k: stretch.get(k) for k in ("seconds", "ended", "hers", "keys_that_move_her", "pictures_a_second", "learned", "gains", "losses", "new_views", "views_along", "input_key_downs", "clicks", "taps")})
-        if not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses"):
-            self.quiet_until, self.quiet_on = time.monotonic() + _left_alone_for(self), self.said_now
-            self.under_her_hand = False
+        _left_alone_after(self, stretch)
 
     async def _did_again_what_it_showed(self) -> bool:
         """Where the place's words ask for what it shows to be done again: each showing watched and done again, round
@@ -1305,6 +1307,33 @@ async def _hers_to_send_is_in_sight(reflexes: PlayingAsItHappens, now: float) ->
     except _A_FAULT_OF_HERS as why:
         logger.info("her own thing could not be looked for: %s", why)
         return False
+
+
+def _ways_asked_in_this_game(reflexes: PlayingAsItHappens, asked: list[str]) -> list[str]:
+    """The ways the place asks to be played, as its screens in front of her say, else as any of its screens said
+    before: offline 2026-10-12 "Click on your ball and hold down the mouse button" was read six screens before the
+    course (players, a name, a colour), was no longer among the words she went by there, and the course was
+    played as a world going by itself, with not one putt."""
+    if asked:
+        reflexes.keep["ways_read"] = list(dict.fromkeys([*asked, *(reflexes.keep.get("ways_read") or [])]))
+        return asked
+    return list(reflexes.keep.get("ways_read") or [])
+
+def _left_alone_after(reflexes: PlayingAsItHappens, stretch: dict[str, Any]) -> None:
+    """After a stretch that found nothing of hers and gained and lost nothing, the screen is left to the pursuit a
+    while; and stretches in a row that ended on a still screen are counted (see `_stuck_still`)."""
+    nothing = not stretch.get("hers") and not stretch.get("gains") and not stretch.get("losses")
+    still = nothing and str(stretch.get("ended") or "").startswith("nothing on the screen")
+    reflexes.keep["still_stretches"] = int(reflexes.keep.get("still_stretches") or 0) + 1 if still else 0
+    if nothing:
+        reflexes.quiet_until, reflexes.quiet_on = time.monotonic() + _left_alone_for(reflexes), reflexes.said_now
+        reflexes.under_her_hand = False
+
+def _stuck_still(reflexes: PlayingAsItHappens) -> bool:
+    """Whether play as it happens has ended on a still screen, with nothing to show for it, too many times in a row
+    to be begun again at once, though the place goes on in time: offline 2026-10-12 a golf course and a menu of
+    difficulties were each played for three seconds at a time, a hundred times over, and nothing else done."""
+    return int(reflexes.keep.get("still_stretches") or 0) >= STILL_STRETCHES_AT_MOST
 
 
 def _logged_leaving_alone(reflexes: PlayingAsItHappens, now: float) -> None:
