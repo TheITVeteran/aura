@@ -156,6 +156,12 @@ class WhatAPressDoes:
             if watch.key == key:
                 watch.let_go = True
 
+    def interrupted(self) -> None:
+        """Another input ends the measured prefix and cannot teach this input's path."""
+        for watch in self.watching:
+            _keep_entity_interval(self, watch)
+        self.watching.clear()
+
     def held_for(self, key: str, least: float) -> float:
         """How long to hold ``key`` to press it as it was pressed when watched; at least ``least`` seconds."""
         held = list(self.holds.get(key, ()))

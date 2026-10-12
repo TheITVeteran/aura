@@ -140,10 +140,19 @@ class _Speeds:
     #: How many of each press's speeds were taken up against something: a press that met a wall says nothing of its key.
     pinned_in: dict[tuple[str, float], int] = field(default_factory=dict)
     interrupted: set[tuple[str, float]] = field(default_factory=set)
+    ended: set[tuple[str, float]] = field(default_factory=set)
+
+    def end(self, key: str, began: float) -> None:
+        """Keep the measured prefix; later inputs cannot extend or contradict it."""
+        self.ended.add((key, began))
+        if len(self.ended) > 80:
+            self.ended.remove(min(self.ended, key=lambda value: value[1]))
 
     def unseen(self, key: str, began: float, *, contradicted: bool = False) -> None:
         """Resume from a fresh measured segment after a gap; retire a contradicted trial."""
         press = (key, began)
+        if press in self.ended:
+            return
         if contradicted:
             self.interrupted.add(press)
         if len(self.interrupted) > 80:
@@ -154,7 +163,7 @@ class _Speeds:
     def add(self, key: str, vx: float, vy: float, *, press: float | None = None, pinned: bool = False,
             settled: bool = True, position: tuple[float, float] | None = None, at: float | None = None,
             when: float | None = None) -> None:
-        if press is not None and (key, press) in self.interrupted:
+        if press is not None and ((key, press) in self.interrupted or (key, press) in self.ended):
             return
         if position is not None:
             for axis, (place, speed) in enumerate(zip(position, (vx, vy), strict=True)):

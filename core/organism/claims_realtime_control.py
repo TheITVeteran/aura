@@ -397,6 +397,7 @@ def install_realtime_control_claims(suite: Any) -> None:
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.agency.finding_her_another_way import _current_body_motion_invariant
+    from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
     from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
     from core.agency.which_one_answers_to_her import _motion_segments_invariant
@@ -410,6 +411,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("secondary_inputs_end_independent_body_observations", "core/agency/inputs_while_measuring_control.py",
+         "tests/test_inputs_while_measuring_control.py", lambda: _single_input_interval_invariant() == (),
+         "Another delivered action ends the isolated control interval; measured prefixes remain intact and later mixed motion cannot extend them."),
         ("pointer_control_needs_one_continuing_body", "core/agency/what_follows_the_pointer.py",
          "tests/test_pointer_control_belongs_to_one_body.py", lambda: _pointer_body_continuity_invariant() == (),
          "Pointer-control sightings keep the same entity and birth; separate objects, capture gaps and unmeasured movement cannot share a trail."),

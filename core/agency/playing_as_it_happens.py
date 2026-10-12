@@ -59,6 +59,11 @@ from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S as BLOW_EVERY_S
 from core.agency.how_far_her_blow_reaches import HerBlows
 from core.agency.how_the_contest_stands import ContestStands
+from core.agency.inputs_while_measuring_control import (
+    HandsWithControlReceipts,
+    body_probe_is_active,
+    hold_control,
+)
 from core.agency.naming_what_she_sees import (
     SeeingInPlay,
     a_stance_said,
@@ -509,29 +514,7 @@ def _say(run: _Run, say: Callable[[str], Any] | None, line: str, at: float, *, o
 
 
 async def _hold(hands: Any, run: _Run, hers: WhichIsHers, key: str, at: float, *, trying: bool = False) -> None:
-    # A delivered hold keeps its start and experiment status until the input
-    # changes. Choosing that same key under another policy delivers no new
-    # intervention and cannot supply another independent trial.
-    if key == run.held:
-        return
-    if key != run.held:
-        if run.held:
-            await hands.up(run.held)
-            if run.presses is not None:
-                run.presses.released(run.held, time.monotonic())
-        dispatched = time.monotonic()
-        if key:
-            await hands.down(key)
-            run.input_key_downs[key] += 1
-        if run.presses is not None:
-            run.presses.pressed(key, time.monotonic(), run.things.values(), hers.number,
-                                epoch=hers.identification.epoch, independent=trying)
-        run.responses.append(max(0.0, time.monotonic() - at))
-    delivered = time.monotonic()
-    if key and key != run.held:
-        hers.tapped(key, delivered, began=dispatched)
-    run.held, run.held_since, run.held_trying = key, delivered, trying
-    hers.holding(key, delivered, trying=trying)
+    await hold_control(hands, run, hers, key, at, trying=trying, now=time.monotonic)
 
 
 async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float, moves: Any = None) -> None:
@@ -1148,6 +1131,7 @@ async def _play_as_it_happens(
     from core.agency.what_a_press_does import WhatAPressDoes
 
     run.presses = keep.get("presses") or WhatAPressDoes()
+    hands = HandsWithControlReceipts(hands, run, hers)
     from core.agency.when_a_press_pays import WhenAPressPays
 
     run.timing = keep.get("timing") or WhenAPressPays()
@@ -1727,7 +1711,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     """
     from core.agency.thrown_at_what_shows import comes_at_her, how_long_throws_take
 
-    if rules is None:
+    if rules is None or (not _no_body_to_find() and body_probe_is_active(run, hers, pointer_steps=2 * len(_POINTER_TRIAL))):
         return
     # A key the words give to getting out of the way is not one to fire with, whatever else a run-on line made of it:
     # LIVE 2026-10-11 "...FIVE TIMES WINS DODGE FOOD BY PRESSING THE SPACE BAR" gave space to hitting as well, she
