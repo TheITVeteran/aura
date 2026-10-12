@@ -972,8 +972,9 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         # A thing that answers what is put to it: what she asked, and what it answered, as it shows it.
         answered = shows or str((keep or {}).get("answered") or "")[:160] or str(run.get("words") or "")[:160]
         gave = (f"I gave it my name, {typed!r}" if (keep or {}).get("typed_kind") == "a name" else f"I asked it {typed!r}")
-        return (f"There's nothing to win or score in this one; it answers what you give it. {gave}, and "
-                f"it answered: {answered[:1].lower()}{answered[1:]}.")
+        # A word in capitals stays in capitals: lowered by its first letter ("lYOUR") it reads as a program's name.
+        opening = answered if answered[:2].isupper() else f"{answered[:1].lower()}{answered[1:]}"
+        return f"There's nothing to win or score in this one; it answers what you give it. {gave}, and it answered: {opening}."
     if not shows:
         return _what_was_made(run, moves)
     asked = _what_it_is_for(words)

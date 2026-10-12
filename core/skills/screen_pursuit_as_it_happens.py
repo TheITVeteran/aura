@@ -138,7 +138,51 @@ def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> 
     if not asking or len(asking & words_now) < 0.5 * len(asking):
         return ""
     new = words_now - words(f"{before} {typed}")
-    return now if len(new) >= NEW_WORDS_AN_ANSWER else ""
+    return (_the_new_part(now, f"{before} {typed}") or now) if len(new) >= NEW_WORDS_AN_ANSWER else ""
+
+
+def _the_new_part(now: str, before: str) -> str:
+    """The longest run of a screen's words that were not on it before, nor misreadings of those (a letter or two off), nor
+    a way to go again: what it answered, not the whole screen ("HENRY THE HATER", not "YOUR NAME HERE ... YOUR SECRET
+    IDENTITY" around it)."""
+    import re
+
+    from core.language.a_way_on import how_much_it_leads_on
+
+    def letters(token: str) -> str:
+        return re.sub(r"[^a-z]", "", token.lower())
+
+    was = {letters(token) for token in before.split() if letters(token)}
+
+    def near(word: str) -> bool:
+        # A misreading is a letter off in a short word, two in a long one: "HENRY" is no misreading of "HERE".
+        off = 1 if len(word) <= 6 else 2
+        return any(abs(len(word) - len(old)) <= off and _apart(word, old) <= off for old in was)
+
+    runs, run = [], []
+    for token in now.split():
+        word = letters(token)
+        fresh = bool(word) and word not in was and not near(word) and how_much_it_leads_on(token) <= 1.0 \
+            and "again" not in word
+        if fresh:
+            run.append(token.strip("*•…"))
+        elif run:
+            runs.append(run)
+            run = []
+    if run:
+        runs.append(run)
+    best = max(runs, key=len, default=[])
+    return " ".join(token for token in best if token)
+
+
+def _apart(a: str, b: str) -> int:
+    """How many letters apart two words are (edits)."""
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (x != y))
+    return row[-1]
 
 
 def _made_by_placing(can_do: Any) -> bool:

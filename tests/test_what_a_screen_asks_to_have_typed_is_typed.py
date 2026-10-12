@@ -264,3 +264,17 @@ def test_a_riddle_answered_on_a_screen_with_nowhere_to_type_is_told_not_typed():
                                           _Hands(), say=said.append))
     assert done["why"] == "it answered its own question" and not typed
     assert said and "Aura" in said[0]
+
+
+def test_what_it_answered_is_the_new_part_of_the_screen_and_is_said_in_its_own_capitals():
+    """Offline 2026-10-11 the machine answered "HENRY THE HATE..." and her line said nothing of it: the whole screen was
+    quoted, its first letter lowered ("lYOUR"), and that read as a program's name and was left unsaid."""
+    from core.language.what_a_watcher_hears import in_words_not_code
+    from core.skills.screen_pursuit_as_it_happens import _answered_since_typed
+
+    machine = {"typed": "Aura", "typed_kind": "a name", "typed_on": "FYOUR NAME HERE ETRYCOAIN GOUR SECRET DENTLTY",
+               "typed_asked_by": "YOUR NAME HERE ETRYCOAIN GOUR SECRET DENTLTY"}
+    answered = _answered_since_typed(machine, {"text": "LYOUR NAME HERE *TRYAGAIN HENRY THE HATE YOUR SECRET DENTITY"})
+    assert answered == "HENRY THE HATE"
+    line = f"I gave it my name, 'Aura', and it answered: {answered}."
+    assert in_words_not_code(line) == line
