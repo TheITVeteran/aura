@@ -118,3 +118,44 @@ async def test_invalid_deadlines_do_not_admit_work(seconds):
 
     with pytest.raises(ValueError):
         await run_case(None, message="a request", session="session", key="key", seconds=seconds, save=forbidden)
+
+
+@pytest.mark.asyncio
+async def test_cli_uses_the_native_launchers_readiness_route(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from core.runtime import file_write_gateway
+    from tools import run_desktop_campaign_case as case
+
+    message_file = tmp_path / "request.txt"
+    message_file.write_text("Use this environment.")
+    out = tmp_path / "receipt.json"
+    monkeypatch.setattr("sys.argv", ["case", "--message-file", str(message_file), "--out", str(out),
+                                     "--expected-commit", "checkpoint"])
+    paths, saved = [], []
+
+    async def transport(request):
+        paths.append(request.url.path)
+        if request.url.path == "/api/health/boot":
+            return httpx.Response(200, json={"conversation_ready": True, "runtime_revision": {
+                "actual_commit_sha": "checkpoint", "verified": True, "source_current": True,
+            }})
+        if request.url.path == "/api/chat":
+            return httpx.Response(202, json={"delivery_status": "pending"})
+        if request.url.path.startswith("/api/chat/delivery/"):
+            return httpx.Response(200, json={"idempotency_key": request.url.path.rsplit("/", 1)[1],
+                                             "terminal": True, "result": {"response": "done"}})
+        pytest.fail(f"unsupported readiness or delivery route: {request.url.path}")
+
+    async def write(path, record, **kwargs):
+        assert path == out
+        saved.append(copy.deepcopy(record))
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(case.httpx, "AsyncClient", lambda **kwargs: client_class(
+        **kwargs, transport=httpx.MockTransport(transport)))
+    monkeypatch.setattr(file_write_gateway, "get_file_write_gateway", lambda: SimpleNamespace(write_json_async=write))
+    assert await case.main() == 0
+    assert paths[0] == "/api/health/boot"
+    assert saved[-1]["runtime_revision"]["actual_commit_sha"] == "checkpoint"
+    assert saved[-1]["qualification"] == "unmeasured"

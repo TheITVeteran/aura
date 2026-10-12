@@ -113,7 +113,7 @@ async def main() -> int:
     if args.out.exists():
         parser.error("use a new output path so earlier attempts remain intact")
     async with httpx.AsyncClient(base_url="http://127.0.0.1:8000", timeout=10.) as client:
-        health_response = await client.get("/healthz")
+        health_response = await client.get("/api/health/boot")
         health = health_response.json()
         revision = health.get("runtime_revision") or {}
         if (revision.get("actual_commit_sha") != args.expected_commit or revision.get("verified") is not True
