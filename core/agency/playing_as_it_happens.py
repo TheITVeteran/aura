@@ -363,6 +363,7 @@ class _Run:
     #: and how many trials it has asked for.
     faces: Any = None
     facing_trials: int = 0
+    facing_trial: Any = None
     #: The things that come for her, told from those that go their own way (core/agency/what_comes_for_her.py).
     comes: Any = None
     #: What she plays for and what each pull is worth in its terms (core/agency/what_she_plays_for.py), what each thing
@@ -550,18 +551,10 @@ FACING_TRIALS = 10
 
 
 async def _a_facing_trial(hands: Any, run: _Run, hers: WhichIsHers, choosing: _Choosing, at: float) -> bool:
-    """A key tried on its own, between goings ahead, where a key has moved her and another moved her nowhere: tried in
-    turn, two keys that turn her cancel or add up and which did what is lost. Whether a trial was made."""
-    if (run.faces is None or choosing.mine is None or hers.follows_pointer or run.facing_trials >= FACING_TRIALS
-            or at - run.tried_at < TRY_A_KEY_S):
-        return False
-    key = run.faces.trial(run.keys)
-    if key is None:
-        return False
-    run.facing_trials += 1
-    await _hold(hands, run, hers, key, at, trying=True)
-    run.tried_at = run.held_since
-    return True
+    from core.agency.giving_a_trial_time import try_a_facing_control
+
+    return await try_a_facing_control(hands, run, hers, choosing, at, hold=_hold,
+                                     seconds=TRY_A_KEY_S, limit=FACING_TRIALS)
 
 
 async def _click_things(hands: Any, run: _Run, moves: WhatMoves, meeting: WhatMeetingDoes, at: float,

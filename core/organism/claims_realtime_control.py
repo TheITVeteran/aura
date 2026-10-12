@@ -7,6 +7,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
     from core.agency.deliberate_action import _unmeasured_response_invariant
+    from core.agency.giving_a_trial_time import _control_trial_time_invariant
     from core.agency.how_a_game_works import _known_body_controls_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
@@ -57,6 +58,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("control_trials_keep_their_measurement_time", "core/agency/giving_a_trial_time.py",
+         "tests/test_a_control_trial_gets_time_to_answer.py", lambda: _control_trial_time_invariant() == (),
+         "A control trial retains its finite measurement interval while input and observation identity remain unchanged."),
         ("joined_parts_keep_measured_pixels", "core/perception/parts_when_things_touch.py",
          "tests/test_touching_things_keep_their_parts.py", lambda: _joined_parts_invariant() == (),
          "Touching foreground parts retain measured pixels and separate only where recent appearance and motion distinguish them."),
