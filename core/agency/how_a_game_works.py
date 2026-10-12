@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.verify.invariants import invariant
+
 __all__ = [
     "AIMS_FROM_A_BODY",
     "AGAINST_SOMEONE",
@@ -132,6 +134,18 @@ class HowItWorks:
         be worked some other way."""
         return not self.me.known() or self.me.value in (STEERED, AIMS_FROM_A_BODY, TIMES)
 
+    def try_pointer_first(self, otherwise: bool) -> bool:
+        """Try the input known to move her before incidental controls on the interface.
+
+        Offline 2026-10-12 a body named for the keys was never found while its
+        menu's pointer controls kept the loop sweeping for a following body.
+        """
+        if self.me.known() and self.me.value in (STEERED, AIMS_FROM_A_BODY):
+            return False
+        if self.me.known() and self.me.value == FOLLOWS:
+            return True
+        return otherwise
+
     def against_someone(self) -> bool:
         """Whether the place is played against someone on the other side, as far as she understands it."""
         return self.against.value == AGAINST_SOMEONE and self.against.sure >= SAID_SURE
@@ -171,6 +185,17 @@ def _a_control_said(key: str, act: str) -> str:
     first = act.split()[0] if act.split() else ""
     does = first.endswith("s") and not first.endswith(("ss", "us", "is")) and len(first) > 3
     return f"{key} {act}" if does else f"{key} to {act}"
+
+
+@invariant("agency.known_body_controls_set_trial_priority", scope="agency",
+           owner="core/agency/how_a_game_works.py", observational=False)
+def _known_body_controls_invariant() -> tuple:
+    assert not HowItWorks(me=Answer(STEERED, SEEN_SURE)).try_pointer_first(True)
+    assert not HowItWorks(me=Answer(AIMS_FROM_A_BODY, SAID_SURE)).try_pointer_first(True)
+    assert HowItWorks(me=Answer(FOLLOWS, SEEN_SURE)).try_pointer_first(False)
+    assert HowItWorks(me=Answer(STEERED, CODED_SURE)).try_pointer_first(True)
+    assert not HowItWorks().try_pointer_first(False)
+    return ()
 
 
 def understood(guide: Any, also: str = "") -> HowItWorks:

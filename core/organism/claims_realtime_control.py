@@ -7,6 +7,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
     from core.agency.deliberate_action import _unmeasured_response_invariant
+    from core.agency.how_a_game_works import _known_body_controls_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
     from core.agency.where_things_lead import _unknown_selector_invariant
@@ -55,6 +56,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("known_body_controls_set_trial_priority", "core/agency/how_a_game_works.py",
+         "tests/test_known_body_controls_set_trial_priority.py", lambda: _known_body_controls_invariant() == (),
+         "Known body inputs set control trial priority before incidental interface input guesses; unknown roles preserve uncertainty."),
         ("foreground_masks_require_measured_support", "core/perception/foreground_appearance.py",
          "tests/test_transfer_identity_survives_background_changes.py", lambda: _foreground_mask_invariant() == (),
          "Appearance masks exclude only a measured flat exterior while retaining bounded foreground support and enclosed highlights."),
