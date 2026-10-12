@@ -855,7 +855,10 @@ def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at:
     # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
     moving = hers.keys_that_move_her(run.keys) if hers.kind is not None else {}
     answers = hers.kind is not None and (hers.follows_pointer or (bool(moving) and _answers_now(run, hers, moving, at)))
-    if at - run.began < NOTHING_ANSWERS_S + experiment_time or answers:
+    # Where she understands no body of hers is in the picture, nothing is there to answer her: what she does is aimed
+    # from outside it. Offline 2026-10-12 a food fight she was holding her own in was handed back mid-round, every round,
+    # at the moment a title screen would have been.
+    if at - run.began < NOTHING_ANSWERS_S + experiment_time or answers or _how_it_stands(run, at)[1]:
         return ""
     if meeting.verdicts:
         # What is counted keeps it going while it is not all going against her: LIVE 2026-10-09 a game's bar went down

@@ -947,7 +947,10 @@ class PlayingAsItHappens:
             self.recalled = True
             self.keep.update(_what_she_kept_of(self.page))
         # What the place's screens said, and what taking stock found out (core/cognition/taking_stock.py), read alike.
-        read = " ".join([self.goal, *self.words[-6:], str(self.keep.get("counsel") or "")])
+        # And what the place said of how it is played, kept by the guide: offline 2026-10-12 a food fight's second round
+        # began on its "BETTER LUCK NEXT TIME", nothing of "click to throw" among the words of it, and in every round
+        # after the first she threw at no one.
+        read = " ".join([self.goal, *heard[-12:], *self.words[-6:], str(self.keep.get("counsel") or "")])
         named, pointer_first = controls_named_in(read,
                                                 keys_without_words=(), during_play=True)
         # And what the guide to the place holds of its controls: its page's words, its program, what she looked up

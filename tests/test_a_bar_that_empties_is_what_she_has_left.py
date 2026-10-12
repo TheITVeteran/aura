@@ -276,3 +276,18 @@ def test_a_bar_named_by_a_control_is_not_what_she_has_left(monkeypatch):
     hers = SimpleNamespace(kind=1, follows_pointer=False, thing=lambda moves: None)
     reading._read_the_bars(run, meeting, hers, SimpleNamespace(shape=(300, 400)), None, 1.0, said.append)
     assert run.losses == 0 and not verdicts and not said
+
+
+def test_where_no_body_of_hers_is_in_the_picture_nothing_answering_does_not_end_play(monkeypatch):
+    """Offline 2026-10-12 a food fight she was holding her own in, aiming from outside the picture, was handed back
+    mid-round, every round, at the moment a title screen would have been."""
+    from types import SimpleNamespace
+
+    import core.agency.playing_as_it_happens as play
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    run = play._Run(keys=["space"], began=0.0)
+    meeting = SimpleNamespace(verdicts=[], evidence={})
+    assert play._nothing_answers(run, WhichIsHers(), meeting, 40.0) == "nothing here answers to me while it moves"
+    monkeypatch.setattr(play, "_how_it_stands", lambda _run, _at: (True, True))
+    assert not play._nothing_answers(run, WhichIsHers(), meeting, 40.0)
