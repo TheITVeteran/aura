@@ -350,10 +350,9 @@ def _carry_rules_from_a_world_like_it(
                 elsewhere.get("world") or {}, carried
             ).__dict__
         )
-        _tell(
-            f"I have been somewhere like this before — {like_it['kind']} — "
-            "so I will start from what that moved like."
-        )
+        # Said as a person says it; the kind of world it was taken for ("a 3x3 small world, 4 acts, uncounted") is the
+        # log's, not the watcher's.
+        _tell("This is like somewhere I've been before, so I'll start from what worked there.")
         logger.info(
             "borrowed from %r at %.2f trust: %s",
             like_it["kind"], carried, knows.rules.says(),

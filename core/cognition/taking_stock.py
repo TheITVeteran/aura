@@ -240,8 +240,9 @@ class Counsel:
     def said(self) -> str:
         """In a sentence or two: what she found, and from where; or that nothing said more than the place itself."""
         if not self.kept:
-            asked = ", ".join(self.asked_of) or "what I have"
-            return f"I asked {asked}, and nothing said more than this place itself does."
+            # Said plainly, once: where she looked is in her log, and a list of six sources read out at the start of
+            # every game is a list, not a thought (offline 2026-10-12, in fifteen games of fifty-four).
+            return "Nothing I looked up says more than this place itself does, so I'll go by what it shows."
         first = self.kept[0]
         others = sorted({h.source for h in self.kept[1:] if h.source != first.source})
         also = f" ({' and '.join(others)} agree{'s' if len(others) == 1 else ''})" if others else ""

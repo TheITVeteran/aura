@@ -89,7 +89,7 @@ def test_every_source_is_asked_at_once_and_one_slow_or_failing_does_not_hold_up_
 @pytest.mark.unit
 def test_nothing_found_is_said_as_nothing_found():
     counsel = asyncio.run(take_stock(SITUATION, {"the web": _source()}, seconds=0.5))
-    assert not counsel and "nothing said more than this place itself" in counsel.said()
+    assert not counsel and "says more than this place itself" in counsel.said()
 
 
 @pytest.mark.unit

@@ -116,9 +116,10 @@ class Bearings:
         and what she leaves alone."""
         parts = []
         if self.sticks_out:
-            # A shape already named for standing out is named by where it is: LIVE 2026-10-09 'The one that stands out
-            # at 85% across, 30% down stands out.'
-            named = [label.replace(STANDS_OUT, "the one at", 1) for label in self.sticks_out[:2]]
+            # A shape with no words of its own is named by where it is, as a person points: "something at the bottom
+            # right", not 'the one at 85% across, 30% down' (LIVE 2026-10-09; offline 2026-10-12 in nine games of
+            # fifty-four), and two shapes in the same part of the screen are one thing said.
+            named = list(dict.fromkeys(_as_pointed_at(label) for label in self.sticks_out[:2]))
             parts.append(f"{_and(named)} stand{'s' if len(named) == 1 else ''} out")
         if self.leaving_alone:
             parts.append(f"{_and(self.leaving_alone[:2])} would take me away from it, so I leave {'it' if len(self.leaving_alone) == 1 else 'them'} be")
@@ -128,13 +129,26 @@ class Bearings:
         return line[:1].upper() + line[1:] + "."
 
 
+_AT_SHARES = re.compile(r"(?:the one that stands out|the one|the shape) at (\d+)% across, (\d+)% down")
+
+
+def _as_pointed_at(label: str) -> str:
+    """A label as a person would point it out: its own words, or, for a shape with none, where it is on the screen."""
+    found = _AT_SHARES.search(str(label).replace(STANDS_OUT, "the one at", 1))
+    if not found:
+        return label
+    from core.language.what_a_watcher_hears import where_it_is
+
+    return f"something at {where_it_is(int(found.group(1)) / 100, int(found.group(2)) / 100)}"
+
+
 def _short(text: str, most: int = 110) -> str:
     said = " ".join(str(text or "").split())
     return said if len(said) <= most else said[: most - 1].rsplit(" ", 1)[0] + "…"
 
 
 def _and(items: tuple[str, ...] | list[str]) -> str:
-    items = [f"“{i}”" if not str(i).startswith("the ") else str(i) for i in items]
+    items = [f"“{i}”" if not str(i).startswith(("the ", "something at ")) else str(i) for i in items]
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 

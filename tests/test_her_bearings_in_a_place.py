@@ -40,3 +40,16 @@ def test_her_bearings_name_what_stands_out_and_what_she_leaves_alone():
 def test_a_place_that_says_nothing_of_what_to_do_leaves_that_open():
     bearings = take_bearings(Place(asked="Fill in the form.", labels=("the shape at the middle",)))
     assert "how is this done here" in bearings.open_questions and not bearings.instructions
+
+
+def test_a_shape_with_no_words_of_its_own_is_pointed_out_by_where_it_is():
+    """Offline 2026-10-12 nine games of fifty-four had "The one at 58% across, 89% down … stand out" said aloud."""
+    from core.cognition.her_bearings import Bearings
+
+    def said(*sticks_out: str) -> str:
+        return Bearings(why="", instructions=(), sticks_out=sticks_out, can_act_on=(), leaving_alone=(), moving=False,
+                        open_questions=()).said()
+
+    both = said("the one that stands out at 58% across, 89% down", "the one that stands out at 52% across, 94% down")
+    assert both == "Something at the bottom stands out."
+    assert said("GO", "the one that stands out at 83% across, 94% down") == "“GO” and something at the bottom right stand out."
