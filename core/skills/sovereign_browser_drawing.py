@@ -1020,10 +1020,11 @@ def _only_a_score(reflexes: Any, run: Mapping[str, Any]) -> bool:
     "GAME OVER YOUR SCORE: 120". Seen whole, with no winner, no goal to beat
     and no level or stage on any of its screens, its run is finished, not lost.
     """
-    from core.language.how_a_game_ended import offers_a_win
+    from core.language.how_a_game_ended import names_a_measure, offers_a_win
 
     seen = " ".join([*getattr(reflexes, "words", []), str(run.get("words") or "")])
-    return not offers_a_win(seen) and run.get("score") is not None
+    # A score named with its number left undrawn is still a score kept: the run is measured by what she counted.
+    return not offers_a_win(seen) and (run.get("score") is not None or names_a_measure(str(run.get("words") or "")))
 
 
 def _the_score_of(run: Mapping[str, Any], reflexes: Any) -> int | None:
@@ -1042,7 +1043,23 @@ def _the_score_of(run: Mapping[str, Any], reflexes: Any) -> int | None:
 
 def _scored(run: Mapping[str, Any]) -> str:
     score = run.get("score")
-    return f"scored {score}" if score is not None else f"{run.get('ended') or 'over'}, its score not shown"
+    if score is not None:
+        return f"scored {score}"
+    counted = _by_her_own_count(run)
+    return counted if counted else f"{run.get('ended') or 'over'}, its score not shown"
+
+
+def _by_her_own_count(run: Mapping[str, Any]) -> str:
+    """A run whose score was named and not drawn, as she can measure it herself: what she counted in it, and the
+    rating its last screen gave it in words; '' where its last screen named no measure."""
+    from core.language.how_a_game_ended import names_a_measure, the_rating_in
+
+    words = str(run.get("words") or "")
+    if not names_a_measure(words):
+        return ""
+    rated = the_rating_in(words)
+    counted = f"{int(run.get('gains') or 0)} by my own count" if run.get("gains") else "its score not drawn"
+    return f"{counted}, rated {rated}" if rated else counted
 
 
 def _what_there_is_to_play_for(reflexes: Any) -> str:
@@ -1067,6 +1084,17 @@ def _the_best_of(runs: list[dict[str, Any]]) -> str:
         return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. My best was run {which}, with {best}" + (
             f"; the others: {', '.join(others[:-1]) + ' and ' + others[-1] if len(others) > 1 else others[0]}."
             if others else ".")
+    counted = [(int(r.get("gains") or 0), i) for i, r in enumerate(runs, 1)]
+    if any(count for count, _which in counted):
+        # No number was drawn for any run: the best is the one she counted most in, said as her own count, with what
+        # each was rated in words where the game rated it.
+        best, which = max(counted)
+        others = [_by_her_own_count(r) or f"{int(r.get('gains') or 0)} by my own count"
+                  for i, r in enumerate(runs, 1) if i != which]
+        rated = _by_her_own_count(runs[which - 1]).partition(", rated ")[2]
+        return (f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was drawn; by my own count my best was "
+                f"run {which}, with {best}" + (f", rated {rated}" if rated else "")
+                + (f"; the others: {'; '.join(others)}." if others else "."))
     longest = max(range(len(runs)), key=lambda i: float(runs[i].get("took_s") or 0.0))
     return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was shown; my longest was run {longest + 1}, at {float(runs[longest].get('took_s') or 0.0):.0f} seconds."
 

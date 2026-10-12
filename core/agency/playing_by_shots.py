@@ -629,7 +629,7 @@ async def play_by_shots(
 
     to_try: list[tuple[tuple[float, float], str, Setting]] | None = None
     sent_nothing: list[tuple[float, float]] = []
-    taken = gains = misses = sent = 0
+    taken = gains = misses = sent = got_there = 0
     ended = "out of time"
     while time.monotonic() - began < seconds:
         seen = await _a_look_with_the_first_over(look, moves)
@@ -698,6 +698,7 @@ async def play_by_shots(
             if ended_at is not None:
                 sent += 1
                 shots_by_way.setdefault(way, Shots(way=way)).took(shot)
+            got_there += int(shot.got_there)
             ended = "what she sent got there" if shot.got_there else "what she sent has gone from sight"
             break
         if ended_at is None:
@@ -728,9 +729,12 @@ async def play_by_shots(
         keep["rests_at"] = ended_at if became[0] == RESTS else None
         shots_by_way.setdefault(way, Shots(way=way)).took(shot)
         if shot.got_there:
+            got_there += 1
             tell("That's the measure of it.")
     if keep.get("lies_where_struck") and ended in _HERS_IS_ELSEWHERE_AFTER:
         # The next screen puts her thing somewhere of its own: where it was pressed on this one says nothing of that.
         keep["sends_from"] = keep["rests_at"] = None
-    return {"shots": taken, "sent": sent, "gains": gains, "ended": ended, "sends_from": keep.get("sends_from"),
+    # A thing of hers got where it was to go: that is getting somewhere, whether or not the place counts it in sight.
+    return {"shots": taken, "sent": sent, "gains": gains + got_there, "got_there": got_there, "ended": ended,
+            "sends_from": keep.get("sends_from"),
             "how_it_goes": {way: shots.how_it_goes() for way, shots in shots_by_way.items()}}

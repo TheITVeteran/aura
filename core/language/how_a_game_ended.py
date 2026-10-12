@@ -17,8 +17,9 @@ import re
 import unicodedata
 from typing import Any, Final
 
-__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "offers_a_win", "says_a_round_is_over", "says_an_unresolved_result",
-           "says_play_is_ongoing", "the_score_in", "what_it_asks_of_a_player", "what_says_the_game_is_over"]
+__all__ = ["asks_to_win", "declares_a_win", "how_it_ended", "how_it_ended_in", "names_a_measure", "offers_a_win",
+           "says_a_round_is_over", "says_an_unresolved_result", "says_play_is_ongoing", "the_rating_in", "the_score_in",
+           "what_it_asks_of_a_player", "what_says_the_game_is_over"]
 
 _WINNING: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeated|champion)\b")
 _RESULT_VERB: Final = re.compile(r"\b(win|wins|won|winner|victory|victorious|beat|beats|defeat|defeats|defeated|champion|"
@@ -298,6 +299,26 @@ def the_score_in(words: str) -> int | None:
     """The last score a screen's words write out, or None where they write none."""
     found = list(_A_SCORE.finditer(_plain(words)))
     return int(found[-1].group(1).replace(",", "")) if found else None
+
+
+#: A measure named on a last screen, whether or not its number is drawn: "YOUR SCORE:", "Your rating: LONG SHOT".
+_NAMES_A_MEASURE: Final = re.compile(r"\b(?:(?:your|final|total|high|best)\s+)?(?:score|rating|rank|grade|points)\b\s*[:=]")
+#: A rating as a last screen writes it, up to whatever goes on from there.
+_A_RATING: Final = re.compile(r"\b(?:your\s+)?(?:rating|rank|grade)\s*[:=]\s*([a-z][a-z' !-]{1,28}?)"
+                              r"(?=\s+(?:play|try|again|continue|next|menu|back|your|score|click|press)\b|\s*$)")
+
+
+def names_a_measure(words: str) -> bool:
+    """Whether a screen's words name a measure of the run (a score, a rating), with its number drawn or not. A game's
+    last screen wrote "GAME OVER  YOUR SCORE:  YOUR RATING: CRACKED UP" with nothing drawn after the score (offline
+    2026-10-12, a player that leaves a game's own number fields blank), and four finished runs were four games lost."""
+    return bool(_NAMES_A_MEASURE.search(_plain(words)))
+
+
+def the_rating_in(words: str) -> str:
+    """The rating a last screen gives the run in words ("CRACKED UP", "LONG SHOT"), or ''."""
+    found = _A_RATING.search(_plain(words))
+    return found.group(1).strip(" -!").upper() if found else ""
 
 
 def offers_a_win(words: str) -> bool:
