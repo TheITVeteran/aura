@@ -53,7 +53,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb")
+DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb",
+           "blocksworld", "mystery_blocksworld")
 BENCH = Path("~/.aura/benchmarks").expanduser()
 #: EvalPlus's own request for a chat model.
 CODE_REQUEST = ("Please provide a self-contained Python script that solves the following problem "
@@ -198,6 +199,13 @@ def _cruxeval_tasks() -> list[dict[str, Any]]:
             for row in rows]
 
 
+def _planbench_tasks(domain: str) -> list[dict[str, Any]]:
+    """PlanBench plan generation, its one-shot query as the request (tools/planbench_restated.py)."""
+    from tools.planbench_restated import tasks
+
+    return tasks(domain)
+
+
 def _meeting_tasks() -> list[dict[str, Any]]:
     data = json.loads((BENCH / "g09/natural-plan/meeting_planning.json").read_text(encoding="utf-8"))
     return [{"id": f"meeting:{key}", "request": value["prompt_5shot"],
@@ -240,7 +248,9 @@ def _lcb_tasks() -> list[dict[str, Any]]:
 LOADERS = {"math": _math_tasks, "code": _code_tasks, "planning": _planning_tasks,
            "knowledge": _knowledge_tasks, "transfer": _transfer_tasks, "bbeh": _bbeh_tasks,
            "trip": _trip_tasks, "aime": _aime_tasks, "cruxeval": _cruxeval_tasks,
-           "meeting": _meeting_tasks, "lcb": _lcb_tasks}
+           "meeting": _meeting_tasks, "lcb": _lcb_tasks,
+           "blocksworld": lambda: _planbench_tasks("blocksworld"),
+           "mystery_blocksworld": lambda: _planbench_tasks("mystery_blocksworld")}
 
 
 def sample(tasks: list[dict[str, Any]], count: int, seed: int, excluded: set[str]) -> list[dict[str, Any]]:
@@ -544,6 +554,12 @@ from os.path import commonprefix
 from typing import List, Tuple, Dict, Set, Optional, Union, Any, Callable, Iterable, Iterator, Generator"""
 
 
+def _planbench_grade(text: str, truth: dict[str, Any]) -> tuple[bool, str]:
+    from tools.planbench_restated import grade
+
+    return grade(text, truth)
+
+
 def grade_lcb(text: str, truth: dict[str, str]) -> tuple[bool, str]:
     """LiveCodeBench's execution scoring, restated: extract_execution_code (cot) and evaluate_score, the check
     run here in her OS sandbox."""
@@ -566,7 +582,9 @@ def grade_lcb(text: str, truth: dict[str, str]) -> tuple[bool, str]:
 GRADERS = {"math": grade_math, "code": grade_code, "planning": grade_planning,
            "knowledge": grade_knowledge, "transfer": grade_transfer, "bbeh": grade_bbeh,
            "trip": grade_trip, "aime": grade_math, "cruxeval": grade_cruxeval,
-           "meeting": grade_meeting, "lcb": grade_lcb}
+           "meeting": grade_meeting, "lcb": grade_lcb,
+           "blocksworld": lambda text, truth: _planbench_grade(text, truth),
+           "mystery_blocksworld": lambda text, truth: _planbench_grade(text, truth)}
 
 
 # ── The run ────────────────────────────────────────────────────────────────
