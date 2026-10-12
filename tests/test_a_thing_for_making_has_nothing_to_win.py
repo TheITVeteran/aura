@@ -141,7 +141,8 @@ def test_what_a_thing_that_answers_said_is_told_with_what_she_asked_it(monkeypat
             return out.getvalue()
 
     async def seen(prompt, image, **_kw):
-        return '{"shows": "Swami Shaggy saying Like, no way, man!"}'
+        assert "answer" in prompt                                         # asked for its answer, not what it shows
+        return '{"answered": "Swami Shaggy saying Like, no way, man!"}'
 
     monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
     said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [],

@@ -891,6 +891,10 @@ def _the_shape_of(reflexes: Any, run: Mapping[str, Any]) -> str:
                     a_measure_seen=run.get("score") is not None)
 
 
+#: What her eyes are asked of a thing that answered a question: its answer, quoted where it is written.
+_WHAT_IT_ANSWERED = ("This is a picture of a toy or game that has just answered a question someone typed into it. What "
+                     "answer does it give? Quote the answer word for word where it is written on the picture; otherwise "
+                     'say in a few words what it shows as its answer. Answer with JSON only: {"answered": "<the answer>"}')
 #: What her eyes are asked of a thing made: what it shows, in a sentence.
 _WHAT_IT_SHOWS = ("This is a picture someone has just made in a game for making things: a scene, a character, a card, a "
                   "photo. In one short plain sentence, say what it shows: who or what is in it, and what they are doing. "
@@ -918,9 +922,14 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         png = await page.screenshot(clip={"x": left * size["width"], "y": top * size["height"],
                                           "width": (right - left) * size["width"], "height": (bottom - top) * size["height"]})
         frame = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
-        answer = await look_with_her_eyes(_WHAT_IT_SHOWS, _as_jpeg(frame), max_tokens=80, timeout_s=40.0)
+        # A thing that answered what she asked is asked for its answer, in its own words where it writes them; a thing
+        # made, for what it shows.
+        asked_it = bool((keep or {}).get("typed"))
+        answer = await look_with_her_eyes(_WHAT_IT_ANSWERED if asked_it else _WHAT_IT_SHOWS, _as_jpeg(frame),
+                                          max_tokens=80, timeout_s=40.0)
         found = re.search(r"\{.*\}", answer or "", re.S)
-        shows = " ".join(str(json.loads(found.group(0)).get("shows") or "").split()).rstrip(".") if found else ""
+        said = json.loads(found.group(0)) if found else {}
+        shows = " ".join(str(said.get("answered") or said.get("shows") or "").split()).rstrip(".")
     except Exception as why:  # noqa: BLE001 - her eyes not answering leaves what her choices say
         import logging
 
