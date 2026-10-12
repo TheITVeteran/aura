@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from core.agency.which_one_answers_to_her import WAYS
 
-__all__ = ["a_legend_of_controls", "controls_named_in", "without_a_legend"]
+__all__ = ["a_legend_of_controls", "controls_named_in", "the_pointer_only_clicks", "without_a_legend"]
 
 #: Words that say a game is played with the pointer.
 _POINTER_WORDS = ("mouse", "cursor", "pointer", "click", "drag", "aim", "trackpad")
@@ -238,3 +238,27 @@ def without_a_legend(text: str) -> str:
         last = end
     out.append(str(text)[last:])
     return " ".join(" ".join(out).split())
+
+
+#: The pointer worked in time: moved, steered or aimed with, or clicked to do something that has a moment (a throw, a
+#: shot, a jump, a swing). Said either way round: "move the mouse to steer", "the mouse moves your basket", "aim with
+#: your mouse", "click to throw".
+_THE_POINTER_IN_TIME = re.compile(
+    r"\b(?:move|moving|steer|steering|guide|guiding|control|controlling|drive|driving|fly|flying|aim|aiming|follow\w*)\b"
+    r"[^.!?]{0,40}\b(?:mouse|cursor|pointer)\b"
+    r"|\b(?:mouse|cursor|pointer)\b[^.!?]{0,30}\b(?:moves?|steers?|guides?|controls?|drives?|aims?|follows?|to (?:move|"
+    r"steer|guide|control|drive|aim|fly))\b"
+    r"|\bclick\w*\s+(?:\w+\s+){0,3}to\s+(?:throw|toss|shoot|fire|jump|hit|swing|attack|whack|splat|zap|flap|kick|punch|"
+    r"strike|smash|bounce)\b", re.I)
+
+
+def the_pointer_only_clicks(text: str) -> bool:
+    """Whether a place's words name the pointer only to click on things, drag them, or start, and name no key for moving:
+    a moving scene in such a place is no world to play in time, however its pictures move. "Click on items as you find
+    them. Then drag them here" is clicked through; "aim with your mouse and click to throw" and "use the mouse to move your
+    basket" are played as they happen. Offline 2026-10-11 a hidden-object game whose rooms animated was handed to her
+    fast play thirty-two times, three seconds at a time, and nothing was found."""
+    keys, pointer = controls_named_in(text, keys_without_words=(), during_play=True)
+    moving = {"up", "down", "left", "right", "w", "a", "s", "d"} & set(keys)
+    return bool(pointer and not moving and not _THE_POINTER_IN_TIME.search(" ".join(str(text or "").split())))
+

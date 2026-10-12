@@ -80,7 +80,10 @@ def ways_asked(read: str, last_screen: str = "") -> list[str]:
     if sends_by_letting_go(read):
         asked.append(SEND)
     keys, pointer = controls_named_in(read, keys_without_words=(), during_play=True)
-    if keys or pointer:
+    from core.agency.the_controls_a_game_names import the_pointer_only_clicks
+
+    # The pointer named only to click on things, drag them or start is not played in time (the_pointer_only_clicks).
+    if keys or pointer and not the_pointer_only_clicks(read):
         asked.append(AS_IT_HAPPENS)
     from core.cognition.a_guide_to_a_place import THE_GUIDE
     from core.cognition.what_this_place_is import ways_it_is_played_by
@@ -96,6 +99,9 @@ def ways_asked(read: str, last_screen: str = "") -> list[str]:
     # mechanic known only from its program is left out, as what its program listens for is not how it is played.
     if guide is not None:
         looks += reflex_ways(_ways_of_mechanics_said(guide))
+    if the_pointer_only_clicks(read):
+        # Clicked through, whatever a clock or a situation says of its time: nothing in it is steered.
+        looks = [way for way in looks if way != AS_IT_HAPPENS]
     return asked + [way for way in dict.fromkeys(looks) if way not in asked and way != TYPE]
 
 

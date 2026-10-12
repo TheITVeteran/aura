@@ -129,6 +129,8 @@ NEW_SCREEN_STILL_S = 1.5
 
 #: Where the world waits for her, nothing moving for this long ends a stretch: she has tried her ways, and none goes.
 WAITING_STILL_FOR_S = 8.0
+#: How much longer than the longest quiet a place has kept while played a stillness must last to end a stretch.
+QUIET_KEPT = 1.5
 
 #: How long a thing must have been on the screen to be taken for her by how her presses move it: offline 2026-10-11 in a
 #: flying shooter things on the screen a second or two (an enemy, a shot) were taken for her and lost a second later,
@@ -169,6 +171,10 @@ class _Run:
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
     last_moving: float = 0.0
+    #: Whether the place's words put her in a situation played in time, and the longest it has gone still between
+    #: movements while played: its own rhythm, against which a stillness is or is not an ending.
+    in_time: bool = False
+    longest_still: float = 0.0
     new_screen_at: float = -math.inf
     #: Her acts (keys pressed, the pointer tried or moved) when the screen last changed, and the pointer's moves.
     acts_at_new_screen: int = 0
@@ -736,11 +742,17 @@ def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float
     # Motion seen in this picture, not a thing carried on along its last speed
     # because it was not seen.
     if any(thing.seen == at for thing in moves.moving(faster_than=8.0)):
+        if run.first_moving < at:
+            run.longest_still = max(run.longest_still, at - run.last_moving)
         run.last_moving = at
         run.first_moving = min(run.first_moving, at)
     still = at - run.last_moving
-    # A world that waits for her is still until she moves: its stillness ends a stretch only once her ways have had time.
-    still_for = WAITING_STILL_FOR_S if run.waits_for_her else STILL_FOR_S
+    # A world that waits for her is still until she moves, and one played in time goes still between what comes: its
+    # stillness ends a stretch only once her ways have had time, and never sooner than half again the longest quiet it
+    # has kept while played. Offline 2026-10-11 a food fight whose opponents rose from behind the tables now and then
+    # was handed back three seconds into its first quiet, and the round ran out with nothing thrown.
+    still_for = WAITING_STILL_FOR_S if run.waits_for_her or run.in_time else STILL_FOR_S
+    still_for = max(still_for, QUIET_KEPT * run.longest_still)
     # A new screen that stands still is handed back once she has tried it: a level often waits for the player's first
     # move (LIVE 2026-10-10 a boat game's level was handed back 2 seconds in, and played itself to GAME OVER).
     if (at - run.new_screen_at < still_for and still >= max(NEW_SCREEN_STILL_S, still_for - STILL_FOR_S)
@@ -1011,12 +1023,14 @@ async def _play_as_it_happens(
     from core.agency.situations_she_knows import caution_of, situations_in
 
     situations = situations_in(told) if told else ()
+    from core.agency.situations_she_knows import played_in_time
     hers: WhichIsHers = keep.get("hers") or WhichIsHers()
     meeting: WhatMeetingDoes = keep.get("meeting") or WhatMeetingDoes()
     for kept in (physics, hers, meeting):
         kept.numbered_afresh()
     run = _Run(keys=list(keys), began=began, last_moving=began, pointer_first=pointer_first, legend=tuple(keep.get("legend") or ()),
-               contest=keep.get("contest") or ContestStands(), waits_for_her=waits_for_her)
+               contest=keep.get("contest") or ContestStands(), waits_for_her=waits_for_her,
+               in_time=played_in_time(situations), longest_still=float(keep.get("longest_still") or 0.0))
     run.pointer_trigger = rules is not None and rules.a_click_is_a_shot
     run.burst_keys = keys_pressed_fast(told)
     run.building_up = builds_up(told)
@@ -1211,6 +1225,7 @@ async def _play_as_it_happens(
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
                  "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
+                 "longest_still": run.longest_still,
                  "said_once": run.said, "leading": run.leading, "choices": run.choices, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
                  "plays_for": run.plays_for, "who": run.who, "touches_told": run.touches_told,

@@ -134,6 +134,13 @@ class OnAPage:
         """Watch the part being read as a stream from the first look; and while something plays by itself, wait for it."""
         from core.perception.watching_it_happen import Watching
 
+        if self.watching is not None and over is None:
+            # A look at the whole page does not move what she watches: the stream stays on the part she acts on, and her
+            # acts on it stay hers to be answered. Measured offline 2026-10-11: each act was followed by a whole-page
+            # look that began the stream again, every act's answer was lost, and every click was judged by whether the
+            # words changed; a choice that only lit up ("1 Player") was taken to do nothing, and she went back and on
+            # between two screens for four minutes.
+            return
         if self.watching is None or over != self._watching_over:
             await self.stop_watching()
             self._pictures = await _pictures_of(self.page, over)
@@ -212,6 +219,11 @@ class OnAPage:
 
             wide, tall = await the_page_size(self.page)
             left = top = 0.0
+        if self._swept is not None and any(abs(x - a) < 0.02 and abs(y - b) < 0.02 for a, b in self._swept[1]):
+            # A place found by the pointer turning into a hand is clicked where it answers now: it may move.
+            from core.perception.where_the_pointer_turns import where_the_hand_is_now
+
+            x, y = await where_the_hand_is_now(self.page, x, y, left, top, wide, tall)
         watching = self.watching
         window = None
         delivered = False

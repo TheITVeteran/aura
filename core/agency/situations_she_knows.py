@@ -38,7 +38,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["SITUATIONS", "Situation", "caution_of", "lasting_is_the_task", "prior_stance", "situations_in", "ways_of"]
+__all__ = ["PLAYED_IN_TIME", "SITUATIONS", "Situation", "caution_of", "lasting_is_the_task", "played_in_time", "prior_stance",
+           "situations_in", "ways_of"]
 
 #: Stances, as core/agency/what_meeting_things_does.py names them.
 MEET, AVOID, SHOOT = "meet", "avoid", "shoot"
@@ -306,3 +307,15 @@ def prior_stance(situations: Sequence[Situation], thing: Any, mine: Any) -> str:
         if toward > 0:
             return next((s.heading_for_her for s in situations if s.heading_for_her), "")
     return ""
+
+
+#: The situations played in time: what comes, falls or runs out comes whether she is ready or not.
+PLAYED_IN_TIME = frozenset({"catching what falls", "keeping clear of what comes", "keeping something away from whoever is after it",
+                            "holding on until the end", "getting them all against a clock", "shooting what comes",
+                            "pressing at the right moment", "a fight at close quarters"})
+
+
+def played_in_time(situations: Sequence[Situation]) -> bool:
+    """Whether any of the situations a place's words put her in is played in time."""
+    return any(situation.name in PLAYED_IN_TIME for situation in situations)
+

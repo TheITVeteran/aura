@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-__all__ = ["places_the_pointer_turns", "where_the_pointer_turns"]
+__all__ = ["places_the_pointer_turns", "shown_as_a_hand", "where_the_hand_is_now", "where_the_pointer_turns"]
 
 logger = logging.getLogger("Aura.WhereThePointerTurns")
 
@@ -88,3 +88,40 @@ async def where_the_pointer_turns(page: Any, over: tuple[float, float, float, fl
     places = places_the_pointer_turns(hands)
     logger.info("where the pointer turns into a hand: %s", [(round(x, 2), round(y, 2)) for x, y in places])
     return places
+
+
+async def shown_as_a_hand(page: Any, x: float, y: float) -> bool:
+    """Whether the pointer, moved to ``x``, ``y`` in the page's pixels, is shown as a hand there now."""
+    await page.mouse.move(x, y)
+    return str(await page.evaluate(_SHOWN_AS, [x, y]) or "") in _A_HAND
+
+
+async def where_the_hand_is_now(page: Any, x: float, y: float, left: float, top: float, wide: float,
+                                tall: float) -> tuple[float, float]:
+    """Where a place found to answer the pointer answers now, as shares of the part swept: where it was, where the pointer
+    is still a hand there; else the nearest place within a grid step or so where it is; else where it was. A button
+    that moves (a top spinning about a title, a door that slides) is not where it was when the screen was swept: offline
+    2026-10-11 a title's start was a spinning top, and every click went to where it had been."""
+    try:
+        if await shown_as_a_hand(page, left + x * wide, top + y * tall):
+            return x, y
+        found = []
+        for row in range(-NEAR, NEAR + 1):
+            for column in range(-NEAR, NEAR + 1):
+                there = (x + column / (2 * ACROSS), y + row / (2 * DOWN))
+                if not (0.0 <= there[0] <= 1.0 and 0.0 <= there[1] <= 1.0) or (row, column) == (0, 0):
+                    continue
+                if await shown_as_a_hand(page, left + there[0] * wide, top + there[1] * tall):
+                    found.append(there)
+    except Exception as why:  # noqa: BLE001 - a page that cannot be asked is clicked where the place was
+        logger.info("where the hand is now could not be asked: %s", str(why)[:120])
+        return x, y
+    if not found:
+        return x, y
+    near = min(found, key=lambda p: (p[0] - x) ** 2 + (p[1] - y) ** 2)
+    return near
+
+
+#: How many half grid steps either way a place found to answer the pointer is looked for where it has gone.
+NEAR = 3
+

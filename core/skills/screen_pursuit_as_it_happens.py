@@ -42,16 +42,11 @@ def _a_different_screen(said: str, before: str) -> bool:
 
 #: The situations a place's words may put her in that are played in time, as things happen, not a move at a time
 #: (core/agency/situations_she_knows.py).
-_IN_TIME = frozenset({"catching what falls", "keeping clear of what comes", "keeping something away from whoever is after it",
-                      "holding on until the end", "getting them all against a clock", "shooting what comes",
-                      "pressing at the right moment", "a fight at close quarters"})
-
-
 def _played_in_time(said: str) -> bool:
     """Whether what a place has said puts her in a situation played in time."""
-    from core.agency.situations_she_knows import situations_in
+    from core.agency.situations_she_knows import played_in_time, situations_in
 
-    return any(situation.name in _IN_TIME for situation in situations_in(said))
+    return played_in_time(situations_in(said))
 
 
 async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bool:
@@ -624,9 +619,20 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
+        from core.agency.the_controls_a_game_names import the_pointer_only_clicks
+        from core.cognition.a_guide_to_a_place import THE_GUIDE as _THE_GUIDE
+
+        # Everything the place has said of how it is played, not only its last screens: its instructions as read, kept
+        # by the guide. Offline 2026-10-11 a golf game's "click on your ball and hold down the mouse button" was six
+        # screens behind by the time the course came up, and on the course she clicked the words painted on it.
+        heard = list(getattr(getattr(_THE_GUIDE.get(), "rules", None), "heard", None) or [])
+        said = " ".join([*heard[-12:], *self.words[-6:], str(self.keep.get("counsel") or "")])
+        # A place whose words name the pointer only to click on things, drag them or start is clicked through by the
+        # pursuit, however its scenery moves (core/agency/the_controls_a_game_names.py the_pointer_only_clicks).
+        only_clicks = the_pointer_only_clicks(said)
+        in_time = _played_in_time(said) and not only_clicks
         # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
         # a game played without one (a food fight seen from behind the player's own eyes) goes.
-        in_time = _played_in_time(" ".join([*self.words[-6:], str(self.keep.get("counsel") or "")]))
         if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
             _logged_leaving_alone(self, now)
             return
@@ -649,7 +655,6 @@ class PlayingAsItHappens:
             return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
-        said = " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")])
         asked = ways_asked(said, self.words[-1] if self.words else "")
         way = held.choose(asked, said)
         if way == SEND and not self._no_place_for_shots():
@@ -691,6 +696,7 @@ class PlayingAsItHappens:
         )
 
         done_by = not_steered(guide) if guide is not None and not named and not pointer_first else ""
+        done_by = done_by or ("clicking and dragging things" if only_clicks and not self.under_her_hand else "")
         if guide is not None and guide.rules.a_lesson_plays(self.labels_seen):
             # A lesson new to her is playing: it is read, not played (core/cognition/reading_the_rules.py).
             logger.info("a lesson is playing: reading it, not playing it")

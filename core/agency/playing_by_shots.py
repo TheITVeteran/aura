@@ -55,7 +55,7 @@ _SENDING_WORDS = ("pull", "release", "let go", "launch", "fling", "sling", "putt
 #: use something for as long as it is held (glide, fly, speed up), it is no send: LIVE 2026-10-09 a game said "while
 #: flying, click and hold your mouse button to use Glide Power", and she pulled and let go two hundred times.
 _HELD = re.compile(r"\b(?:hold the mouse|click and hold|hold down the mouse|hold the button)\b")
-_HELD_TO_SEND = re.compile(r"\b(?:aim\w*|release|let go|power up|shot|charge|strength|how hard|shoot|throw|putt|swing)\b")
+_HELD_TO_SEND = re.compile(r"\b(?:aim\w*|release|let go|power up|shot|charge|strength|how hard|shoot|throw|putt\w*|swing)\b")
 
 #: Words for sending that a click alone may do: "click to throw" is a shot aimed by the pointer, made at once
 #: (core/agency/playing_as_it_happens.py); a throw held, pulled or let go is sent. LIVE 2026-10-09 a food fight's
@@ -91,7 +91,15 @@ def sends_by_letting_go(told: str) -> bool:
     The floor below decides the sentences it is sure of, and teaches the learned surface with each; a sentence the floor
     passes over is decided by the surface where it has decided one like it, and abstains otherwise.
     """
-    for sentence in re.split(r"(?<=[.!?;])\s+|\n", "\n".join(" ".join(line.lower().split()) for line in told.splitlines())):
+    lowered = "\n".join(" ".join(line.lower().split()) for line in told.splitlines())
+    # A press of the pointer held, in a passage that says what it is held for: offline 2026-10-11 "HOW TO USE THE PUTTER:
+    # 1. Click on your ball and hold down the mouse button." was read as a hold that sends nothing, and on the course
+    # she clicked the words painted on it instead of putting.
+    held_to_send = bool(_HELD_TO_SEND.search(lowered))
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n", lowered):
+        if held_to_send and _HELD.search(sentence) and not _a_key_held(sentence):
+            SENDS_BY_LETTING_GO.observe(sentence, holds=True)
+            return True
         if _a_key_held(sentence):
             SENDS_BY_LETTING_GO.observe(sentence, holds=False)
             continue

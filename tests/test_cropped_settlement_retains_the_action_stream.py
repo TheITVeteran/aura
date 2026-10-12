@@ -89,3 +89,53 @@ async def test_cropped_page_settlement_retains_its_real_watcher_and_owned_input(
         assert before["text"] == after["text"]
     finally:
         await surface.stop_watching()
+
+
+@pytest.mark.asyncio
+async def test_a_look_at_the_whole_page_between_acts_keeps_the_stream_on_the_part_she_acts_on(monkeypatch):
+    """Measured offline 2026-10-11: each act was followed by a whole-page look that began the stream again, and every
+    act's answer was lost; a choice that only lit up was taken to do nothing."""
+    from core.perception import what_her_page_shows
+    from core.skills import screen_pursuit_on_a_page
+
+    crop = (.0, .04, 1.0, 1.0)
+    bounds = [0, 28, 1280, 768]
+    providers = []
+    still = np.full((96, 128, 3), 50, dtype=np.uint8)
+    lit = still.copy()
+    lit[30:50, 40:65] = 240
+
+    class Pictures:
+        async def __call__(self):
+            return None
+
+        async def close(self):
+            pass
+
+    async def pictures(_page, over):
+        providers.append(over)
+        return Pictures()
+
+    async def look(_page, over, *, name):
+        return {"text": "Please Select Number Of Players", "layout": [], "surface_id": "page:game",
+                "bounds": bounds if over == crop else [0, 0, 1280, 800], "_capture_epoch": str(time.monotonic()),
+                "capture_at": time.time()}
+
+    async def click(*_args):
+        surface.watching.saw(lit, time.monotonic())
+
+    surface = OnAPage(SimpleNamespace(mouse=SimpleNamespace(click=click)), "game")
+    monkeypatch.setattr(screen_pursuit_on_a_page, "_pictures_of", pictures)
+    monkeypatch.setattr(what_her_page_shows, "look_at_a_page", look)
+    try:
+        await surface.read(crop)
+        watcher = surface.watching
+        for index in range(17):
+            watcher.saw(still, time.monotonic() - 2.2 + index / 8)
+        assert await surface.click(.44, .41, bounds)
+        await surface.read(None)                                  # a look at the whole page
+        after = await surface.read(crop)
+        assert surface.watching is watcher and providers == [crop]
+        assert after["answer_window"]["sequence"] == 1 and after["answered"] is True
+    finally:
+        await surface.stop_watching()
