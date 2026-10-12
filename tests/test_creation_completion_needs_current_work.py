@@ -106,3 +106,17 @@ def test_navigation_eventually_reports_unverified_work_without_a_success():
     works = WhatWorksHere(did_something={'click "Next background"': 500})
     assert reflexes.run_is_over(reading(image(), 3), can_do=works)
     assert reflexes.over_because == pursuit.MAKING_STALLED
+
+
+def test_a_thing_made_by_choosing_and_its_own_finishing_control_is_made_by_her_acts_changing_it():
+    """Offline 2026-10-11 an agent generator showed the agent card it made, nothing was placed in it, and she went on
+    clicking for four minutes: what is not carried into place is not measured by placement."""
+    reflexes = run()
+    reflexes.words = ["Create your own agent by selecting your favorite body parts. Then click GENERATE."]
+    token = pursuit.AS_IT_HAPPENS.set(reflexes)
+    try:
+        works = WhatWorksHere(did_something={'click "GENERATE"': 1, 'click "the shape at 40% across"': 6})
+        assert pursuit.a_handed_over_run_is_over(reading(image(), 3), made=pursuit.CHANGES_MADE_AT_LEAST, can_do=works)
+        assert reflexes.over_because == pursuit.MADE_NOT_WON
+    finally:
+        pursuit.AS_IT_HAPPENS.reset(token)

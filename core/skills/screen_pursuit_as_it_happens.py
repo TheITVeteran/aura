@@ -112,6 +112,24 @@ def _what_play_showed_of_how_it_works(stretch: dict[str, Any]) -> None:
         _said_while_playing(now.replace("As I understand it:", "Now I understand it better:", 1))
 
 
+def _made_by_placing(can_do: Any) -> bool:
+    """Whether what is made here is made by carrying things into place, so that only placed work, measured, shows it
+    made (core/skills/screen_step_evidence.py): things have been carried, or are said to be, or she understands herself
+    to be a hand that puts things in place (core/agency/how_a_game_works.py). Elsewhere a thing for making is made by
+    choosing and its own finishing control: offline 2026-10-11 an agent generator showed the agent card it made, nothing
+    was placed in it, and she went on clicking for four minutes."""
+    if getattr(can_do, "carried_to", None) or getattr(can_do, "carrying_said", False):
+        return True
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import PLACES, understood
+
+    return understood(guide).me.value == PLACES or guide.in_play("dragging")
+
+
 def _it_goes_on_without_her(reflexes: Any) -> bool:
     """Whether, as she understands the place (core/agency/how_a_game_works.py), it goes on without her: from all its
     guide has read and what is on the screens before her, and what her play there has shown."""
@@ -237,6 +255,9 @@ ANSWER_WITHIN_S = 20.0
 TRYING_OUT_S = 90.0
 #: The longest an attempt at making continues without measured current work.
 TRYING_OUT_MOST_S = 240.0
+#: Where what is made is not carried into place but chosen and finished by its own controls (a generator, a randomizer,
+#: "I'm done"), how many of her acts must have changed it for something to have been made.
+CHANGES_MADE_AT_LEAST = 5
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
@@ -594,7 +615,8 @@ class PlayingAsItHappens:
             if making >= TRYING_OUT_S and can_do is not None:
                 from core.skills.screen_step_evidence import current_work_is_measured
 
-                made = current_work_is_measured(can_do, observation)
+                made = current_work_is_measured(can_do, observation) or (
+                    not _made_by_placing(can_do) and self.acts_that_changed - self.made_before >= CHANGES_MADE_AT_LEAST)
             else:
                 made = False
             if made:
