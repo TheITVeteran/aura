@@ -166,6 +166,8 @@ class Thing:
     announced: bool = True
     #: Whether it is a thing that went out of sight and came back into it (OUT_OF_SIGHT_S).
     again: bool = False
+    #: Pixels assigned to this object inside its measured patch; holes remain scenery.
+    support: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     @property
     def size(self) -> float:
@@ -341,6 +343,10 @@ class WhatMoves:
     """
 
     def __init__(self, *, width: int = WORKING_WIDTH, kinds: list[Kind] | None = None) -> None:
+        from core.perception.points_that_keep_their_motion import FollowingPoints
+
+        self.points = FollowingPoints()
+        self._point_motion: dict = {}
         self.width = width
         self.scale = 1.0
         self.shape: tuple[int, int] = (0, 0)
@@ -424,6 +430,8 @@ class WhatMoves:
         self._first = []
         self._backdrop = None
         self._drawn.clear()
+        self.points.clear()
+        self._point_motion.clear()
         self.screens += 1
 
     def _drift(self, small: np.ndarray, dt: float) -> None:
@@ -608,6 +616,7 @@ class WhatMoves:
                     "look": _look_of(pixels),
                     "colour": self._colour_of(small, x, y, w, h, part, pixels),
                     "patch": small[top:bottom, left:right].copy(),
+                    "support": part[top - y:bottom - y, left - x:right - x].copy(),
                 })
         return found
 
@@ -631,8 +640,17 @@ class WhatMoves:
     def _cost(self, thing: Thing, blob: dict[str, Any], at: float) -> float:
         dt = max(1e-3, at - thing.seen)
         px, py = _measured(thing)
-        px, py = px + thing.vx * dt, py + thing.vy * dt
-        reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + 0.5 * max(thing.w, thing.h)
+        motion = self._point_motion.get(thing.number)
+        if motion is not None and motion.before == thing.seen and motion.at == at:
+            if not motion.inside(blob):
+                return math.inf
+            px, py = px + motion.dx, py + motion.dy
+            # An outline may change with articulation. Its changed half-size
+            # bounds how far the centre can move without its texture moving.
+            reach = 3.0 + .5 * math.hypot(blob["w"] - thing.w, blob["h"] - thing.h)
+        else:
+            px, py = px + thing.vx * dt, py + thing.vy * dt
+            reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + 0.5 * max(thing.w, thing.h)
         distance = math.hypot(blob["x"] - px, blob["y"] - py) / reach
         if distance > 1.0:
             return math.inf
@@ -645,13 +663,31 @@ class WhatMoves:
         if max(aspect, 1.0 / max(1e-6, aspect)) > 2.5:
             return math.inf
         ratio = max(blob["w"] * blob["h"], thing.size) / max(1.0, min(blob["w"] * blob["h"], thing.size))
+        if motion is not None and motion.before == thing.seen and motion.at == at and ratio > 4.0:
+            return math.inf
         return distance + looks + 0.3 * math.log(ratio)
 
     def _match(self, blobs: list[dict[str, Any]], at: float) -> tuple[dict[int, int], list[int]]:
+        from scipy.spatial import cKDTree
+
+        if not blobs:
+            return {}, []
+        places = cKDTree([(blob["x"], blob["y"]) for blob in blobs])
+        largest = max(math.hypot(blob["w"], blob["h"]) for blob in blobs)
+        candidates = {}
+        for number, thing in {**self.things, **self.pending}.items():
+            dt = max(1e-3, at - thing.seen)
+            x, y = _measured(thing)
+            speed = math.hypot(thing.vx, thing.vy) * dt
+            reach = 6.0 + 2.5 * speed + LEAP_SIZES * max(thing.w, thing.h)
+            motion = self._point_motion.get(number)
+            if motion is not None and motion.before == thing.seen and motion.at == at:
+                reach = max(reach, math.hypot(motion.dx, motion.dy) + 3 + .5 * (largest + math.hypot(thing.w, thing.h)))
+            candidates[number] = places.query_ball_point((x, y), reach)
         pairs = []
         for number, thing in {**self.things, **self.pending}.items():
-            for index, blob in enumerate(blobs):
-                cost = self._cost(thing, blob, at)
+            for index in candidates[number]:
+                cost = self._cost(thing, blobs[index], at)
                 if cost < math.inf:
                     pairs.append((cost, number, index))
         pairs.sort()
@@ -667,8 +703,8 @@ class WhatMoves:
         # pictures against a reach of 11, was taken for a new thing at every jump, and no press was ever seen to move it.
         leaps = sorted((cost, number, index)
                        for number, thing in {**self.things, **self.pending}.items() if number not in matched
-                       for index, blob in enumerate(blobs) if index not in taken
-                       if (cost := self._leap_cost(thing, blob, at)) < math.inf)
+                       for index in candidates[number] if index not in taken
+                       if (cost := self._leap_cost(thing, blobs[index], at)) < math.inf)
         for _cost, number, index in leaps:
             if number in matched or index in taken:
                 continue
@@ -679,6 +715,9 @@ class WhatMoves:
     def _leap_cost(self, thing: Thing, blob: dict[str, Any], at: float) -> float:
         """How far a blob is from where a thing was last seen, in reaches of a sudden move; inf where it is not the
         thing: farther than a few of its sizes, or not of the same look, size and shape."""
+        motion = self._point_motion.get(thing.number)
+        if motion is not None and motion.before == thing.seen and motion.at == at:
+            return self._cost(thing, blob, at)
         dt = max(1e-3, at - thing.seen)
         px, py = _measured(thing)
         reach = 6.0 + 1.5 * math.hypot(thing.vx, thing.vy) * dt + LEAP_SIZES * max(thing.w, thing.h)
@@ -700,6 +739,7 @@ class WhatMoves:
         thing.x, thing.y, thing.w, thing.h = blob["x"], blob["y"], blob["w"], blob["h"]
         thing.look = 0.8 * thing.look + 0.2 * blob["look"]
         thing.colour, thing.patch = blob["colour"], blob["patch"]
+        thing.support = blob.get("support")
         thing.seen, thing.still = at, False
         thing.path.append((at, thing.x, thing.y))
         thing.vx, thing.vy = _speed_from_its_path(thing.path, at, (vx, vy), (thing.vx, thing.vy))
@@ -776,6 +816,7 @@ class WhatMoves:
         thing = Thing(
             self._numbers, blob["x"], blob["y"], blob["w"], blob["h"], blob["look"],
             blob["colour"], blob["patch"], born=at, seen=at,
+            support=blob.get("support"),
         )
         thing.kind = self._kind_for(thing.look, thing.size, thing.colour)
         before = _back_in_sight(self, thing, at)
@@ -815,6 +856,10 @@ class WhatMoves:
             self._still = np.where(changed, np.float32(0.0), before + np.float32(dt))
         else:
             self._still = np.zeros(small.shape[:2], np.float32)
+        self.points.see(small, at)
+        self._point_motion = {thing.number: motion
+                              for thing in [*self.things.values(), *self.pending.values()]
+                              if (motion := self.points.motion_of(thing, at)) is not None}
         self._last, self._last_at = small, at
         self.pictures += 1
         if self._first_look(small, at):
@@ -911,7 +956,8 @@ class WhatMoves:
             if int(visible.sum()) < SMALLEST and not held:
                 continue
             found.append({"x": x + w / 2, "y": y + h / 2, "w": w, "h": h,
-                          "look": _look_of(np.asarray([colour])), "colour": colour, "patch": patch.copy()})
+                          "look": _look_of(np.asarray([colour])), "colour": colour, "patch": patch.copy(),
+                          "support": painted.copy()})
         return found
 
     def _a_new_screen(self, small: np.ndarray) -> bool:

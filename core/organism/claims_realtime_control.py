@@ -48,6 +48,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.foreground_appearance import _foreground_mask_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.parts_when_things_touch import _joined_parts_invariant
+    from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
@@ -76,6 +77,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("point_identity_needs_current_pixels", "core/perception/points_that_keep_their_motion.py",
+         "tests/test_points_keep_their_observed_motion.py", lambda: _point_identity_invariant() == (),
+         "Bounded point tracks retain measured identities across consecutive frames and retire them on occlusion, gaps or resets."),
         ("pixel_control_requires_resolved_displacement", "core/agency/controls_measured_on_one_thing.py",
          "tests/test_which_thing_answers_to_her.py", lambda: _resolved_motion_invariant() == (),
          "Pixel-derived control evidence requires observed displacement beyond the tracker resolution before assigning a new body identity."),
