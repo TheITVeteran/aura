@@ -106,3 +106,32 @@ def test_a_place_whose_words_say_how_it_is_played_has_no_board_or_well_looked_fo
     assert not _played_neither_by_turns_nor_by_pieces(board)
     tiles = SimpleNamespace(words=["Rotate the falling blocks to complete lines."], keep={})
     assert not _played_neither_by_turns_nor_by_pieces(tiles)
+
+
+def test_things_side_by_side_with_a_little_between_are_told_apart_by_a_finer_sweep():
+    """Offline 2026-10-11 a corridor of doors, a row of six at a time, was found as one place a row, and the middle of
+    each row was clicked over and over."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from core.perception.where_the_pointer_turns import where_the_pointer_turns
+
+    doors = [(0.04 + 0.16 * i, 0.12 + 0.33 * j, 0.11, 0.2) for i in range(6) for j in range(3)]
+
+    class _Page:
+        viewport_size = {"width": 1280, "height": 768}
+
+        def __init__(self):
+            self.at = (0.0, 0.0)
+            self.mouse = SimpleNamespace(move=self._move)
+
+        async def _move(self, x, y):
+            self.at = (x / 1280, y / 768)
+
+        async def evaluate(self, _script, _where):
+            x, y = self.at
+            return "pointer" if any(a <= x <= a + w and b <= y <= b + h for a, b, w, h in doors) else "auto"
+
+    places = asyncio.run(where_the_pointer_turns(_Page()))
+    found = {(round(x * 6 - 0.5), round((y - 0.12) * 3)) for x, y in places}
+    assert len(places) >= 15 and len(found) >= 15, places

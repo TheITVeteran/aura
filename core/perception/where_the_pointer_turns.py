@@ -43,6 +43,23 @@ _SHOWN_AS = """(([x, y]) => {
 })"""
 
 
+def _groups(hands: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+    """The cells where the pointer was a hand, neighbours taken together."""
+    left, groups = set(hands), []
+    while left:
+        start = left.pop()
+        group, frontier = [start], [start]
+        while frontier:
+            column, row = frontier.pop()
+            for near in ((column + 1, row), (column - 1, row), (column, row + 1), (column, row - 1)):
+                if near in left:
+                    left.discard(near)
+                    group.append(near)
+                    frontier.append(near)
+        groups.append(group)
+    return groups
+
+
 def places_the_pointer_turns(hands: set[tuple[int, int]], across: int = ACROSS, down: int = DOWN) -> list[tuple[float, float]]:
     """The places of a swept grid where the pointer was a hand, neighbours taken together, as the middle of each in
     shares of what was swept; none where it was a hand nearly everywhere or nowhere."""
@@ -86,8 +103,52 @@ async def where_the_pointer_turns(page: Any, over: tuple[float, float, float, fl
         logger.info("the pointer could not be swept over the page: %s", str(why)[:120])
         return []
     places = places_the_pointer_turns(hands)
+    if places and len(hands) < 0.8 * ACROSS * DOWN:
+        places = await _split_finer(page, hands, (left, top, right, bottom), (width, height)) or places
     logger.info("where the pointer turns into a hand: %s", [(round(x, 2), round(y, 2)) for x, y in places])
     return places
+
+
+#: How much finer a place the pointer turned over is swept again, and the least cells a place covers to be swept again.
+FINER = 3
+SPLIT_FROM_CELLS = 3
+
+
+async def _split_finer(page: Any, hands: set[tuple[int, int]], over: tuple[float, float, float, float],
+                       size: tuple[float, float]) -> list[tuple[float, float]]:
+    """The places again, where a place covers several cells of the sweep, swept again finer over that place, so that
+    things side by side with a little between them are told apart: offline 2026-10-11 a corridor of doors, a row of six
+    at a time, was found as one place a row, and the middle of each row was clicked over and over. [] where nothing
+    is split."""
+    left, top, right, bottom = over
+    width, height = size
+    split, places = False, []
+    for group in sorted(_groups(hands), key=len, reverse=True)[:MOST]:
+        if len(group) < SPLIT_FROM_CELLS:
+            places.append(((sum(c for c, _ in group) / len(group) + 0.5) / ACROSS, (sum(r for _, r in group) / len(group) + 0.5) / DOWN))
+            continue
+        columns = [c for c, _ in group]
+        rows = [r for _, r in group]
+        c0, c1, r0, r1 = min(columns), max(columns) + 1, min(rows), max(rows) + 1
+        wide, high = (c1 - c0) * FINER, (r1 - r0) * FINER
+        finer: set[tuple[int, int]] = set()
+        try:
+            for row in range(high):
+                for column in range(wide):
+                    x = (left + (right - left) * (c0 + (column + 0.5) / FINER) / ACROSS) * width
+                    y = (top + (bottom - top) * (r0 + (row + 0.5) / FINER) / DOWN) * height
+                    await page.mouse.move(x, y)
+                    if str(await page.evaluate(_SHOWN_AS, [x, y]) or "") in _A_HAND:
+                        finer.add((column, row))
+        except Exception as why:  # noqa: BLE001 - a place that cannot be swept again is kept as it was
+            logger.info("the pointer could not be swept finer: %s", str(why)[:120])
+            return []
+        parts = [part for part in _groups(finer) if len(part) >= 2]
+        split = split or len(parts) > 1
+        for part in parts or [[(column, row) for column in range(wide) for row in range(high)]]:
+            places.append(((c0 + (sum(c for c, _ in part) / len(part) + 0.5) / FINER) / ACROSS,
+                           (r0 + (sum(r for _, r in part) / len(part) + 0.5) / FINER) / DOWN))
+    return places[:MOST * 3] if split else []
 
 
 async def shown_as_a_hand(page: Any, x: float, y: float) -> bool:
