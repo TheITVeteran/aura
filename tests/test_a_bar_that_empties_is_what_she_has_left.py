@@ -192,6 +192,28 @@ def test_a_gauge_that_fills_from_one_end_is_not_her():
     assert not hers._outlines.a_gauge(2)
 
 
+def test_a_painter_whose_trail_grows_from_where_it_began_is_no_gauge():
+    """Offline 2026-10-12 a boy painting the ground was found by his keys four times and each time taken for a gauge: his
+    outline, paint and all, grew from where it began. It grew across as well, as no gauge does."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    hers = WhichIsHers()
+    hers.number, hers.kind = 3, 3                         # found because he went the way of each key named for a way
+    hers.identification.receipts.append({"epoch": 0, "reason": "went the way of each key named for a way", "selected": 3,
+                                         "ways": 3})
+    at = 1.0
+    for step in range(8):
+        at += 0.1
+        width = 20.0 + 6.0 * step                          # the trail runs rightward from x = 40
+        tall = 24.0 + (5.0 * (step - 3) if step > 3 else 0.0)   # and then he goes up as well
+        painter = SimpleNamespace(number=3, kind=3, x=40.0 + width / 2, y=200.0 - tall / 2, w=width, h=tall, vx=0.0, vy=0.0,
+                                  seen=at, born=0.0, size=width * tall, moved=True)
+        hers.saw(SimpleNamespace(things={3: painter}, shape=(300, 400), kinds=[]), [], at)
+    assert hers.number == 3 and 3 not in hers.not_mine
+
+
 def test_what_her_presses_bring_out_is_not_taken_for_her():
     """Offline 2026-10-11 each shot of a flying shooter was taken for her as it was fired, nine in sixteen seconds: what
     her presses bring out goes the same way at every press, and she is the thing that was there before the press."""

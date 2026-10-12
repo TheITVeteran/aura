@@ -466,10 +466,15 @@ class _HowOutlinesGo:
         boxes = self.boxes.get(number) or []
         if len(boxes) < 2:
             return False
-        for low, high in ((0, 2), (1, 3)):
-            lows, highs = [box[low] for box in boxes], [box[high] for box in boxes]
-            low_runs, high_runs = max(lows) - min(lows), max(highs) - min(highs)
-            if min(low_runs, high_runs) <= EDGE_STAYS_PX and max(low_runs, high_runs) >= GAUGE_RUNS_PX:
+        runs = [(max(box[low] for box in boxes) - min(box[low] for box in boxes),
+                 max(box[high] for box in boxes) - min(box[high] for box in boxes)) for low, high in ((0, 2), (1, 3))]
+        for along, (low_runs, high_runs) in enumerate(runs):
+            # And across the way it fills, it holds still, as wide as it ever was: a painter running about leaves a trail
+            # that grows from where it began, but it grows across as well. Offline 2026-10-12 a boy painting the ground
+            # was found by his keys four times and each time taken for a gauge.
+            across = runs[1 - along]
+            if (min(low_runs, high_runs) <= EDGE_STAYS_PX and max(low_runs, high_runs) >= GAUGE_RUNS_PX
+                    and max(across) <= 2 * EDGE_STAYS_PX):
                 return True
         return False
 
@@ -778,7 +783,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                 self._outlines.saw(thing)
         if len(self._outlines.boxes) > 4 * max(8, len(moves.things)):
             self._outlines.forget_all_but(moves.things)
-        if self._outlines.a_gauge(self.number) and self.number not in self.not_mine:
+        # Not one found because it went the way of several keys named for ways: no gauge goes up and left and right.
+        found_by_ways = any(receipt.get("selected") == self.number and receipt.get("ways") for receipt in
+                            list(self.identification.receipts)[-4:])
+        if self._outlines.a_gauge(self.number) and self.number not in self.not_mine and not found_by_ways:
             logger.info("her thing %s fills and empties from one end: a gauge, not her", self.number)
             self.not_mine.add(self.number)
             self.identification.reset("her thing is a gauge")
