@@ -137,8 +137,14 @@ def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> 
     words_now, asking = words(now), words(asked_by)
     if not asking or len(asking & words_now) < 0.5 * len(asking):
         return ""
-    new = words_now - words(f"{before} {typed}")
-    return (_the_new_part(now, f"{before} {typed}") or now) if len(new) >= NEW_WORDS_AN_ANSWER else ""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    # A way to go again appearing is how such a place offers another go, not what it answered.
+    new = {word for word in words_now - words(f"{before} {typed}") if how_much_it_leads_on(word) <= 1.0}
+    if len(new) < NEW_WORDS_AN_ANSWER:
+        return ""
+    part = _the_new_part(now, f"{before} {typed}")
+    return part if part and new & {w.lower() for w in re.findall(r"[A-Za-z]{4,}", part)} else now
 
 
 def _the_new_part(now: str, before: str) -> str:
@@ -163,7 +169,7 @@ def _the_new_part(now: str, before: str) -> str:
     for token in now.split():
         word = letters(token)
         fresh = bool(word) and word not in was and not near(word) and how_much_it_leads_on(token) <= 1.0 \
-            and "again" not in word
+            and how_much_it_leads_on(word) <= 1.0 and "again" not in word
         if fresh:
             run.append(token.strip("*•…"))
         elif run:
@@ -1057,7 +1063,10 @@ class PlayingAsItHappens:
             # once is answered: offline 2026-10-11 a name typed and left in its box was typed into again, "AuAurara".
             tries[asked.kind] = 2
             self.keep["typed"] = str(done["typed"])
-            self.keep["typed_kind"], self.keep["typed_on"] = str(done.get("kind") or ""), self.words[-1]
+            # What the place had shown before she typed, all its screens' readings: a label read cleanly only after is
+            # no answer for having been misread before (offline 2026-10-11 "YOUR SECRET IDENTITY", read "GOUR SECRET
+            # DENTLTY" until then, was reported as the machine's answer).
+            self.keep["typed_kind"], self.keep["typed_on"] = str(done.get("kind") or ""), " ".join(self.words[-12:])
             self.keep["typed_asked_by"] = asked.asked_by
             if done.get("kind") == QUESTION:
                 self.keep["answered"] = await _what_it_answered(self.look, recognize_text)

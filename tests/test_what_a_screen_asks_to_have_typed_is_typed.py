@@ -278,3 +278,15 @@ def test_what_it_answered_is_the_new_part_of_the_screen_and_is_said_in_its_own_c
     assert answered == "HENRY THE HATE"
     line = f"I gave it my name, 'Aura', and it answered: {answered}."
     assert in_words_not_code(line) == line
+
+
+def test_a_label_read_cleanly_only_after_typing_is_no_answer():
+    """Offline 2026-10-11 "YOUR SECRET IDENTITY", read "GOUR SECRET DENTLTY" until then, was reported as the answer."""
+    from core.skills.screen_pursuit_as_it_happens import _answered_since_typed
+
+    machine = {"typed": "Aura", "typed_kind": "a name",
+               "typed_on": "Riddle me this YOUR NAME HERE GO YOUR SECRET IDENTITY FYOUR NAME HERE ETRYCOAIN",
+               "typed_asked_by": "YOUR NAME HERE"}
+    assert not _answered_since_typed(machine, {"text": "YOUR NAME HERE Aura TRY AGAIN YOUR SECRET IDENTITY"})
+    assert _answered_since_typed(machine, {"text": "YOUR NAME HERE TRY AGAIN THE PUZZLE BARON YOUR SECRET IDENTITY"}) == \
+        "THE PUZZLE BARON"
