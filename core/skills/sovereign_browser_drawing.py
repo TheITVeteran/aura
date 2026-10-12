@@ -657,10 +657,12 @@ async def _one_run_with_guidance(page: Any, band: tuple[float, float, float, flo
     stock = keep.get("stock")
     guide = await _the_guide(page, keep)
     if stock is not None and not stock.taken and not stock.remembered():
-        # Somewhere new, with nothing kept of it: taking stock before acting, while it waits at its start.
+        # Optional research runs beside the work already grounded in this
+        # page. Its operation owner retires it when this run ends.
+        from core.cognition.guidance_lifetime import create_guidance_task
         from core.cognition.taking_stock import BEFORE
 
-        await stock.take(BEFORE, goal, [], "", [], keep, deadline)
+        create_guidance_task(stock.take(BEFORE, goal, [], "", [], keep, deadline))
     _what_the_guide_says(guide, keep, goal)
     reflexes = PlayingAsItHappens(page=page, band=band, goal=goal, ends_at=deadline, keep=keep)
     held = HER_OWN_PAGE.set(on := OnAPage(page=page, name=HER_BROWSER))

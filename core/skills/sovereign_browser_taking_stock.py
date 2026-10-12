@@ -97,6 +97,7 @@ class Stocktaking:
                    deadline: float) -> bool:
         """Stop, ask, and put what is worth going by where play will read it; whether anything was found."""
         from core.brain.llm.thinking_reserve import seconds_to_decode
+        from core.cognition.guidance_lifetime import publication_stamp
         from core.cognition.taking_stock import (
             BEFORE,
             Situation,
@@ -114,6 +115,8 @@ class Stocktaking:
         from core.skills.sovereign_browser_going import _named_on_its_page, _names_it
         from core.skills.what_others_wrote import what_others_wrote
 
+        stamp = publication_stamp()
+
         # The thing waits for her while she takes stock: she takes the time her model needs to be asked too, within a
         # share of what is left to play. LIVE 2026-10-10 a fixed 25 s left her model out of every stock she took, it
         # needing 35, and nothing else had anything to say of the game.
@@ -126,7 +129,7 @@ class Stocktaking:
         situation = Situation(self.thing, goal, tuple(words[-6:]), ended, why, kind=kind)
         helped = WhatHelped.of(self.thing)
         # Said as a person says it, not as a search is typed.
-        _tell(f"Before I begin, I'm looking up how {self.thing} is played." if why == BEFORE
+        _tell(f"I'm checking what I know about {self.thing}, while I use what the page shows." if why == BEFORE
               else f"{why}, so I'm taking stock: {questions_for(situation)[0]}?")
         sources = {
             "what helped me before": helped.source(),
@@ -140,6 +143,7 @@ class Stocktaking:
             "my model": from_her_model(ask_her_model),
         }
         counsel = helped.without_what_did_not(await take_stock(situation, sources, seconds=seconds))
+        stamp.check()
         # Before play what was found goes into the guide to the place, which says it whole; after, it is counsel.
         _tell(counsel.gathered() if why == BEFORE else counsel.said())
         if not counsel:
