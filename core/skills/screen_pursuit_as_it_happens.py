@@ -630,6 +630,7 @@ class PlayingAsItHappens:
         from core.language.a_way_on import how_much_it_leads_on
         from core.skills.screen_pursuit_bearings import restart_controls
 
+        _ways_on_read_right_before(self, observation)
         said = " ".join(str(observation.get("text") or "").split())
         labels = [" ".join(str(r.get("text") or "").split()) for r in observation.get("layout") or () if isinstance(r, dict)]
         self.said_now = said
@@ -1310,6 +1311,37 @@ async def _hers_to_send_is_in_sight(reflexes: PlayingAsItHappens, now: float) ->
     except _A_FAULT_OF_HERS as why:
         logger.info("her own thing could not be looked for: %s", why)
         return False
+
+
+#: How long, and how near as a share of the picture, a way on read right is taken to be what a misreading in its place
+#: says.
+WAY_ON_KEPT_S = 30.0
+WAY_ON_SAME_PLACE = 0.03
+
+
+def _ways_on_read_right_before(reflexes: PlayingAsItHappens, observation: dict[str, Any]) -> None:
+    """A way on read right a moment ago ("Start") is what a misreading in the same place now says ("tarit"), and the
+    look's layout says so. Offline 2026-10-12 a title's small "start" was read once, then otherwise at every look, and in
+    five minutes on the title it was never pressed."""
+    import math
+
+    from core.language.a_way_on import how_much_it_leads_on
+    from core.language.what_a_watcher_hears import legible_share
+
+    now = time.monotonic()
+    kept = [way for way in reflexes.keep.get("ways_on_read") or () if now - way[3] <= WAY_ON_KEPT_S]
+    for region in observation.get("layout") or ():
+        if not isinstance(region, dict) or "center_x" not in region or "center_y" not in region:
+            continue
+        text = " ".join(str(region.get("text") or "").split())
+        place = (float(region["center_x"]), float(region["center_y"]))
+        if 0 < len(text) <= 40 and how_much_it_leads_on(text) > 1.0:
+            kept = [way for way in kept if math.dist(way[1:3], place) > WAY_ON_SAME_PLACE] + [(text, *place, now)]
+        elif text and len(text.split()) <= 2 and legible_share(text) < 0.5:
+            near = [way for way in kept if math.dist(way[1:3], place) <= WAY_ON_SAME_PLACE]
+            if near:
+                region["text"] = near[-1][0]
+    reflexes.keep["ways_on_read"] = kept[-12:]
 
 
 def _ways_asked_in_this_game(reflexes: PlayingAsItHappens, asked: list[str]) -> list[str]:

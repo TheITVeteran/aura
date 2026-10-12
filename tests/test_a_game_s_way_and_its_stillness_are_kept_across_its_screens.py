@@ -44,3 +44,17 @@ def test_stretches_ending_still_with_nothing_to_show_hand_the_screen_over():
     assert _stuck_still(playing)
     _left_alone_after(playing, {**still, "gains": 1, "ended": "the screen says the round is over"})
     assert not _stuck_still(playing), "a stretch that got somewhere starts the count again"
+
+
+def test_a_way_on_read_right_a_moment_ago_is_what_a_misreading_in_its_place_says():
+    """Offline 2026-10-12 a title's small "start" was read once, then otherwise at every look ("tarit"), and in five
+    minutes on the title it was never pressed."""
+    from core.skills.screen_pursuit_as_it_happens import _ways_on_read_right_before
+
+    playing = _playing()
+    first = {"layout": [{"text": "Start", "center_x": 0.74, "center_y": 0.84}, {"text": "ChOY", "center_x": 0.35, "center_y": 0.56}]}
+    _ways_on_read_right_before(playing, first)
+    later = {"layout": [{"text": "tarit", "center_x": 0.745, "center_y": 0.842}, {"text": "BLEADELS", "center_x": 0.37, "center_y": 0.36},
+                        {"text": "Score 120", "center_x": 0.74, "center_y": 0.85}]}
+    _ways_on_read_right_before(playing, later)
+    assert [region["text"] for region in later["layout"]] == ["Start", "BLEADELS", "Score 120"]
