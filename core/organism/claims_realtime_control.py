@@ -9,10 +9,17 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.causal_identification import (
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
+    from core.agency.controls_measured_on_one_thing import (
+        _own_control_witness_invariant,
+        _trajectory_control_invariant,
+    )
+    from core.agency.controls_ready_for_the_motion_model import _model_readiness_invariant
     from core.agency.countering_motion_as_it_appears import _counter_trial_measurement_invariant
     from core.agency.deliberate_action import _unmeasured_response_invariant
     from core.agency.giving_a_trial_time import _control_trial_time_invariant
     from core.agency.how_a_game_works import _known_body_controls_invariant
+    from core.agency.keeping_a_trial_observable import _observed_viability_invariant
+    from core.agency.using_a_control_on_a_thing import _object_use_target_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
     from core.agency.where_things_lead import _unknown_selector_invariant
@@ -46,6 +53,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.visual_probe_cache import _visual_probe_miss_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
     from core.perception.where_the_words_point import _named_places_invariant
+    from core.perception.word_labels_seen_again import _visible_word_labels_invariant
     from core.perception.words_kept_with_their_pixels import _kept_word_pixels_invariant
     from core.runtime.action_executor import _terminal_effect_flags_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
@@ -67,6 +75,24 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("entity_control_cannot_borrow_kind_evidence", "core/agency/controls_measured_on_one_thing.py",
+         "tests/test_a_kind_cannot_lend_a_controls_identity.py", lambda: _own_control_witness_invariant() == (),
+         "A kind's control prior cannot replace an entity's missing input trials or measured exclusions."),
+        ("returning_paths_keep_their_entity_trials", "core/agency/controls_measured_on_one_thing.py",
+         "tests/test_entity_press_trajectories.py", lambda: _trajectory_control_invariant() == (),
+         "Returning trajectories require repeated contrasting input receipts on the same observed entity and experiment."),
+        ("controls_are_ready_for_the_motion_model", "core/agency/controls_ready_for_the_motion_model.py",
+         "tests/test_control_readiness_matches_the_motion_model.py", lambda: _model_readiness_invariant() == (),
+         "A control remains unknown until the active motion model has measured its response."),
+        ("control_trials_preserve_observation_time", "core/agency/keeping_a_trial_observable.py",
+         "tests/test_a_control_trial_preserves_its_view.py", lambda: _observed_viability_invariant() == (),
+         "Measured acceleration can interrupt an unknown control trial when waiting and braking would leave the observed field."),
+        ("object_use_requires_positive_target_evidence", "core/agency/using_a_control_on_a_thing.py",
+         "tests/test_a_control_is_used_on_what_it_is_for.py", lambda: _object_use_target_invariant() == (),
+         "Unknown action text cannot authorize using a key on an unnamed object without a stated target or measured effect."),
+        ("remembered_labels_keep_current_word_pixels", "core/perception/word_labels_seen_again.py",
+         "tests/test_visible_word_labels.py", lambda: _visible_word_labels_invariant() == (),
+         "A retained label requires a unique fresh match to its measured word pixels within the same view and bounded lifetime."),
         ("provisional_responses_do_not_establish_identity", "core/agency/a_response_worth_measuring_again.py",
          "tests/test_a_cold_control_loop_preserves_time_to_measure.py", lambda: _provisional_response_invariant() == (),
          "A fresh pulse and neutral interval can select a bounded independent repeat without granting body identity; missing or competing measurements abstain."),

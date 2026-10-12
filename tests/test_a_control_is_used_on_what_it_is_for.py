@@ -248,3 +248,19 @@ def test_a_key_said_to_confirm_input_is_not_used_on_things_whatever_form_its_ver
                                       "space": SimpleNamespace(act="opens doors", on="doors", key="space"),
                                       "z": SimpleNamespace(act="launches bombs", on="", key="z")})
     assert [control.key for control in _the_controls_with_a_use(guide)] == ["space"]
+
+
+def test_unknown_action_text_cannot_make_unnamed_scenery_a_control_target():
+    from core.agency.using_a_control_on_a_thing import _a_use_for
+
+    spot = SimpleNamespace(mark='patch', name='blue patch', bears='', usually='', someone=False, unnamed=True)
+    for act in ('glorp', 'n4v1gate', 'unfamiliar'):
+        control = SimpleNamespace(key='left', act=act, on='')
+        guide = SimpleNamespace(controls={'left': control})
+        using = UsingOnThings()
+        assert _a_use_for(guide, using, spot, 1.) is None
+        control.on = 'panels'
+        assert _a_use_for(guide, using, spot, 1.) is control
+        control.on = ''
+        using.worked.add(('left', 'blue patch'))
+        assert _a_use_for(guide, using, spot, 1.) is control

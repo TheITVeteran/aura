@@ -27,6 +27,7 @@ include_rules = [
     "+core.perception.drawn_objects",
     "+core.perception.watching_it_happen",
     "+core.perception.visual_anchor",
+    "+core.perception.word_labels_seen_again",
     "+core.perception.visual_probe_cache", # Synthetic validation of scoped visual rejections.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
     "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.

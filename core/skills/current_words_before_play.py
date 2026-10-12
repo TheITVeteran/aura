@@ -83,9 +83,13 @@ async def read_current_words(reflexes: Any, *, goes_on: bool) -> dict | None:
     # The word reader takes BGR; the control stream supplies RGB.
     bgr = pixels[:, :, 2::-1].copy()
     regions = await asyncio.to_thread(recognize_text, bgr)
+    from core.skills.visible_words_from_their_pixels import verified_fast_labels
+
+    regions = await verified_fast_labels(reflexes, regions, bgr, at)
     observed = words_of_this_frame(regions, at=at, now=time.monotonic(), band=reflexes.band)
     if observed is not None:
         observed = ScreenReading(observed)
+        observed.label_recovery_done = True
         observed.word_pixels = words_with_their_pixels(ScreenReading({"layout": regions}, picture_snapshot=make_snapshot(bgr)))
         reflexes.read(observed)
     elif 0 <= time.monotonic() - at <= .25:

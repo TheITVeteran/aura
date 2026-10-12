@@ -10,10 +10,9 @@ moves alike (core/agency/what_a_press_does.py).
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from typing import Any
 
-from core.agency.causal_identification import CausalWitness
+from core.agency.controls_measured_on_one_thing import own_control_witness, own_trajectory_witness
 
 logger = logging.getLogger("core.agency.which_one_answers_to_her")
 
@@ -39,30 +38,25 @@ class FoundAnotherWay:
         return at is not None and 0.0 <= at - self.set_back_at <= SET_BACK_S
 
     def _the_one_of_a_kind_that_answers(self, moves: Any) -> int | None:
-        """Where no one thing's presses answer her keys, the kind whose do, where one thing of it is on the screen.
+        """A known kind suggests a candidate whose own control receipts must answer."""
+        from core.agency.which_one_answers_to_her import _goes_with_the_world, _how_the_world_went
 
-        A thing's number does not outlast its being lost to sight: met by
-        something, a body is one patch with it for a picture and comes out
-        under a new number, and its presses are split between the two
-        (offline 2026-10-09, a runner met by the first block during her trials
-        of her keys: one press of each, under two numbers, and no answer). Its
-        kind outlasts that, and a kind with one thing of it on the screen is
-        that thing.
-        """
         witnesses = []
-        for kind, speeds in self._by_kind.items():
+        world = _how_the_world_went(self)
+        for kind in self._by_kind:
             things = [t for t in moves.things.values() if t.kind == kind and t.moved and t.number not in self.not_mine]
             if len(things) != 1:
                 continue
-            f, widest = speeds.ratio()
-            trials: dict[str, int] = defaultdict(int)
-            for (key, _press), values in speeds.by_press.items():
-                if len(values) >= 2:
-                    trials[key] += 1
-            witnesses.append(CausalWitness(things[0].number, self.identification.epoch, tuple(sorted(trials.items())), f, widest))
+            number = things[0].number
+            own = self._by_thing.get(number)
+            witness = own_control_witness(number, own, epoch=self.identification.epoch,
+                                           a_gauge=_a_gauge(self, number),
+                                           with_the_world=own is not None and _goes_with_the_world(own, world))
+            if witness is not None:
+                witnesses.append(witness)
         return self.identification.choose(witnesses, visible=set(moves.things), established=None, excluded=self.not_mine)
 
-    def moved_by_her_presses(self, thing: Any, at: float) -> None:
+    def moved_by_her_presses(self, thing: Any, at: float, *, receipts: Any = ()) -> None:
         """``thing`` is the one thing of a kind her presses move the same way every time: it is hers.
 
         The same evidence as her trials, read another way: a press is a trial,
@@ -72,6 +66,18 @@ class FoundAnotherWay:
         to lift its kind and let it down.
         """
         if self.number is not None or thing.number in self.not_mine or _a_gauge(self, thing.number):
+            return
+        from core.agency.which_one_answers_to_her import _goes_with_the_world, _how_the_world_went
+
+        own = self._by_thing.get(thing.number)
+        witness = own_control_witness(thing.number, own, epoch=self.identification.epoch,
+                                       with_the_world=own is not None and _goes_with_the_world(own, _how_the_world_went(self)))
+        if own is not None and _goes_with_the_world(own, _how_the_world_went(self)):
+            return
+        if witness is None or witness.statistic <= self.identification.statistic_over or witness.effect <= self.identification.effect_over:
+            witness = own_trajectory_witness(thing, receipts, epoch=self.identification.epoch)
+        if witness is None or self.identification.choose([witness], visible={thing.number}, established=None,
+                                                         excluded=self.not_mine) != thing.number:
             return
         self.number, self.kind = thing.number, thing.kind
         self.identification.receipts.append({"epoch": self.identification.epoch, "reason": "moved alike by every press",

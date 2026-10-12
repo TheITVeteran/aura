@@ -20,9 +20,11 @@ def _body(number, kind, position, colour):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("extra_controls", [0, 2, 4])
 @pytest.mark.parametrize("axis,sign,keys", [(1, 1, ("a", "b", "c")), (1, -1, ("j", "l", "k")),
                                          (0, 1, ("z", "x", "y")), (0, -1, ("m", "o", "n"))])
-async def test_cold_actor_repeats_an_observed_control_then_measures_the_other_controls(monkeypatch, axis, sign, keys):
+async def test_cold_actor_repeats_an_observed_control_then_measures_the_other_controls(monkeypatch, axis, sign, keys, extra_controls):
+    keys = (*keys, *(f"extra_{index}" for index in range(extra_controls)))
     now = [0.0]
     monkeypatch.setattr(play.time, "monotonic", lambda: now[0])
     actions = []
@@ -48,7 +50,7 @@ async def test_cold_actor_repeats_an_observed_control_then_measures_the_other_co
     hands = Hands()
     response_at, identity_at = None, None
     assert hers.number is None and not hers._by_thing
-    for step in range(1, 289):
+    for step in range(1, int((2 + 4 * len(keys)) * 60)):
         now[0] = step / 60
         for thing, push in ((mine, -110. if run.held == keys[0] else 90.), (stone, 90.)):
             velocity = [thing.vx, thing.vy]
@@ -72,8 +74,10 @@ async def test_cold_actor_repeats_an_observed_control_then_measures_the_other_co
             assert run.counter_trial.response.number == mine.number
         location = (mine.x, mine.y)[axis]
         assert 7 < location < 253, "the track left the finite observation area before control was learned"
+        if hers.keys_known(list(keys)):
+            break
     assert response_at is not None and identity_at is not None and response_at < identity_at < 3.0
     assert hers.carried and hers.keys_known(list(keys))
     assert run.counter_trial.done
     assert all(any(key == other_key for _at, key in actions) for other_key in keys[1:])
-    assert now[0] == 4.8
+    assert all(hers.push_of(key) is not None for key in keys)

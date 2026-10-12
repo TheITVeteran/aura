@@ -53,6 +53,7 @@ from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decis
     _times_to,
     goes_with,
 )
+from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.countering_motion_as_it_appears import CounteringMotion
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S as BLOW_EVERY_S
@@ -515,8 +516,9 @@ async def _hold(hands: Any, run: _Run, hers: WhichIsHers, key: str, at: float, *
         if key:
             await hands.down(key)
             run.input_key_downs[key] += 1
-            if run.presses is not None:
-                run.presses.pressed(key, dispatched, run.things.values(), hers.number)
+        if run.presses is not None:
+            run.presses.pressed(key, time.monotonic(), run.things.values(), hers.number,
+                                epoch=hers.identification.epoch, independent=trying)
         run.responses.append(max(0.0, time.monotonic() - at))
     delivered = time.monotonic()
     if key and key != run.held:
@@ -529,30 +531,9 @@ async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float, mov
     """Hold each key in turn, with a rest between, to see what answers. The key that points against the way the
     biggest moving thing is going is held first, and again after one rest (core/agency/the_key_against_its_going.py):
     LIVE 2026-10-11 a lander down in five seconds was never found to be hers in ten goes of four seconds a round."""
-    from core.agency.a_response_worth_measuring_again import response_worth_repeating
-    from core.agency.the_key_against_its_going import FIRST, against_its_going
-    from core.agency.which_one_answers_to_her import PUSHED_FOR_S, REALLY_MOVES, SETTLE_S
+    from core.agency.trying_controls_with_a_view_of_their_response import try_controls
 
-    if at - run.tried_at < TRY_A_KEY_S:
-        return
-    if not hasattr(run, "counter_trial"):
-        run.counter_trial = CounteringMotion()
-    key = run.counter_trial.choose(run.keys, getattr(moves, "things", {}).values(), at,
-                                   held=getattr(run, "held", ""), held_since=run.held_since,
-                                   epoch=getattr(getattr(hers, "identification", None), "epoch", 0),
-                                   settle_s=SETTLE_S, step_s=TRY_A_KEY_S, steps=FIRST,
-                                   wait_s=4 * len(run.keys) * TRY_A_KEY_S,
-                                   against=lambda keys, things: against_its_going(keys, things, 2.0 * TOLD_FROM_STANDING_PX),
-                                   measured=(lambda keys, things: response_worth_repeating(keys, things, hers, moves.shape,
-                                                 at, run.held_since, seconds=TRY_A_KEY_S, steps=FIRST,
-                                                 effect_over=REALLY_MOVES / PUSHED_FOR_S))
-                                             if hers is not None and hasattr(moves, "shape") else None)
-    if key is None:
-        turn = run.trying % (2 * len(run.keys))
-        run.trying += 1
-        key = run.keys[turn // 2] if turn % 2 == 0 else ""
-    await _hold(hands, run, hers, key, at, trying=True)
-    run.tried_at = run.held_since
+    await try_controls(hands, run, hers, at, moves, hold=_hold, seconds=TRY_A_KEY_S)
 
 
 #: The most trials a game is given to learn what turns her (core/agency/which_way_she_faces.py).
@@ -1386,7 +1367,9 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     # times a second in its first round and once a second in every round after.
     if (choosing.mine is None or _how_it_stands(run, at)[1]) and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
-    if not trying_the_pointer and run.trying < 2 * len(run.keys) and not hers.keys_known(run.keys) and not hers.follows_pointer:
+    if (not trying_the_pointer and run.keys and not hers.follows_pointer
+            and ((choosing.mine is None and run.trying < 2 * len(run.keys))
+                 or (hers.kind is not None and not hers.keys_known(run.keys)))):
         await _try_the_keys(hands, run, hers, at, moves)
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):
@@ -1459,7 +1442,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
             await _click_things(hands, run, moves, meeting, at)
             await _click_the_picture(hands, run, moves, at)
         return
-    untried = [k for k in run.keys if hers.tried(k) < 4 and k not in choosing.ways]
+    untried = [k for k in run.keys if not has_a_measured_response(hers, k) and k not in choosing.ways]
     # Where she means to go and no way she knows takes her nearer, a way she has not learned yet is tried now: LIVE
     # 2026-10-07 her hero stood still beside the thing it meant to go to, left being the one arrow not yet learned.
     if untried and choosing.danger((0.0, 0.0)) == 0.0 and (
@@ -1518,7 +1501,7 @@ def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: fl
     candidates = [thing for thing in moves.things.values() if thing.kind in kinds and thing.kind not in made
                   and at - float(getattr(thing, "born", at)) >= THERE_BEFORE_S]
     if len(candidates) == 1:
-        hers.moved_by_her_presses(candidates[0], at)
+        hers.moved_by_her_presses(candidates[0], at, receipts=run.presses.entity_presses)
 
 
 async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say: Any) -> bool:

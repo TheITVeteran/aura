@@ -38,6 +38,7 @@ from core.agency.causal_identification import (
     CausalWitness,
     within_observed_reach,
 )
+from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.what_follows_the_pointer import FollowsThePointer
 from core.perception.parts_when_things_touch import same_colour_mix
@@ -1029,15 +1030,16 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         return len(self._hers.free.get(key) or [])
 
     def keys_known(self, keys: list[str]) -> bool:
-        """Whether every key has been held long enough on her thing to say what it does."""
-        return self.kind is not None and all(self.tried(key) >= ENOUGH for key in keys)
+        """Whether the motion model has a measured response for every control."""
+        return self.kind is not None and all(has_a_measured_response(self, key) for key in keys)
 
-    def axes(self, keys: list[str]) -> tuple[bool, bool]:
-        """Whether her keys move her across, and up and down."""
-        ways = self.keys_that_move_her(keys).values()
+    def axes(self, keys: list[str]) -> tuple[bool | None, bool | None]:
+        """Measured motion axes; missing control models leave absence unknown."""
+        ways = list(self.keys_that_move_her(keys).values())
+        absent = False if self.keys_known(keys) else None
         return (
-            any(abs(vx) > REALLY_MOVES for vx, _vy in ways),
-            any(abs(vy) > REALLY_MOVES for _vx, vy in ways),
+            True if any(abs(vx) > REALLY_MOVES for vx, _vy in ways) else absent,
+            True if any(abs(vy) > REALLY_MOVES for _vx, vy in ways) else absent,
         )
 
 

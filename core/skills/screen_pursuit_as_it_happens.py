@@ -683,7 +683,9 @@ class PlayingAsItHappens:
         """What a look of the pursuit showed: the screen's words, and its ways back at the start."""
         from core.language.a_way_on import how_much_it_leads_on
         from core.skills.screen_pursuit_bearings import restart_controls
+        from core.skills.visible_words_from_their_pixels import current_visible_words
 
+        observation = current_visible_words(self, observation)
         _ways_on_read_right_before(self, observation)
         said = " ".join(str(observation.get("text") or "").split())
         labels = [" ".join(str(r.get("text") or "").split()) for r in observation.get("layout") or () if isinstance(r, dict)]

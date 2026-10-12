@@ -12,6 +12,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from core.agency.keeping_a_trial_observable import visible_path_clearance
 from core.verify import invariant
 
 
@@ -54,23 +55,7 @@ def _push(samples: Any) -> tuple[tuple[float, float], float] | None:
 
 def _clearance(thing: Any, shape: tuple[int, int], pushes: Sequence[tuple[float, float]], seconds: float) -> float:
     """The least visible clearance along the measured accelerated path."""
-    position, velocity = [float(thing.x), float(thing.y)], [float(thing.vx), float(thing.vy)]
-    lower = [float(thing.w) / 2, float(thing.h) / 2]
-    upper = [shape[1] - lower[0], shape[0] - lower[1]]
-    clearance = min(*(position[a] - lower[a] for a in (0, 1)), *(upper[a] - position[a] for a in (0, 1)))
-    for push in pushes:
-        for axis in (0, 1):
-            points = [0.0, seconds]
-            if abs(push[axis]) > 1e-9:
-                turns = -velocity[axis] / push[axis]
-                if 0 < turns < seconds:
-                    points.append(turns)
-            for when in points:
-                where = position[axis] + velocity[axis] * when + push[axis] * when * when / 2
-                clearance = min(clearance, where - lower[axis], upper[axis] - where)
-            position[axis] += velocity[axis] * seconds + push[axis] * seconds * seconds / 2
-            velocity[axis] += push[axis] * seconds
-    return clearance
+    return visible_path_clearance(thing, shape, [(seconds, push) for push in pushes])
 
 
 def response_worth_repeating(keys: Sequence[str], things: Iterable[Any], hers: Any, shape: tuple[int, int],

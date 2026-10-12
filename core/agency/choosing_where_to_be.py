@@ -214,9 +214,9 @@ class _Choosing:
 
     def line(self) -> int | None:
         """The axis she cannot move along, when she moves along only one."""
-        if self.across and not self.updown:
+        if self.across is True and self.updown is False:
             return 1
-        if self.updown and not self.across:
+        if self.updown is True and self.across is False:
             return 0
         return None
 

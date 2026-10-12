@@ -32,6 +32,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.verify import invariant
+
 __all__ = ["UsingOnThings", "a_name_for", "a_place_to_go", "use_controls_on_things"]
 
 logger = logging.getLogger("Aura.UsingAControlOnAThing")
@@ -419,8 +421,10 @@ def _a_use_for(guide: Any, using: UsingOnThings, spot: _Spot, at: float, *, wait
         pair = (control.key, spot.name)
         if pair not in using.worked and using.nothing.get(pair, 0) >= NOTHING_TWICE:
             continue
-        if spot.unnamed or a_name_for(control.on, spot.name, spot.bears, spot.usually, control.act, spot.someone):
-            # A thing of no known name is tried: what the press does there says whether it is one the control is for.
+        if (pair in using.worked or (spot.unnamed and control.on)
+                or a_name_for(control.on, spot.name, spot.bears, spot.usually, control.act, spot.someone)):
+            # An unnamed thing needs a stated target or an observed useful effect.
+            # Unrecognized action words alone do not say to use a key on scenery.
             return control
     return None
 
@@ -531,3 +535,18 @@ def _a(name: str) -> str:
     if name[:1].isupper():
         return name
     return ("an " if name[:1].lower() in "aeiou" else "a ") + name
+
+
+@invariant("agency.object_use_needs_a_target_or_measured_effect", scope="agency",
+           owner="core/agency/using_a_control_on_a_thing.py", observational=False)
+def _object_use_target_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    spot = SimpleNamespace(mark="patch", name="patch", bears="", usually="", someone=False, unnamed=True)
+    control = SimpleNamespace(key="a", act="unrecognized", on="")
+    guide = SimpleNamespace(controls={"a": control})
+    using = UsingOnThings()
+    assert _a_use_for(guide, using, spot, 1.) is None
+    control.on = "panels"
+    assert _a_use_for(guide, using, spot, 1.) is control
+    return ()

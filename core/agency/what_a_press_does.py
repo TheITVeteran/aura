@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["WhatAPressDoes"]
+__all__ = ["PressTrajectory", "WhatAPressDoes"]
 
 #: The longest after a press she watches what it does, in seconds: longer than a jump's hang in any world measured
 #: (Flash platformers: 0.5 to 1.1 s), so the whole of a jump is seen.
@@ -51,6 +51,19 @@ LIFTED_BACK = 0.2
 SEEN_WITHIN_PX = 2.0
 
 
+@dataclass(frozen=True)
+class PressTrajectory:
+    """One delivered trial observed on one continuously followed entity."""
+
+    key: str
+    number: int
+    epoch: int
+    began: float
+    ended: float
+    born: float
+    samples: tuple[tuple[float, float, float], ...]
+
+
 @dataclass
 class _Watch:
     key: str
@@ -65,6 +78,10 @@ class _Watch:
     still: int = 0
     let_go: bool = False
     hers: bool = False
+    epoch: int | None = None
+    independent: bool = False
+    born: float | None = None
+    observed: bool = False
 
 
 class WhatAPressDoes:
@@ -79,12 +96,18 @@ class WhatAPressDoes:
         #: How long each press of a key was held, newest last: a press is made again as it was made when watched.
         self.holds: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=KEPT))
         self._pressed_at: dict[str, float] = {}
+        #: Entity receipts retain the delivered trial and its observation lifetime.
+        self.entity_presses: deque[PressTrajectory] = deque(maxlen=2 * WATCHED * KEPT)
 
-    def pressed(self, key: str, at: float, things: Iterable[Any], hers: int | None = None) -> None:
+    def pressed(self, key: str, at: float, things: Iterable[Any], hers: int | None = None, *,
+                epoch: int | None = None, independent: bool = False) -> None:
         """A press of ``key`` at ``at``, watched on each of ``things`` from where it is and the way it is going; ``hers``
         is the number of the one that is hers, where that is known."""
-        if not key:
-            return
+        # A changed input ends the isolated interval. Later motion may still
+        # teach a path, but cannot prove which of two inputs caused it.
+        for watch in self.watching:
+            _keep_entity_interval(self, watch)
+            watch.independent = False
         self._pressed_at[key] = at
         self.watching = [w for w in self.watching if w.key != key]
         for thing in list(things)[:WATCHED]:
@@ -101,9 +124,13 @@ class WhatAPressDoes:
             drift = _going_on(thing)
             if drift == (0.0, 0.0) and math.hypot(float(thing.vx), float(thing.vy)) > GOING_PX_S:
                 continue
+            seen = getattr(thing, "seen", None)
+            observed = (born is not None and seen is not None and math.isfinite(float(born))
+                        and math.isfinite(float(seen)) and 0 <= at - float(seen) <= .25)
             self.watching.append(_Watch(key, int(thing.number), int(thing.kind), at, float(thing.x), float(thing.y),
                                         drift, max(float(thing.w), float(thing.h), 1.0),
-                                        hers=hers is not None and int(thing.number) == hers))
+                                        hers=hers is not None and int(thing.number) == hers, let_go=not key,
+                                        epoch=epoch, independent=independent, born=born, observed=observed))
 
     def released(self, key: str, at: float) -> None:
         """``key`` let go at ``at``: how long that press was held."""
@@ -127,7 +154,17 @@ class WhatAPressDoes:
             if thing is None:
                 self.watching.remove(watch)
                 continue
+            born = getattr(thing, "born", None)
+            if watch.born is not None and born != watch.born:
+                self.watching.remove(watch)
+                continue
             if after <= 0.0:
+                continue
+            seen = getattr(thing, "seen", at)
+            if seen != at:
+                watch.observed = False
+                if after >= LONGEST_S:
+                    self.watching.remove(watch)
                 continue
             dx = float(thing.x) - watch.x - watch.drift[0] * after
             dy = float(thing.y) - watch.y - watch.drift[1] * after
@@ -143,6 +180,7 @@ class WhatAPressDoes:
                     self.by_number[(watch.key, watch.number)].append(watch.samples)
                     if watch.hers:
                         self.curves[(watch.key, HERS)].append(watch.samples)
+                    _keep_entity_interval(self, watch)
 
     def _curves(self, key: str, kind: int | None, number: int | None) -> list[list[tuple[float, float, float]]]:
         """The curves that say what ``key`` does to her: of her kind, else of her as she was known, else of her thing.
@@ -265,3 +303,12 @@ def _where(curve: list[tuple[float, float, float]], seconds: float) -> tuple[flo
             share = (seconds - t0) / (t1 - t0) if t1 > t0 else 0.0
             return x0 + (x1 - x0) * share, y0 + (y1 - y0) * share
     return curve[-1][1], curve[-1][2]
+
+
+def _keep_entity_interval(presses: WhatAPressDoes, watch: _Watch) -> None:
+    """Retain only independently delivered input with a measured observation interval."""
+    if (watch.observed and watch.independent and type(watch.epoch) is int
+            and watch.born is not None and len(watch.samples) >= 3):
+        presses.entity_presses.append(PressTrajectory(watch.key, watch.number, watch.epoch, watch.began,
+                                                      watch.began + watch.samples[-1][0], float(watch.born),
+                                                      tuple(watch.samples)))
