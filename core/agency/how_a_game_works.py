@@ -146,6 +146,12 @@ class HowItWorks:
             return True
         return otherwise
 
+    def keys_for_body_trials(self, keys: Any) -> list[str]:
+        """Controls of the body are tried within one play state; the interface keeps its other controls."""
+        from core.agency.body_trials_keep_the_world import keys_for_body_trials
+
+        return keys_for_body_trials(keys, self.inputs, body_known=self.has_a_body() is True)
+
     def against_someone(self) -> bool:
         """Whether the place is played against someone on the other side, as far as she understands it."""
         return self.against.value == AGAINST_SOMEONE and self.against.sure >= SAID_SURE

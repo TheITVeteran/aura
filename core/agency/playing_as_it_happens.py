@@ -1106,7 +1106,9 @@ async def _play_as_it_happens(
     from core.agency.how_a_game_works import understood
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
-    pointer_first = understood(THE_GUIDE.get(), also=told).try_pointer_first(pointer_first)
+    how = understood(THE_GUIDE.get(), also=told)
+    pointer_first = how.try_pointer_first(pointer_first)
+    keys = how.keys_for_body_trials(keys)
     for kept in (physics, hers, meeting):
         kept.numbered_afresh()
     run = _Run(keys=list(keys), began=began, last_moving=began, pointer_first=pointer_first, legend=tuple(keep.get("legend") or ()),

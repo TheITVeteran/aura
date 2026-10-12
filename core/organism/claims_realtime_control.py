@@ -3,6 +3,7 @@ from typing import Any
 
 
 def install_realtime_control_claims(suite: Any) -> None:
+    from core.agency.body_trials_keep_the_world import _body_trial_phase_invariant
     from core.agency.causal_identification import (
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
@@ -61,6 +62,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("body_trials_preserve_their_interaction_phase", "core/agency/body_trials_keep_the_world.py",
+         "tests/test_body_trials_leave_interface_controls_available.py", lambda: _body_trial_phase_invariant() == (),
+         "Known body trials exclude explicit resets and text-entry controls while preserving unknown inputs and interface availability."),
         ("kept_words_need_their_captured_pixels", "core/perception/words_kept_with_their_pixels.py",
          "tests/test_old_menu_words_keep_their_pixels.py", lambda: _kept_word_pixels_invariant() == (),
          "Retained word readings can be contradicted by measured appearance changes; absent pixels and changed view geometry stay unknown."),
