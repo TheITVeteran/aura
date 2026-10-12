@@ -34,6 +34,8 @@ from typing import Any
 
 import numpy as np
 
+from core.agency.arriving_by_her_pushes import arrival_excess, arrival_holds, stopping_distance
+
 __all__ = ["HORIZON_S", "Plan", "best_plan", "plans_to_imagine"]
 
 #: How far ahead she imagines, and in what steps, in seconds.
@@ -116,6 +118,10 @@ class _Scene:
     pushes: dict[str, tuple[float, float]] | None = None
     going: tuple[float, float] = (0.0, 0.0)
     gentle: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    arriving: bool = False
+    arrival_near: tuple[float, float] = (0., 0.)
+    arrival_gentle: float = 0.
+    delay: float = 0.
 
 
 def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) -> list[Plan]:
@@ -134,7 +140,7 @@ def plans_to_imagine(choices: Sequence[str], presses: Sequence[str], held: str) 
 
 
 def best_plan(choosing: Any, held: str, goal: tuple[float | None, float | None], *,
-              horizon: float = HORIZON_S) -> Imagined | None:
+              horizon: float = HORIZON_S, arrive_at: Any = None) -> Imagined | None:
     """The plan that comes out best for ``choosing`` (the real-time player's arithmetic of one decision), holding
     ``held`` now and meaning to be at ``goal``; None where there is nothing to imagine with: no thing of hers, or no way
     she knows of moving it."""
@@ -142,9 +148,22 @@ def best_plan(choosing: Any, held: str, goal: tuple[float | None, float | None],
     if scene is None:
         return None
     plans = plans_to_imagine(["", *scene.ways], list(scene.paths), held)
+    arrival = None
+    if arrive_at is not None and scene.pushes is not None:
+        scene.arriving = True
+        cadence = max(STEP_S, float(getattr(choosing, "next_picture_s", STEP_S)))
+        near = ((scene.size[0] + arrive_at.w) / 2, (scene.size[1] + arrive_at.h) / 2)
+        gentle = choosing.meeting.gentle_below(arrive_at.kind) if hasattr(choosing.meeting, "gentle_below") else None
+        if gentle is None:
+            gentle = GENTLE_SHARE * max(math.hypot(*p) for p in scene.pushes.values())
+        scene.arrival_near, scene.arrival_gentle = near, gentle
+        arrival = arrival_holds(scene.start, scene.going, goal, scene.pushes, scene.times.tolist(), cadence, held,
+                                near=near, gentle=gentle)
+        if arrival:
+            plans.append(Plan(arrival))
     imagined = [_run(scene, plan, goal, held, choosing.caution) for plan in plans]
     best = max(imagined, key=lambda one: one.worth)
-    best.decides = len({(one.gets, one.costs) for one in imagined}) > 1
+    best.decides = bool(arrival) or len({(one.gets, one.costs) for one in imagined}) > 1
     return best
 
 
@@ -168,7 +187,8 @@ def _the_scene(choosing: Any, horizon: float) -> _Scene | None:
             paths[key] = path
     scene = _Scene(times=times, start=start, size=(float(mine.w), float(mine.h)),
                    bounds=(mine.w / 2, mine.h / 2, wide - mine.w / 2, tall - mine.h / 2), ways=ways,
-                   rest=tuple(getattr(choosing, "rest", (0.0, 0.0))), paths=paths, barred=getattr(choosing, "barred", None))
+                   rest=tuple(getattr(choosing, "rest", (0.0, 0.0))), paths=paths,
+                   barred=getattr(choosing, "barred", None), delay=response)
     hers = getattr(choosing, "hers", None)
     if hers is not None and getattr(hers, "carried", False):
         # Carried on by its own going, a key adds to her going rather than setting it.
@@ -176,6 +196,14 @@ def _the_scene(choosing: Any, horizon: float) -> _Scene | None:
         scene.pushes = {key: push for key, push in pushes.items() if push is not None}
         scene.going = (float(mine.vx), float(mine.vy))
         scene.start = (float(mine.x), float(mine.y))
+        if response:
+            held = getattr(choosing, "held_now", "")
+            if held not in scene.pushes:
+                return None
+            ax, ay = scene.pushes[held]
+            scene.start = (mine.x + mine.vx * response + .5 * ax * response ** 2,
+                           mine.y + mine.vy * response + .5 * ay * response ** 2)
+            scene.going = (mine.vx + ax * response, mine.vy + ay * response)
     _the_world_run_forward(choosing, scene)
     return scene
 
@@ -194,7 +222,11 @@ def _the_world_run_forward(choosing: Any, scene: _Scene) -> None:
     fastest = max((math.hypot(*way) for way in scene.ways.values()), default=0.0)
     construed = []
     for thing, worth in things:
-        path = _its_path(physics, thing, float(scene.times[-1]) * max(PACES))
+        path = _its_path(physics, thing, float(scene.times[-1]) * max(PACES) + scene.delay)
+        if scene.delay:
+            def delayed(after, original=path):
+                return original(after + scene.delay)
+            path = delayed
         soonest = _soonest_within_reach(path, scene, fastest, thing)
         if soonest is not None:
             construed.append((soonest, thing, worth, path))
@@ -307,8 +339,19 @@ def _run(scene: _Scene, plan: Plan, goal: tuple[float | None, float | None], hel
     gx, gy = goal
     if gx is not None or gy is not None:
         reach = max(1.0, max((math.hypot(*way) for way in scene.ways.values()), default=1.0) * float(times[-1]))
+        if scene.arriving:
+            reach = max(reach, math.hypot((scene.start[0] - gx) if gx is not None else 0.,
+                                         (scene.start[1] - gy) if gy is not None else 0.))
         far = math.hypot((xs[-1] - gx) if gx is not None else 0.0, (ys[-1] - gy) if gy is not None else 0.0)
         worth -= FAR_FROM_THE_GOAL * min(2.0, far / reach)
+        if scene.arriving and scene.pushes is not None:
+            # A plan ending near the place at speed still has to stop. Give
+            # it the cost of half that remaining room beyond the horizon.
+            room = stopping_distance(going, goal, scene.pushes)
+            worth -= FAR_FROM_THE_GOAL * .5 * room / reach
+            excess = arrival_excess((float(xs[-1]), float(ys[-1])), going, goal, scene.pushes,
+                                    scene.arrival_near, scene.arrival_gentle)
+            worth -= LOSS * excess / max(1., scene.arrival_gentle)
     if plan.first != held:
         worth -= CHANGING
     if not plan.first and len(plan.held) > 1:
@@ -332,8 +375,11 @@ def _what_it_meets(scene: _Scene, layer: int, xs: np.ndarray, ys: np.ndarray, ca
     worth, gets, costs, lost_at = 0.0, 0, 0, len(xs)
     firsts = [int(hits[0]) if hits.size else -1 for hits in (np.flatnonzero(meets[:, c]) for c in range(scene.worth.size))]
     if scene.pushes is not None and speeds is not None and scene.gentle.size:
+        # Contact can begin between two imagined pictures. The greatest
+        # endpoint speed bounds a constant push's speed through that step.
+        through_step = np.maximum(speeds, np.r_[math.hypot(*scene.going), speeds[:-1]])
         for column, first in enumerate(firsts):
-            if first >= 0 and not costly[column] and speeds[first] > scene.gentle[column]:
+            if first >= 0 and not costly[column] and through_step[first] > scene.gentle[column]:
                 costly = costly.copy()
                 costly[column] = True
     for column, first in enumerate(firsts):

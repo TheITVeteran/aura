@@ -315,7 +315,7 @@ class _Choosing:
         # to, as a walker does: offline 2026-10-10 the star behind a door she opened was never gone to.
         level = [t for t in self.others() if not t.moved and self.stance(t) in (MEET, CLICK) and not self._out_of_reach(t)
                  and abs((t.x, t.y)[line] - her_line) <= max((mine.w, mine.h)[line], (t.w, t.h)[line])
-                 and not _boxes_meet(mine.box(), t.box())]
+                 and not self._already_there(t)]
         if level:
             nearest = min(level, key=lambda t: abs((t.x, t.y)[free] - her_free))
             goal = [None, None]
@@ -386,7 +386,7 @@ class _Choosing:
         for thing in self.others():
             stance = self.stance(thing)
             # A still thing she is on already is not somewhere to go: what being on it does, it is doing.
-            if stance not in (MEET, CLICK) or self._out_of_reach(thing) or not thing.moved and _boxes_meet(mine.box(), thing.box()):
+            if stance not in (MEET, CLICK) or self._out_of_reach(thing) or not thing.moved and self._already_there(thing):
                 continue
             when = math.hypot(thing.x - mine.x, thing.y - mine.y) / speed
             if through is not None and not thing.moved:
@@ -416,6 +416,16 @@ class _Choosing:
         if ground is not None:
             return ground, "cover", None
         return (None, None), "wait", None
+
+    def _already_there(self, thing: Any) -> bool:
+        """Crossing a place at speed is still an approach, rather than a settled arrival."""
+        if not _boxes_meet(self.mine.box(), thing.box()):
+            return False
+        if not self.ahead_s:
+            return True
+        limit = self.meeting.gentle_below(thing.kind) if hasattr(self.meeting, "gentle_below") else None
+        limit = limit if limit is not None else GENTLE_SHARE * max(self.speed(0), self.speed(1))
+        return math.hypot(self.mine.vx - thing.vx, self.mine.vy - thing.vy) <= limit
 
     def _a_thing_to_push(self) -> tuple[tuple[float | None, float | None], str, Any] | None:
         """Where to go to push a thing she pushes onto its place, where both are on the screen."""
@@ -640,7 +650,8 @@ class _Choosing:
             from core.agency.imagining_ahead import best_plan
 
             self.held_now = held
-            self.planned = best_plan(self, held, (gx, gy))
+            self.planned = best_plan(self, held, (gx, gy),
+                                     arrive_at=aim if self.ahead_s and aim is not None and not aim.moved else None)
             if self.planned is not None and self.planned.decides and self.planned.plan.first not in walled:
                 return self.planned.plan.first, why, aim
         choices = {"": self.rest, **{key: way for key, way in self.ways.items() if key not in walled}}

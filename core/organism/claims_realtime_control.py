@@ -396,6 +396,7 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
+    from core.agency.arriving_by_her_pushes import _arrival_braking_invariant
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.inputs_while_measuring_control import _single_input_interval_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
@@ -412,6 +413,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("arrivals_need_measured_braking_room", "core/agency/arriving_by_her_pushes.py",
+         "tests/test_a_carried_body_arrives_before_it_stops.py", lambda: _arrival_braking_invariant() == (),
+         "Carried arrival plans need measured braking pushes and finite goals; terminal closing speed is weighed against room before first contact."),
         ("point_paths_keep_their_original_visible_marks", "core/perception/position_from_the_same_points.py",
          "tests/test_a_point_path_keeps_its_original_marks.py", lambda: _point_path_invariant() == (),
          "A path measured from points retains original named marks, current owned pixels and coherent displacement; lost or replacement marks end the path."),
