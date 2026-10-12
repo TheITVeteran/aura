@@ -168,3 +168,14 @@ def test_a_watch_made_for_something_else_notices_signs_coming():
 
     known = asyncio.run(watch())
     assert known is not None and known[0][0] > 0.2 and abs(known[0][1]) < 0.05, known       # going right, on a level line
+
+
+def test_only_a_place_that_asks_for_keys_shown_to_be_followed_has_them_followed():
+    """Offline 2026-10-12 a tunnel's arrows to be flown through for points came at her in a line, and she held the keys
+    they pointed for instead of steering."""
+    from core.agency.signs_that_come_along import told_to_follow_signs
+
+    assert told_to_follow_signs("Follow the arrow keys in Grim's Magic Book to cast the correct clean-up spell.")
+    assert told_to_follow_signs("Press the arrows when they reach the line!")
+    assert not told_to_follow_signs("You have two minutes to collect as many points as possible. Zip Arrows 1000 pts")
+    assert not told_to_follow_signs("Use the arrow keys to move")

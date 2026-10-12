@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
@@ -34,7 +35,7 @@ import numpy as np
 
 logger = logging.getLogger("Aura.SignsThatComeAlong")
 
-__all__ = ["SignsAreComing", "SignsComing", "the_sign_in", "watching_for_signs"]
+__all__ = ["SignsAreComing", "SignsComing", "the_sign_in", "told_to_follow_signs", "watching_for_signs"]
 
 #: The widest a sign is, as a share of the picture's width, and the slowest one comes, in picture-widths a second.
 SMALL = 0.08
@@ -232,6 +233,22 @@ class SignsComing:
             run.held = ""
         await self.hold(hands, at, say=say)
         return True
+
+
+#: Words that ask for keys shown to be pressed as they come: to the beat, as they reach a mark.
+_IN_TIME = re.compile(r"\b(?:press|hit|tap|match)\b[^.!?]{0,30}\b(?:arrows?|keys?|notes?|buttons?|signs?)\b[^.!?]{0,40}"
+                      r"\b(?:when|as)\b[^.!?]{0,30}\b(?:reach|get to|hit|cross|line up|arrive|pass)|\bdance\b|\brhythm\b|"
+                      r"\bto the (?:beat|music)\b", re.I)
+
+
+def told_to_follow_signs(words: str) -> bool:
+    """Whether a place's words ask for keys it shows to be followed: done again in order, or pressed as each comes in.
+    Arrows coming along a line in a place that asks nothing of the kind are things of the place: offline 2026-10-12 a
+    tunnel's arrows to be flown through for points came at her in a line, and she held the keys they pointed for instead
+    of steering."""
+    from core.agency.doing_again_what_was_shown import asks_to_follow
+
+    return asks_to_follow(words) or bool(_IN_TIME.search(" ".join(str(words or "").split())))
 
 
 def _the_same_way(a: tuple[float, float], b: tuple[float, float]) -> bool:

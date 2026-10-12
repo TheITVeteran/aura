@@ -80,6 +80,7 @@ from core.agency.reading_while_playing import (  # noqa: F401  (re-exported: the
     _what_is_writing,
     rules_as_told_since,
 )
+from core.agency.signs_that_come_along import told_to_follow_signs
 from core.agency.the_controls_a_game_names import controls_named_in
 from core.agency.using_a_control_on_a_thing import (
     UsingOnThings,
@@ -1338,7 +1339,9 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
                choosing: _Choosing, at: float, *, say: Any = None, rules: WhatTheRulesSaid | None = None) -> None:
     # Signs coming along a line ask for the front one's key, held, and nothing else pressed (signs_that_come_along.py).
     # Not where the place is played with the pointer: a row of targets crossing a gallery is no line of keys' signs.
-    if (run.coming is not None and not run.pointer_first and not run.pointer_trigger
+    # And only where the place's words ask for keys shown to be followed (signs_that_come_along.py told_to_follow_signs).
+    if (run.coming is not None and not run.pointer_first and not run.pointer_trigger and rules is not None
+            and told_to_follow_signs(rules.words)
             and await run.coming.answered_now(hands, run, at, lambda line: _say(run, say, line, at, once="signs coming"))):
         return
     # Keys the screen puts up mid-play are asked for now, before anything she had in mind (pressing_what_is_shown.py).
