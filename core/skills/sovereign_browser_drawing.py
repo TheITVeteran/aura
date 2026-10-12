@@ -176,6 +176,8 @@ async def _start_what_is_covered(page: Any, band: tuple[float, float, float, flo
 
 #: Pages whose game was played to an end she said (won, its share of time up, not getting better), and that end.
 _PLAY_OVER: dict[str, str] = {}
+#: When play at each address began for the asking in hand: its share runs from then, however often it is handed back.
+_SHARE_BEGAN: dict[str, float] = {}
 #: Pages whose drawing she has played in this sitting, how often she has gone back to playing each without asking her
 #: model, and the most times she does.
 _PLAYED_HERE: set[str] = set()
@@ -304,6 +306,7 @@ async def _on_the_drawing(browser: Any, goal: str, observation: Mapping[str, Any
         # Play that ended for a reason she said, or won, ends what she was doing on this page too.
         if played.get("won") or played.get("stopped_because"):
             _PLAY_OVER[_address(url)] = "won" if played.get("won") else str(played["stopped_because"])
+            _SHARE_BEGAN.pop(_address(url), None)
         return played
     finally:
         if context is not None:
@@ -368,7 +371,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     # One of several things asked for ("the first of the 3 picked") has its share of the time, not all of it; asked to
     # be carried on until its end is reached, it has all of it.
     share = PLAY_UNTIL_WON_S if terms.until_the_end else max(LEAST_SHARE_S, PLAY_UNTIL_WON_S / _how_many_asked(goal))
-    deadline = time.monotonic() + (share if until_won or limit > 1 else _one_run_s())
+    deadline = _the_share_ends(url, share, share if until_won or limit > 1 else _one_run_s())
     contract = step.get("runtime_contract") or {}
     keep: dict[str, Any] = {"required_edges": contract.get("required_edges") or [],
                             "edge_provenance": contract.get("provenance") or "", "stock": await _a_stocktaking(goal, page)}
@@ -480,7 +483,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
             break
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
-    if time.monotonic() >= deadline and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
+    if time.monotonic() >= deadline - RAN_OUT_WITHIN_S and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
         if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making():
             # A person whose time is up in a thing for making shows what they made in it: offline 2026-10-12 a
             # scrapbook of photographs was worked for five minutes and left with nothing said of what was in it.
@@ -635,6 +638,24 @@ PLAY_UNTIL_WON_S = 1200.0
 
 #: The most runs of one game in one hand-over.
 MOST_RUNS = 12
+
+
+#: How near its deadline a run that stopped is taken to have run out of time: the run's own clock stops a little before.
+RAN_OUT_WITHIN_S = 20.0
+
+
+def _the_share_ends(url: str, share: float, this_time: float) -> float:
+    """When play here stops: this hand-over's time, and never past the share the game has had since it was begun for
+    the asking in hand. LIVE 2026-10-12 a name machine handed back for "I'll keep playing it" was given four fresh
+    minutes each time, its run stopping a moment before its deadline and so never said to be out of time, and one game
+    of three held the asking for eighteen minutes."""
+    import time
+
+    now = time.monotonic()
+    began = _SHARE_BEGAN.setdefault(_address(url), now)
+    if now - began > 2 * PLAY_UNTIL_WON_S:
+        began = _SHARE_BEGAN[_address(url)] = now  # begun for an asking long gone: this is a new one
+    return min(now + this_time, began + share)
 
 
 def _one_run_s() -> float:
