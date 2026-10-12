@@ -5,6 +5,11 @@ Catalog rows are tab-separated title, uploaded file path and optional archive
 identifier. Unavailable or invalid programs remain rows with explicit errors.
 The bundle preserves original bytes; it does not implement game strategies.
 Ruffle is pinned and checked against the package registry's integrity digest.
+
+A program may load other files from where it was kept (its levels, its pictures), by paths relative to it. Each case's
+other files are fetched from the same archive item its program came from (``--dependencies``), kept under
+``games/<case>/`` with their hashes, and the case is played with that folder as its base: offline 2026-10-11 a trap
+game asked for its levels, which its archive item holds and the bundle did not, and stood at LOADING LEVEL.
 """
 from __future__ import annotations
 
@@ -116,7 +121,7 @@ fetch('manifest.json').then(r=>r.json()).then(m=>{const c=m.cases.find(c=>String
 if(c){document.title=c.title;document.getElementById('title').textContent=c.title;}});
 const player=window.RufflePlayer.newest().createPlayer();
 document.getElementById('stage').appendChild(player);
-player.ruffle().load({url:'programs/'+number+'.swf'}).catch(error=>{
+player.ruffle().load({url:'programs/'+number+'.swf',base:'games/'+number+'/'}).catch(error=>{
 document.getElementById('stage').textContent='Program failed to load: '+error;throw error;});
 </script></body></html>"""
 
@@ -150,13 +155,74 @@ def prepare(catalog: Path, assets: Path, output: Path, expected_count: int | Non
     return manifest
 
 
+#: Files of an archive item that are its record, not the program's: never fetched as dependencies.
+_RECORD = (".xml", ".sqlite", ".torrent", "_thumb.jpg", "_screenshot.jpg")
+#: The largest dependency fetched, and how long one fetch may take.
+MAX_DEPENDENCY_BYTES = 32 * 1024 * 1024
+FETCH_TIMEOUT_S = 60
+
+
+def _item_files(identifier: str) -> list[dict]:
+    with urllib.request.urlopen(f"https://archive.org/metadata/{identifier}", timeout=FETCH_TIMEOUT_S) as answer:
+        return list(json.loads(answer.read()).get("files") or [])
+
+
+def fetch_dependencies(output: Path, list_files=_item_files, fetch=None) -> dict:
+    """Each verified case's other files, from the archive item its program came from: kept under ``games/<case>/`` by
+    their own paths, with their hashes, in the manifest. A file that is the program itself, the item's record, too
+    large, or that leaves the case's folder is not kept."""
+    fetch = fetch or (lambda url: urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S).read())
+    manifest = json.loads((output / "manifest.json").read_text())
+    for case in manifest["cases"]:
+        identifier = case.get("archive_identifier") or ""
+        if case.get("status") != "asset_verified" or not identifier:
+            continue
+        program = Path(case.get("catalog_source") or "").name
+        kept: dict[str, str] = {}
+        try:
+            files = list_files(identifier)
+        except (OSError, ValueError) as error:
+            case["dependencies_error"] = f"{type(error).__name__}: {error}"
+            continue
+        folder = (output / "games" / str(case["id"])).resolve()
+        for item in files:
+            name = str(item.get("name") or "")
+            if (not name or name.endswith(_RECORD) or name == program or name.lower().endswith(".swf") and "/" not in name
+                    and int(item.get("size") or 0) == int(case["program"]["bytes"])):
+                continue
+            if int(item.get("size") or 0) > MAX_DEPENDENCY_BYTES:
+                continue
+            target = (folder / name).resolve()
+            if not target.is_relative_to(folder):
+                continue
+            try:
+                data = fetch(f"https://archive.org/download/{identifier}/{urllib.request.quote(name)}")
+            except OSError as error:
+                case.setdefault("dependency_errors", {})[name] = f"{type(error).__name__}: {error}"
+                continue
+            write_bytes(target, data)
+            kept[name] = hashlib.sha256(data).hexdigest()
+        case["dependencies"] = kept
+    manifest["dependency_completeness"] = "each case's other files fetched from the archive item its program came from"
+    write_bytes(output / "manifest.json", json.dumps(manifest, indent=2).encode())
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--catalog", type=Path, required=True)
-    parser.add_argument("--assets", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path)
+    parser.add_argument("--assets", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--expect-count", type=int)
+    parser.add_argument("--dependencies", action="store_true", help="fetch each case's other files into the bundle")
     args = parser.parse_args()
+    if args.dependencies:
+        manifest = fetch_dependencies(args.out)
+        print(json.dumps({case["id"]: sorted(case.get("dependencies") or {}) for case in manifest["cases"]
+                          if case.get("dependencies")}), flush=True)
+        return 0
+    if args.catalog is None or args.assets is None:
+        parser.error("--catalog and --assets are needed to prepare a bundle")
     manifest = prepare(args.catalog, args.assets, args.out, args.expect_count)
     cases = manifest["cases"]
     print(json.dumps({"cases": len(cases), "assets_verified": sum(case["status"] == "asset_verified" for case in cases),

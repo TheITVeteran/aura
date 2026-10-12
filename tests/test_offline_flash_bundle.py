@@ -63,3 +63,25 @@ def test_duplicate_case_numbers_are_not_a_complete_campaign(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="duplicate"):
         check_bundle(tmp_path)
+
+
+def test_a_programs_other_files_are_fetched_from_its_archive_item_and_kept_with_their_hashes(tmp_path):
+    """Offline 2026-10-11 a trap game asked for its levels, which its archive item holds and the bundle did not."""
+    from tools.prepare_offline_flash_bundle import fetch_dependencies
+    from tools.serve_offline_flash_bundle import check_bundle
+
+    _bundle(tmp_path)
+    bundle = tmp_path
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    manifest["cases"][0].update(archive_identifier="a-trap-game", catalog_source="2003/trap/trap-2003.swf")
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+    listed = [{"name": "game.swf", "size": str(manifest["cases"][0]["program"]["bytes"])},
+              {"name": "include/level1.txt", "size": "5"}, {"name": "a-trap-game_meta.xml", "size": "9"},
+              {"name": "../escape.txt", "size": "3"}]
+    fetched = fetch_dependencies(bundle, list_files=lambda _id: listed, fetch=lambda url: b"lvl 1")
+    assert fetched["cases"][0]["dependencies"] == {"include/level1.txt": hashlib.sha256(b"lvl 1").hexdigest()}
+    assert (bundle / "games" / "0" / "include" / "level1.txt").read_bytes() == b"lvl 1"
+    check_bundle(bundle)
+    (bundle / "games" / "0" / "include" / "level1.txt").write_bytes(b"changed")
+    with pytest.raises(ValueError):
+        check_bundle(bundle)
