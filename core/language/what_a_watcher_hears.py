@@ -304,9 +304,8 @@ class WhatAWatcherHears:
             # What she could not read is left out, and the rest said, as a person reading aloud passes over a word they
             # cannot make out: offline 2026-10-12 what she made in a thing for making was never told, for a caption
             # quoted in it. A line that is little more than the quote says nothing without it.
-            rest = said
-            for quoted in unread:
-                rest = rest.replace(quoted, " ", 1)
+            # Counted outside every quote: a line made of quotes and a few words between says little without one.
+            rest = _QUOTED.sub(" ", said)
             if len(re.findall(r"[A-Za-z]{2,}", rest)) < SAID_WITHOUT_THE_QUOTE:
                 logger.info("not said, what it quotes could not be read: %r", said[:120])
                 return None

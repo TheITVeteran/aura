@@ -150,3 +150,29 @@ def test_what_a_thing_that_answers_said_is_told_with_what_she_asked_it(monkeypat
     said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [],
                                                       {"typed": "Will I win?"}))
     assert "I asked it 'Will I win?'" in said and "it answered: swami shaggy saying like, no way" in said.lower()
+
+
+def test_a_place_understood_as_for_making_is_known_when_her_time_runs_out():
+    """Offline 2026-10-12 a scrapbook of photographs was worked for five minutes and, its time up, left with nothing
+    said of what was in it: where she understands a place is for making, what she made is said when her time is up."""
+    from types import SimpleNamespace
+
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+    from core.skills.sovereign_browser_drawing import _a_place_for_making
+
+    for mechanics, expected in (({"making": object()}, True), ({"avoiding": object()}, False)):
+        guide = SimpleNamespace(controls={}, mechanics=mechanics, how=None, how_seen={}, how_said="", goals=[], things={},
+                                rules=None, readouts={}, said="", program="")
+        token = THE_GUIDE.set(guide)
+        try:
+            from core.agency import how_a_game_works
+
+            original = how_a_game_works.understood
+            how_a_game_works.understood = lambda _guide, also="": how_a_game_works.HowItWorks()
+            try:
+                assert _a_place_for_making() is expected
+            finally:
+                how_a_game_works.understood = original
+        finally:
+            THE_GUIDE.reset(token)
+    assert _a_place_for_making() is False

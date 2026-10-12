@@ -138,3 +138,9 @@ def test_a_long_line_is_said_with_what_she_could_not_read_left_out():
     assert said is not None and "photo of a dog on a beach" in said and "Xqzt" not in said
     assert said.endswith("under the caption words I could not make out.")
     assert watcher.heard('Clicking "trelalts hop" — to see what it does', 1.0) is None
+
+
+@pytest.mark.unit
+def test_a_line_mostly_of_quotes_is_not_said_with_one_left_out():
+    watcher = WhatAWatcherHears()
+    assert watcher.heard('Carrying "the red cup" to "Xqzt Bvrk" — to see what it does', 0.0) is None

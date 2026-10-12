@@ -481,8 +481,15 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
     if time.monotonic() >= deadline and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
-        _tell("I've given this one its share of the time, and I leave it here." + _where_it_stood(runs))
-        result["stopped_because"] = "its share of the time is up"
+        if runs and moves and (terms.made_once or terms.tell_what_was_made) and _a_place_for_making():
+            # A person whose time is up in a thing for making shows what they made in it: offline 2026-10-12 a
+            # scrapbook of photographs was worked for five minutes and left with nothing said of what was in it.
+            _tell("My time with this one is up. " + await _what_was_made_as_seen(
+                page, band, runs[-1], moves, list(getattr(reflexes, "words", []) or []), keep))
+            result["stopped_because"] = MADE_AS_ASKED
+        else:
+            _tell("I've given this one its share of the time, and I leave it here." + _where_it_stood(runs))
+            result["stopped_because"] = "its share of the time is up"
     elif until_won and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
         # Played to be won and stopped short of it, with no end said: an end is said, and the page is not begun again.
         result["stopped_because"] = "I could not get further with it"
@@ -1097,6 +1104,19 @@ def _the_best_of(runs: list[dict[str, Any]]) -> str:
                 + (f"; the others: {'; '.join(others)}." if others else "."))
     longest = max(range(len(runs)), key=lambda i: float(runs[i].get("took_s") or 0.0))
     return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was shown; my longest was run {longest + 1}, at {float(runs[longest].get('took_s') or 0.0):.0f} seconds."
+
+
+def _a_place_for_making() -> bool:
+    """Whether she understands the place before her is for making something (core/agency/how_a_game_works.py)."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import MAKES, understood
+
+    how = understood(guide)
+    return how.me.value == MAKES or how.counts.value == "make" or "making" in (getattr(guide, "mechanics", None) or {})
 
 
 def _where_it_stood(runs: list[dict[str, Any]]) -> str:
