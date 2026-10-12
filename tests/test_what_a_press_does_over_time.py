@@ -59,6 +59,17 @@ def test_curves_that_disagree_are_not_enough_and_two_that_agree_are():
     assert presses.lifts(3, 10.0) == ["space"]
 
 
+def test_a_bodys_observed_curve_precedes_its_kinds_unrelated_no_op_curves():
+    presses = WhatAPressDoes()
+    still = [(.1, 0., 0.), (.2, 0., 0.), (.4, 0., 0.)]
+    presses.curves[('a', 3)].extend([still, still])
+    presses.by_number[('a', 7)].append([(.1, 0., -8.), (.2, 0., -12.), (.4, 0., 0.)])
+    assert presses.lifts(3, 10., 7) == ['a']
+    assert presses.numbers_it_moves(5.) == {7}
+    assert presses.moves_anything(5.)
+    assert not presses.entity_presses
+
+
 def test_a_press_made_while_falling_is_not_read_as_a_lift():
     """A thing gaining speed is not taken to go on at the speed it had: its fall is not subtracted as its way."""
     presses = WhatAPressDoes()

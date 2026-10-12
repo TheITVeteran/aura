@@ -30,10 +30,12 @@ include_rules = [
     "+core.perception.word_labels_seen_again",
     "+core.perception.visual_probe_cache", # Synthetic validation of scoped visual rejections.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
+    "+core.perception.boundary_support_for_translation", # Pure check of exterior support for plain-patch translation.
     "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.
     "+core.perception.points_that_keep_their_motion", # Pure checks of visible point identity and bounded lifetime.
     "+core.perception.reading_again_after_loss", # Pure checks of measured loss and bounded request renewal.
     "+core.perception.the_whole_patch_around_a_visible_corner", # Pure check of connected support around initial foreground seeds.
+    "+core.perception.translation_from_visible_support", # Pure check of measured translation before learning controls.
     "+core.perception.what_moves_in_the_picture",
     "+core.perception.what_the_points_on_a_thing_say", # Pure check of current owned points before reading approach or identity.
     "+core.perception.a_small_thing_in_a_joined_patch", # Pure canary for minority pixels and bounded discovery.

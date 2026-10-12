@@ -26,7 +26,11 @@ import statistics
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
+
+from core.perception.translation_from_visible_support import matching_support, motion_status
+from core.verify import invariant
 
 __all__ = ["PressTrajectory", "WhatAPressDoes"]
 
@@ -82,6 +86,13 @@ class _Watch:
     independent: bool = False
     born: float | None = None
     observed: bool = False
+    reference: Any = None
+    needs_anchor: bool = False
+    eligible: bool = False
+    measured_segment: list[tuple[float, float, float]] = field(default_factory=list)
+    curve_finished: bool = False
+    curve_stored: bool = False
+    settled_samples: list[tuple[float, float, float]] = field(default_factory=list)
 
 
 class WhatAPressDoes:
@@ -108,15 +119,18 @@ class WhatAPressDoes:
         for watch in self.watching:
             _keep_entity_interval(self, watch)
             watch.independent = False
+        self.watching = [w for w in self.watching if not w.curve_finished]
         self._pressed_at[key] = at
         self.watching = [w for w in self.watching if w.key != key]
         for thing in list(things)[:WATCHED]:
+            if hasattr(thing, "motion_path") and thing.motion_measured_at != thing.seen:
+                continue
             # A thing seen too few times to know how it goes on is not watched: its own going would be read as the
             # press's (LIVE-like 2026-10-10, a block just come on at the edge, sliding at the runner, read as moved by
             # every press, and taken for hers).
             born = getattr(thing, "born", None)
             new = born is not None and at - float(born) < NEW_FOR_S
-            if len(getattr(thing, "path", ()) or ()) < KNOWN_AFTER and (
+            if len(_motion_history(thing)) < KNOWN_AFTER and (
                     new or math.hypot(float(thing.vx), float(thing.vy)) > GOING_PX_S):
                 continue
             # Likewise one going along whose course cannot be told (its speed unsteady as read): taken as still, its own
@@ -130,7 +144,8 @@ class WhatAPressDoes:
             self.watching.append(_Watch(key, int(thing.number), int(thing.kind), at, float(thing.x), float(thing.y),
                                         drift, max(float(thing.w), float(thing.h), 1.0),
                                         hers=hers is not None and int(thing.number) == hers, let_go=not key,
-                                        epoch=epoch, independent=independent, born=born, observed=observed))
+                                        epoch=epoch, independent=independent, born=born, observed=observed,
+                                        eligible=observed, reference=_visible_reference(thing)))
 
     def released(self, key: str, at: float) -> None:
         """``key`` let go at ``at``: how long that press was held."""
@@ -160,35 +175,69 @@ class WhatAPressDoes:
                 continue
             if after <= 0.0:
                 continue
-            seen = getattr(thing, "seen", at)
-            if seen != at:
+            evidence = motion_status(thing, at)
+            if evidence != "measured":
+                if evidence == "unavailable":
+                    _keep_entity_interval(self, watch)
+                elif watch.independent:
+                    self.entity_presses = deque((trial for trial in self.entity_presses
+                                                 if (trial.key, trial.number, trial.began, trial.epoch)
+                                                 != (watch.key, watch.number, watch.began, watch.epoch)),
+                                                maxlen=self.entity_presses.maxlen)
                 watch.observed = False
-                if after >= LONGEST_S:
+                watch.measured_segment.clear()
+                watch.needs_anchor = True
+                if evidence == "contradicted" or after >= LONGEST_S:
                     self.watching.remove(watch)
                 continue
+            if watch.needs_anchor:
+                if watch.reference is None or not matching_support(watch.reference, vars(thing)):
+                    if after >= LONGEST_S:
+                        self.watching.remove(watch)
+                    continue
+                watch.needs_anchor = False
+                watch.observed = watch.eligible
             dx = float(thing.x) - watch.x - watch.drift[0] * after
             dy = float(thing.y) - watch.y - watch.drift[1] * after
+            watch.measured_segment.append((after, dx, dy))
+            # Settling describes the learned behavior. The delivered trial
+            # still needs observations, including measured lack of response,
+            # for comparison with controls whose effects arrive later.
+            if watch.curve_finished:
+                _keep_entity_interval(self, watch)
+                if math.dist((dx, dy), watch.samples[-1][1:]) < .05 * watch.size:
+                    watch.settled_samples.append((after, dx, dy))
+                    if after >= LONGEST_S:
+                        self.watching.remove(watch)
+                    continue
+                # A delayed response revises this trial's curve. Quiet
+                # observations retain its latency; no extra press is counted.
+                watch.samples.extend(watch.settled_samples)
+                watch.settled_samples.clear()
+                watch.curve_finished = False
             if watch.samples:
                 watch.still = watch.still + 1 if math.dist((dx, dy), watch.samples[-1][1:]) < 0.05 * watch.size else 0
             watch.samples.append((after, dx, dy))
             if after >= LONGEST_S or (watch.still >= SETTLED and len(watch.samples) > SETTLED):
-                self.watching.remove(watch)
+                watch.curve_finished = True
+                if after >= LONGEST_S or not watch.independent:
+                    self.watching.remove(watch)
                 # A key still held when the watch is over was held, not pressed: holding a key that lifts her lifts
                 # her again and again, and that is not what one press does.
-                if watch.let_go or after < LONGEST_S:
+                if not watch.curve_stored and (watch.let_go or after < LONGEST_S):
                     self.curves[(watch.key, watch.kind)].append(watch.samples)
                     self.by_number[(watch.key, watch.number)].append(watch.samples)
                     if watch.hers:
                         self.curves[(watch.key, HERS)].append(watch.samples)
-                    _keep_entity_interval(self, watch)
+                    watch.curve_stored = True
+                _keep_entity_interval(self, watch)
 
     def _curves(self, key: str, kind: int | None, number: int | None) -> list[list[tuple[float, float, float]]]:
         """The curves that say what ``key`` does to her: of her kind, else of her as she was known, else of her thing.
         One curve that lifts her and lets her down whole is enough on its own: a curve gone wrong has no such shape,
         and her first trial of a key is often made before her thing is followed (offline 2026-10-09)."""
-        found = [(key, kind) if kind is not None else None, (key, HERS)]
-        stores = [self.curves.get(at, ()) if at is not None else () for at in found]
-        stores.append(self.by_number.get((key, number), ()) if number is not None else ())
+        stores = [self.by_number.get((key, number), ()) if number is not None else (),
+                  self.curves.get((key, kind), ()) if kind is not None else (), self.curves.get((key, HERS), ())]
         for curves in stores:
             usable = [curve for curve in curves if len(curve) >= 3]
             if _enough(usable) or (len(usable) == 1 and _lifts(usable[0])):
@@ -215,7 +264,24 @@ class WhatAPressDoes:
 
     def moves_anything(self, least: float) -> bool:
         """Whether a press has been seen to move a thing more than ``least`` the same way each time it was made."""
-        return bool(self.kinds_it_moves(least))
+        return bool(self.numbers_it_moves(least) or self.kinds_it_moves(least))
+
+    def numbers_it_moves(self, least: float, numbers: Iterable[int] | None = None) -> set[int]:
+        """Continuing entities whose own observed press curves move them repeatedly."""
+        moved = set()
+        present = set(numbers) if numbers is not None else None
+        for (_key, number), curves in list(self.by_number.items()):
+            if present is not None and number not in present:
+                continue
+            usable = [curve for curve in curves if len(curve) >= 3]
+            if not (_enough(usable) or (len(usable) == 1 and _lifts(usable[0]))):
+                continue
+            for step in range(21):
+                points = [_where(curve, step / 20 * LONGEST_S) for curve in usable]
+                if math.hypot(statistics.median(p[0] for p in points), statistics.median(p[1] for p in points)) > least:
+                    moved.add(number)
+                    break
+        return moved
 
     def kinds_it_moves(self, least: float) -> set[int]:
         """The kinds of thing a press of some key moves more than ``least``, the same way each time it was made."""
@@ -282,7 +348,7 @@ def _going_on(thing: Any) -> tuple[float, float]:
     second later: taken as going on, a press made mid-fall read as lifting it two hundred pixels (offline
     2026-10-09). A speed that has held is going on; one that has not is taken as none.
     """
-    path = list(getattr(thing, "path", ()) or ())[-4:]
+    path = _motion_history(thing)[-4:]
     steps = [((x1 - x0) / (t1 - t0), (y1 - y0) / (t1 - t0)) for (t0, x0, y0), (t1, x1, y1) in zip(path, path[1:], strict=False)
              if t1 > t0]
     if len(steps) < 3:
@@ -291,6 +357,20 @@ def _going_on(thing: Any) -> tuple[float, float]:
     if fastest > 0 and max(math.dist(step, steps[-1]) for step in steps) > 0.25 * fastest:
         return 0.0, 0.0
     return float(thing.vx), float(thing.vy)
+
+
+def _motion_history(thing: Any) -> list:
+    if hasattr(thing, "motion_path"):
+        return list(thing.motion_path) if thing.motion_measured_at == thing.seen else []
+    return list(getattr(thing, "path", ()) or ())
+
+
+def _visible_reference(thing: Any) -> Any:
+    if not hasattr(thing, "motion_path"):
+        return None
+    return SimpleNamespace(w=thing.w, h=thing.h, patch=thing.patch.copy(),
+                           support=thing.support.copy() if thing.support is not None else None,
+                           boundary=getattr(thing, "boundary", None))
 
 
 def _where(curve: list[tuple[float, float, float]], seconds: float) -> tuple[float, float]:
@@ -308,7 +388,53 @@ def _where(curve: list[tuple[float, float, float]], seconds: float) -> tuple[flo
 def _keep_entity_interval(presses: WhatAPressDoes, watch: _Watch) -> None:
     """Retain only independently delivered input with a measured observation interval."""
     if (watch.observed and watch.independent and type(watch.epoch) is int
-            and watch.born is not None and len(watch.samples) >= 3):
-        presses.entity_presses.append(PressTrajectory(watch.key, watch.number, watch.epoch, watch.began,
-                                                      watch.began + watch.samples[-1][0], float(watch.born),
-                                                      tuple(watch.samples)))
+            and watch.born is not None and len(watch.measured_segment) >= 3):
+        trial = PressTrajectory(watch.key, watch.number, watch.epoch, watch.began,
+                                watch.began + watch.measured_segment[-1][0], float(watch.born),
+                                tuple(watch.measured_segment))
+        same = [old for old in presses.entity_presses
+                if (old.key, old.number, old.epoch, old.began) == (trial.key, trial.number, trial.epoch, trial.began)]
+        if same and max(old.samples[-1][0] - old.samples[0][0] for old in same) >= trial.samples[-1][0] - trial.samples[0][0]:
+            return
+        for old in same:
+            presses.entity_presses.remove(old)
+        presses.entity_presses.append(trial)
+
+
+@invariant("agency.settling_does_not_end_an_independent_observation", scope="agency",
+           owner="core/agency/what_a_press_does.py", observational=False)
+def _settled_trial_invariant() -> tuple:
+    presses = WhatAPressDoes()
+    body = SimpleNamespace(number=1, kind=0, born=0., seen=1., x=20., y=20.,
+                           vx=0., vy=0., w=10., h=10., path=[])
+    presses.pressed('a', 1., [body], epoch=1, independent=True)
+    for i in range(1, 13):
+        body.seen = 1. + i * .05
+        presses.saw({1: body}, body.seen)
+    assert len(presses.by_number[('a', 1)]) == 1
+    assert presses.by_number[('a', 1)][0][-1][0] < .3
+    assert presses.entity_presses[0].ended == body.seen
+    presses.pressed('b', 1.61, [body], epoch=1, independent=False)
+    assert all(w.key == 'b' for w in presses.watching)
+    assert presses.entity_presses[0].ended == 1.6
+    return ()
+
+
+@invariant("agency.only_delivered_input_starts_a_control_trial", scope="agency",
+           owner="core/agency/playing_as_it_happens.py", observational=False)
+def _unchanged_input_invariant() -> tuple:
+    from core.agency.playing_as_it_happens import _hold
+
+    run = SimpleNamespace(held='q', held_since=1., held_trying=False)
+    before = vars(run).copy()
+    attempt = _hold(None, run, None, 'q', 2., trying=True)
+    try:
+        attempt.send(None)
+    except StopIteration:
+        pass
+    else:
+        raise AssertionError('An unchanged input attempted another delivery')
+    finally:
+        attempt.close()
+    assert vars(run) == before
+    return ()

@@ -42,6 +42,7 @@ from core.agency.controls_ready_for_the_motion_model import has_a_measured_respo
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.what_follows_the_pointer import FollowsThePointer
 from core.perception.parts_when_things_touch import same_colour_mix
+from core.perception.translation_from_visible_support import motion_status, motion_was_measured
 from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX
 from core.verify import invariant
 
@@ -138,10 +139,23 @@ class _Speeds:
     timed: dict[tuple[str, float], list[tuple[float, float, float]]] = field(default_factory=dict)
     #: How many of each press's speeds were taken up against something: a press that met a wall says nothing of its key.
     pinned_in: dict[tuple[str, float], int] = field(default_factory=dict)
+    interrupted: set[tuple[str, float]] = field(default_factory=set)
+
+    def unseen(self, key: str, began: float, *, contradicted: bool = False) -> None:
+        """Resume from a fresh measured segment after a gap; retire a contradicted trial."""
+        press = (key, began)
+        if contradicted:
+            self.interrupted.add(press)
+        if len(self.interrupted) > 80:
+            self.interrupted.remove(min(self.interrupted, key=lambda value: value[1]))
+        for kept in (self.by_press, self.timed, self.pinned_in):
+            kept.pop(press, None)
 
     def add(self, key: str, vx: float, vy: float, *, press: float | None = None, pinned: bool = False,
             settled: bool = True, position: tuple[float, float] | None = None, at: float | None = None,
             when: float | None = None) -> None:
+        if press is not None and (key, press) in self.interrupted:
+            return
         if position is not None:
             for axis, (place, speed) in enumerate(zip(position, (vx, vy), strict=True)):
                 self.lowest[axis] = min(self.lowest[axis], place)
@@ -826,7 +840,14 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
             began, key, trying = held
             press = began if at - began >= SETTLE_S else None
             for thing in moves.things.values():
-                if thing.seen != at or thing.born == at:
+                evidence = motion_status(thing, at)
+                if evidence != "measured":
+                    if thing.number in self._by_thing:
+                        self._by_thing[thing.number].unseen(key, began, contradicted=evidence == "contradicted")
+                    if thing.number == self.number:
+                        self._hers.unseen(key, began, contradicted=evidence == "contradicted")
+                    continue
+                if thing.born == at:
                     continue
                 if trying:
                     self._by_thing[thing.number].add(key, thing.vx, thing.vy, press=press,
@@ -860,6 +881,9 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         for number, speeds in self._by_thing.items():
             if number not in moves.things or not moves.things[number].moved or number in self.not_mine:
                 continue
+            thing = moves.things[number]
+            if not motion_was_measured(thing, getattr(thing, 'seen', None) if at is None else at):
+                continue
             if self._outlines.a_gauge(number) or _goes_with_the_world(speeds, world):
                 continue
             witness = own_control_witness(number, speeds, epoch=self.identification.epoch,
@@ -872,11 +896,15 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         best = self.identification.choose(witnesses, visible=set(moves.things),
                                           established=self.number, excluded=self.not_mine)
         if best is None:
-            best = self._the_one_of_a_kind_that_answers(moves)
+            best = self._the_one_of_a_kind_that_answers(moves, at)
         if best is None:
             best = gone_the_ways_of_the_keys(self, moves)
         if best is None and self.lost():
             best = self._found_by_her_controls(moves)
+        if best is not None and best != self.number:
+            thing = moves.things[best]
+            if not motion_was_measured(thing, getattr(thing, 'seen', None) if at is None else at):
+                best = None
         if best is not None:
             if best != self.number:
                 logger.info("her thing is %s (was %s): %s", best, self.number, (self.identification.receipts or [{}])[-1].get("reason"))
@@ -1246,3 +1274,17 @@ def _the_key_s_own_way(key: str, going: tuple[float, float]) -> bool:
 def last_moved(hers: WhichIsHers) -> float:
     """When her thing was last seen to go, -inf where she has none."""
     return hers._hers.moved_at if hers.kind is not None else -math.inf
+
+
+@invariant("agency.missing_motion_restarts_a_segment_and_contradiction_retires_the_trial", scope="agency",
+           owner="core/agency/which_one_answers_to_her.py", observational=False)
+def _motion_segments_invariant() -> tuple:
+    speeds = _Speeds()
+    speeds.add("a", 80., 0., press=1., when=1.1)
+    speeds.unseen("a", 1.)
+    speeds.add("a", 30., 0., press=1., when=1.4)
+    assert speeds.by_press[("a", 1.)] == [(30., 0.)]
+    speeds.unseen("a", 1., contradicted=True)
+    speeds.add("a", 30., 0., press=1., when=1.5)
+    assert not speeds.by_press and not speeds.timed
+    return ()

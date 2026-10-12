@@ -396,13 +396,36 @@ def install_realtime_control_claims(suite: Any) -> None:
 
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
+    from core.agency.finding_her_another_way import _current_body_motion_invariant
+    from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
+    from core.agency.which_one_answers_to_her import _motion_segments_invariant
+    from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
+    from core.perception.translation_from_visible_support import _translation_support_invariant
     from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("old_control_trials_need_current_body_motion", "core/agency/which_one_answers_to_her.py",
+         "tests/test_entity_press_trajectories.py", lambda: _current_body_motion_invariant() == (),
+         "Historical control receipts cannot assign a new body identity while its current pixel movement is unavailable, contradicted or stale."),
+        ("control_trials_start_on_delivered_input", "core/agency/playing_as_it_happens.py",
+         "tests/test_control_trials_start_when_input_is_delivered.py", lambda: _unchanged_input_invariant() == (),
+         "Choosing an unchanged held input preserves the physical intervention start and cannot manufacture an independent control trial."),
+        ("settled_behavior_keeps_the_independent_observation", "core/agency/what_a_press_does.py",
+         "tests/test_translation_needs_visible_support.py", lambda: _settled_trial_invariant() == (),
+         "Settled behavior retains measured trial coverage until the delivered input interval ends; lack of response is observed rather than inferred."),
+        ("plain_patch_motion_requires_visible_exterior_boundaries", "core/perception/boundary_support_for_translation.py",
+         "tests/test_visible_boundary_support.py", lambda: _visible_boundary_invariant() == (),
+         "Plain-patch translation requires observed corresponding exterior boundaries; an interior window on a uniform surface remains unmeasured."),
+        ("control_motion_requires_agreeing_current_support", "core/perception/translation_from_visible_support.py",
+         "tests/test_translation_needs_visible_support.py", lambda: _translation_support_invariant() == (),
+         "Detected box movement requires agreeing current visible support before it teaches control responses or physics."),
+        ("control_measurements_resume_on_new_observed_segments", "core/agency/which_one_answers_to_her.py",
+         "tests/test_translation_needs_visible_support.py", lambda: _motion_segments_invariant() == (),
+         "Missing motion starts a fresh measured segment of the held input; contradictory motion retires that trial."),
         ("lost_readings_are_refreshed_without_duplicate_requests", "core/perception/reading_again_after_loss.py",
          "tests/test_a_body_guess_keeps_its_observed_track.py", lambda: _reading_renewal_invariant() == (),
          "An unresolved reading can be refreshed after measured loss; unread frames, active requests and current ownership do not authorize another request."),

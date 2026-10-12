@@ -31,6 +31,8 @@ from typing import Any
 
 import numpy as np
 
+from core.perception.boundary_support_for_translation import boundaries_agree, visible_boundary
+from core.perception.translation_from_visible_support import translation_status
 from core.verify import invariant
 
 __all__ = ["Kind", "Thing", "WhatMoves", "what_happened"]
@@ -177,6 +179,11 @@ class Thing:
     #: How soon it will arrive, by how fast the points on it spread (core/perception/what_the_points_on_a_thing_say.py):
     #: inf where they are not spreading, None where too few were followed to say.
     closing_s: float | None = None
+    #: Current translation evidence is separate from a detected or predicted box.
+    motion_measured_at: float | None = None
+    motion_evidence: str = "unavailable"
+    boundary: Any = field(default=None, repr=False, compare=False)
+    motion_path: deque = field(default_factory=lambda: deque(maxlen=40), repr=False)
 
     @property
     def size(self) -> float:
@@ -639,6 +646,8 @@ class WhatMoves:
                     "colour": self._colour_of(small, x, y, w, h, part, pixels),
                     "patch": small[top:bottom, left:right].copy(),
                     "support": part[top - y:bottom - y, left - x:right - x].copy(),
+                    "boundary": visible_boundary(small, left, top, right, bottom,
+                                                 part[top - y:bottom - y, left - x:right - x]),
                 })
         return found
 
@@ -757,17 +766,26 @@ class WhatMoves:
     def _moved(self, thing: Thing, blob: dict[str, Any], at: float) -> None:
         dt = max(1e-3, at - thing.seen)
         x0, y0 = _measured(thing)
+        thing.motion_evidence = translation_status(thing, blob, at, self._point_motion.get(thing.number))
+        observed = thing.motion_evidence == "measured"
+        if not observed or thing.motion_measured_at != thing.seen:
+            thing.motion_path.clear()
+        if observed and not thing.motion_path:
+            thing.motion_path.append((thing.seen, x0, y0))
+        thing.motion_measured_at = at if observed else None
         vx, vy = (blob["x"] - x0) / dt, (blob["y"] - y0) / dt
-        blend = 0.5 if thing.seen > thing.born else 1.0
-        thing.vx = (1 - blend) * thing.vx + blend * vx
-        thing.vy = (1 - blend) * thing.vy + blend * vy
         thing.x, thing.y, thing.w, thing.h = blob["x"], blob["y"], blob["w"], blob["h"]
         thing.look = 0.8 * thing.look + 0.2 * blob["look"]
         thing.colour, thing.patch = blob["colour"], blob["patch"]
         thing.support = blob.get("support")
+        thing.boundary = blob.get("boundary")
         thing.seen, thing.still = at, False
         thing.path.append((at, thing.x, thing.y))
-        thing.vx, thing.vy = _speed_from_its_path(thing.path, at, (vx, vy), (thing.vx, thing.vy))
+        if observed:
+            thing.motion_path.append((at, thing.x, thing.y))
+            thing.vx, thing.vy = _speed_from_its_path(thing.motion_path, at, (vx, vy), (vx, vy))
+        else:
+            thing.vx, thing.vy = 0.0, 0.0
         thing.sizes.append(thing.size)
         thing.dims.append((thing.w, thing.h))
         _settled_size(thing)
@@ -794,6 +812,9 @@ class WhatMoves:
         if here.shape != thing.patch.shape or self._backdrop is None:
             return False
         if float(np.abs(here.astype(np.int16) - thing.patch.astype(np.int16)).mean()) >= 25.0:
+            return False
+        current = visible_boundary(small, left, top, right, bottom, thing.support)
+        if not boundaries_agree(thing.boundary, current):
             return False
         # And it is something: a patch that matches itself and the floor is floor.
         floor = self._backdrop[top:bottom, left:right]
@@ -842,6 +863,7 @@ class WhatMoves:
             self._numbers, blob["x"], blob["y"], blob["w"], blob["h"], blob["look"],
             blob["colour"], blob["patch"], born=at, seen=at,
             support=blob.get("support"),
+            boundary=blob.get("boundary"),
         )
         thing.kind = self._kind_for(thing.look, thing.size, thing.colour)
         before = _back_in_sight(self, thing, at)
@@ -996,7 +1018,8 @@ class WhatMoves:
                 continue
             found.append({"x": x + w / 2, "y": y + h / 2, "w": w, "h": h,
                           "look": _look_of(np.asarray([colour])), "colour": colour, "patch": patch.copy(),
-                          "support": painted.copy()})
+                          "support": painted.copy(),
+                          "boundary": visible_boundary(small, left, top, right, bottom, painted)})
         return found
 
     def _a_new_screen(self, small: np.ndarray) -> bool:
@@ -1013,9 +1036,18 @@ class WhatMoves:
             thing = kept[number]
             if self._still_there(thing, small):
                 thing.x, thing.y = _measured(thing)
-                thing.vx *= 0.5
-                thing.vy *= 0.5
                 thing.still = True
+                if thing.motion_measured_at != thing.seen:
+                    thing.motion_path.clear()
+                thing.motion_measured_at = at if 0 < at - thing.seen <= .35 else None
+                thing.motion_evidence = "measured" if thing.motion_measured_at == at else "unavailable"
+                if thing.motion_measured_at is None:
+                    thing.motion_path.clear()
+                else:
+                    if not thing.motion_path:
+                        thing.motion_path.append((thing.seen, thing.x, thing.y))
+                    thing.motion_path.append((at, thing.x, thing.y))
+                thing.vx, thing.vy = _speed_from_its_path(thing.motion_path, at, (0., 0.), (0., 0.))
                 thing.seen = at
                 thing.path.append((at, thing.x, thing.y))
                 continue

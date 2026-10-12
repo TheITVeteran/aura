@@ -509,7 +509,10 @@ def _say(run: _Run, say: Callable[[str], Any] | None, line: str, at: float, *, o
 
 
 async def _hold(hands: Any, run: _Run, hers: WhichIsHers, key: str, at: float, *, trying: bool = False) -> None:
-    if key == run.held and trying == run.held_trying:
+    # A delivered hold keeps its start and experiment status until the input
+    # changes. Choosing that same key under another policy delivers no new
+    # intervention and cannot supply another independent trial.
+    if key == run.held:
         return
     if key != run.held:
         if run.held:
@@ -1503,17 +1506,9 @@ async def _press_to_get_clear(hands: Any, run: _Run, hers: WhichIsHers, choosing
 
 def _found_by_her_presses(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: float) -> None:
     """Where her trials have not found her, the one thing of a kind her presses move alike every time is hers."""
-    if hers.number is not None or hers.follows_pointer or not run.presses.curves:
-        return
-    kinds = run.presses.kinds_it_moves(TOLD_FROM_STANDING_PX * 2)
-    # What her presses bring out (a shot) goes the same way at every press, and is not her: offline 2026-10-11 each
-    # shot of a flying shooter was taken for her as it was fired, nine of them in sixteen seconds. She is a thing that
-    # was there before the press.
-    made = {makes.kind for makes in hers.makes.values()}
-    candidates = [thing for thing in moves.things.values() if thing.kind in kinds and thing.kind not in made
-                  and at - float(getattr(thing, "born", at)) >= THERE_BEFORE_S]
-    if len(candidates) == 1:
-        hers.moved_by_her_presses(candidates[0], at, receipts=run.presses.entity_presses)
+    from core.agency.finding_her_another_way import found_by_press_curves
+
+    found_by_press_curves(run, moves, hers, at, old_for=THERE_BEFORE_S)
 
 
 async def _press_in_time(hands: Any, run: _Run, moves: WhatMoves, at: float, say: Any) -> bool:

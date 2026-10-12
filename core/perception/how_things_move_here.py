@@ -34,6 +34,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.perception.translation_from_visible_support import motion_was_measured
+
 __all__ = ["HowThingsMoveHere", "Imagined"]
 
 #: Fewest samples before a learned quantity is used instead of the plain guess.
@@ -110,7 +112,7 @@ class HowThingsMoveHere:
         mine = hers.thing(moves)
         seen = set()
         for thing in moves.things.values():
-            if not thing.moved or (mine is not None and thing.number == mine.number):
+            if not motion_was_measured(thing, at) or not thing.moved or (mine is not None and thing.number == mine.number):
                 continue
             seen.add(thing.number)
             before = self._last.get(thing.number)
