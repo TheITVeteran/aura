@@ -175,5 +175,5 @@ def test_the_one_thrown_at_is_found_again_where_it_was_under_another_number() ->
     elsewhere = _thing(4, 50, 60, born=1.0, size=2600.0)
     x, y, seen = where_the_one_thrown_at_is([elsewhere, again], last, 10.4, 600)
     assert (x, y) == (320, 205) and seen is again
-    assert where_the_one_thrown_at_is([elsewhere], last, 10.4, 600)[:2] == (300.0, 200.0)   # out of sight: where it was
+    assert where_the_one_thrown_at_is([elsewhere], last, 10.4, 600) is None                 # out of sight: not thrown at
     assert where_the_one_thrown_at_is([elsewhere, again], last, 11.5, 600) is None          # too long ago to be there still

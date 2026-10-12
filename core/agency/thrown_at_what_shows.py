@@ -47,8 +47,10 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
     # offline 2026-10-11 she threw after her own ball as it rose, and not at the eggs coming down.
     things = list(things)
     taken_afresh = _taken_in_afresh(things)
+    # And a strip is no one: offline 2026-10-12 a food fight's two health bars, redrawn at each splat, drew throw after
+    # throw to the top of the screen while the opponent stood in the middle of it.
     mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds
-            and not _growing(thing) and (thing in taken_afresh or not _her_shot(thing, shots_at))]
+            and not _growing(thing) and not _a_strip(thing) and (thing in taken_afresh or not _her_shot(thing, shots_at))]
     # Someone gets about; a thing that only sways where it hangs (a lamp, a flag, a sign) is part of the room: offline
     # 2026-10-11 throws went at a swinging lamp while the opponent ran to and fro below it.
     about = [thing for thing in mine if _gets_about(thing)]
@@ -77,16 +79,18 @@ STILL_IT_WITHIN = 0.2
 
 def where_the_one_thrown_at_is(things: Iterable[Any], last: tuple[float, float, float, float] | None, at: float,
                                wide: float) -> tuple[float, float, Any] | None:
-    """Where the one she was last throwing at is now, and the thing it is where it is seen: the figure nearest where it
-    was and near its size, though the eye lost it and found it again under another number (it turned, it crouched,
-    food went past it); where none is, where it was. None once it has been out of sight too long to be there still."""
+    """Where the one she was last throwing at is now, and the thing it is: the figure nearest where it was and near its
+    size, though the eye lost it and found it again under another number (it turned, it crouched, food went past it).
+    None where no such figure is in sight, or it has been out of sight too long to be there still: a throw at where it
+    was goes where it is not (offline 2026-10-12, measured on the pictures, half again as far off as a throw at
+    whoever was in sight)."""
     if last is None or at - last[2] > KEPT_IN_MIND_S:
         return None
     x, y, _seen, size = last
-    near = [thing for thing in things if not _growing(thing) and math.dist((thing.x, thing.y), (x, y)) <= STILL_IT_WITHIN * wide
-            and 0.4 * size <= float(thing.size) <= 2.5 * size]
+    near = [thing for thing in things if not _growing(thing) and not _a_strip(thing)
+            and math.dist((thing.x, thing.y), (x, y)) <= STILL_IT_WITHIN * wide and 0.4 * size <= float(thing.size) <= 2.5 * size]
     if not near:
-        return x, y, None
+        return None
     seen = min(near, key=lambda thing: math.dist((thing.x, thing.y), (x, y)))
     return seen.x, seen.y, seen
 
@@ -114,6 +118,15 @@ def _taken_in_afresh(things: list[Any]) -> list[Any]:
     born = sorted(float(getattr(thing, "born", -1e9)) for thing in things)
     together = {when for when in born if sum(abs(other - when) <= ONE_MOMENT_S for other in born) >= TAKEN_IN_TOGETHER}
     return [thing for thing in things if any(abs(float(getattr(thing, "born", -1e9)) - when) <= ONE_MOMENT_S for when in together)]
+
+
+#: How many times longer than it is wide a thing is that is a strip (a bar, a rule, an edge redrawn), not anyone.
+A_STRIP = 3.5
+
+
+def _a_strip(thing: Any) -> bool:
+    wide, tall = float(getattr(thing, "w", 0) or 0), float(getattr(thing, "h", 0) or 0)
+    return wide > 0 and tall > 0 and max(wide, tall) >= A_STRIP * min(wide, tall)
 
 
 def _her_shot(thing: Any, shots_at: Collection[float]) -> bool:

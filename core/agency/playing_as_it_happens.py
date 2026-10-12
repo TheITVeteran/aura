@@ -1358,8 +1358,11 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     trying_the_pointer = run.pointer_first and run.pointed < 2 * len(_POINTER_TRIAL) and not hers.follows_pointer
     # A game its words say is played with the pointer is clicked between the keys tried, not after all of them:
     # LIVE 2026-10-08 a stretch ended on its ten key trials before the click that would have started the game.
+    # Not where a click throws at someone on the other side: there each click is a throw, and one at the picture is a
+    # throw wasted (offline 2026-10-12, a third of a food fight's throws went to one spot of the floor).
+    throws_at_someone = rules is not None and rules.a_click_is_a_shot and _how_it_stands(run, at)[0]
     if (run.pointer_first and not trying_the_pointer and not hers.follows_pointer and choosing.mine is None
-            and hasattr(hands, "click") and at - run.last_click >= CLICK_THE_PICTURE_S):
+            and not throws_at_someone and hasattr(hands, "click") and at - run.last_click >= CLICK_THE_PICTURE_S):
         await _click_the_picture(hands, run, moves, at)
         if run.last_click == at:
             return
