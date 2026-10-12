@@ -26,10 +26,15 @@ from core.perception.shapes_that_look_pressable import STANDS_OUT
 
 __all__ = ["Bearings", "Place", "instructions_in", "leads_away", "take_bearings"]
 
-#: A control's words that say it leads away from the thing it is on.
+#: A control's words that say it leads away from the thing it is on. Buying with real money leads away; a bare "BUY" or
+#: "SHOP" on a thing's own picture spends what its play earned (an upgrade, a better launcher) and is part of it:
+#: offline 2026-10-12 a launching game's upgrades, bought with the distance each launch earned, were left alone as a
+#: purchase, and every launch went as far as the first.
 _AWAY = re.compile(
-    r"\b(more games?|other games?|play more|download|install|get the app|buy|purchase|shop|store|subscribe|sign ?up|"
-    r"log ?in|sign ?in|register|share|tweet|facebook|follow us|visit|website|privacy|terms|advert\w*|sponsor\w*)\b",
+    r"\b(more games?|other games?|play more|download|install|get the app|buy (?:now|it now|online|the (?:full|whole) "
+    r"(?:game|version))|full version|purchase|premium|membership|online (?:shop|store)|web ?(?:shop|store)|"
+    r"app store|subscribe|sign ?up|log ?in|sign ?in|register|share|tweet|facebook|follow us|visit|website|privacy|"
+    r"terms|advert\w*|sponsor\w*)\b|[$€£]\s?\d+\.\d\d",
     re.I)
 
 #: A sentence that tells a person what to do: it opens with an act, or says what is to be done, or with what.

@@ -20,6 +20,9 @@ def test_what_tells_her_what_to_do_is_found():
 def test_what_would_take_her_away_is_left_alone_unless_it_is_what_she_was_asked_for():
     assert leads_away("MORE GAMES") and leads_away("Download our app") and not leads_away("START")
     assert not leads_away("Download", "Download the report from this page")
+    # Spending what play earned is part of the thing; real money is not.
+    assert not leads_away("BUY") and not leads_away("SHOP") and not leads_away("Upgrade store")
+    assert leads_away("Buy the full version") and leads_away("Only $4.99") and leads_away("Go premium")
 
 
 @pytest.mark.unit
