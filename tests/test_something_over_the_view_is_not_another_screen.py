@@ -30,7 +30,8 @@ def test_a_blot_over_the_view_that_clears_leaves_the_same_screen_and_its_things(
     for _ in range(20):
         eyes.see(_room(x), at)
         at, x = at + 0.05, x + 2
-    square = next(number for number, thing in eyes.things.items() if thing.colour[0] > 200)
+    square, = [number for number, thing in eyes.things.items()
+               if thing.colour[0] > 200 and thing.colour[1] < 80 and thing.seen == eyes._last_at]
     screens = eyes.screens
     happened = eyes.see(_room(x, blot=True), at)
     assert any(h["what"] == "new screen" for h in happened)

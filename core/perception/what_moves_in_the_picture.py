@@ -31,6 +31,8 @@ from typing import Any
 
 import numpy as np
 
+from core.verify import invariant
+
 __all__ = ["Kind", "Thing", "WhatMoves", "what_happened"]
 
 #: The width pictures are read at. A sprite eight pixels across on a 480-wide
@@ -282,6 +284,11 @@ def _back_in_sight(moves: WhatMoves, thing: Thing, at: float) -> Thing | None:
             del moves.out_of_sight[number]
             continue
         if gone.kind != thing.kind or number in moves.things or number in moves.pending:
+            continue
+        # A shared kind is too broad to carry an identity through absence.
+        ratio = max(gone.size, thing.size) / max(1., min(gone.size, thing.size))
+        aspect = (thing.w / max(1., thing.h)) / (gone.w / max(1., gone.h))
+        if ratio > 4. or max(aspect, 1. / max(1e-6, aspect)) > 2.5 or _look_apart(gone.look, thing.look) > SAME_LOOK:
             continue
         x, y = gone.x + gone.vx * away, gone.y + gone.vy * away
         off = math.hypot(thing.x - x, thing.y - y)
@@ -670,7 +677,8 @@ class WhatMoves:
         if distance > 1.0:
             return math.inf
         looks = _look_apart(thing.look, blob["look"])
-        if looks > 0.8:
+        current_points = motion is not None and motion.before == thing.seen and motion.at == at
+        if looks > (0.8 if current_points else SAME_LOOK):
             return math.inf
         # Equal area and colour do not make a tall object a wide one.
         # Otherwise a control can retain its identity when replaced by text.
@@ -678,7 +686,9 @@ class WhatMoves:
         if max(aspect, 1.0 / max(1e-6, aspect)) > 2.5:
             return math.inf
         ratio = max(blob["w"] * blob["h"], thing.size) / max(1.0, min(blob["w"] * blob["h"], thing.size))
-        if motion is not None and motion.before == thing.seen and motion.at == at and ratio > 4.0:
+        # Offline 2026-10-12 a body became a scenery fragment as its points
+        # disappeared. Missing points cannot relax the size of a valid match.
+        if ratio > 4.0:
             return math.inf
         return distance + looks + 0.3 * math.log(ratio)
 
@@ -1055,3 +1065,18 @@ def _the_same_screen_back(eyes: WhatMoves, small: np.ndarray, at: float) -> bool
     eyes._first, eyes._backdrop = [], backdrop
     eyes.things = {**things, **eyes.things}
     return True
+
+
+@invariant("perception.missing_points_do_not_relax_object_identity", scope="perception",
+           owner="core/perception/what_moves_in_the_picture.py", observational=False)
+def _missing_points_invariant() -> tuple:
+    look = np.array([1., 0.])
+    body = Thing(1, 40., 50., 12., 12., look, (200, 200, 200), np.ones((12, 12, 3)), 0., 1.)
+    moves = WhatMoves()
+    patch = {"x": 40., "y": 50., "w": 60., "h": 60., "look": look}
+    assert not math.isfinite(moves._cost(body, patch, 1.1))
+    patch.update(w=12., h=12., look=np.array([.3, .7]))
+    assert not math.isfinite(moves._cost(body, patch, 1.1))
+    patch["look"] = look
+    assert math.isfinite(moves._cost(body, patch, 1.1))
+    return ()

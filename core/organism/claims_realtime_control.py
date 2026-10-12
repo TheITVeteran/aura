@@ -398,9 +398,13 @@ def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
+    from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("missing_points_do_not_relax_object_identity", "core/perception/what_moves_in_the_picture.py",
+         "tests/test_points_keep_their_observed_motion.py", lambda: _missing_points_invariant() == (),
+         "Missing point support cannot relax measured shape and appearance continuity or lend an identity through a shared kind."),
         ("point_meaning_requires_current_owned_support", "core/perception/what_the_points_on_a_thing_say.py",
          "tests/test_the_points_on_a_thing_say_how_soon_it_arrives.py", lambda: _point_meaning_invariant() == (),
          "Point-derived approach and identity require current owned pixels; absent support and ambiguous or expired owners remain unknown."),

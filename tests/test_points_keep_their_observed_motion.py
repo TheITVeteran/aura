@@ -134,9 +134,10 @@ def test_old_point_motion_does_not_overrule_a_current_detection():
     assert moves._cost(thing, old, 1.1) < float("inf")
 
 
-def test_a_fragment_cannot_turn_into_a_much_larger_patch_in_one_measurement():
+@pytest.mark.parametrize("points", [True, False])
+def test_a_fragment_cannot_turn_into_a_much_larger_patch_in_one_measurement(points):
     moves, thing, old = _association()
-    moves._point_motion = {1: PointMotion(0., 0., .01, 5, 1., 1.1)}
+    moves._point_motion = {1: PointMotion(0., 0., .01, 5, 1., 1.1)} if points else {}
     assert moves._cost(thing, {**old, "w": 60., "h": 60.}, 1.1) == float("inf")
     assert moves._cost(thing, {**old, "w": 15., "h": 14.}, 1.1) < float("inf")
 
@@ -253,3 +254,35 @@ def test_a_proposed_outline_keeps_the_points_that_measured_its_motion():
     assert motion.inside(blob)
     blob["support"][1:11, 1:11] = False
     assert not motion.inside(blob)
+
+
+def test_without_current_points_another_appearance_cannot_inherit_a_track():
+    moves, thing, old = _association()
+    thing.look = np.array([1., 0.])
+    replacement = {**old, "look": np.array([.3, .7])}
+    assert moves._cost(thing, replacement, 1.1) == float("inf")
+    moves._point_motion = {1: PointMotion(0., 0., .01, 5, .9, 1.)}
+    assert moves._cost(thing, replacement, 1.1) == float("inf")
+    assert moves._cost(thing, {**old, "look": np.array([.8, .2])}, 1.1) < float("inf")
+
+
+def test_shared_kind_does_not_bypass_measured_shape_on_return():
+    from core.perception.what_moves_in_the_picture import Thing, _back_in_sight
+
+    moves, _thing, old = _association()
+    body = Thing(1, 40., 50., 12., 12., old["look"], (200, 200, 200), np.ones((12, 12, 3)), 0., 1., kind=0)
+    other = Thing(2, 40., 50., 60., 60., old["look"], (200, 200, 200), np.ones((60, 60, 3)), 1.2, 1.2, kind=0)
+    moves.out_of_sight[1] = (body, 1.)
+    assert _back_in_sight(moves, other, 1.2) is None
+    other.w = other.h = 12.
+    assert _back_in_sight(moves, other, 1.2) is body
+
+
+def test_missing_point_identity_has_a_registered_measurement():
+    from core.organism.claims_realtime_control import install_realtime_control_claims
+    from core.organism.model_validation import ValidationSuite
+
+    suite = ValidationSuite()
+    install_realtime_control_claims(suite)
+    check = next(item for item in suite.tests() if item.name == "missing_points_do_not_relax_object_identity")
+    assert check.predict(None) is True
