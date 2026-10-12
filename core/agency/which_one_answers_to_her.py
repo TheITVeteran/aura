@@ -818,10 +818,11 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
 
     def _decide(self, moves: Any, at: float | None = None) -> None:
         witnesses = []
+        world = _how_the_world_went(self)
         for number, speeds in self._by_thing.items():
             if number not in moves.things or not moves.things[number].moved or number in self.not_mine:
                 continue
-            if self._outlines.a_gauge(number):
+            if self._outlines.a_gauge(number) or _goes_with_the_world(speeds, world):
                 continue
             f, widest = speeds.ratio()
             trials: dict[str, int] = defaultdict(int)
@@ -1174,6 +1175,22 @@ def _how_the_world_went(hers: WhichIsHers) -> dict[tuple[str, float], tuple[floa
         if together >= TOGETHER * len(seen):
             world[press] = (wx, wy)
     return world
+
+
+def _goes_with_the_world(speeds: Any, world: dict[tuple[str, float], tuple[float, float]]) -> bool:
+    """Whether a thing went as the world went in most of the presses the world went as one: scenery the view slides past,
+    which answers her keys as all of the world does, and is not hers. Offline 2026-10-12 a samurai held his place in the
+    middle of a scrolling world while the platforms went by against each key, and a platform was taken for her."""
+    presses = [(press, _mean(values)) for press, values in speeds.by_press.items() if press in world and len(values) >= 2]
+    if len(presses) < WITH_THE_WORLD_AT_LEAST:
+        return False
+    alike = sum(math.hypot(vx - world[press][0], vy - world[press][1]) < 0.35 * math.hypot(*world[press])
+                for press, (vx, vy) in presses)
+    return alike >= TOGETHER * len(presses)
+
+
+#: How many presses in which the world went as one a thing must be seen in to be told for scenery by them.
+WITH_THE_WORLD_AT_LEAST = 2
 
 
 def last_moved(hers: WhichIsHers) -> float:

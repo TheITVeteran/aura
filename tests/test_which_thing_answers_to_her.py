@@ -430,3 +430,28 @@ def test_of_two_things_that_go_with_the_pointer_the_body_is_hers_and_a_speck_is_
                                moved=True, size=480.0)
         hers._what_follows_the_pointer(SimpleNamespace(things={1: speck, 2: boat}, shape=(300, 400)), at)
     assert hers.follows_pointer and hers.number == 2
+
+
+def test_in_a_world_that_scrolls_the_scenery_going_by_against_her_keys_is_not_hers():
+    """Offline 2026-10-12 a samurai held his place in the middle of a scrolling world while the platforms went by against
+    each key, and a platform was taken for her ("I'm the brown platform at the middle, moved by right")."""
+    hero = _Thing(1, 0)
+    scenery = [_Thing(n, 2) for n in range(2, 7)]
+    for n, thing in enumerate(scenery):
+        thing.x, thing.w, thing.h = 20.0 + 15 * n, 12.0, 4.0
+    moves = _Moves([hero, *scenery])
+    hers = WhichIsHers()
+    at = 0.0
+    for step in range(240):
+        key = ("right", "", "left", "", "up", "")[(step // 10) % 6]
+        hers.holding(key, at, trying=True)
+        at += 0.03
+        slide = {"right": -90.0, "left": 90.0}.get(key, 0.0)          # the view follows her: the world goes against the key
+        for depth, thing in zip((1.25, 1.0, 0.95, 0.9, 1.05), scenery, strict=True):     # each layer at its own pace
+            thing.vx, thing.vy = slide * depth, 0.0
+            thing.x += slide * depth * 0.03
+        hero.vx, hero.vy = 0.0, 0.0                                # she holds her place in the picture
+        for thing in moves.things.values():
+            thing.seen = at
+        hers.saw(moves, [], at)
+    assert hers.number not in {thing.number for thing in scenery}
