@@ -135,3 +135,20 @@ def test_things_side_by_side_with_a_little_between_are_told_apart_by_a_finer_swe
     places = asyncio.run(where_the_pointer_turns(_Page()))
     found = {(round(x * 6 - 0.5), round((y - 0.12) * 3)) for x, y in places}
     assert len(places) >= 15 and len(found) >= 15, places
+
+
+def test_a_thing_for_making_has_no_board_looked_for_on_it():
+    """Offline 2026-10-12 an alien maker's save screen was taken for three in a row, and three minutes went on searching
+    moves on it, none made."""
+    from types import SimpleNamespace
+
+    from core.cognition.a_guide_to_a_place import SCREEN, THE_GUIDE, Guide
+    from core.skills.screen_pursuit_as_it_happens import _played_neither_by_turns_nor_by_pieces
+
+    maker = Guide(place="an alien maker")
+    maker.take_in(SCREEN, "Create, customize and name your own alien hero!")
+    token = THE_GUIDE.set(maker)
+    try:
+        assert _played_neither_by_turns_nor_by_pieces(SimpleNamespace(words=["SAVE TO THE OMNITRIX"], keep={}))
+    finally:
+        THE_GUIDE.reset(token)

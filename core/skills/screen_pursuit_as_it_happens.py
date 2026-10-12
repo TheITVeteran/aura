@@ -63,7 +63,19 @@ def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
     from core.agency.situations_she_knows import situations_in
 
     said = " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
-    return any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said))
+    if any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said)):
+        return True
+    # Nor in a thing for making, as she understands the place: offline 2026-10-12 an alien maker's save screen was taken
+    # for three in a row, and three minutes went on searching moves on it, none made.
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import MAKES, understood
+
+    how = understood(guide, also=said)
+    return how.me.value == MAKES or how.counts.value == "make"
 
 
 def _keys_of_play(guide: Any, read: str) -> list[str]:
