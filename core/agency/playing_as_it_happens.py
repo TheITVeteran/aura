@@ -359,6 +359,7 @@ class _Run:
     reach: Any = None
     #: The tells of each kind of thing, learned from what followed each change in it (core/agency/warning_signs.py).
     signs: Any = None
+    settings: Any = None
     #: Each choice she makes, with its reason, craft, what it counts on and what it came to (a_choice_and_its_reasons.py).
     choices: Any = None
     #: What the place does to her whatever she does (core/agency/what_the_place_does_to_her.py), and the thing she is
@@ -1153,6 +1154,9 @@ async def _play_as_it_happens(
     from core.agency.warning_signs import WarningSigns, read_the_signs
 
     run.signs, run.bars = keep.get("signs") or WarningSigns(), keep.get("bars")  # a person knows her bar again
+    from core.agency.settings_that_paid import after_the_stretch, for_this_stretch
+
+    run.settings = for_this_stretch(keep)  # how often to throw, to duck: by what has paid (settings_that_paid.py)
     from core.agency.a_choice_and_its_reasons import ChoicesMade
 
     run.choices = keep.get("choices") or ChoicesMade()
@@ -1313,7 +1317,7 @@ async def _play_as_it_happens(
         keep["keys_never_absent"] = run.shown.done()
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
-                 "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "bars": run.bars, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
+                 "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "bars": run.bars, "settings": run.settings, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
                  "longest_still": run.longest_still,
                  "said_once": run.said, "leading": run.leading, "choices": run.choices, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
@@ -1321,6 +1325,7 @@ async def _play_as_it_happens(
                  "sounds_heard": run.sounds, "allies": run.allies,
                  "supply": run.supply, "pushing": run.pushing})
     result = _what_it_came_to(run, moves, hers, meeting, ended, began)
+    after_the_stretch(run.settings, run.gains, run.losses)
     result["runtime_checks"] = {"required_edges": sorted(motion_checks.required_edges),
                                 "provenance": motion_checks.provenance, "violations": motion_checks.violations,
                                 "unconfirmed": motion_checks.unconfirmed}
@@ -1735,8 +1740,11 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         hers.tapped(fire, time.monotonic(), began=began)
         run.last_trigger_began, run.taps = began, run.taps + 1
         return
-    if away and at - run.last_trigger_began >= GOT_OUT_OF_THE_WAY_EVERY_S and (
-            comes_at_her(moves.things.values()) or getattr(run, "signs", None) is not None and run.signs.just_shown(at)):
+    from core.agency.settings_that_paid import setting
+    from core.agency.thrown_at_what_shows import ARRIVES_WITHIN_S
+
+    if away and at - run.last_trigger_began >= setting(run, "duck every", GOT_OUT_OF_THE_WAY_EVERY_S) and (
+            comes_at_her(moves.things.values(), setting(run, "arriving within", ARRIVES_WITHIN_S)) or getattr(run, "signs", None) is not None and run.signs.just_shown(at)):
         # With no body of hers in the place, what comes at her grows, or someone shows what comes before harm: the key
         # for getting out of the way is pressed.
         run.last_trigger_began = time.monotonic()
@@ -1745,7 +1753,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     against = _how_it_stands(run, at)[0]
     # Against someone, as fast as the place takes throws: offline 2026-10-12 a food fight was lost each round throwing
     # every 0.6 s at the opponent, and won throwing at him five times a second, the place taking what it would.
-    every = THROW_AT_SOMEONE_S if against else THROW_WHILE_FINDING_S
+    every = setting(run, "throw every", THROW_AT_SOMEONE_S) if against else THROW_WHILE_FINDING_S
     if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < every:
         return
     takes = how_long_throws_take(run, moves, at)
