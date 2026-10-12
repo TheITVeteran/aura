@@ -398,7 +398,9 @@ def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.agency.finding_her_another_way import _current_body_motion_invariant
     from core.agency.what_a_press_does import _settled_trial_invariant, _unchanged_input_invariant
+    from core.agency.what_follows_the_pointer import _pointer_body_continuity_invariant
     from core.agency.which_one_answers_to_her import _motion_segments_invariant
+    from core.perception.activity_in_the_picture import _picture_activity_invariant
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
@@ -408,6 +410,12 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("pointer_control_needs_one_continuing_body", "core/agency/what_follows_the_pointer.py",
+         "tests/test_pointer_control_belongs_to_one_body.py", lambda: _pointer_body_continuity_invariant() == (),
+         "Pointer-control sightings keep the same entity and birth; separate objects, capture gaps and unmeasured movement cannot share a trail."),
+        ("visible_activity_does_not_need_certified_body_velocity", "core/perception/activity_in_the_picture.py",
+         "tests/test_visible_activity_is_not_body_velocity.py", lambda: _picture_activity_invariant() == (),
+         "Visible activity prevents a still-screen handoff without supplying body translation or control authority; capture gaps cannot establish continuous quiet."),
         ("old_control_trials_need_current_body_motion", "core/agency/which_one_answers_to_her.py",
          "tests/test_entity_press_trajectories.py", lambda: _current_body_motion_invariant() == (),
          "Historical control receipts cannot assign a new body identity while its current pixel movement is unavailable, contradicted or stale."),

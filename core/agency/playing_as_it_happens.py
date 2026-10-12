@@ -794,12 +794,17 @@ def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float
         run.new_screen_at = -math.inf  # something over the view cleared: the screen did not change
     # Motion seen in this picture, not a thing carried on along its last speed
     # because it was not seen.
-    if any(thing.seen == at for thing in moves.moving(faster_than=8.0)):
+    activity = getattr(moves, 'activity', None)
+    if (activity is not None and activity.at == at and activity.changed is True
+            or any(thing.seen == at for thing in moves.moving(faster_than=8.0))):
         if run.first_moving < at:
             run.longest_still = max(run.longest_still, at - run.last_moving)
         run.last_moving = at
         run.first_moving = min(run.first_moving, at)
     still = at - run.last_moving
+    if activity is not None:
+        quiet = activity.quiet_for(at)
+        still = min(still, quiet) if quiet is not None else 0.
     # A world that waits for her is still until she moves, and one played in time goes still between what comes: its
     # stillness ends a stretch only once her ways have had time, and never sooner than half again the longest quiet it
     # has kept while played. Offline 2026-10-11 a food fight whose opponents rose from behind the tables now and then

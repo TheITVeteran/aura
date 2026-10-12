@@ -557,9 +557,9 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self._pressed: dict[str, int] = defaultdict(int)
         self.makes: dict[str, Makes] = {}
         self._pointer: list[tuple[float, float, float]] = []
-        self._followed: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
+        self._followed: dict[tuple[int, float | None], list[tuple[float, float, float]]] = defaultdict(list)
         self._looked = 0
-        self._sighted: int | None = None
+        self._sighted: tuple[int, float | None] | None = None
         self.follows_pointer = False
         self._new_screen_at = -math.inf
         #: The axes along which it follows: a paddle under the pointer may follow only across.

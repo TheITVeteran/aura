@@ -417,6 +417,9 @@ class WhatMoves:
         #: The last few pictures that were drawn anew, with when: the view is measured against the oldest.
         self._drawn: deque = deque(maxlen=3)
         self._now = -math.inf
+        from core.perception.activity_in_the_picture import PictureActivity
+
+        self.activity = PictureActivity()
 
     # -- the picture -------------------------------------------------------
 
@@ -885,6 +888,7 @@ class WhatMoves:
         self.shape = small.shape[:2]
         happened: list[dict[str, Any]] = []
         self._now = at
+        self.activity.saw(small, at)
         if self._with_the_view(small):
             return happened
         if _the_same_screen_back(self, small, at):
