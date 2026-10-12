@@ -107,6 +107,23 @@ class _ExecutingDelivery:
 _executing_deliveries: dict[DeliveryIdentity, _ExecutingDelivery] = {}
 
 
+def cancel_local_delivery(identity: DeliveryIdentity) -> dict[str, Any] | None:
+    """Stop this process's authenticated execution before waiting on receipt IO.
+
+    The admission already contains the durable principal/session binding. This
+    acknowledgement does not claim that cancellation reached a terminal state.
+    """
+    owner = _executing_deliveries.get(identity)
+    if owner is None or owner.task.done():
+        return None
+    record = owner.admission.record
+    if record.identity != identity or record.terminal:
+        return None
+    disposition = request_delivery_cancellation(record)
+    return {**record.public_status(include_result=False), "cancellation_status": disposition,
+            "terminal": False, "delivery_status": "pending"}
+
+
 def request_delivery_cancellation(record: DeliveryRecord) -> str:
     """Cancel only the current execution of the authenticated journal record."""
     if record.terminal:

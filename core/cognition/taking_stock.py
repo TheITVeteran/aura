@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -336,18 +337,28 @@ def what_to_take(heard: Sequence[Heard], situation: Situation, questions: Sequen
 async def take_stock(situation: Situation, sources: dict[str, Source], *, seconds: float) -> Counsel:
     """Ask every source the situation's questions at once, each within ``seconds``, and keep what is worth going by."""
     began = time.monotonic()
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError("taking stock requires a finite nonnegative time budget")
     questions = questions_for(situation)
+
+    from core.cognition.guidance_lifetime import create_guidance_task, guidance_work
 
     async def ask(name: str, source: Source) -> list[Heard]:
         try:
-            return list(await asyncio.wait_for(source(questions, seconds), timeout=seconds) or [])
+            return list(await source(questions, seconds) or [])
         except TimeoutError:
             logger.info("taking stock: %s did not answer in %.0fs", name, seconds)
         except Exception as why:  # noqa: BLE001 - a source that fails has said nothing
             logger.info("taking stock: %s could not be asked: %s", name, str(why)[:160])
         return []
 
-    answers = await asyncio.gather(*(ask(name, source) for name, source in sources.items()))
+    async with guidance_work():
+        tasks = [create_guidance_task(ask(name, source)) for name, source in sources.items()]
+        done, pending = await asyncio.wait(tasks, timeout=seconds) if tasks else (set(), set())
+        answers = [task.result() for task in tasks if task in done and not task.cancelled()]
+        for name, task in zip(sources, tasks, strict=True):
+            if task in pending:
+                logger.info("taking stock: %s did not answer in %.0fs", name, seconds)
     heard = [h for one in answers for h in one]
     kept = what_to_take(heard, situation, questions)
     counsel = Counsel(tuple(questions), tuple(kept), tuple(sources), time.monotonic() - began)

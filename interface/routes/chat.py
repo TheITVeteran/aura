@@ -6781,6 +6781,9 @@ async def api_chat_delivery_cancel(
             session_id=session_key,
             idempotency_key=idempotency_key,
         )
+        local_ack = _chat_delivery.cancel_local_delivery(identity)
+        if local_ack is not None:
+            return JSONResponse(local_ack, status_code=202, headers={"Cache-Control": "no-store"})
         journal = await asyncio.to_thread(get_chat_delivery_journal)
         record = await journal.get(identity)
     except ValueError as exc:
