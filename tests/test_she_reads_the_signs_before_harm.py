@@ -170,9 +170,23 @@ def test_with_no_body_of_hers_and_a_key_to_duck_she_learns_the_tell_and_ducks_as
         for _ in range(25):
             read_the_signs(signs, across(False), None, losses, at, said.append, out_of_the_way=True)
             at += 0.1
-    assert signs.is_a_tell(3, STOPS) and said
+    assert signs.is_a_tell(3, STOPS) and (3, STOPS) in signs.said
     for _ in range(8):
         read_the_signs(signs, across(False), None, losses, at, said.append, out_of_the_way=True)
         at += 0.1
     read_the_signs(signs, across(True), None, losses, at, said.append, out_of_the_way=True)
     assert signs.just_shown(at + 0.1) and not signs.just_shown(at + 0.15)       # once for each tell
+
+
+def test_a_tell_of_things_she_cannot_name_is_learned_and_not_said():
+    from types import SimpleNamespace
+
+    from core.agency.warning_signs import read_the_signs
+
+    signs = WarningSigns()
+    signs._by_chance = lambda: 0.1
+    signs.counts[(3, STOPS)] = (5, 0)
+    said: list[str] = []
+    moves = SimpleNamespace(kinds=[], things={})
+    read_the_signs(signs, moves, ME, [], 10.0, said.append)
+    assert said == [] and (3, STOPS) in signs.said and signs.is_a_tell(3, STOPS)

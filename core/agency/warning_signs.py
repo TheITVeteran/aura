@@ -242,7 +242,10 @@ def read_the_signs(signs: WarningSigns | None, moves: Any, mine: Any, verdicts: 
         return name if name[:1].isupper() else f"the {plural(name)}"
 
     for line in signs.news(name_of, at):
-        say_once(line)
+        # A tell of things she can only call "the others" is learned and acted on, and kept to herself: a watcher hears
+        # nothing in "when the others speed up, harm follows" (offline 2026-10-12, in a dozen games).
+        if not line.startswith(("When the others ", "When the other ")):
+            say_once(line)
 
 
 def _as_said(sign: str) -> str:
