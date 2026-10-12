@@ -625,7 +625,7 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
-        from core.agency.the_controls_a_game_names import the_pointer_only_clicks
+        from core.agency.the_controls_a_game_names import the_pointer_only_clicks, tried_in_turn
         from core.cognition.a_guide_to_a_place import THE_GUIDE as _THE_GUIDE
 
         # Everything the place has said of how it is played, not only its last screens: its instructions as read, kept
@@ -744,6 +744,7 @@ class PlayingAsItHappens:
             keys = [*keys, "left", "right", "up", "down"]
         pointer_first = (pointer_first or bool(self.keep.get("pointer_named"))) and not acts
         self.keep["named_keys"], self.keep["pointer_named"] = keys, pointer_first
+        keys = tried_in_turn(keys, " ".join(self.words[-2:]))
         logger.info("it moves on its own: playing it as it happens with %s%s", keys, " and the pointer" if pointer_first else "")
         # The person's ask, apart from the screen's words: what she plays for is theirs first.
         self.keep["asked"] = self.goal

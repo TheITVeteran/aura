@@ -97,7 +97,7 @@ from core.agency.whether_it_goes_by_itself import it_goes_while_held as it_goes_
 from core.agency.whether_it_goes_by_itself import (
     the_world_moves_on_its_own as the_world_moves_on_its_own,
 )
-from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers
+from core.agency.which_one_answers_to_her import RESPONSE_S, WAYS, WhichIsHers, last_moved
 from core.agency.which_one_answers_to_her import ways_carried as ways_carried
 from core.agency.who_is_who import FRIENDLY, IN_HER_WAY
 from core.agency.who_is_who import NEVER_SHOT as NEVER_SHOT
@@ -170,6 +170,8 @@ class _Run:
     countering: str = ""
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
+    #: When her thing was last seen to go, and how many presses of the keys that move it she had made by then.
+    answered: tuple[float, int] = (-math.inf, 0)
     last_moving: float = 0.0
     #: Whether the place's words put her in a situation played in time, and the longest it has gone still between
     #: movements while played: its own rhythm, against which a stillness is or is not an ending.
@@ -772,13 +774,33 @@ NOTHING_ANSWERS_S = 10.0
 TOUCHING_TO_NO_END_S = 20.0
 
 
+#: How many presses of the keys that moved her thing may go by with it not going, and for how long at least, before
+#: it is taken to answer to nothing now.
+UNANSWERED_PRESSES = 6
+UNANSWERED_FOR_S = 8.0
+
+
+def _answers_now(run: _Run, hers: WhichIsHers, moving: dict[str, Any], at: float) -> bool:
+    """Whether the thing her keys moved still goes under them. What answered once and stands still under press after
+    press answers to nothing now: offline 2026-10-11 a lander's crash screen kept the lander drawn on it, the keys
+    that had flown it were known, and she held them at the picture for three minutes."""
+    moved = last_moved(hers)
+    downs = sum(run.input_key_downs[key] for key in moving)
+    # Her thing found afresh is counted from then: what the one before it last did says nothing of it.
+    if moved != run.answered[0]:
+        run.answered = (moved, downs)
+    since, downs_then = run.answered
+    return at - max(since, run.began) <= UNANSWERED_FOR_S or downs - downs_then < UNANSWERED_PRESSES
+
+
 def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at: float) -> str:
     # Allow two complete experiments and their intervening wait before
     # declaring that no control answers. The run's own deadline still bounds it.
     experiment_time = 8 * len(run.keys) * TRY_A_KEY_S + RECHECK_CONTROLS_S if run.keys else 0.0
     # A thing her eyes took for hers that nothing of hers has ever moved answers to nothing: LIVE 2026-10-11 the boy on
     # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
-    answers = hers.kind is not None and (hers.follows_pointer or bool(hers.keys_that_move_her(run.keys)))
+    moving = hers.keys_that_move_her(run.keys) if hers.kind is not None else {}
+    answers = hers.kind is not None and (hers.follows_pointer or (bool(moving) and _answers_now(run, hers, moving, at)))
     if at - run.began < NOTHING_ANSWERS_S + experiment_time or answers:
         return ""
     if meeting.verdicts:

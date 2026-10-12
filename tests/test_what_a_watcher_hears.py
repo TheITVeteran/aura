@@ -36,6 +36,14 @@ def test_a_near_miss_is_mended_and_a_word_not_made_out_left_out():
 
 
 @pytest.mark.unit
+def test_the_names_of_keys_are_words_of_the_place():
+    """Offline 2026-10-11 "USE WASD TO MOVE SPACE TO STOMP" was said as "USE … TO MOVE SPACE TO STOMP"."""
+    watcher = WhatAWatcherHears()
+    said = watcher.heard("It says: USE WASD TO MOVE SPACE TO STOMP, CTRL OR F2 TO DUCK", 0.0)
+    assert said is not None and "WASD" in said and "CTRL" in said and "F2" in said
+
+
+@pytest.mark.unit
 def test_names_she_was_given_are_words():
     watcher = WhatAWatcherHears()
     assert watcher.heard('Clicking "Bloo" — to see what it does', 0.0) is None

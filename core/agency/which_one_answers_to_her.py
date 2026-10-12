@@ -44,7 +44,7 @@ from core.verify import invariant
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Makes", "WhichIsHers", "ways_carried"]
+__all__ = ["Makes", "WhichIsHers", "last_moved", "ways_carried"]
 
 #: How long after a key is pressed its effect shows in a picture: one frame of
 #: the game and one of the picture being taken.
@@ -1165,3 +1165,8 @@ def _how_the_world_went(hers: WhichIsHers) -> dict[tuple[str, float], tuple[floa
         if together >= TOGETHER * len(seen):
             world[press] = (wx, wy)
     return world
+
+
+def last_moved(hers: WhichIsHers) -> float:
+    """When her thing was last seen to go, -inf where she has none."""
+    return hers._hers.moved_at if hers.kind is not None else -math.inf

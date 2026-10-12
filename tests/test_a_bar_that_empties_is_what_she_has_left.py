@@ -136,6 +136,36 @@ def test_a_thing_her_eyes_took_for_hers_that_nothing_of_hers_moves_answers_to_no
     assert not _nothing_answers(run, hers, meeting, 40)
 
 
+def test_a_thing_that_answered_once_and_stands_still_under_press_after_press_answers_to_nothing_now():
+    """Offline 2026-10-11 a lander's crash screen kept the lander drawn on it; the keys that had flown it were known, and
+    she held them at the picture for three minutes."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import UNANSWERED_PRESSES, _nothing_answers, _Run
+
+    class Hers:
+        kind, follows_pointer = 3, False
+
+        def __init__(self):
+            self._hers = SimpleNamespace(moved_at=39.0)
+
+        def keys_that_move_her(self, keys):
+            return {"up": (0.0, -20.0), "left": (-20.0, 0.0)}
+
+    run = _Run(keys=["up", "left"], began=0.0)
+    meeting = SimpleNamespace(verdicts=[], evidence={})
+    hers = Hers()
+    run.input_key_downs.update({"up": 40, "left": 40})
+    assert not _nothing_answers(run, hers, meeting, 40.0)                # it went a moment ago
+    run.input_key_downs.update({"up": UNANSWERED_PRESSES})
+    assert not _nothing_answers(run, hers, meeting, 45.0)                # pressed, but not long since it went
+    assert _nothing_answers(run, hers, meeting, 60.0) == "nothing here answers to me while it moves"
+    hers._hers.moved_at = 59.0                                           # it goes again under her keys
+    assert not _nothing_answers(run, hers, meeting, 60.0)
+    run.input_key_downs.update({"space": 50})                            # keys that never moved it say nothing
+    assert not _nothing_answers(run, hers, meeting, 75.0)
+
+
 def test_a_gauge_that_fills_from_one_end_is_not_her():
     """LIVE 2026-10-11 a shooter's super-shot bar filled while space was held and emptied as the shot went; it answered
     to space and x, and she took it for herself ("I'm the white bar at the top left, moved by space and x"). A body goes

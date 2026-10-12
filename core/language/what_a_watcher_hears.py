@@ -148,6 +148,11 @@ def _seen_before(plain: str, seen: frozenset[str]) -> str | None:
     return near[0] if len(near) == 1 else None
 
 
+#: The names of keys, as instructions write them: words of the place's controls, not of the language. LIVE-like
+#: 2026-10-11 "USE WASD TO MOVE" was said as "USE … TO MOVE".
+_KEY_NAMES = frozenset("wasd ijkl esdf zqsd arrows ctrl shift esc escape enter tab alt spacebar backspace pgup pgdn".split())
+
+
 def _a_word(token: str, names: frozenset[str]) -> str | None:
     """The word ``token`` is: a name she was given, a short word of the language, or a word one misread letter away.
     A word joined by hyphens ("late-night") is a word where each of its parts is."""
@@ -156,7 +161,7 @@ def _a_word(token: str, names: frozenset[str]) -> str | None:
         read = [_a_word(part, names) for part in parts]
         return "-".join(read) if all(read) else None  # type: ignore[arg-type]
     plain = _plain(token.replace("’", "'").split("'")[0])
-    if plain in names:
+    if plain in names or plain in _KEY_NAMES or re.fullmatch(r"f(?:[1-9]|1[0-2])", plain):
         return plain
     if len(plain) <= 2:
         return plain if plain in _SHORT else None

@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 from core.agency.which_one_answers_to_her import WAYS
 
-__all__ = ["a_legend_of_controls", "controls_named_in", "the_pointer_only_clicks", "without_a_legend"]
+__all__ = ["a_legend_of_controls", "controls_named_in", "the_pointer_only_clicks", "tried_in_turn", "without_a_legend"]
 
 #: Words that say a game is played with the pointer.
 _POINTER_WORDS = ("mouse", "cursor", "pointer", "click", "drag", "aim", "trackpad")
@@ -178,6 +178,19 @@ def controls_named_in(text: str, *, keys_without_words: Sequence[str] = ("up", "
     if not keys:
         keys = list(keys_without_words)
     return keys, pointer
+
+
+#: The keys that move a body by custom.
+_MOVING = ("up", "down", "left", "right", "w", "a", "s", "d")
+
+
+def tried_in_turn(keys: Sequence[str], said_now: str) -> list[str]:
+    """``keys`` in the order they are tried for what moves her: keys for moving that the screen in front of her names
+    first, then other keys for moving, then the rest (keys named for an act: space to stomp, X to fire). Offline
+    2026-10-11 a bowling game's "USE WASD TO MOVE" was tried after space and four arrows it did not use, and its
+    two-heart player was out before her keys were known."""
+    named_now, _ = controls_named_in(said_now, keys_without_words=(), during_play=True)
+    return sorted(keys, key=lambda key: 0 if key in named_now and key in _MOVING else 1 if key in _MOVING else 2)
 
 
 #: What a control is called by what it does, as legends name them beside pictures of keys, and the key that by custom
