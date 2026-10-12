@@ -210,3 +210,14 @@ def test_where_the_pointer_turns_into_a_hand_beside_the_box_is_what_sends_it(mon
     hands = _Hands()
     asyncio.run(typing._sent_by_the_button_beside(look, hands, (0.64, 0.36), "return"))
     assert hands.clicked == [(0.62, 0.5)]
+
+
+def test_an_answer_is_told_by_words_of_the_language_not_by_misread_lettering():
+    """Offline 2026-10-11 the machine answered "RABBLE ROUSER"; the words that asked had been read with lettering
+    misread among them ("ETRYGOAIN", "GOUR"), and the answer was taken for the asking screen gone."""
+    from core.skills.screen_pursuit_as_it_happens import _answered_since_typed
+
+    machine = {"typed": "Aura", "typed_kind": "a name", "typed_on": "FYOUR NAME HERE ETRYGOAIN GOUR SECRET DENTIY",
+               "typed_asked_by": "YOUR NAME HERE ETRYGOAIN GOUR SECRET DENTIY"}
+    assert _answered_since_typed(machine, {"text": "NAME HERE … RABBLE ROUSER YOUR"})
+    assert not _answered_since_typed(machine, {"text": "FYOUR NAME HERE AurA *TRYGOAIN GOUR SECRETJDENTLFY"})

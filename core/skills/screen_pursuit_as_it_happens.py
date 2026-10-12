@@ -113,7 +113,7 @@ def _what_play_showed_of_how_it_works(stretch: dict[str, Any]) -> None:
 
 
 #: The fewest words of the language, new on the screen that asked, for what she typed to have been answered.
-NEW_WORDS_AN_ANSWER = 2
+NEW_WORDS_AN_ANSWER = 1
 
 
 def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> str:
@@ -129,13 +129,15 @@ def _answered_since_typed(keep: dict[str, Any], observation: dict[str, Any]) -> 
     typed, before, asked_by = keep.get("typed"), keep.get("typed_on"), str(keep.get("typed_asked_by") or "")
     if not typed or before is None:
         return ""
+    def words(text: str) -> set[str]:
+        # Words of the language only: what a screen's lettering is misread as ("ETRYGOAIN") is neither asked nor new.
+        return {w.lower() for w in re.findall(r"[A-Za-z]{4,}", text) if the_word(w) is not None}
+
     now = " ".join(str(observation.get("text") or "").split())
-    words_now = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", now)}
-    asking = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", asked_by)}
+    words_now, asking = words(now), words(asked_by)
     if not asking or len(asking & words_now) < 0.5 * len(asking):
         return ""
-    seen = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", f"{before} {typed}")}
-    new = {w for w in words_now - seen if the_word(w) is not None}
+    new = words_now - words(f"{before} {typed}")
     return now if len(new) >= NEW_WORDS_AN_ANSWER else ""
 
 
