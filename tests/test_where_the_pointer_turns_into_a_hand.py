@@ -152,3 +152,16 @@ def test_a_thing_for_making_has_no_board_looked_for_on_it():
         assert _played_neither_by_turns_nor_by_pieces(SimpleNamespace(words=["SAVE TO THE OMNITRIX"], keep={}))
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_what_the_pointer_turns_into_a_hand_over_is_offered_though_nothing_else_made_it_clickable():
+    """Offline 2026-10-12 a title's "start", small letters the pointer turned into a hand over, was read and never
+    offered, and its title was played with keys for four minutes."""
+    from core.agency.what_i_can_do_here import a_click_on
+    from core.skills.screen_pursuit_looking import _what_answers_the_pointer
+
+    observation = {"layout": [{"text": "start", "center_x": 0.75, "center_y": 0.83, "answers_the_pointer": True},
+                              {"text": "Candy Machine", "center_x": 0.4, "center_y": 0.5}]}
+    offered = _what_answers_the_pointer(observation, ("v", "space"))
+    assert a_click_on("start") in offered and a_click_on("Candy Machine") not in offered
+    assert _what_answers_the_pointer(observation, (a_click_on("start"),)).count(a_click_on("start")) == 1

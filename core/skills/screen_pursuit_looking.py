@@ -901,6 +901,22 @@ def _what_paused_it(observation: dict[str, Any], clickable: Any, can_do: Any, pa
     return (*clickable, can_do.paused_by)
 
 
+def _what_answers_the_pointer(observation: dict[str, Any], clickable: Any) -> Any:
+    """What the screen has that the pointer turns into a hand over, among what she can click, though nothing else made
+    it so (core/perception/where_the_pointer_turns.py): offline 2026-10-12 a title's "start", small letters the pointer
+    turned into a hand over, was read and never offered, and its title was played with keys for four minutes."""
+    from core.agency.what_i_can_do_here import a_click_on
+
+    have = {_label_of(move) for move in clickable}
+    more = []
+    for region in [*(observation.get("layout") or ()), *(observation.get("shapes") or ())]:
+        text = " ".join(str(region.get("text") or "").split()) if isinstance(region, dict) else ""
+        if text and region.get("answers_the_pointer") and text not in have:
+            have.add(text)
+            more.append(a_click_on(text))
+    return (*clickable, *more)
+
+
 def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: Any, narrate: bool) -> None:
     """What she can click on the screen now, and what it says that she has not yet read.
 
@@ -921,6 +937,7 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
     guide = THE_GUIDE.get()
+    clickable = _what_answers_the_pointer(observation, clickable)
     clickable = _where_the_way_on_was(observation, clickable, says, paced)
     clickable = _what_paused_it(observation, clickable, can_do, paced)
     clickable = _the_place_its_words_name(observation, clickable, can_do)
