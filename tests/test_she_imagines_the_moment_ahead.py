@@ -92,3 +92,19 @@ def test_a_body_carried_on_by_its_own_going_is_brought_onto_its_pad_slowly():
     choosing.mine.y, choosing.mine.vy = 200.0, 120.0     # falling onto the pad, too fast to land on it
     imagined = best_plan(choosing, "", (None, None))
     assert imagined.decides and imagined.plan.first == "up" and imagined.costs == 0
+
+
+def test_what_cannot_come_within_her_reach_is_left_out_before_she_plans():
+    """Construal (Ho et al. 2022): a thing that cannot reach where she could be in the time imagined cannot change her
+    route; a fast one from far off that can is imagined, a near one going away is not."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from core.agency.imagining_ahead import STEP_S, _soonest_within_reach
+
+    scene = SimpleNamespace(times=np.arange(1, 37) * STEP_S, start=(100.0, 100.0), size=(10.0, 10.0))
+    small = SimpleNamespace(w=6.0, h=6.0)
+    coming = _soonest_within_reach(lambda t: (400.0 - 300.0 * t, 100.0), scene, 50.0, small)       # 300 px off, fast
+    going = _soonest_within_reach(lambda t: (160.0 + 300.0 * t, 100.0), scene, 50.0, small)        # 60 px off, leaving
+    assert coming is not None and going is None

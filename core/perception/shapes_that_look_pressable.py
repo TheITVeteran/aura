@@ -43,6 +43,11 @@ APART_BY = 40.0
 APART_TIMES = 2.0
 ALIKE_AT_LEAST = 3
 
+#: Where the bottom right corner begins, as shares of the picture across and down.
+CORNER_FROM = (0.85, 0.8)
+#: How strong a colour is to be a button's own, as its saturation.
+STRONG_COLOUR = 0.55
+
 #: What the one that stands apart is called, before where it is.
 STANDS_OUT = "the one that stands out at"
 
@@ -68,7 +73,7 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
     small = pixels[::step, ::step, :3]
     high, wide = small.shape[:2]
     found: dict[tuple[int, int, int, int], tuple[float, np.ndarray]] = {}
-    for mask in (_standing_out(small), _outlined(small)):
+    for mask in (_standing_out(small), _outlined(small), _strongly_coloured(small)):
         for box, filled, colour in _button_like(mask, small):
             if not any(_same_place(box, other) for other in found):
                 found[box] = (filled, colour)
@@ -84,7 +89,9 @@ def pressable_shapes(picture: Any, *, apart_from: Any = (), at_most: int = AT_MO
         if under and (not stands or any(re.search(r"[A-Za-z]{2,}", str(region.get("text") or "")) for region in under)):
             continue
         name = STANDS_OUT if stands else "the shape at"
-        shapes.append((filled + (1.0 if stands else 0.0), {
+        # Where a page of a story puts its way to the next one, the bottom right corner, is offered among the first.
+        corner = 0.5 if cx >= CORNER_FROM[0] and cy >= CORNER_FROM[1] else 0.0
+        shapes.append((filled + (1.0 if stands else 0.0) + corner, {
             "text": f"{name} {int(round(cx * 20)) * 5}% across, {int(round(cy * 20)) * 5}% down",
             "x": round(left / wide, 5), "y": round(top / high, 5),
             "width": round(w / wide, 5), "height": round(h / high, 5),
@@ -130,6 +137,16 @@ def _standing_out(small: np.ndarray) -> np.ndarray:
     around = ndimage.median_filter(gray, size=max(9, small.shape[1] // 12))
     mask = ndimage.binary_closing(np.abs(gray - around) > 28.0, iterations=2)
     return ndimage.binary_fill_holes(mask)
+
+
+def _strongly_coloured(small: np.ndarray) -> np.ndarray:
+    """What is of a strong, bright colour, as a mask: a button is often a patch of one strong colour, where neither its
+    brightness nor its outline stands out of a busy drawing round it (LIVE 2026-10-11 a comic's magenta arrow)."""
+    from scipy import ndimage
+
+    brightest, darkest = small.max(axis=2), small.min(axis=2)
+    strong = ((brightest - darkest) / np.maximum(brightest, 1.0) > STRONG_COLOUR) & (brightest > 150)
+    return ndimage.binary_fill_holes(ndimage.binary_closing(ndimage.binary_opening(strong, iterations=1), iterations=1))
 
 
 def _outlined(small: np.ndarray) -> np.ndarray:

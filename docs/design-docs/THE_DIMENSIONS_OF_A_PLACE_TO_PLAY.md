@@ -22,14 +22,14 @@ gives it (`THE_56_GAMES_AND_WHAT_THEY_ASK.md`).
 | Dimensions | 18 |
 | Values across them | 107 |
 | Kinds of place they make, multiplied out | 26,754,416,640,000 |
-| Values with an answer | 105 |
+| Values with an answer | 106 |
 | Games | 56 |
 | Distinct combinations among the 56 | 52 |
-| Values a game needs | 0 to 53, 23.4 on average |
-| Games with an answer for every value they need | 40 |
+| Values a game needs | 0 to 53, 23.3 on average |
+| Games with an answer for every value they need | 43 |
 
 Two of the 56 need the same combination as another game; the rest are each a
-place of their own. Answering the 2 values with none answers every value the
+place of their own. Answering the 1 value with none answers every value the
 56 need, where the dimensions are independent.
 
 Eight values were answered on 11 October, each by a module shown working in a
@@ -38,7 +38,12 @@ faster and urgency (`core/agency/what_the_place_does_to_her.py`), a thing gone
 for (`core/agency/a_thing_gone_for.py`), meeting by what she is now
 (`core/agency/meeting_by_what_she_is.py`), what comes for her
 (`core/agency/what_comes_for_her.py`) and keys that turn her
-(`core/agency/which_way_she_faces.py`). A way through
+(`core/agency/which_way_she_faces.py`). Where a falling piece goes was answered the same day (`core/agency/playing_a_well.py`): a well known by what it
+shows, her keys known by what each does to a piece, every landing tried, and what clears learned from what goes.
+In a well of its own with tokens that clear in unlike pairs she kept it clear for four minutes where the well left
+alone filled in four pieces; in one of blocks that turn she cleared 36 rows in four minutes where left alone it
+filled in 20; on the archived Link 'N Smash, offline, she scored 850 and 2,080 against 90 and 40 before.
+A way through
 (`core/agency/a_way_through.py`) finds its way in its own world and is joined
 to her play, but in whole play on a world of rooms she has not yet got through
 a gap, so it stays on the list below.
@@ -175,7 +180,6 @@ seams are kept to one owner each, so that the answers compose:
 | Games | Dimension: value | What answers it |
 |---|---|---|
 | 13 | searching: a way through | a way across the cells she can stand in, round what she has found in the way |
-| 5 | searching: where a piece goes | each place a falling piece could land, judged by what it would clear and leave |
 
 Each is built as a module of its own, shown working in a world of its own
 before it is joined to her play, and listed in the registry with its test.

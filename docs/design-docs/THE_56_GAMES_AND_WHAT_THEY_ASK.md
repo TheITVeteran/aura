@@ -44,6 +44,7 @@ if any of them is not called from her live play or has no test.
 | a board in turns | a board, moves in turns, someone on the other side | `core/skills/screen_pursuit.py` with `core/agency/looking_ahead.py` |
 | a board seen and searched | a board drawn with no writing on it: its squares and pieces seen, its family known from the board and its words, its rules as its words change them, every move searched | `core/agency/playing_a_board.py` with `core/perception/a_board_seen.py` and `core/agency/rules_of_a_board.py` |
 | a grid's rule | a grid whose rule is found by moving in it | `core/skills/screen_pursuit.py` (her rule of the world) |
+| a well of falling pieces | a well with pieces coming down it: known for what it is by its ground, its cells and a piece falling by itself; her keys known by what each does to a piece; every landing tried, and what clears learned from what goes when a piece lands | `core/agency/playing_a_well.py` with `core/perception/a_well_seen.py` and `core/agency/where_a_piece_goes.py` |
 | type | type what a screen asks for: an answer, a name, a question | `core/agency/typing_what_is_asked.py` |
 | make | make something and say what | `core/skills/sovereign_browser_drawing.py` (MADE) |
 | use things | take a thing (it goes elsewhere or is chosen where it is), then use it on another: two clicks | `core/agency/taking_and_using.py` |
@@ -132,7 +133,7 @@ own words where it has any, else from what its code does.
 | 51 | Regular Show: Dance of Doom | copy a sequence, steer |
 | 52 | Gumball: Water Sons | shoot, counters |
 | 53 | Regular Show: High Flying Halloween | steer, jump |
-| 54 | Sonic Boom: Link 'N Smash | a grid's rule, time a press |
+| 54 | Sonic Boom: Link 'N Smash | a well of falling pieces |
 | 55 | Gumball: Battle Bowlers | send (bowl), steer, switch (number keys) |
 
 Games 51 and 53 had no file the archive served when this map was made; what

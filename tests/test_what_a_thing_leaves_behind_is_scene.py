@@ -56,6 +56,25 @@ def test_a_thing_at_rest_does_not_fade_into_the_scene():
     assert any(abs(t.w - 30 * moves.scale) < 6 and abs(t.h - 40 * moves.scale) < 6 for t in moves.things.values()), moves.things
 
 
+def test_a_thing_waiting_where_something_reaches_it_is_still_the_thing():
+    """Measured offline 2026-10-10: a basket waiting under a falling egg grew as the egg reached it, its still body went
+    into the scene, and she lost her own basket (37 caught a minute on 3 October, 10 since)."""
+    def draw(picture, at):
+        if at < 0.8:
+            return
+        x = 200 + int((min(at, 1.4) - 0.8) * 100)                              # the basket goes, then waits
+        picture[300:330, x:x + 50] = (120, 70, 30)
+        drop = (at - 1.4) % 1.0
+        if at > 1.4:
+            y = 100 + int(drop * 220)                                         # an egg falls into it, again and again
+            picture[y:y + 14, x + 18:x + 30] = (250, 250, 240)
+    moves = WhatMoves()
+    for picture, at in _frames(draw, 5.0):
+        moves.see(picture, at)
+    baskets = [t for t in moves.things.values() if abs(t.w - 50 * moves.scale) < 10 and t.h >= 20 * moves.scale]
+    assert baskets, [(t.w, t.h) for t in moves.things.values()]
+
+
 def _moves_with(things):
     class _Thing:
         def __init__(self, number):
@@ -72,6 +91,12 @@ def _pressed(hers, number, key, vx, vy, n):
     speeds = hers._by_thing.setdefault(number, _Speeds())
     for _ in range(3):
         speeds.add(key, vx, vy, press=float(n))
+
+
+def _rested(hers, number, vx=0.0, vy=0.0, n=100):
+    """The rests between a trial's presses: what her keys move stands still in them."""
+    for at in (n, n + 1):
+        _pressed(hers, number, "", vx, vy, float(at))
 
 
 @pytest.mark.parametrize(("presses", "chosen"), [
@@ -93,7 +118,18 @@ def test_what_goes_the_way_each_arrow_points_is_hers(presses, chosen):
         for key, vx, vy in keys:
             n += 1
             _pressed(hers, number, key, vx, vy, n)
+        _rested(hers, number, *((40, -30) if number == 2 and chosen == 1 else (0, 0)), n=100 + 10 * number)
     assert gone_the_ways_of_the_keys(hers, _moves_with(presses)) == chosen
+
+
+def test_what_goes_on_going_while_she_rests_is_not_hers_however_it_went_under_her_keys():
+    """Measured offline 2026-10-10: in a Pong of the worked-on worlds she took the ball for herself in two runs of three,
+    a bouncing ball having gone three keys' ways by chance."""
+    hers = WhichIsHers()
+    for n, (key, vx, vy) in enumerate((("right", 90, 10), ("down", 10, 80), ("left", -95, 5)), start=1):
+        _pressed(hers, 1, key, vx, vy, n)
+    _rested(hers, 1, 70, -60)                                               # it goes on going between her presses
+    assert gone_the_ways_of_the_keys(hers, _moves_with([1])) is None
 
 
 def test_in_a_world_that_scrolls_what_holds_its_place_against_it_is_hers():
@@ -105,6 +141,8 @@ def test_in_a_world_that_scrolls_what_holds_its_place_against_it_is_hers():
         for number in (2, 3, 4, 5):  # barrels, crates, trees: the view moving
             _pressed(hers, number, key, world[0] + number, world[1], n)
         _pressed(hers, 1, key, hero[0], hero[1], n)
+    for number in (1, 2, 3, 4, 5):
+        _rested(hers, number, n=100 + 10 * number)
     assert gone_the_ways_of_the_keys(hers, _moves_with([1, 2, 3, 4, 5])) == 1
 
 
@@ -117,4 +155,7 @@ def test_a_world_that_does_not_move_as_one_is_not_taken_for_the_view():
         for number, own in ((2, (60, 40)), (3, (-50, 30)), (4, (10, -70)), (5, (-30, -40))):
             _pressed(hers, number, key, *own, n)
         _pressed(hers, 1, key, *mine, n)
+    _rested(hers, 1)
+    for number, own in ((2, (60, 40)), (3, (-50, 30)), (4, (10, -70)), (5, (-30, -40))):
+        _rested(hers, number, *own, n=100 + 10 * number)
     assert gone_the_ways_of_the_keys(hers, _moves_with([1, 2, 3, 4, 5])) == 1

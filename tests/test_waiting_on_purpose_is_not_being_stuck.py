@@ -66,3 +66,52 @@ def test_what_an_end_announces_is_read_and_a_way_on_from_it_is_pressed(label, re
     from core.language.a_way_on import how_much_it_leads_on
 
     assert (how_much_it_leads_on(label) < 0.7) is read
+
+
+def test_a_screen_found_no_well_is_not_watched_again_while_it_stays_the_same_screen(monkeypatch):
+    """LIVE-like 2026-10-11 a scrapbook's page was watched for eight seconds, for a well, before every click on it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import core.agency.playing_a_well as wells
+    import core.skills.screen_pursuit_as_it_happens as pursuit
+
+    watched = []
+
+    async def no_well(look, known=None, seen=None):
+        watched.append(1)
+        return None
+
+    monkeypatch.setattr(wells, "a_well_with_a_piece_coming_down", no_well)
+    reflexes = SimpleNamespace(no_well_here=False, keep={}, look=None, said_now="SCOOBY-DOO PUBLIC LIBRARY NEW PHOTO",
+                               waited_at_a_well=0.0)
+    assert not asyncio.run(pursuit._played_a_well(reflexes, 100.0))
+    reflexes.said_now = "SCOOBY-D0O PUBLIC LIBRARY NEW PH0TO"                    # read a little differently
+    assert not asyncio.run(pursuit._played_a_well(reflexes, 200.0))
+    assert len(watched) == 1
+    reflexes.said_now = "LEVEL 1 SCORE 0"                                         # another screen
+    asyncio.run(pursuit._played_a_well(reflexes, 300.0))
+    assert len(watched) == 2
+
+
+@pytest.mark.parametrize(("said", "in_time"), [
+    ("TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. DODGE FOOD BY PRESSING THE SPACE BAR.", True),
+    ("Move the mouse to control your boat. Click the mouse button to hit enemies with your yo-yo.", True),
+    ("Catch the falling eggs in your basket.", True),
+    ("Click on a piece, then click where you want it to go.", False),
+    ("Use your imagination to make the craziest scenes you can think of.", False),
+])
+def test_a_place_whose_words_put_her_in_a_situation_played_in_time_is_known_so_before_it_is_seen_to_move(said, in_time):
+    """Offline 2026-10-11 a food fight whose opponent rose from behind the tables now and then was watched still,
+    played with arrows a move at a time, and lost in thirty seconds."""
+    from core.skills.screen_pursuit_as_it_happens import _played_in_time
+
+    assert _played_in_time(said) is in_time
+
+
+@pytest.mark.parametrize("label", ["TRY THIS LEVEL AGAIN", "Next Level", "NEXT LEVEL >", "Replay Level", "Retry level"])
+def test_a_way_on_to_a_level_again_or_the_next_is_a_way_on(label):
+    """Offline 2026-10-11 a painting game's "TRY THIS LEVEL AGAIN" was read as no way on, and its end screen never left."""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    assert how_much_it_leads_on(label) > 1.0

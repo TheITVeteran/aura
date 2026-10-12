@@ -9,11 +9,13 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.agency.deliberate_action import _unmeasured_response_invariant
     from core.agency.what_meeting_things_does import _absent_counters_are_not_current
     from core.agency.where_clicks_pay import _click_attribution_respects_stretch_boundaries
+    from core.agency.where_things_lead import _unknown_selector_invariant
     from core.agency.which_one_answers_to_her import (
         _ambiguous_controls_remain_unknown,
         _emissions_require_distinct_input_receipts,
         _fresh_control_experiment_forgets_old_rejections,
     )
+    from core.cognition.action_refinement import _bound_refinement_invariant
     from core.cognition.guidance_lifetime import _completed_guidance_invariant
     from core.cognition.procedure_binding import _choice_binding_invariant
     from core.cognition.reading_the_rules import _procedure_completion_is_measured
@@ -27,6 +29,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.drawn_objects import _object_candidates_invariant
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
+    from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
@@ -41,8 +44,25 @@ def install_realtime_control_claims(suite: Any) -> None:
         _construction_readiness_invariant,
         _response_dispatch_invariant,
     )
+    from core.skills.sovereign_browser_drawing import _current_play_veto_invariant
+    from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("relations_require_unique_finite_entities", "core/perception/relations_between_things.py",
+         "tests/test_spatial_relations_require_unique_current_entities.py", lambda: _relations_require_unique_finite_entities() == (),
+         "Spatial completion evidence abstains when object names are ambiguous or their geometry is unmeasured."),
+        ("picked_objectives_require_each_outcome", "core/skills/sovereign_browser_picking.py",
+         "tests/test_picked_objectives_require_each_outcome.py", lambda: _picked_outcomes_invariant() == (),
+         "A collection's completion requires each requested objective rather than each pursuit merely ending."),
+        ("current_play_vetoes_predicted_completion", "core/skills/sovereign_browser_drawing.py",
+         "tests/test_play_completion_requires_terminal_evidence.py", lambda: _current_play_veto_invariant() == (),
+         "Current turn and ongoing-play evidence vetoes an inferred win or loss."),
+        ("refined_obligations_require_their_bound_transfer", "core/cognition/action_refinement.py",
+         "tests/test_source_choice_and_placement_share_one_owned_action.py", lambda: _bound_refinement_invariant() == (),
+         "A combined choice and placement requires the exact source-use transfer bound before delivery."),
+        ("unknown_selector_views_do_not_create_navigation_identity", "core/agency/where_things_lead.py",
+         "tests/test_selector_views_keep_visual_navigation_states.py", lambda: _unknown_selector_invariant() == (),
+         "Unmeasured selector contents cannot create a navigation state or an edge between states."),
         ("response_streams_keep_owned_capture_windows", "core/perception/watching_it_happen.py",
          "tests/test_action_response_windows.py", _response_window_keeps_its_evidence,
          "Response streams retain delivery intervals and capture timestamps, excluding prior owned changes from background."),

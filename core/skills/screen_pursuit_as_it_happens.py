@@ -40,14 +40,57 @@ def _a_different_screen(said: str, before: str) -> bool:
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
-def begin_run(keep: dict[str, Any]) -> None:
-    """A new attempt keeps world knowledge and measures its own state."""
+#: The situations a place's words may put her in that are played in time, as things happen, not a move at a time
+#: (core/agency/situations_she_knows.py).
+_IN_TIME = frozenset({"catching what falls", "keeping clear of what comes", "keeping something away from whoever is after it",
+                      "holding on until the end", "getting them all against a clock", "shooting what comes",
+                      "pressing at the right moment", "a fight at close quarters"})
+
+
+def _played_in_time(said: str) -> bool:
+    """Whether what a place has said puts her in a situation played in time."""
+    from core.agency.situations_she_knows import situations_in
+
+    return any(situation.name in _IN_TIME for situation in situations_in(said))
+
+
+async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bool:
+    """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
+    known = reflexes.still_screen
+    if (known is not None and _the_same_screen(known[0], reflexes.said_now)
+            and time.monotonic() - known[1] < STILL_SCREEN_KEPT_S):
+        return False
+    moves = await watched(reflexes.look)
+    reflexes.still_screen = None if moves else (reflexes.said_now, time.monotonic())
+    return moves
+
+
+def _the_same_screen(before: Any, said: Any) -> bool:
+    """Whether a screen read now is one read before, a reading a little differently made being the same screen."""
+    return (isinstance(before, str) and isinstance(said, str)
+            and (before == said or bool(before and said) and not _a_different_screen(said, before)))
+
+
+def begin_run(keep: dict[str, Any], game: str = "") -> None:
+    """A new attempt keeps world knowledge and measures its own state. ``game`` is the name the game is kept under
+    (`_this_game`): where it is the game the last attempt was at, unchanged, what she is in it and what her keys do
+    are kept too, and only which thing on the screen she is now is found again.
+
+    A game mended between attempts is another game, and its keys are measured afresh: a paddle whose up key was put
+    right does not go the way it went. But the same game begun again has the keys it had. LIVE 2026-10-11 a lander
+    that is down in five seconds was begun ten times, each time from knowing nothing of herself, and the five seconds
+    went on finding out; and a two-minute game had its keys tried again at the start of each of three runs."""
     from core.agency.how_the_contest_stands import ContestStands
     from core.agency.which_one_answers_to_her import WhichIsHers
 
     contest = keep.get("contest")
     keep["contest"] = ContestStands(wins=contest.wins) if contest is not None else ContestStands()
-    keep["hers"] = WhichIsHers()
+    hers = keep.get("hers")
+    if game and keep.get("hers_in", game) == game and hers is not None and hers.kind is not None:
+        hers.numbered_afresh()
+    else:
+        keep["hers"] = WhichIsHers()
+    keep["hers_in"] = game
     meeting = keep.get("meeting")
     if meeting is not None:
         meeting.begin_run()
@@ -64,6 +107,13 @@ def begin_run(keep: dict[str, Any]) -> None:
     for kept in (keep.get("plays_for"), keep.get("who")):
         if kept is not None:
             kept.begin_run()
+
+#: How many times one screen that offers a way on is left to be gone on from before what moves on it is played: a
+#: way on may take a second look to be known for a control, and a second click to take.
+WAYS_ON_TRIED = 4
+
+#: How long a screen found not to move on its own is taken to stay so while its words do not change, in seconds.
+STILL_SCREEN_KEPT_S = 12.0
 
 #: How long the reflexes leave a moving screen alone after finding nothing on
 #: it that answers to her: a title screen that animates is not a game yet.
@@ -92,6 +142,10 @@ ANSWER_WITHIN_S = 20.0
 
 #: How long she tries out a thing whose own words set her to make something, not to win: it has no end of its own.
 TRYING_OUT_S = 90.0
+#: How many of her acts must have changed it for a thing for making to have had something made in it, and the longest
+#: she goes on trying to make something in one that will not change.
+CHANGES_MADE_AT_LEAST = 5
+TRYING_OUT_MOST_S = 240.0
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
@@ -122,6 +176,17 @@ LEGEND_WORDS = 6
 SEND_WAY, AS_IT_HAPPENS_WAY = "send", "as it happens"
 
 
+
+def _newly_says_the_game_is_over(observation: dict[str, Any], during: set[str]) -> str:
+    """The words by which the screen says the game is over, where nothing read while she played had them in it."""
+    from core.language.how_a_game_ended import what_says_the_game_is_over
+
+    ending = what_says_the_game_is_over(str(observation.get("text") or ""))
+    if not ending or any(ending in " ".join(str(said).lower().split()) for said in during):
+        return ""
+    return ending
+
+
 @dataclass
 class PlayingAsItHappens:
     """Eyes and hands on the part of her own page that draws, at the speed it goes."""
@@ -138,6 +203,8 @@ class PlayingAsItHappens:
     #: The words of the screen she was left quiet on, and of the screen as last looked at: quiet is for that screen.
     quiet_on: str = ""
     said_now: str = ""
+    #: The words of the screen last watched and found not to move on its own, and when.
+    still_screen: tuple[str, float] | None = None
     over_because: str = ""
     recalled: bool = False
     #: The words of the screen that ended the run, for whoever asks how it ended.
@@ -154,10 +221,19 @@ class PlayingAsItHappens:
     held_for_a_way_on: dict[str, int] = field(default_factory=dict)
     #: Since when its words have been known to set her to make something, not to win.
     for_making_since: float | None = None
+    #: How many of her acts had changed the screen when making began, and how many have now.
+    made_before: int = 0
+    acts_that_changed: int = 0
     #: Whether the last screen read showed a label that goes on (Play, Start, Next): a menu, not a world to send into.
     way_on_shown: bool = False
     #: The short labels her screens have shown (a button's "LAUNCH", "Next"): words on their own, not what it says to do.
     labels_seen: set = field(default_factory=set)
+    #: Play that knows when its game has stopped (a well nothing more comes down) said it has: with a way to start again
+    #: on screen, the run is over, though that way was on screen before.
+    play_stopped: bool = False
+    #: A well was tried this run and no key of hers moved its piece; and how long she has waited at a well for a piece.
+    no_well_here: bool = False
+    waited_at_a_well: float = 0.0
     #: When she last played anything, and the screens not seen before counted when the last stretch was judged.
     played_at: float = 0.0
     _screens_judged: int = 0
@@ -371,7 +447,7 @@ class PlayingAsItHappens:
 
         A screen not yet read is read first; a screen whose words offer a way on (Start, Play, Next) is a menu,
         whatever moves on it, and is clicked through first: LIVE 2026-10-08 a title's fireflies were played for
-        fifty-three seconds with START under them. Twice at most for one screen, in case its way on does nothing.
+        fifty-three seconds with START under them. A few times at most for one screen, in case its way on does nothing.
         """
         from core.language.a_way_on import offers_a_way_on
 
@@ -382,7 +458,7 @@ class PlayingAsItHappens:
             return False
         key = said[:80]
         self.held_for_a_way_on[key] = self.held_for_a_way_on.get(key, 0) + 1
-        return self.held_for_a_way_on[key] <= 2
+        return self.held_for_a_way_on[key] <= WAYS_ON_TRIED
 
     def _a_screen_not_seen_before(self, said: str) -> None:
         """Count a screen the game has not shown her before: getting to one is getting somewhere, scored or not.
@@ -409,12 +485,17 @@ class PlayingAsItHappens:
             return True
         from core.language.how_a_game_ended import what_it_asks_of_a_player
 
-        # A thing for making has no end of its own: a person tries it out a while and is done with it.
+        # A thing for making has no end of its own: a person tries it out a while and is done with it, once they have made
+        # something in it. Offline 2026-10-11 a scrapbook's photo was taken for made after ninety seconds of arrows
+        # pressed and a menu clicked, nothing put in its scene: the time is had, and enough of her acts change it.
         if self.for_making_since is None and what_it_asks_of_a_player(" ".join(self.words)) == "make":
-            self.for_making_since = time.monotonic()
-        if self.for_making_since is not None and time.monotonic() - self.for_making_since >= TRYING_OUT_S:
-            self.over_because = MADE_NOT_WON
-            return True
+            self.for_making_since, self.made_before = time.monotonic(), self.acts_that_changed
+        if self.for_making_since is not None:
+            making = time.monotonic() - self.for_making_since
+            if making >= TRYING_OUT_MOST_S or (making >= TRYING_OUT_S
+                                               and self.acts_that_changed - self.made_before >= CHANGES_MADE_AT_LEAST):
+                self.over_because = MADE_NOT_WON
+                return True
         if not any(stretch.get("pictures") for stretch in self.stretches):
             return False
         from core.skills.screen_pursuit_bearings import restart_controls
@@ -426,6 +507,20 @@ class PlayingAsItHappens:
         before = during if during else (self.first_ways_back or frozenset())
         offered = restart_controls(observation)
         appeared = {control for control in offered if control not in before}
+        if offered and not appeared and self.play_stopped:
+            # The game itself stopped: LIVE-like 2026-10-11 a second game of falling pieces ended on the screen the
+            # first had ended on, its PLAY AGAIN no longer new, and she played the end screen for a minute and a half.
+            appeared = set(offered)
+        said_over = _newly_says_the_game_is_over(observation, during)
+        if said_over and not appeared:
+            # The screen says the game is over in words it did not show while she played, whatever way on it offers:
+            # LIVE 2026-10-11 a two-minute game ended on "Your final score" over the Play its title had shown, she
+            # played on into the next game, and each of her three runs was ended by her own clock part-way through one.
+            self.over_because = f"the screen says the game is over ({said_over})"
+            self.ending_words = " ".join(str(observation.get("text") or "").split())
+            self.ending_parts = _lines_of(observation.get("layout") or [])
+            logger.info("the run is over: %s", self.over_because)
+            return True
         if offered and not appeared:
             logger.info("a way to start again is on screen (%s), but it was there while she played", ", ".join(sorted(offered)))
         if appeared:
@@ -501,7 +596,10 @@ class PlayingAsItHappens:
         picture = np.asarray(seen[0])
         regions = await asyncio.to_thread(recognize_text, np.ascontiguousarray(picture[..., ::-1]))
         shown = what_a_legend_shows(picture, regions)
-        if not shown:
+        # A legend sets several things each beside what to do about it. One line with such a word in it, on a screen
+        # that is not one of rules, is a title or a banner: LIVE 2026-10-11 "GET READY" over a game and a game's own
+        # name with SMASH in it were each read as a thing shown to be got or shot.
+        if not shown or (len({drawn.words for drawn in shown}) < 2 and not reads_as_rules(said)):
             return
         kept = list(self.keep.get("legend") or [])
         kept += [drawn for drawn in shown if all(drawn.words != k.words or drawn.where != k.where for k in kept)]
@@ -526,7 +624,11 @@ class PlayingAsItHappens:
         # led from an animated menu into a boat game, which played itself to GAME OVER in the quiet left on the menu.
         if now < self.quiet_until and self.said_now != self.quiet_on and _a_different_screen(self.said_now, self.quiet_on):
             self.quiet_until = 0.0
-        if (now < self.quiet_until and not held.holding()) or now >= self.ends_at:
+        # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
+        # a game played without one (a food fight seen from behind the player's own eyes) goes.
+        in_time = _played_in_time(" ".join([*self.words[-6:], str(self.keep.get("counsel") or "")]))
+        if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
+            _logged_leaving_alone(self, now)
             return
         # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
         # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
@@ -542,17 +644,30 @@ class PlayingAsItHappens:
         # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py).
         if await _played_a_board(self, now):
             return
+        # A well with a piece coming down it is played by where each piece lands best (core/agency/playing_a_well.py).
+        if await _played_a_well(self, now):
+            return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
         said = " ".join([*self.words[-6:], str(self.keep.get("counsel") or "")])
-        way = held.choose(ways_asked(said, self.words[-1] if self.words else ""), said)
+        asked = ways_asked(said, self.words[-1] if self.words else "")
+        way = held.choose(asked, said)
         if way == SEND and not self._no_place_for_shots():
             await self._by_shots(now)
             return
-        # Played as it happens where it moves on its own, and where it moves for as long as she holds a key.
-        if not self.under_her_hand and not await the_world_moves_on_its_own(self.look):
-            # A world that waits for her: words it asks for are typed; where it says to send something, by shots.
-            if not await self._typed_what_it_asks() and SEND not in held.let_go:
+        # Played as it happens where it moves on its own, and where it moves for as long as she holds a key. Whether a
+        # screen moves on its own is watched once a screen, not before every move on it: LIVE-like 2026-10-11 a menu
+        # whose figures bobbed in place was watched for three and a half seconds before each of her clicks.
+        # And where the place's words put her in a situation played in time (dodging, catching, shooting what comes),
+        # the screen after its menus is played as it happens without first waiting to see it move: offline 2026-10-11
+        # a food fight whose opponent rose from behind the tables now and then was watched still, played with arrows by
+        # the slow pursuit, and lost in thirty seconds; LIVE 2026-10-10 a boat game the same.
+        if not self.under_her_hand and not in_time and not await _it_moves_on_its_own(self, the_world_moves_on_its_own):
+            # A world that waits for her: words it asks for are typed; where it says to send something, by shots. Only
+            # there: LIVE 2026-10-11 a still level select, in a game played as it happens, had three minutes of pulls
+            # and holds let go at it, and nothing sent.
+            if (not await self._typed_what_it_asks() and SEND not in held.let_go and SEND in asked
+                    and not self._no_place_for_shots()):
                 await self._by_shots(now)
             return
         if not self.keep.get("hers") and not self.recalled:
@@ -705,6 +820,9 @@ class PlayingAsItHappens:
         done = await type_what_is_asked(asked, self.look, recognize_text, self, goal=self.goal,
                                         answer=_an_answer_she_has, say=_said_while_playing)
         logger.info("typed what the screen asks for: %s", done)
+        if done.get("typed"):
+            # What she put to it, for saying what it answered: a thing asked once has its question and its answer.
+            self.keep["typed"] = str(done["typed"])
         return bool(done.get("typed"))
 
     async def _by_shots(self, now: float) -> None:
@@ -771,6 +889,13 @@ def _without_labels(said: str, labels: set) -> str:
     return said
 
 
+def _logged_leaving_alone(reflexes: PlayingAsItHappens, now: float) -> None:
+    """That a screen is being left alone, logged once each time it is begun."""
+    if now < reflexes.quiet_until and reflexes.keep.get("quiet_said") != reflexes.quiet_until:
+        reflexes.keep["quiet_said"] = reflexes.quiet_until
+        logger.info("leaving this screen alone for %.0fs more", reflexes.quiet_until - now)
+
+
 def _left_alone_for(reflexes: PlayingAsItHappens) -> float:
     """How long a moving screen that answered to nothing is left alone: twice as long each time the same screen does it
     again. LIVE 2026-10-11 a building game's characters idled on its board, and every twenty seconds she spent nineteen
@@ -789,6 +914,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
 
     if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
+    # A screen looked over and found no board is not looked over again while it stays the same screen.
+    if _the_same_screen(reflexes.keep.get("no_board_on"), getattr(reflexes, "said_now", None)):
+        return False
     reflexes.keep["board_looked_for_at"] = now
     seen = await reflexes.look()
     # What the place said of its rules is kept from one stretch of play to the next: LIVE 2026-10-11 a second stretch
@@ -799,6 +927,7 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
     board = a_board_in(seen[0]) if seen is not None else None
     if board is None or not a_board_game(board, words):
+        reflexes.keep["no_board_on"] = getattr(reflexes, "said_now", None)
         return False
     logger.info("a board of two sides in turns (%s): playing it by search", a_board_game(board, words))
     stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
@@ -815,6 +944,108 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     else:
         # A board played until its time ran out is looked for again at once, not tried with keys meanwhile.
         reflexes.keep["board_looked_for_at"] = -1e9
+    return True
+
+
+#: What a fault in her own seeing or playing of a well can raise: any of these leaves the screen to her other ways.
+_A_FAULT_OF_HERS = (ImportError, IndexError, KeyError, ValueError, TypeError, AttributeError, ArithmeticError, RuntimeError,
+                    OSError)
+#: The keys a piece coming down a well is tried with, beside any the place has named.
+_KEYS_FOR_A_PIECE = ("left", "right", "up", "down", "space")
+
+
+#: How many times in one game a ground may be taken for a well, with no key of hers moving its piece, before it is
+#: not looked for there again.
+NO_WELL_AFTER = 2
+#: How long, in one run, a well she has played before is waited at for a piece to come down it before the screen is
+#: left to her other ways.
+WAITS_AT_A_WELL_S = 45.0
+
+
+async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
+    """Where what the page draws is a well with a piece coming down it, each piece is put where it lands best, her keys
+    and what clears found by trying and watching (core/agency/playing_a_well.py); whether it was. Looked for every few
+    seconds, and not again this run where nothing she pressed moved the piece. A well she has played before, seen with
+    nothing yet coming down it, is waited at: LIVE-like 2026-10-11 a second game of falling tiles opened on a moment
+    with no piece in it, was steered about in for fifty seconds as a place to move through, and was lost by then."""
+    from core.agency.playing_a_well import (
+        NOTHING_MOVES_IT,
+        a_well_with_a_piece_coming_down,
+        play_a_well,
+    )
+
+    if reflexes.no_well_here or int(reflexes.keep.get("no_well_found", 0)) >= NO_WELL_AFTER \
+            or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
+        return False
+    # A screen watched and found no well with a piece coming down it is not watched again while it stays the same
+    # screen: LIVE-like 2026-10-11 a scrapbook's page, its ground like a well's, was watched for eight seconds before
+    # every one of her clicks on it.
+    if _the_same_screen(reflexes.keep.get("no_well_on"), getattr(reflexes, "said_now", None)) \
+            and not reflexes.keep.get("well_keys"):
+        return False
+    reflexes.keep["well_looked_for_at"] = now
+    empty: list[Any] = []
+    try:
+        well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"), empty)
+    except _A_FAULT_OF_HERS as why:
+        # Looking for a well is never what ends a game: LIVE 2026-10-11 a fault in it ended every game she opened.
+        from core.runtime.errors import record_degradation
+
+        logger.exception("looking for a well failed")
+        record_degradation("playing_a_well", why, action="no well is looked for again this run")
+        reflexes.no_well_here = True
+        return False
+    if well is None:
+        waited = time.monotonic() - now
+        if empty and reflexes.keep.get("well_keys") and reflexes.waited_at_a_well + waited < WAITS_AT_A_WELL_S:
+            reflexes.waited_at_a_well += waited
+            reflexes.keep["well_looked_for_at"] = -1e9
+            return True
+        reflexes.keep["no_well_on"] = getattr(reflexes, "said_now", None)
+        return False
+    reflexes.keep["well_seen"] = well
+    logger.info("a well %d across and %d down with a piece coming down it: playing it by where each piece lands best",
+                well.columns, well.rows)
+    heard: list[str] = reflexes.keep.setdefault("words_of_the_place", [])
+    heard += [w for w in reflexes.words if w not in heard]
+    del heard[:-WORDS_KEPT]
+    words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
+    keys = list(dict.fromkeys([*_KEYS_FOR_A_PIECE, *(k for k in reflexes.keep.get("named_keys") or [] if k != MOUSE_BUTTON)]))
+    try:
+        stretch = await play_a_well(reflexes.look, reflexes, well, words,
+                                    seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
+                                    say=_said_while_playing, offered=keys, known=reflexes.keep)
+    except _A_FAULT_OF_HERS as why:
+        # A fault in playing the well is hers to hear of and not the game's to lose by: the screen goes to her other
+        # ways for the rest of the run. Offline 2026-10-11 one such fault ended a whole run two minutes in.
+        from core.runtime.errors import record_degradation
+
+        logger.exception("playing the well failed")
+        record_degradation("playing_a_well", why, action="left the well to her other ways for this run")
+        reflexes.no_well_here = True
+        return False
+    logger.info("a well played: %s", stretch)
+    if stretch.get("ended") == NOTHING_MOVES_IT:
+        # Not a well this run; and taken for one twice in a game with no key moving its piece, not a well in this game.
+        reflexes.no_well_here = True
+        reflexes.keep["no_well_found"] = int(reflexes.keep.get("no_well_found", 0)) + 1
+        reflexes.keep.pop("well_seen", None)
+        return False
+    reflexes.keep["no_well_found"] = 0
+    reflexes.waited_at_a_well = 0.0
+    reflexes.stretches.append({"pictures": stretch.get("pieces", 0), "turns": stretch.get("pieces", 0),
+                               "gains": int(stretch.get("cleared") or 0), "losses": 0,
+                               "seconds": time.monotonic() - now, "ended": stretch.get("ended"),
+                               "settled": stretch.get("ended")})
+    reflexes.played_at = time.monotonic()
+    if stretch.get("ended") == "out of time":
+        # A well played until its time ran out is looked for again at once, not tried with keys meanwhile.
+        reflexes.keep["well_looked_for_at"] = -1e9
+    elif stretch.get("pieces"):
+        # Nothing more comes down, or the well is covered: the game has stopped. The screen it stopped on is read, not
+        # steered about in.
+        reflexes.play_stopped = True
+        reflexes.quiet_until, reflexes.quiet_on = time.monotonic() + LEAVE_A_MOVING_MENU_S, reflexes.said_now
     return True
 
 
@@ -975,7 +1206,10 @@ async def _waited_out_while_made_ready(reflexes: PlayingAsItHappens, look: Any, 
     return seen
 
 
-def a_handed_over_run_is_over(observation: dict[str, Any]) -> bool:
-    """A run played and over ends a hand-over; what follows belongs to whoever handed it over."""
+def a_handed_over_run_is_over(observation: dict[str, Any], made: int = 0) -> bool:
+    """A run played and over ends a hand-over; what follows belongs to whoever handed it over. ``made`` is how many of
+    her acts so far changed what was on the screen."""
     reflexes = AS_IT_HAPPENS.get()
+    if reflexes is not None:
+        reflexes.acts_that_changed = made
     return reflexes is not None and reflexes.run_is_over(observation)

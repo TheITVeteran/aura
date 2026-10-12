@@ -237,6 +237,9 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
     #: The mechanics this place's words, and what she found out before she began, have spoken of
     #: (core/agency/mechanics_she_knows.py); and where each thing she can click is, as shares of the screen.
     mechanics_said: set[str] = field(default_factory=set)
+    #: The keys the guide knows the place is worked with, where it knows and no arrow is among them: no other key is
+    #: tried to see what it does.
+    keys_known: frozenset[str] | None = None
     where: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     def asked_for_by(self, words: str, clickable: Sequence[str] = (), drawn: Sequence[str] = (), counsel: str = "") -> None:
@@ -246,6 +249,15 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
 
         self.told_of_carrying(f"{words} {counsel}")
         self.told_of_using(f"{words} {counsel}")
+        # A place the guide knows is worked by dragging (its words before, or its program) is one where things are
+        # carried, though this screen's words do not say so: offline 2026-10-11 a scrapbook whose program dragged
+        # pictures into a scene, and nothing was ever carried into it.
+        from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+        guide = THE_GUIDE.get()
+        if guide is not None and getattr(guide, "in_play", None) is not None and "dragging" in getattr(guide, "mechanics", {}) \
+                and guide.in_play("dragging"):
+            self.carrying_said = True
         from core.agency.mechanics_she_knows import mechanics_in
 
         self.mechanics_said |= set(mechanics_in(f"{words} {counsel}"))
@@ -275,15 +287,27 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             # instructions said to move the mouse, on its wordless screens).
             from core.cognition.a_guide_to_a_place import _TRUST, PAGE, THE_GUIDE
 
-            controls = getattr(THE_GUIDE.get(), "controls", None) or {}
+            guide = THE_GUIDE.get()
+            controls = getattr(guide, "controls", None) or {}
             # What its words name outranks keys found only in its program: LIVE 2026-10-10 a music maker whose guide
             # said "Controls: the mouse holds and drags" had its arrows pressed on every screen.
             said = {key for key, control in controls.items() if _TRUST.get(getattr(control, "source", ""), 0) >= _TRUST[PAGE]}
-            if said or controls:
-                self.pointer_only = (said or set(controls)) == {"the pointer"}
+            # And what its program does with the pointer (drags, clicks) names the pointer where no word does: offline
+            # 2026-10-11 a scrapbook whose program dragged things with the mouse had its arrows pressed.
+            named = getattr(guide, "pointer_named", None)
+            pointer = "the pointer" in (said or set(controls)) or bool(callable(named) and named())
+            if said or controls or pointer:
+                self.pointer_only = pointer and not (said or set(controls)) - {"the pointer"}
+            # The arrows offered where nothing names the keys are a guess. Where the guide knows how the place is
+            # worked and no arrow moves anything in it (nor a set of WASD), they are not pressed: offline 2026-10-11 a
+            # mini-golf game worked with the mouse, return and s had its arrows pressed on every screen.
+            known = set(controls)
+            arrows = {"up", "down", "left", "right"}
+            if (known or pointer) and not known & arrows and len(known & set("wasd")) < 3 and set(self.told) <= arrows:
+                self.told, self.keys_known = (), frozenset(known - {"the pointer"})
 
     def looked_at(self, clickable: Sequence[str], says: str = "", looks: Mapping[str, tuple[float, ...]] | None = None,
-                  where: Mapping[str, tuple[float, float]] | None = None) -> None:
+                  where: Mapping[str, tuple[float, float]] | None = None, selector_view: Any = None) -> None:
         """What she can click now: the writing that was there at the last look too.
 
         A control stays where it is; a readout changes. LIVE 2026-10-03 04:49,
@@ -301,7 +325,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         self.saw_looks(looks or {})
         self.on_screen = tuple(label for label in now if label in self.seen_before or _goes_on(label))
         self.seen_before = now
-        self.leads.looked(now, says)
+        self.leads.looked(now, says, selector_view=selector_view)
 
     # ── finding out ──────────────────────────────────────────────────────
 
@@ -435,6 +459,7 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             return told + goes_on
         wider = list(told) + [
             key for key in worth_trying(self.told) if key not in dead and key not in told
+            and (self.keys_known is None or key in self.keys_known)
         ]
         wider += [click for click in self.on_screen if click not in dead and click not in wider and _not_read_only(click)]
         if wider and set(wider) != set(self.told) and not self.said_it_differs:

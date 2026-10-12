@@ -10,7 +10,7 @@
 # Everything else below is the closed-world list the generator wrote: what
 # this package imports today, and nothing else.
 
-description = "core.organism: measured claims may exercise named observation custody and construction readiness canaries; other imports remain closed."
+description = "core.organism: measured claims may exercise named observation custody, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
 
 include_rules = [
     # The registered knowledge-revision canary exercises the canonical store.
@@ -30,6 +30,12 @@ include_rules = [
     "+core.perception.where_the_words_point",
     # The pure offline readiness canary checks eligibility without dispatching input.
     "+core.skills.screen_step_evidence",
+    # The completion claim probes the actual browser-play adjudication seam.
+    "+core.skills.sovereign_browser_drawing",
+    # The collection claim probes that each picked objective's outcome is required, at the picking seam.
+    "+core.skills.sovereign_browser_picking",
+    # The spatial-relations claim probes that relations abstain where names are ambiguous or geometry unmeasured.
+    "+core.perception.relations_between_things",
     "+core.organism",
 
     # What this package reaches for today.

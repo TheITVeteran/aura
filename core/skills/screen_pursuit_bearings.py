@@ -318,6 +318,7 @@ def where_to_click(observation: dict[str, Any], label: str) -> tuple[float, floa
 #: with. Matched against what is really on screen — never inferred, and never
 #: clicked unless the run has actually stopped getting anywhere.
 RESTART_LABELS = ("new game", "restart", "play again", "try again", "start over", "reset")
+_RESTARTS_OF_TWO_WORDS = tuple(label for label in RESTART_LABELS if " " in label)
 
 
 #: The two ways out of an impasse that are not "keep pressing".
@@ -335,6 +336,8 @@ def restart_controls(observation: dict[str, Any]) -> frozenset[str]:
     Game" above the board all game long puts "Try again" over it when it
     ends, and only the second of those is news.
     """
+    from core.language.a_way_on import nearly_says
+
     found: set[str] = set()
     for region in observation.get("layout") or []:
         text = str(region.get("text") or "").strip()
@@ -343,6 +346,9 @@ def restart_controls(observation: dict[str, Any]) -> frozenset[str]:
         lowered = text.lower()
         if any(label in lowered for label in RESTART_LABELS):
             found.add(lowered)
+        elif nearly_says(lowered, _RESTARTS_OF_TWO_WORDS):
+            # Read a letter or two out ("try abain"): the same way back, under the words it was meant to have.
+            found.add(nearly_says(lowered, _RESTARTS_OF_TWO_WORDS))
     return frozenset(found)
 
 

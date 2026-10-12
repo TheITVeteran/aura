@@ -96,6 +96,12 @@ WAYS: tuple[Way, ...] = (
         "of it lies, and a view she had not been in counted as getting somewhere",
         "core.perception.where_in_a_world:WhereInTheWorld", "core.agency.playing_as_it_happens",
         "tests/test_where_she_is_in_a_world_bigger_than_the_view.py"),
+    Way("a well of falling pieces", "a well with pieces coming down it, known for what it is by its ground, its cells and "
+        "a piece falling by itself, whatever the pieces are drawn as: her keys known by what each does to a piece, every "
+        "landing tried and scored, what clears learned from what goes when a piece lands, and where pieces come in kept "
+        "clear",
+        "core.agency.playing_a_well:play_a_well", "core.skills.screen_pursuit_as_it_happens",
+        "tests/test_a_well_is_seen_and_played.py"),
     Way("a board in turns", "a board, moves in turns, someone on the other side: looked ahead as far as there is time",
         "core.agency.looking_ahead:look_ahead", "core.skills.screen_pursuit_decision",
         "tests/test_looking_as_far_ahead_as_there_is_time_for.py"),

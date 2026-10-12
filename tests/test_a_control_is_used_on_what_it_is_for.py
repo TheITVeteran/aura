@@ -222,3 +222,16 @@ def test_a_control_for_her_own_going_is_not_used_on_what_is_beside_her():
 
     guide = _guide("Right increases forward speed.", "Up to boost.", "Press SPACE to open doors.")
     assert [c.key for c in _the_controls_with_a_use(guide)] == ["space"]
+
+
+@pytest.mark.asyncio
+async def test_a_key_that_drives_her_is_not_used_on_what_is_beside_her():
+    """Offline 2026-10-11 "Up is to forward, so I'm pressing up" beside each car of a parking game."""
+    guide = _guide("Press up to go forward and down to reverse.", "Press space to brake.")
+    token = THE_GUIDE.set(guide)
+    try:
+        hands = _Hands()
+        moves, hers, run = _world([_thing(1, 1, 100.0, 200.0), _thing(2, 5, 112.0, 200.0)])
+        assert not await use_controls_on_things(hands, run, moves, hers, [], 1.0)
+    finally:
+        THE_GUIDE.reset(token)

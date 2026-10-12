@@ -574,9 +574,9 @@ async def decide_the_next_move(
         return _left__
 
     band, looking_at_the_thing = await _decide_the_next_move_what_she_looking(anchor, drawn, narrate, observation, responds, target_app)
-    from .screen_step_evidence import settle_step
+    from .screen_step_evidence import current_controls, settle_step
 
-    if not settle_step(pending, observation, things_to_click(observation, drawn.get("where")), can_do):
+    if not settle_step(pending, observation, current_controls(observation, drawn.get("where"), can_do), can_do):
         no_move["because"] = "the delivered effect needs a fresh observation before another input"
         return WAITING
     if await _the_screen_taken_in_while_a_lesson_plays(can_do, observation, drawn.get("where"), narrate, no_move):
@@ -1818,6 +1818,7 @@ async def decide_the_next_move(
         pacing["brief"],
         made is not None,
     )
+    _a_click_begins_another_screen(key)
 
     async def act() -> bool:
         """Lifted to screen_pursuit_acting.py; the scope is handed over per call."""
@@ -1882,3 +1883,16 @@ from core.skills.screen_pursuit_decision_branches import (  # noqa: E402
     _what_she_says_as_she_moves,
     _what_the_thought_came_to,
 )
+
+
+def _a_click_begins_another_screen(key: str) -> None:
+    """A click (PLAY, TRY AGAIN, NEXT) begins another screen: what play left alone on the one before is not on it.
+    LIVE 2026-10-11 a lander game's title, moving and answering to nothing, was left alone for a while; PLAY began the
+    game with the same few words on it, the leaving alone held, and the lander fell to the ground unplayed, four times."""
+    if not str(key).startswith("click"):
+        return
+    from core.skills.screen_pursuit_as_it_happens import AS_IT_HAPPENS
+
+    reflexes = AS_IT_HAPPENS.get()
+    if reflexes is not None:
+        reflexes.quiet_until = 0.0

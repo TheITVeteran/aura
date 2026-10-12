@@ -294,7 +294,8 @@ async def test_what_her_own_model_knows_fills_the_guide_beside_her_work_and_neve
     assert len([a for a in asked if "Do not name keys" in a]) == 1 and len(asked) <= 2
     assert guide.lose and guide.tips and guide.things.get("rocks") == "avoid"
     assert "space" not in guide.keys_for_play()                                         # a model's keys are not taken
-    assert said and said[0].startswith("From what I know of it:") and "crashes" in said[0]
+    # What her model supposes goes into the guide and is not said to the person: it is weighed, not told.
+    assert not [line for line in said if line.startswith("From what I know of it:")]
     assert "what I know of it" in guide.says()
 
 

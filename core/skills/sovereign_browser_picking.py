@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.language.picking_by_a_rule import a_picking_rule
+from core.verify.invariants import invariant
 
 logger = logging.getLogger("Skills.SovereignBrowser.Picking")
 
@@ -179,6 +180,20 @@ def _as_asked(done: Mapping[str, Any]) -> dict[str, bool]:
             "could_not_apply": any(bool(step.get("the_ask_does_not_apply")) for step in done_by)}
 
 
+def _all_picks_as_asked(results: list[dict[str, Any]], count: int) -> bool:
+    had = [result for result in results if result.get("had")]
+    return count > 0 and len(had) >= count and all(result.get("as_asked") for result in had)
+
+
+@invariant("agency.picked_objectives_require_each_outcome", scope="agency",
+           owner="core/skills/sovereign_browser_picking.py", observational=False)
+def _picked_outcomes_invariant() -> tuple:
+    ended = {"completed": True, "steps": [{"won": False, "completed": False}]}
+    assert not _all_picks_as_asked([{"had": True, **_as_asked(ended)}] * 3, 3)
+    assert not _all_picks_as_asked([{"had": True, "as_asked": True}], 3)
+    return ()
+
+
 def _how_it_ended(done: Mapping[str, Any]) -> str:
     """How one pick's pursuit ended, in her words: what she concluded, else why she said it was done.
 
@@ -318,16 +333,17 @@ async def picked_by_the_rule(skill: Any, browser: Any, url: str, goal: str, max_
         done = await skill._handle_pursue(browser, None, f"{task} (It is “{pick.item}”, the {_ordinal(n)} of the {len(picks)} picked.)",
                                           max_steps, action_context=action_context, said_before=said_before)
         done = done if isinstance(done, dict) else {}
+        outcome = _as_asked(done)
         results.append({"number": pick.number, "item": pick.item, "url": item["href"], "had": True, "ok": bool(done.get("ok")),
-                        "completed": bool(done.get("completed")), "concluded": _with_the_best(_how_it_ended(done), done),
-                        **_as_asked(done)})
+                        "completed": outcome["as_asked"], "pursuit_completed": bool(done.get("completed")),
+                        "concluded": _with_the_best(_how_it_ended(done), done), **outcome})
         if queue:
             skill._say_out_loud(f"That was “{pick.item}”. On to the next one the rule picks.")
     played = [r for r in results if r["had"]]
     return {
         **done,
         "ok": any(r["ok"] for r in results),
-        "completed": len(played) >= len(picks) and all(r["completed"] for r in played),
+        "completed": _all_picks_as_asked(results, len(picks)),
         "goal": goal,
         "picked": results,
         # One sentence each: LIVE 2026-10-08 they ran together, "...getting nowhere in it Second, ...".

@@ -50,6 +50,11 @@ PER_SECOND = 8.0
 #: How long the timeline reaches back, in seconds.
 REMEMBERED_S = 60.0
 
+#: How much of the picture a change covers to be a whole new screen rather than something going on in it, and how
+#: many pictures something must go on for to have gone anywhere.
+NEW_SCREEN_SHARE = 0.5
+GOING_FOR = 3
+
 #: The grid the picture is measured on, and the width it is shrunk to first.
 CELLS = (16, 12)
 LOOKED_AT_WIDE = 96
@@ -326,6 +331,17 @@ class Watching:
             self._watched_until = time.monotonic() + 60.0
         logger.info("watched it play out on its own for %.1fs", watched)
         return watched
+
+    def where_it_came_to_rest(self, since: float) -> tuple[float, float] | None:
+        """Where what changed after ``since`` was changing last before it stopped: the middle of the last cells to
+        change, as shares across and down, leaving out what changes all the time and a whole new screen. Where a
+        machine she built was set going, that is where it stopped. None where nothing went on for a few pictures."""
+        always = self._always()
+        going = [m for m in self.moments if m.at > since and m.share < NEW_SCREEN_SHARE and (m.cells & ~always).any()]
+        if len(going) < GOING_FOR:
+            return None
+        rows, columns = np.nonzero(going[-1].cells & ~always)
+        return (float(columns.mean()) + 0.5) / CELLS[0], (float(rows.mean()) + 0.5) / CELLS[1]
 
     def says(self) -> str:
         """What the stream shows, in a line."""

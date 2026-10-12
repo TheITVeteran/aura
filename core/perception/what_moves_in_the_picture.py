@@ -84,6 +84,10 @@ LEFT_BEHIND_GROWTH = 1.6
 #: How long a pixel inside such a thing stays unchanged before it is taken for what it left behind, in seconds.
 LEFT_BEHIND_S = 0.25
 
+#: How far a thing's width and height may stray from their middle, as a share of it, and it still be settled at a size:
+#: the few pixels a picture's edges wander by on a thing of a few dozen.
+SETTLED = 0.15
+
 #: A thing missing this long, and not found by its look, has gone.
 GONE_AFTER_S = 0.25
 #: How long a moving thing that went out of sight is kept, with where its going was taking it, so that a thing of its
@@ -150,8 +154,14 @@ class Thing:
     still: bool = False
     path: deque = field(default_factory=lambda: deque(maxlen=40))
     sizes: deque = field(default_factory=lambda: deque(maxlen=15))
-    #: Its own size: the least it has measured, over a few pictures at a time, while followed.
+    #: Its width and height picture by picture, and the size it has settled at: not growing nor shrinking over the last
+    #: fifteen pictures (a basket first stands out as a sliver of its leading edge, and is not that size).
+    dims: deque = field(default_factory=lambda: deque(maxlen=15))
+    steady: tuple[float, float] = ()
+    #: Its own size: the least it has measured, over a few pictures at a time, while followed; and its width and height
+    #: then.
     least: float = math.inf
+    least_dims: tuple[float, float] = ()
     #: Whether anyone has been told it appeared: while the view moves, not until it has shown it is not scenery.
     announced: bool = True
     #: Whether it is a thing that went out of sight and came back into it (OUT_OF_SIGHT_S).
@@ -268,6 +278,47 @@ def _back_in_sight(moves: WhatMoves, thing: Thing, at: float) -> Thing | None:
         if off <= 2 * max(gone.w, gone.h) + 0.5 * math.hypot(gone.vx, gone.vy) * away and off < nearest:
             best, nearest = number, off
     return moves.out_of_sight.pop(best)[0] if best is not None else None
+
+
+def _settled_size(thing: Thing) -> None:
+    """Its size where it has settled at one: over the pictures remembered, within SETTLED of the middle one in width and
+    height, and its first few and last few alike within a third of that (a slow growth is no settling)."""
+    recent = list(thing.dims)
+    if len(recent) < (thing.dims.maxlen or len(recent) + 1):
+        return
+    wide = sorted(w for w, _h in recent)[len(recent) // 2]
+    tall = sorted(h for _w, h in recent)[len(recent) // 2]
+    if not wide or not tall:
+        return
+    first, last = recent[:5], recent[-5:]
+    trend = max(abs(sum(w for w, _h in last) - sum(w for w, _h in first)) / (5 * wide),
+                abs(sum(h for _w, h in last) - sum(h for _w, h in first)) / (5 * tall))
+    if trend <= SETTLED / 3 and all(abs(w - wide) <= SETTLED * wide and abs(h - tall) <= SETTLED * tall for w, h in recent):
+        thing.steady = (wide, tall)
+
+
+def _behind_it(thing: Thing, area: tuple[slice, slice], shape: tuple[int, int]) -> np.ndarray | None:
+    """Where in a box a travelling thing has passed and left: behind it, further back from its leading edge than its own
+    length along the way it goes; None where it is not travelling (has not gone its own length over the path remembered
+    of it) or its own size is not known. A basket's body is never behind its own leading edge by more than its length,
+    whether it waits or goes, and whatever falls into it; a painter's paint soon is."""
+    path = list(thing.path)
+    dims = thing.steady or thing.least_dims
+    if not dims or len(path) < 2:
+        return None
+    dx, dy = path[-1][1] - path[0][1], path[-1][2] - path[0][2]
+    gone = math.hypot(dx, dy)
+    own = abs(dx) / max(gone, 1e-6) * dims[0] + abs(dy) / max(gone, 1e-6) * dims[1]
+    if gone < own or gone == 0:
+        return None
+    ux, uy = dx / gone, dy / gone
+    # Over the box as the picture holds it: a box running past the picture's edge is cut where the picture ends.
+    rows = (area[0].start + np.arange(shape[0], dtype=np.float32))[:, None]
+    cols = (area[1].start + np.arange(shape[1], dtype=np.float32))[None, :]
+    left, top, right, bottom = thing.box()
+    lead = max(ux * left, ux * right) + max(uy * top, uy * bottom)
+    along = ux * cols + uy * rows
+    return along < lead - own
 
 
 def what_happened(kind: str, thing: Thing, at: float) -> dict[str, Any]:
@@ -400,8 +451,14 @@ class WhatMoves:
                 # What goes as the view goes is the view: an edge of the scenery the backdrop was laid a part of a
                 # pixel off. Held, it is held wrong, and it grows.
                 continue
-            if still is not None and thing.size > LEFT_BEHIND_GROWTH * thing.least:
-                stood = still[area] >= LEFT_BEHIND_S
+            # What a thing going on leaves behind (paint, a line, footprints) is scene: what in its box has stood still,
+            # where it has passed and left. Measured offline 2026-10-10: taking every still pixel of a thing grown past
+            # the least size it was seen at for something it left behind turned a catcher's own basket into scene (it
+            # first stands out as a sliver, and a plain body's middle does not change as it goes): 37 caught a minute on
+            # 3 October, 7 at the change that brought it in, 27 with this.
+            behind = _behind_it(thing, area, still[area].shape) if still is not None else None
+            if behind is not None:
+                stood = (still[area] >= LEFT_BEHIND_S) & behind
                 held[area] |= ~stood
                 left_behind[area] |= stood
             else:
@@ -648,8 +705,14 @@ class WhatMoves:
         thing.path.append((at, thing.x, thing.y))
         thing.vx, thing.vy = _speed_from_its_path(thing.path, at, (vx, vy), (thing.vx, thing.vy))
         thing.sizes.append(thing.size)
-        if len(thing.sizes) >= 5:
-            thing.least = min(thing.least, float(np.median(list(thing.sizes)[-5:])))
+        thing.dims.append((thing.w, thing.h))
+        _settled_size(thing)
+        # Its width and height at its least are taken where it is at its least as much as where it gets less: its least
+        # starts at the size it was first seen at, and a thing that never shrinks would otherwise have none.
+        if len(thing.sizes) >= 5 and (middle := float(np.median(list(thing.sizes)[-5:]))) <= thing.least:
+            thing.least = middle
+            dims = list(thing.dims)[-5:]
+            thing.least_dims = (sorted(w for w, _h in dims)[len(dims) // 2], sorted(h for _w, h in dims)[len(dims) // 2])
         if len(thing.sizes) % 5 == 0:
             self._kind_again(thing)
         if not thing.moved:

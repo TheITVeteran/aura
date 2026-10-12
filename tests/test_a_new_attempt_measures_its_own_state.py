@@ -53,6 +53,22 @@ def test_a_retry_retains_world_knowledge_without_old_outcomes_or_control_identit
     assert not meeting.read([_region("Opponent 0", 0.6)], 2.0, 0.05)
 
 
+def test_the_same_game_begun_again_keeps_what_she_is_and_what_her_keys_do():
+    # LIVE 2026-10-11 a lander down in five seconds was begun ten times, each from knowing nothing of herself.
+    hers = WhichIsHers()
+    hers.number, hers.kind, hers.last_shape = 9, 3, (4.0, 24.0)
+    for _ in range(12):
+        hers._hers.add("q", 0.0, 100.0)
+    way = hers.way_of("q")
+    assert way is not None
+    keep = {"hers": hers}
+    begin_run(keep, "played as it happens at https://example.org/a-lander")
+    assert keep["hers"] is hers and hers.number is None and hers.kind == 3 and hers.way_of("q") == way
+    # Begun again as another game (mended, or elsewhere), her keys are measured afresh.
+    begin_run(keep, "played as it happens at https://example.org/a-lander (mended)")
+    assert keep["hers"] is not hers and keep["hers"].kind is None and keep["hers"].way_of("q") is None
+
+
 def test_long_world_names_do_not_lose_the_part_that_distinguishes_versions():
     from core.runtime.what_she_learned import named
 
@@ -250,7 +266,10 @@ def test_a_partial_trajectory_does_not_invent_walls_at_its_endpoints():
     assert _range_of(moves, 1, 1, physics) == (12, 140)
 
 
-def test_an_unreachable_immediate_arrival_is_not_discarded_for_a_distant_one():
+def test_the_soonest_arrival_she_can_reach_is_met_and_one_she_cannot_is_let_go():
+    """The soonest arrival is met where she can get there in time. Where she cannot, a catcher lets it go for the next
+    she can reach: chasing one and missing two that could have been caught is the classic mistake (measured offline
+    2026-10-10 on an egg-catching game; core/agency/a_choice_and_its_reasons.py)."""
     from types import SimpleNamespace
 
     from core.agency.playing_as_it_happens import _Choosing
@@ -263,8 +282,10 @@ def test_an_unreachable_immediate_arrival_is_not_discarded_for_a_distant_one():
     decision.moves = SimpleNamespace(shape=(150, 200), things={})
     decision.others = lambda: [later, soon]
     decision.stance = lambda thing: "meet"
+    decision.speed = lambda axis: 1000
+    assert decision._target_on_a_line(0)[2] is soon                       # fast enough: the soonest
     decision.speed = lambda axis: 10
-    assert decision._target_on_a_line(0)[2] is soon
+    assert decision._target_on_a_line(0)[2] is later                      # too slow for it: the one she can reach
 
 
 def test_a_summary_keeps_the_observed_control_description_after_it_disappears():

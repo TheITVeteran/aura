@@ -17,7 +17,7 @@ OUT_OF_REACH_S = 0.6
 NO_NEARER_S = 1.5
 
 
-def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
+def out_of_her_reach(run: Any, choosing: Any, at: float) -> list[str]:
     """What she has found she cannot get to: the cells beyond what stops her, and places she gets no nearer to.
 
     A room has walls, and the ground she means to go over is only the ground
@@ -26,16 +26,22 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
     cells that way to the edge of the picture, across the band of her thing's
     own size. Where she makes for a place, by whatever ways, and for a while
     gets no nearer to it, that place: LIVE 2026-10-07 her hero went left and
-    right under a spot on the wall above it a hundred and forty times.
+    right under a spot on the wall above it a hundred and forty times. What to
+    say of it: a place she could not get to is kept as a lock seen.
 
     Where her keys take her every way over a floor seen from above, what stops
     her is a wall with ends, not the edge of what she can get to: the cells
     just ahead are marked a wall and the way round it is found.
     """
+    said: list[str] = []
     mine, cell = choosing.mine, run.cell
     if mine is None or not cell:
         run.stuck = run.making_for = None
-        return
+        return said
+    guide = _the_guide()
+    if guide is not None and guide.locks.reopened_seen():
+        # Something she gained may have put the places she could not get to in reach: they are tried again.
+        run.barred.clear()
     tall, wide = choosing.moves.shape
     # On a floor seen from above, a wall met is gone round (core/agency/a_way_through.py): how near she is is how far
     # the way round is, a place the walls found shut off is out of her reach, and a wall newly found is getting
@@ -62,17 +68,20 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
         elif at - run.making_for[2] >= NO_NEARER_S:
             run.barred.add(place)
             run.making_for = None
+            # A place she cannot get to is a lock seen, not said (core/cognition/locks_she_met.py).
+            if guide is not None and tall and wide:
+                said += guide.locks.saw_out_of_reach(f"the place at {gx / wide:.0%} across and {gy / tall:.0%} down")
     else:
         run.making_for = None
     way = choosing.ways.get(run.held) if run.held else None
     if way is None:
         run.stuck = None
-        return
+        return said
     if run.stuck is None or run.stuck[0] != run.held or math.dist(run.stuck[1:3], (mine.x, mine.y)) > 0.25 * cell:
         run.stuck = (run.held, mine.x, mine.y, at)
-        return
+        return said
     if at - run.stuck[3] < OUT_OF_REACH_S:
-        return
+        return said
     # What she was stopped by, where it is a thing on the screen, is a thing in her way (core/agency/who_is_who.py).
     who = getattr(run, "who", None)
     if who is not None:
@@ -85,7 +94,7 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
                                  (float(mine.w), float(mine.h)), others):
             through.walls_seen(run.picture, choosing.moves.scale, wide, tall)
         run.stuck = None
-        return
+        return said
     along = 0 if abs(way[0]) >= abs(way[1]) else 1
     step = 1 if way[along] > 0 else -1
     middle, half = (mine.y, mine.h / 2) if along == 0 else (mine.x, mine.w / 2)
@@ -96,3 +105,10 @@ def out_of_her_reach(run: Any, choosing: Any, at: float) -> None:
             run.barred.add((ahead, across) if along == 0 else (across, ahead))
         ahead += step
     run.stuck = None
+    return said
+
+
+def _the_guide() -> Any:
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    return THE_GUIDE.get()

@@ -22,6 +22,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from core.verify import invariant
+
 #: The selector the observer gives what a page draws. Not a CSS selector: a move
 #: on it is a hand-over, never a click.
 DRAWING = "::drawing"
@@ -346,7 +348,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
 
     from core.language.how_a_game_ended import asks_to_win, requested_attempts
     from core.language.what_counts_as_done import MADE, MEASURE, terms_asked, without_conditions
-    from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, begin_run
+    from core.skills.screen_pursuit_as_it_happens import MADE_NOT_WON, _this_game, begin_run
 
     # What the person said counts as done for each shape of thing: an end reached, a measure bettered, a thing made.
     terms = terms_asked(goal)
@@ -356,6 +358,8 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     # Asked to carry it through to its end, as many runs as that takes; else a count said, or the most in one hand-over.
     limit = (min(attempts, MOST_RUNS) if attempts is not None else float("inf") if terms.until_the_end
              else MOST_RUNS if until_won else 1)
+    if where_none:
+        limit = max(limit, where_none)
     # One of several things asked for ("the first of the 3 picked") has its share of the time, not all of it; asked to
     # be carried on until its end is reached, it has all of it.
     share = PLAY_UNTIL_WON_S if terms.until_the_end else max(LEAST_SHARE_S, PLAY_UNTIL_WON_S / _how_many_asked(goal))
@@ -366,7 +370,8 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     runs: list[dict[str, Any]] = []
     moves: list[Any] = []
     result: dict[str, Any] = {}
-    while time.monotonic() < deadline and len(runs) < limit:
+    measure_mode = False
+    while time.monotonic() < deadline and sum(bool(r.get("reached_end")) for r in runs) < limit:
         started, steps_before = time.monotonic(), _steps_done(keep)
         # Played to be won, a round is looked at every few minutes: still getting somewhere, it goes on.
         round_ends = min(deadline, started + ROUND_S) if until_won else deadline
@@ -375,6 +380,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         moves += list(result.get("moves") or [])
         moves += [{"key": "played as it happened"} for stretch in reflexes.stretches if stretch.get("pictures")]
         run = _how_the_run_went(reflexes, result)
+        run["reached_end"] = _run_reached_an_end(reflexes, run, result)
         run["took_s"] = time.monotonic() - started
         run["gains"] = sum(int(stretch.get("gains") or 0) for stretch in reflexes.stretches)
         run["observations"] = [
@@ -387,23 +393,36 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The counsel she played this round by, so that a round much worse than her best can go back to it.
         run["counsel"] = str(keep.get("counsel") or "")
         runs.append(run)
+        violations = [v for s in reflexes.stretches for v in (s.get("runtime_checks") or {}).get("violations", [])]
+        if violations:
+            result["runtime_violations"] = violations
+            break
         shape = MADE if reflexes.over_because == MADE_NOT_WON else _the_shape_of(reflexes, run)
         if shape == MADE and (terms.made_once or terms.tell_what_was_made):
             # Made once, and what was made said, as the person asked of a thing with no end and no measure.
             run["ended"] = "finished"
-            _tell(_what_was_made(run, moves))
+            _tell(await _what_was_made_as_seen(page, band, run, moves, list(getattr(reflexes, "words", []) or []), keep))
             result["stopped_because"] = MADE_AS_ASKED
             break
         nothing_to_win = shape == MEASURE or _for_points_only(reflexes, goal) or _only_a_score(reflexes, run)
         if nothing_to_win and where_none:
+            measure_mode = True
             # Where there is nothing to win, what the person asked for that case: so many runs, and the best of them.
+            if not run["reached_end"]:
+                # A clock-bounded hand-over can return while the same run is still in play. Its score is evidence of
+                # progress, not another finished attempt; keep playing it without beginning it again.
+                if time.monotonic() < deadline:
+                    continue
+                break
             run["ended"] = run["ended"] if run["ended"] in ("won", "lost") else "finished"
-            if len(runs) < where_none and time.monotonic() < deadline:
-                _tell(f"{_what_there_is_to_play_for(reflexes)} Run {len(runs)} of {where_none}: {_scored(run)}. Again.")
-                begin_run(keep)
+            finished_runs = [r for r in runs if r.get("reached_end")]
+            if len(finished_runs) < where_none and time.monotonic() < deadline:
+                _tell(f"{_what_there_is_to_play_for(reflexes)} Run {len(finished_runs)} of {where_none}: {_scored(run)}. Again.")
+                begin_run(keep, _this_game(page))
                 continue
-            _tell(_the_best_of(runs))
-            result["stopped_because"] = PLAYED_FOR_ITS_BEST
+            _tell(_the_best_of(finished_runs))
+            result["stopped_because"] = (PLAYED_FOR_ITS_BEST if len(finished_runs) >= where_none else
+                                         f"only {len(finished_runs)} of {where_none} requested runs reached an end before time ran out")
             break
         if reflexes.over_because == MADE_NOT_WON:
             # Asked to win a thing that has no winning, the honest end is to say so, in its own words.
@@ -411,10 +430,6 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
                   "I tried it out, and I leave it here.")
             run["ended"] = "finished"
             result["stopped_because"] = NOTHING_TO_WIN
-            break
-        violations = [v for s in reflexes.stretches for v in (s.get("runtime_checks") or {}).get("violations", [])]
-        if violations:
-            result["runtime_violations"] = violations
             break
         # The round's own clock stops a little before the slice's end: a round that ran most of its slice ran out of it.
         # Looked at before a round with no end of its own is taken as the last: LIVE 2026-10-07 this came after that
@@ -432,12 +447,12 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
                 # Asked to carry it through to its end, a round that gained nothing is begun again from the top.
                 _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'm starting it again from the top.")
                 band = await _from_the_top(page, band)
-                begin_run(keep)
+                begin_run(keep, _this_game(page))
                 continue
             _tell(f"{round(ROUND_S / 60)} minutes in this round and nothing gained; I'll leave this one here.")
             result["stopped_because"] = "getting nowhere in it"
             break
-        if (until_won and run["ended"] == "won") or len(runs) >= limit or not reflexes.over_because:
+        if (until_won and run["ended"] == "won") or sum(bool(r.get("reached_end")) for r in runs) >= limit or not reflexes.over_because:
             _the_last_run_said(run, runs, keep)
             break
         if until_won and not_getting_better(runs) and not terms.until_the_end and not await _stopped_to_take_stock(
@@ -463,11 +478,15 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
     result["as_it_happened"] = "; ".join(r["said"] for r in runs if r["said"])
     last_seen = str(result.get("last_seen") or "")
     won = any(r["ended"] == "won" for r in runs)
-    counted = (until_won and won) or attempts is None or (len(runs) >= attempts and all(r["ended"] in ("won", "lost", "finished") for r in runs))
-    complete = (won if until_won else bool(result.get("completed")) or bool(runs and runs[-1]["ended"])) and counted and not result.get("runtime_violations")
+    finished_runs = [r for r in runs if r.get("reached_end")]
+    counted = (until_won and won) or attempts is None or len(finished_runs) >= attempts
+    complete = (won if until_won else bool(result.get("completed")) or bool(finished_runs)) and counted and not result.get("runtime_violations")
     # Nothing to win, and played as the person said to play such a thing: done as asked.
-    complete = complete or (result.get("stopped_because") in (PLAYED_FOR_ITS_BEST, MADE_AS_ASKED) and not result.get("runtime_violations"))
-    scores = [r["score"] for r in runs if r.get("score") is not None]
+    fulfilled_measure = result.get("stopped_because") == PLAYED_FOR_ITS_BEST and _measure_runs_are_done(runs, where_none)
+    complete = complete or ((fulfilled_measure or result.get("stopped_because") == MADE_AS_ASKED) and not result.get("runtime_violations"))
+    if measure_mode:
+        complete = bool(fulfilled_measure and not result.get("runtime_violations"))
+    scores = [r["score"] for r in finished_runs if r.get("score") is not None]
     return {
         **step,
         "landed": len(moves),
@@ -478,6 +497,8 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         "runs": [r["ended"] or "unread" for r in runs],
         "run_details": runs,
         "requested_attempts": attempts,
+        "requested_measure_runs": where_none,
+        "completed_runs": len(finished_runs),
         "won": won,
         "finished": any(r["ended"] in ("won", "finished") for r in runs),
         "did": what_the_play_came_to(len(moves), result),
@@ -529,7 +550,7 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
                         deadline: float) -> None:
     """A run lost and another begun: how it ended said, the counsel in force judged, and stock taken where she keeps
     losing (core/skills/sovereign_browser_taking_stock.py)."""
-    from core.skills.screen_pursuit_as_it_happens import begin_run
+    from core.skills.screen_pursuit_as_it_happens import _this_game, begin_run
 
     # The screen's own words the first time; after that, the round counted: six of the same line read as one. And what
     # cost her, by name, where play came to keep clear of it: a person going again says what they will do differently.
@@ -547,7 +568,7 @@ async def _between_runs(goal: str, reflexes: Any, run: dict[str, Any], runs: lis
         why = stock.due(runs)
         if why:
             await stock.take(why, goal, list(reflexes.words), run["words"], runs, keep, deadline)
-    begin_run(keep)
+    begin_run(keep, _this_game(getattr(reflexes, "page", None)))
 
 
 def _steps_done(keep: dict[str, Any]) -> int:
@@ -698,19 +719,116 @@ def _keep_the_guide(guide: Any) -> None:
 
 
 def _how_the_run_went(reflexes: Any, result: Mapping[str, Any]) -> dict[str, str]:
-    from core.language.how_a_game_ended import how_it_ended, how_it_ended_in
+    from core.language.how_a_game_ended import (
+        how_it_ended,
+        how_it_ended_in,
+        says_an_unresolved_result,
+        says_play_is_ongoing,
+    )
 
     words = reflexes.ending_words or str(result.get("last_seen") or "")
     parts = list(getattr(reflexes, "ending_parts", None) or [])
     ended = how_it_ended_in(parts) if parts else how_it_ended(words)
+    current = "\n".join([str(result.get("last_seen") or ""), words, *parts])
+    ongoing = says_play_is_ongoing(current)
+    if ongoing:
+        ended = ""
     # Where the end screen's words do not say, the counters may: her score at
     # what wins, theirs at it, nothing left to lose (core/agency/how_the_contest_stands.py).
     played = [s for s in getattr(reflexes, "stretches", []) if s.get("pictures")]
     if any((s.get("runtime_checks") or {}).get("violations") for s in played):
         ended = "interrupted"
-    if not ended and played:
-        ended = str(played[-1].get("settled") or "")
+    if not ended and played and not ongoing and not says_an_unresolved_result(current) and not _a_clock_is_still_running(reflexes, result):
+        predicted = str(played[-1].get("settled") or "")
+        ended = predicted if predicted in ("won", "lost", "drawn") else ""
     return {"ended": ended, "words": " ".join(words.split()), "said": reflexes.what_it_came_to()}
+
+
+def _a_clock_is_still_running(reflexes: Any, result: Mapping[str, Any]) -> bool:
+    """Whether recent observations show a clock decreasing with time still left; a frozen final remainder is not play."""
+    clock_words = re.compile(r"\b(?:time|timer|clock|countdown)\b", re.I)
+    history: dict[str, list[float]] = {}
+
+    def keep(label: str, value: Any, source: str) -> None:
+        name = re.sub(r"([a-z])([A-Z])", r"\1 \2", str(label))
+        name = " ".join(re.sub(r"[^a-z0-9]+", " ", name.lower()).split())
+        if not clock_words.search(name) or re.search(r"\b(?:best|record|final|total|elapsed|response|reaction|completion)\b", name):
+            return
+        try:
+            units = [float(part) for part in str(value).strip().split(":")]
+        except (TypeError, ValueError):
+            return
+        if not units or len(units) > 3:
+            return
+        seconds = sum(unit * 60 ** i for i, unit in enumerate(reversed(units)))
+        history.setdefault(f"{source}:{name}", []).append(seconds)
+
+    for stretch in getattr(reflexes, "stretches", []) or []:
+        if stretch.get("pictures"):
+            for label, value in (stretch.get("counters") or {}).items():
+                keep(str(label), value, "counter")
+    written_clock = re.compile(r"\b((?:time|timer|clock|countdown)(?:\s+(?:left|remaining))?|remaining time)\s*:?\s*(\d+(?::\d{1,2}){0,2}(?:\.\d+)?)\b", re.I)
+    screens = list(getattr(reflexes, "words", None) or [])[-6:]
+    current = str(result.get("last_seen") or "")
+    if current and (not screens or current != screens[-1]):
+        screens.append(current)
+    for screen in screens:
+        for found in written_clock.finditer(screen):
+            keep(found.group(1), found.group(2), "text")
+    measured = [values for name, values in history.items() if name.startswith("counter:") and len(values) >= 2]
+    # Repeated counter observations can establish that a final positive remainder is frozen. A changed-screen-only
+    # OCR history does not record that repeated reading and cannot overrule it with an older decrease.
+    recent = measured or [values for name, values in history.items() if name.startswith("text:")]
+    return any(len(values) >= 2 and 0 < values[-1] < values[-2] for values in recent)
+
+
+def _measure_runs_are_done(runs: list[Mapping[str, Any]], requested: int | None) -> bool:
+    """Only runs that reached their end can fulfill a requested number of attempts at a measure."""
+    return requested is not None and requested > 0 and sum(bool(run.get("reached_end")) for run in runs) >= requested
+
+
+@invariant("agency.measured_play_requires_requested_completed_runs", scope="agency",
+           owner="core/skills/sovereign_browser_drawing.py", observational=False)
+def _measure_runs_count_invariant() -> tuple:
+    """A visible score or partial hand-over cannot satisfy a requested count of finished runs."""
+    for count in range(4):
+        runs = [{"reached_end": True, "score": 120} for _ in range(count)]
+        runs += [{"reached_end": False, "score": 9999} for _ in range(5)]
+        assert _measure_runs_are_done(runs, 3) is (count >= 3)
+    return ()
+
+
+def _run_reached_an_end(reflexes: Any, run: Mapping[str, Any], result: Mapping[str, Any]) -> bool:
+    """Whether this hand-over reached the run's end, rather than returning a still-current measure at its own deadline."""
+    from core.language.how_a_game_ended import (
+        says_a_round_is_over,
+        says_play_is_ongoing,
+        what_says_the_game_is_over,
+    )
+
+    words = "\n".join([str(result.get("last_seen") or ""), str(run.get("words") or ""),
+                       *list(getattr(reflexes, "ending_parts", None) or [])])
+    if says_play_is_ongoing(words) or run.get("ended") == "interrupted":
+        return False
+    if run.get("ended") in ("won", "lost", "drawn", "finished"):
+        return True
+    return bool(getattr(reflexes, "over_because", "") and
+                (says_a_round_is_over(words) or what_says_the_game_is_over(words)))
+
+
+@invariant("agency.current_play_vetoes_predicted_completion", scope="agency",
+           owner="core/skills/sovereign_browser_drawing.py", observational=False)
+def _current_play_veto_invariant() -> tuple:
+    """Current turn evidence prevents a board or counter prediction from declaring a win or loss."""
+    from types import SimpleNamespace
+
+    for prediction in ("won", "lost"):
+        reflexes = SimpleNamespace(ending_words="Your turn to make a move", ending_parts=["Your turn to make a move"],
+                                   stretches=[{"pictures": 1, "settled": prediction}], what_it_came_to=lambda: "")
+        run = _how_the_run_went(reflexes, {})
+        assert run["ended"] == ""
+        assert not _run_reached_an_end(reflexes, run, {})
+    return ()
 
 
 #: The least time one of several games asked for is given, in seconds.
@@ -771,6 +889,63 @@ def _the_shape_of(reflexes: Any, run: Mapping[str, Any]) -> str:
 
     return shape_in(" ".join([*getattr(reflexes, "words", []), str(run.get("words") or "")]),
                     a_measure_seen=run.get("score") is not None)
+
+
+#: What her eyes are asked of a thing that answered a question: its answer, quoted where it is written.
+_WHAT_IT_ANSWERED = ("This is a picture of a toy or game that has just answered a question someone typed into it. What "
+                     "answer does it give? Quote the answer word for word where it is written on the picture; otherwise "
+                     'say in a few words what it shows as its answer. Answer with JSON only: {"answered": "<the answer>"}')
+#: What her eyes are asked of a thing made: what it shows, in a sentence.
+_WHAT_IT_SHOWS = ("This is a picture someone has just made in a game for making things: a scene, a character, a card, a "
+                  "photo. In one short plain sentence, say what it shows: who or what is in it, and what they are doing. "
+                  'Answer with JSON only: {"shows": "<one sentence>"}')
+
+
+async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, float], run: Mapping[str, Any],
+                                 moves: list[Any], words: list[str], keep: Mapping[str, Any] | None = None) -> str:
+    """What she made, as her eyes see it at the end, and why, in the thing's own words for what it is for; where her
+    eyes cannot say, as her choices and its last words have it (``_what_was_made``). Offline 2026-10-11 she said of a
+    scrapbook she had put nothing into "I made it: at the end it shows 'PUBLIC LIBRARY'", and why she made it was not
+    said at all."""
+    import io
+
+    from core.perception.her_eyes import look_with_her_eyes
+    from core.perception.where_i_am_on_screen import _as_jpeg
+
+    shows = ""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        size = getattr(page, "viewport_size", None) or {"width": 1280, "height": 800}
+        left, top, right, bottom = band
+        png = await page.screenshot(clip={"x": left * size["width"], "y": top * size["height"],
+                                          "width": (right - left) * size["width"], "height": (bottom - top) * size["height"]})
+        frame = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
+        # A thing that answered what she asked is asked for its answer, in its own words where it writes them; a thing
+        # made, for what it shows.
+        asked_it = bool((keep or {}).get("typed"))
+        answer = await look_with_her_eyes(_WHAT_IT_ANSWERED if asked_it else _WHAT_IT_SHOWS, _as_jpeg(frame),
+                                          max_tokens=80, timeout_s=40.0)
+        found = re.search(r"\{.*\}", answer or "", re.S)
+        said = json.loads(found.group(0)) if found else {}
+        shows = " ".join(str(said.get("answered") or said.get("shows") or "").split()).rstrip(".")
+    except Exception as why:  # noqa: BLE001 - her eyes not answering leaves what her choices say
+        import logging
+
+        logging.getLogger(__name__).info("her eyes could not say what she made: %s", str(why)[:160])
+    typed = str((keep or {}).get("typed") or "")
+    if typed:
+        # A thing that answers what is put to it: what she asked, and what it answered, as it shows it.
+        answered = shows or str(run.get("words") or "")[:160]
+        return (f"There's nothing to win or score in this one; it answers what you ask it. I asked it {typed!r}, and "
+                f"it answered: {answered[:1].lower()}{answered[1:]}.")
+    if not shows:
+        return _what_was_made(run, moves)
+    asked = _what_it_is_for(words)
+    because = f" I made it that way because it asks to: {asked!r}." if asked else ""
+    return (f"There's nothing to win or score in this one; it's for making things. What I made shows "
+            f"{shows[:1].lower()}{shows[1:]}.{because}")
 
 
 def _what_was_made(run: Mapping[str, Any], moves: list[Any]) -> str:

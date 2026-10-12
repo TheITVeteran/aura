@@ -56,6 +56,10 @@ HELD_TO_SEE_S = 0.45
 
 THE_PRESS_S = 0.1
 
+#: How many times as long as she will hold a key she watches before pressing it: her eyes take about half a second to
+#: pick a moving thing out, and it must then be seen on its way.
+WATCHED_FIRST = 2.5
+
 
 async def it_goes_while_held(look: Callable[[], Awaitable[Any]], hands: Any, key: str, *, held: float = HELD_TO_SEE_S) -> bool:
     """``key`` pressed the way a person presses one to see what it does, held a moment while she watches: whether something goes on going while it is down.
@@ -75,13 +79,18 @@ async def it_goes_while_held(look: Callable[[], Awaitable[Any]], hands: Any, key
     """
     moves = WhatMoves()
     began: float | None = None
-    while not moves.has_looked:
+    pressed_at = 0.0
+    # She watches for as long before the key goes down as she will hold it: what is going already is not going because
+    # of the key. LIVE 2026-10-11 snow fell behind a title's PLAY button and behind a card of control settings; it went
+    # on falling while she held up, both were taken for worlds that move under her hand, and neither was gone on from.
+    while True:
         seen = await look()
         if seen is None:
             return False
         began = seen[1] if began is None else began
         moves.see(*seen)
-        if seen[1] - began > 3 * held:
+        pressed_at = seen[1]
+        if (moves.has_looked and seen[1] - began >= WATCHED_FIRST * held) or seen[1] - began > 2 * WATCHED_FIRST * held:
             break
     await hands.down(key)
     first: float | None = None
@@ -98,7 +107,22 @@ async def it_goes_while_held(look: Callable[[], Awaitable[Any]], hands: Any, key
     finally:
         await hands.up(key)
     since = first + THE_PRESS_S
-    return any(_went_on(thing, since) for thing in moves.things.values())
+    things = list(moves.things.values())
+    # Where things were already on their way before the key went down, a thing first seen moving after it is taken
+    # for one more of them, not for something the key set going.
+    already = any(_before(thing, pressed_at) == "going" for thing in things)
+    return any(_went_on(thing, since) and _before(thing, pressed_at) != "going"
+               and not (already and _before(thing, pressed_at) == "unseen") for thing in things)
+
+
+def _before(thing: Any, until: float) -> str:
+    """What a thing was doing before the key went down: "going" somewhere, "still" where it stood, or "unseen"."""
+    points = [(x, y) for at, x, y in thing.path if at <= until]
+    if len(points) < 2:
+        return "unseen"
+    size = max(float(thing.w), float(thing.h), 1.0)
+    xs, ys = [x for x, _y in points], [y for _x, y in points]
+    return "going" if math.hypot(max(xs) - min(xs), max(ys) - min(ys)) > 0.25 * size else "still"
 
 
 def _went_on(thing: Any, since: float) -> bool:

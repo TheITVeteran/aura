@@ -939,6 +939,10 @@ class PhantomBrowser(_ActsOnThePage):
         )
         self._last_verdict = verdict.to_dict()
         if not verdict.allowed:
+            # The newest request did not reach the network. Retire an older
+            # HTTP failure before a caller decides whether another route helps.
+            self._last_navigation = {"ok": False, "reason": f"policy_refused:{verdict.reason}",
+                                     "requested_url": _normalize_url(url), "final_url": ""}
             logger.warning("🌐 Navigation refused: %s", verdict.reason)
             return False
         url = _normalize_url(url)

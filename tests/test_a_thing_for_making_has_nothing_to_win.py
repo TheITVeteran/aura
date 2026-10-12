@@ -35,13 +35,23 @@ def test_its_own_words_say_whether_it_is_won_scored_or_made():
     assert what_it_asks_of_a_player("Use the arrow keys to move. Catch the fruit.") == ""
 
 
-def test_a_thing_for_making_is_over_once_she_has_tried_it_out():
+def test_a_thing_for_making_is_over_once_she_has_tried_it_out_and_made_something_in_it():
+    """Offline 2026-10-11 a scrapbook's photo was taken for made after ninety seconds of arrows and a menu clicked."""
+    from core.skills.screen_pursuit_as_it_happens import CHANGES_MADE_AT_LEAST, TRYING_OUT_MOST_S
+
     reflexes = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="win it", ends_at=time.monotonic() + 600)
     reflexes.words = ["KND NUMBUH GENERATOR", MAKER]
     assert not reflexes.run_is_over({"text": MAKER})
     reflexes.for_making_since = time.monotonic() - TRYING_OUT_S - 1
+    assert not reflexes.run_is_over({"text": MAKER})                  # its time had, but nothing made in it yet
+    reflexes.acts_that_changed = reflexes.made_before + CHANGES_MADE_AT_LEAST
     assert reflexes.run_is_over({"text": MAKER})
     assert reflexes.over_because == MADE_NOT_WON
+    stuck = PlayingAsItHappens(page=None, band=(0, 0, 1, 1), goal="win it", ends_at=time.monotonic() + 600)
+    stuck.words = ["KND NUMBUH GENERATOR", MAKER]
+    stuck.run_is_over({"text": MAKER})
+    stuck.for_making_since = time.monotonic() - TRYING_OUT_MOST_S - 1
+    assert stuck.run_is_over({"text": MAKER})                         # one that will not change is left in time
 
 
 def test_she_says_what_it_is_for_in_its_own_words_and_ends_it_as_played():
@@ -68,3 +78,73 @@ def test_a_goal_said_with_who_it_is_for_or_where_a_thing_is_brought_is_an_end_an
     assert shape_in("Help the Eds get their jawbreakers by using crazy contraptions.", a_measure_seen=True) == END
     assert shape_in("Create elaborate tubes to get a jawbreaker into a cup.", a_measure_seen=True) == END
     assert shape_in("Drop the coins into the slots for points.", a_measure_seen=True) == MEASURE
+
+
+def test_what_she_made_is_said_as_her_eyes_see_it_and_why_in_its_own_words(monkeypatch):
+    """Offline 2026-10-11 she said of a scrapbook she had put nothing into "I made it: at the end it shows 'PUBLIC
+    LIBRARY'", and why she made it was not said."""
+    import asyncio
+
+    import core.perception.her_eyes as eyes
+    import core.skills.sovereign_browser_drawing as drawing
+
+    class _Page:
+        viewport_size = {"width": 200, "height": 100}
+
+        async def screenshot(self, clip):
+            import io
+
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.new("RGB", (int(clip["width"]), int(clip["height"])), (90, 40, 160)).save(out, format="PNG")
+            return out.getvalue()
+
+    async def seen(prompt, image, **_kw):
+        return '{"shows": "Scooby and Shaggy hiding behind a bookshelf in a haunted library."}'
+
+    monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
+    words = ["INSTRUCTIONS", "Use your imagination to make the craziest, creepiest, or goofiest scenes you can think of."]
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": "NEW PHOTO"}, [], words))
+    assert "shows scooby and shaggy hiding behind a bookshelf" in said.lower()
+    assert "because it asks to" in said and "craziest" in said
+
+
+@pytest.mark.parametrize(("words", "asks"), [
+    ('Instructions 1. Try to type only "Yes" or "No" questions. 2. Don\'t forget to click "Ask."', "make"),
+    ("Ask the Magic 8 ball any question", "make"),
+    ("Answer the questions to win the quiz", "win"),
+    ("Type your name and press enter to begin the race", ""),
+])
+def test_a_thing_that_answers_what_is_asked_of_it_is_played_once_as_one_for_making_is(words, asks):
+    """Offline 2026-10-11 a fortune-teller asked "Will I win?" was played as it happened until its time ran out, and
+    what it answered was never said."""
+    assert what_it_asks_of_a_player(words) == asks
+
+
+def test_what_a_thing_that_answers_said_is_told_with_what_she_asked_it(monkeypatch):
+    import asyncio
+
+    import core.perception.her_eyes as eyes
+    import core.skills.sovereign_browser_drawing as drawing
+
+    class _Page:
+        viewport_size = {"width": 100, "height": 100}
+
+        async def screenshot(self, clip):
+            import io
+
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.new("RGB", (100, 100), (20, 20, 20)).save(out, format="PNG")
+            return out.getvalue()
+
+    async def seen(prompt, image, **_kw):
+        assert "answer" in prompt                                         # asked for its answer, not what it shows
+        return '{"answered": "Swami Shaggy saying Like, no way, man!"}'
+
+    monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [],
+                                                      {"typed": "Will I win?"}))
+    assert "I asked it 'Will I win?'" in said and "it answered: swami shaggy saying like, no way" in said.lower()

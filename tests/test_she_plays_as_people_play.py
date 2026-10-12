@@ -183,3 +183,76 @@ def test_a_place_its_guide_says_is_worked_with_the_mouse_alone_is_not_offered_ke
         assert here.pointer_only and not {"up", "down", "left", "right"} & set(here.available())
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_place_whose_program_drags_with_the_mouse_and_names_no_key_is_worked_by_the_pointer():
+    """Offline 2026-10-11 a scrapbook whose program dragged things with the mouse had its arrows pressed."""
+    from types import SimpleNamespace
+
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = Guide(place="a place")
+    guide.take_in_program(SimpleNamespace(words=[], keys={}, keyed=[], pointer=["moves", "drags"], buttons=[], text=""))
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("")
+        here.looked_at([a_click_on("continue")])
+        here.looked_at([a_click_on("continue")])
+        assert here.pointer_only and not {"up", "down", "left", "right"} & set(here.available())
+    finally:
+        THE_GUIDE.reset(token)
+
+
+def test_a_place_its_guide_knows_is_worked_by_dragging_has_things_carried_though_the_screen_does_not_say_so():
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = Guide(place="a place")
+    guide.take_in(TOLD, ["Drag the pictures into the scene, then take a photo."])
+    assert guide.in_play("dragging")
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=())
+        here.asked_for_by("PUBLIC LIBRARY")
+        here.looked_at([a_click_on("the shape at 85% across, 30% down"), a_click_on("the shape at 40% across, 50% down")])
+        here.looked_at([a_click_on("the shape at 85% across, 30% down"), a_click_on("the shape at 40% across, 50% down")])
+        assert here.carrying_said and any(move.startswith("drag ") for move in here.available())
+    finally:
+        THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize(("label", "said"), [("time di", None), ("Leuel", "level"), ("HP", "hp"), ("hits left", "hits left")])
+def test_a_scrap_of_a_misread_label_is_not_said_as_a_name(label, said):
+    """Offline 2026-10-11 "Time 3, time di 14" was said aloud of a parking game's counters."""
+    from core.language.words_of_the_language import words_of
+
+    assert words_of(label) == said
+
+
+def test_arrows_nobody_named_are_not_pressed_where_the_guide_knows_the_place_is_worked_otherwise():
+    """Offline 2026-10-11 a mini-golf game worked with the mouse, return and s had its arrows pressed."""
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = Guide(place="a place")
+    guide.take_in(TOLD, ["Press RETURN to putt again.", "Press S for sound.", "Click on your ball and hold down the mouse."])
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("")
+        here.looked_at([a_click_on("Choose")])
+        here.looked_at([a_click_on("Choose")])
+        assert not {"up", "down", "left", "right"} & set(here.available())
+    finally:
+        THE_GUIDE.reset(token)
+    walker = Guide(place="another place")
+    walker.take_in(TOLD, ["Use the arrow keys to walk."])
+    token = THE_GUIDE.set(walker)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("")
+        assert here.told == ("up", "down", "left", "right")
+    finally:
+        THE_GUIDE.reset(token)

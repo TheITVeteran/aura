@@ -204,7 +204,7 @@ DIMENSIONS: dict[str, tuple[Value, ...]] = {
         "searching",
         ("a board", "moves looked ahead against the other side", ("a board in turns",), ("a board",)),
         ("how hard and which way", "a shot's settings searched by where each went", ("send",), ("sending by strength",)),
-        ("where a piece goes", "where a falling piece lands best", (), ("stacking", "matching")),
+        ("where a piece goes", "where a falling piece lands best", ("a well of falling pieces",), ("stacking", "matching")),
         ("a way through", "a way from here to there round what is in the way", (), ("reaching a place", "locked ways")),
     ),
     "motivation": _values(

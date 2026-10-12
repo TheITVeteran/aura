@@ -20,13 +20,13 @@ redirects should do so — see :func:`describe_decision`.
 """
 from __future__ import annotations
 
-from core.runtime.errors import record_degradation
-
 import ipaddress
 import os
 import socket
 import urllib.parse
 from typing import Any
+
+from core.runtime.errors import record_degradation
 
 #: Hosts that are always acceptable targets for observation.
 DEFAULT_FETCH_ALLOWLIST = {
@@ -70,6 +70,34 @@ def ip_is_public(ip_text: str) -> bool:
     )
 
 
+def _url_syntax(url: Any) -> tuple[str | None, urllib.parse.ParseResult | None, str]:
+    """Parse a destination without relaxing credentials or URL syntax."""
+    if not isinstance(url, str) or not url.strip():
+        return None, None, "url is missing"
+    if any(ord(char) < 32 or ord(char) == 127 for char in url):
+        return None, None, "url contains whitespace or control characters"
+    text = url.strip()
+    if any(char.isspace() for char in text):
+        return None, None, "url contains whitespace or control characters"
+    if "\\" in text:
+        return None, None, "url contains a backslash"
+    try:
+        parsed = urllib.parse.urlparse(text)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return None, None, "url has an invalid host or port"
+    if parsed.username or parsed.password or "@" in parsed.netloc:
+        return None, None, "url must not contain credentials (userinfo)"
+    if not host:
+        return None, None, "url has no host"
+    if "%" in parsed.netloc:
+        return None, None, "url has an encoded authority"
+    if parsed.netloc.endswith(":") or port == 0:
+        return None, None, "url has an invalid port"
+    return text, parsed, ""
+
+
 def validate_url_shape(url: Any, *, allow_http: bool | None = None) -> tuple[str | None, str]:
     """Every static check EXCEPT the host allowlist.
 
@@ -79,12 +107,9 @@ def validate_url_shape(url: Any, *, allow_http: bool | None = None) -> tuple[str
     have produced a second, weaker version of the dangerous half (CP126
     ``8bf8d32e`` against ``phantom_browser``).
     """
-    if not isinstance(url, str) or not url.strip():
-        return None, "url is missing"
-    text = url.strip()
-    if any(char in text for char in ("\n", "\r", "\x00", " ")):
-        return None, "url contains whitespace or control characters"
-    parsed = urllib.parse.urlparse(text)
+    text, parsed, error = _url_syntax(url)
+    if text is None or parsed is None:
+        return None, error
     scheme = parsed.scheme.lower()
     if allow_http is None:
         allow_http = str(os.environ.get("AURA_WEB_FETCH_ALLOW_HTTP", "")).strip().lower() in {
@@ -92,15 +117,7 @@ def validate_url_shape(url: Any, *, allow_http: bool | None = None) -> tuple[str
         }
     if scheme != "https" and not (allow_http and scheme == "http"):
         return None, f"scheme '{scheme}' not allowed (https required)"
-    if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
-        return None, "url must not contain credentials (userinfo)"
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return None, "url has no host"
-    try:
-        port = parsed.port
-    except ValueError:
-        return None, "url has an invalid port"
+    port = parsed.port
     if port is not None and port not in ALLOWED_PORTS:
         return None, f"port {port} is not permitted for observation"
     return text, ""
@@ -139,12 +156,48 @@ def resolves_to_public_addresses(url: str) -> tuple[bool, str]:
 #: ask for. This is an environment opt-in the process owner sets, and every
 #: use is recorded.
 LOOPBACK_OPT_IN_FLAG = "AURA_BROWSER_ALLOW_LOOPBACK"
+#: Optional comma-separated origins limit the owner's opt-in to named local
+#: servers. An unset value preserves the existing harness opt-in; a present
+#: empty or malformed value admits no local destination.
+LOOPBACK_ORIGINS_FLAG = "AURA_BROWSER_LOOPBACK_ORIGINS"
 
 
 def _loopback_opt_in() -> bool:
     return str(os.environ.get(LOOPBACK_OPT_IN_FLAG, "")).strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def _origin(parsed: urllib.parse.ParseResult) -> tuple[str, str, int]:
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        host = literal.compressed
+    return scheme, host, parsed.port or (443 if scheme == "https" else 80)
+
+
+def _loopback_origin_permitted(parsed: urllib.parse.ParseResult) -> tuple[bool, str]:
+    configured = os.environ.get(LOOPBACK_ORIGINS_FLAG)
+    if configured is None:
+        return True, ""
+    origins = set()
+    for entry in configured.split(","):
+        text, candidate, error = _url_syntax(entry)
+        if (
+            text is None or candidate is None or error
+            or candidate.scheme.lower() not in {"http", "https"}
+            or candidate.path not in {"", "/"}
+            or candidate.params or candidate.query or candidate.fragment
+        ):
+            return False, f"{LOOPBACK_ORIGINS_FLAG} has an invalid origin"
+        origins.add(_origin(candidate))
+    if _origin(parsed) not in origins:
+        return False, f"loopback origin is not in {LOOPBACK_ORIGINS_FLAG}"
+    return True, ""
 
 
 def validate_browser_url(url: Any) -> tuple[str | None, str]:
@@ -155,14 +208,17 @@ def validate_browser_url(url: Any) -> tuple[str | None, str]:
     network does: scheme, credentials, port, and the resolved-address
     classification that defeats DNS rebinding.
     """
-    text = str(url or "").strip()
+    text, parsed, error = _url_syntax(url)
+    if text is None or parsed is None:
+        return None, error
     if _loopback_opt_in() and _is_loopback_only(text):
+        admitted, error = _loopback_origin_permitted(parsed)
+        if not admitted:
+            return None, error
         # A local fixture on this machine, admitted deliberately and
         # recorded. Scheme and port are relaxed here and NOWHERE else: a
         # test server is http on a high port by nature, and the rest of the
         # local network — the SSRF target that matters — is still refused.
-        if any(char in text for char in ("\n", "\r", "\x00", " ")):
-            return None, "url contains whitespace or control characters"
         record_degradation(
             "url_policy",
             PermissionError(f"loopback destination admitted under {LOOPBACK_OPT_IN_FLAG}"),
@@ -193,6 +249,12 @@ def _is_loopback_only(url: str) -> bool:
             return False
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https"}:
+            return False
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            literal = None
+        if literal is not None and not literal.is_loopback:
             return False
         infos = socket.getaddrinfo(
             host, parsed.port or (443 if scheme == "https" else 80), proto=socket.IPPROTO_TCP

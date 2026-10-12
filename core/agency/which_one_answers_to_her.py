@@ -1101,6 +1101,13 @@ def gone_the_ways_of_the_keys(hers: WhichIsHers, moves: Any) -> int | None:
     for number, speeds in hers._by_thing.items():
         if number not in moves.things or number in hers.not_mine:
             continue
+        # What her keys move rests when she rests. A thing that goes on going between her presses (a ball, a falling
+        # thing, the other side's paddle) can go three keys' ways by chance and none against: measured offline
+        # 2026-10-10, in a Pong of the worked-on worlds she took the ball for herself in two runs of three.
+        resting = [math.hypot(vx, vy) for (key, _began), values in speeds.by_press.items() if key == ""
+                   for vx, vy in values]
+        if len(resting) < 2 or statistics.median(resting) >= REALLY_MOVES:
+            continue
         went, against = set(), set()
         for (key, began), values in speeds.by_press.items():
             way = WAYS.get(key)

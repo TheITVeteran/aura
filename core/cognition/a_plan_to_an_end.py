@@ -49,7 +49,7 @@ from core.runtime.skill_contract import (
     semantic_predicate_from_mapping,
 )
 
-__all__ = ["Means", "Plan", "ask_for_a_plan", "plan_again", "the_screen_answered"]
+__all__ = ["Means", "Plan", "ask_for_a_plan", "plan_again", "plan_as_memory", "plan_from_memory", "the_screen_answered"]
 
 logger = logging.getLogger("Aura.APlanToAnEnd")
 
@@ -124,7 +124,9 @@ class Plan(Rules):
         self._pending_changed = changed
         if after is None and (attempt.expected or attempt.predicates != "[]") and changed is not False:
             self.awaiting = attempt.step_key
-            (self.repeat_states if attempt.optional else self.states)[attempt.step_key] = PredicateState.UNKNOWN
+            attempts = self.pending_refinement.attempts if self.pending_refinement is not None else (attempt,)
+            for pending in attempts:
+                (self.repeat_states if pending.optional else self.states)[pending.step_key] = PredicateState.UNKNOWN
             return None
         return super().tried(move, changed, before=before, after=after, step_key=step_key, effects=effects)
 
@@ -159,6 +161,14 @@ class Plan(Rules):
         """Settle the pending step with its owned result. Missing measurements leave the requirement unresolved."""
         attempt = self.pending_step
         if attempt is None:
+            return self.stuck
+        if self.pending_refinement is not None:
+            from core.cognition.procedure_refinement import settle_refinement
+
+            if effects:
+                raise ValueError("a refined action's effects must be declared before its input")
+            measured_change = self._pending_changed if changed is None else changed
+            settle_refinement(self, attempt.move, measured_change, shown)
             return self.stuck
         if before is not None and attempt.before.encoded == "null":
             attempt = replace(attempt, before=EvidenceSnapshot.of(before))
@@ -370,3 +380,33 @@ def _lower(text: str) -> str:
     from core.language.words_of_the_language import as_said_inside
 
     return as_said_inside(str(text).rstrip("."))
+
+
+def plan_as_memory(plan: Any) -> dict[str, Any]:
+    """A plan as plain data, kept with the guide to its place between sittings: its end, its start, what it uses, its
+    steps and what each was to show; not how far it got, since a new sitting starts the place over."""
+    if plan is None or not getattr(plan, "frames", None):
+        return {}
+    return {"end": plan.end, "start": plan.start, "because": plan.because,
+            "means": [{"name": m.name, "does": m.does, "works_with": m.works_with, "on_its_own": m.on_its_own}
+                      for m in plan.means[:12]],
+            "steps": [frame.as_memory() for frame in plan.in_order()[:16]],
+            "expects": {key: said for key, said in plan.expects.items() if key in plan.frames},
+            "vocabulary": sorted(plan.vocabulary)[:200]}
+
+
+def plan_from_memory(held: Any) -> Plan | None:
+    """The plan kept from an earlier sitting, to start from; None where none was kept."""
+    if not isinstance(held, dict) or not held.get("steps"):
+        return None
+    plan = Plan(end=str(held.get("end") or ""), start=str(held.get("start") or ""),
+                vocabulary=set(held.get("vocabulary") or []))
+    plan.because = str(held.get("because") or "made on an earlier visit")
+    fields = set(Frame.__dataclass_fields__) - {"order"}
+    plan.means = [Means(**{k: v for k, v in m.items() if k in Means.__dataclass_fields__})
+                  for m in held.get("means") or [] if isinstance(m, dict) and m.get("name")]
+    plan.took([Frame(**{k: v for k, v in step.items() if k in fields})
+               for step in held.get("steps") or [] if isinstance(step, dict) and step.get("sentence")])
+    plan.expects.update({str(k): str(v) for k, v in (held.get("expects") or {}).items() if k in plan.frames})
+    return plan
+

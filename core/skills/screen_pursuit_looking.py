@@ -857,8 +857,10 @@ def _where_the_way_on_was(observation: dict[str, Any], clickable: Any, says: str
 def _the_place_its_words_name(observation: dict[str, Any], clickable: Any, can_do: Any) -> Any:
     """Where its words say things are carried to ("the end of another device's arrow"), as her eyes found it on the
     screen (core/perception/where_the_words_point.py): a place to carry things to, though no writing is there."""
-    from core.agency.what_i_can_do_here import a_click_on
+    from core.agency.what_i_can_do_here import a_click_on, what_is_clicked
     from core.perception.where_the_words_point import PLACES
+
+    from .screen_pursuit_bearings import where_to_click
 
     place = str(getattr(can_do, "place_named", "") or "")
     paced = MOVES_SAID.get()
@@ -872,6 +874,11 @@ def _the_place_its_words_name(observation: dict[str, Any], clickable: Any, can_d
         # This consumer runs on the task loop. The IPC reader works in a
         # thread and cannot cancel that loop's in-flight localization tasks.
         PLACES.remember(np.frombuffer(snapshot.data, dtype=np.uint8).reshape(snapshot.height, snapshot.width, snapshot.channels))
+    if place and getattr(can_do, "carrying_said", False):
+        wanted = " ".join(place.split()).casefold()
+        if any(" ".join((what_is_clicked(move) or "").split()).casefold() == wanted
+               and where_to_click(observation, what_is_clicked(move)) is not None for move in clickable):
+            return clickable
     at = PLACES.where(place) if place and getattr(can_do, "carrying_said", False) else None
     if at is None or a_click_on(place) in clickable:
         return clickable
@@ -904,20 +911,16 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     differently, and is not said twice.
     """
     from .screen_pursuit import _tell
-    from .screen_pursuit_bearings import things_to_click, what_it_says
+    from .screen_pursuit_bearings import what_it_says
+    from .screen_step_evidence import current_controls
 
     if hasattr(can_do, "observe_objects"):
         can_do.observe_objects(observation)
-    clickable, says, paced = things_to_click(observation, drawn_where), what_it_says(observation, drawn_where), MOVES_SAID.get()
+    clickable, says, paced = current_controls(observation, drawn_where, can_do), what_it_says(observation, drawn_where), MOVES_SAID.get()
     from core.agency.what_i_can_do_here import a_click_on
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
     guide = THE_GUIDE.get()
-    objects = getattr(can_do, "manipulation_sources", None) or {}
-    carrying = (getattr(can_do, "carrying_said", False)
-                or (guide is not None and guide.rules.asks_to_carry()))
-    if drawn_where and carrying:
-        clickable = tuple(dict.fromkeys((*clickable, *(a_click_on(name) for name in objects))))
     clickable = _where_the_way_on_was(observation, clickable, says, paced)
     clickable = _what_paused_it(observation, clickable, can_do, paced)
     clickable = _the_place_its_words_name(observation, clickable, can_do)
@@ -933,6 +936,9 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     if hasattr(can_do, "observe_placements"):
         can_do.observe_placements(observation)
     _what_she_has_built(can_do)
+    from core.agency.mending_what_broke import heard_the_test
+
+    heard_the_test(guide, can_do, observation, str(getattr(can_do, "last_tried", "") or ""), _tell if narrate else None)
     clickable = _as_the_guide_reads_it(clickable, says, paced, narrate,
                                        found=leads.what_things_do() if leads is not None else (),
                                        last_act=str(getattr(can_do, "last_tried", "") or ""))
@@ -948,7 +954,20 @@ def _take_in_the_screen(can_do: Any, observation: dict[str, Any], drawn_where: A
     from .screen_pursuit_bearings import where_to_click
 
     where = {move: at for move in clickable if (at := where_to_click(observation, _label_of(move))) is not None}
-    can_do.looked_at(clickable, says, looks=looks, where=where)
+    from core.cognition.selector_view import UNKNOWN_SELECTOR_VIEW
+
+    selector_view = None
+    for procedure in (getattr(guide, "rules", None), getattr(guide, "plan", None)):
+        current_view = getattr(procedure, "current_selector_view", None)
+        held = current_view(observation, clickable) if callable(current_view) else None
+        if held is None:
+            continue
+        if (held is UNKNOWN_SELECTOR_VIEW or (selector_view is not None
+                                             and held.signature != selector_view.signature)):
+            selector_view = UNKNOWN_SELECTOR_VIEW
+            break
+        selector_view = held
+    can_do.looked_at(clickable, says, looks=looks, where=where, selector_view=selector_view)
     if hasattr(can_do, "pictures"):
         # What the screen reading found drawn, not written: the things that are carried (putting_things_in_place.py).
         can_do.pictures = {" ".join(str(s.get("text") or "").split()) for s in observation.get("shapes") or ()

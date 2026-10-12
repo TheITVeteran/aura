@@ -76,7 +76,8 @@ def a_turn_wanted(can_do: Any, guide: Any, offered: Sequence[str]) -> str:
     from core.agency.what_i_can_do_here import what_is_clicked
     from core.perception.where_the_words_point import PLACES
 
-    part_at = getattr(can_do, "chain_ends_at", None)
+    broke = getattr(guide, "broke_at", None)
+    part_at = broke[:2] if broke else getattr(can_do, "chain_ends_at", None)
     if part_at is None or getattr(can_do, "turned_since_placed", MOST_TURNS) >= MOST_TURNS:
         return ""
     turning = [move for move in offered if turns_a_thing(what_is_clicked(move) or "")]

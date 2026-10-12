@@ -313,6 +313,13 @@ MECHANICS: tuple[Mechanic, ...] = (
              "place each where it rests flat and centred; build steps up to where you must reach",
              r"\b(?:stack\w*|tower|build (?:up|a|steps)|balance|pile)\b",
              r"\btower|stack_?height|balance", ("stack",)),
+    Mechanic("falling pieces", STRUCTURE,
+             "pieces come down a well one after another; each is moved across, changed and dropped, and stays where it lands",
+             "what has landed clears by a rule of the game's own, and the well filling to where pieces come in is the end",
+             "put each piece where it clears most and leaves least; find what clears from what goes; keep the way in clear",
+             r"\b(?:(?:tile|falling) blocks?|drop the (?:tile )?blocks?|clear (?:a |the )?(?:rows?|lines?)|blocked drop|"
+             r"change the order of the tiles)\b",
+             r"blocked_?drop|tile_?block|drop_?(?:piece|block)|clear_?(?:rows?|lines?)", ("a well of falling pieces",)),
     Mechanic("chains", STRUCTURE,
              "parts are placed so each sets off the next, toward an end",
              "a chain fails at its weakest link: each part must lead to the next",

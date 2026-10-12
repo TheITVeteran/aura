@@ -183,7 +183,8 @@ def test_the_pursuit_asks_by_shape_and_lends_once(monkeypatch):
     borrow(knows=Knows, laid_out=OTHER_NUMBERS, like_it=like_it, world=None)
     assert like_it.get("lent") == "numbers"
     assert Knows.rules.tried, "the solved world's counts were lent"
-    assert said and "shaped like numbers" in said[0]
+    # Lent, and not said: what the measure calls alike is hers to try, not a thing to tell the person.
+    assert not [line for line in said if "shaped like" in line]
     before = dict(Knows.rules.tried)
     borrow(knows=Knows, laid_out=OTHER_NUMBERS, like_it=like_it, world=None)
     assert Knows.rules.tried == before, "lent at most once"

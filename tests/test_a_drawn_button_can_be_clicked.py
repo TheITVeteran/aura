@@ -79,3 +79,19 @@ def test_a_button_comes_before_the_title_it_stands_in():
     button = {"text": "the shape at 85% across, 90% down", "x": 0.783, "y": 0.85, "width": 0.183, "height": 0.1}
     named = _named_by_their_writing(pixels, [(0.9, title), (0.6, button)], read)
     assert [region["text"] for _share, region in named] == ["PLAY", "Coco's Scramble PLAY"]
+
+
+def test_a_story_pages_arrow_in_its_corner_is_found_among_a_busy_drawing_and_leads_on():
+    """LIVE 2026-10-11 a comic before play had its magenta arrow in the bottom right corner, and she clicked a shape in
+    the middle of the drawing: a button of one strong colour is found where neither its brightness nor its outline
+    stands out, and the corner a page's way on is put in leads on."""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    rng = np.random.default_rng(7)
+    picture = Image.fromarray(rng.integers(90, 200, (256, 384, 3), dtype=np.uint8))   # a busy drawing
+    draw = ImageDraw.Draw(picture)
+    draw.rectangle((350, 222, 372, 244), fill=(230, 40, 200), outline=(255, 255, 255), width=2)   # the arrow's button
+    shapes = pressable_shapes(np.asarray(picture))
+    corner = [s for s in shapes if s["center_x"] > 0.85 and s["center_y"] > 0.8]
+    assert corner and shapes[0] is corner[0], [s["text"] for s in shapes]
+    assert how_much_it_leads_on(corner[0]["text"]) > how_much_it_leads_on("the shape at 50% across, 50% down")

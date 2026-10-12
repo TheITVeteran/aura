@@ -401,7 +401,7 @@ def _borrow_from_the_world_it_is_most_like(
     like_it["asked_at"] = len(look.relations)
     from core.runtime.what_she_learned import kept_worlds, recall
 
-    from .screen_pursuit import _tell, logger
+    from .screen_pursuit import logger
 
     if "solved" not in like_it:
         like_it["solved"] = {
@@ -424,21 +424,16 @@ def _borrow_from_the_world_it_is_most_like(
     # Said by what a person calls it, never by the name it is filed under: LIVE 2026-10-09 she read out
     # 'her-own-browser-https-archive-org-details-food-bash'.
     called = str(solved[likeness.world][1].get("_called") or "") or _a_name_to_say(likeness.world)
-    # Lent on any likeness that clears its control, but said only where the two are much alike: LIVE 2026-10-11 a
-    # tunnel racer was said to be "shaped like Beatz Editor", a beat maker.
-    if called and float(likeness.score) >= SAID_WHEN_ALIKE:
-        _tell(
-            f"This is shaped like {called}, which I worked out before, so I "
-            "will start from how that moved and let my moves here decide."
-        )
+    # Lent on any likeness that clears its control, at little trust, for her own moves to keep or overturn; and not
+    # said. The measure cannot carry a claim made aloud: a lander scored 0.80 against a food fight (0.60 scrambled) and
+    # one game of numbers 0.81 against another (0.56), so what it calls alike may be anything. LIVE 2026-10-11 she
+    # told the person a tunnel racer was shaped like a beat maker, and a lander like a food fight.
+    if called:
+        logger.info("kept to herself: this is shaped like %s", called)
     logger.info(
         "lent by %s, at %.2f of a fresh start: %s",
         likeness.says(), float(given.get("trust") or 0.0), knows.rules.says(),
     )
-
-
-#: How much of two worlds' structure must be shared for her to say the one is like the other.
-SAID_WHEN_ALIKE = 0.6
 
 
 def _a_name_to_say(filed_as: str) -> str:

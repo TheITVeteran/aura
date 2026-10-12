@@ -179,5 +179,14 @@ def words_of(name: str, *, most: int = 2) -> str | None:
     naming = [p for p in parts if p.lower() not in _JOINING]
     if not naming or len(naming) > most or parts[0].lower() in _JOINING or parts[-1].lower() in _JOINING:
         return None
-    words = [the_word(p) if p.lower() not in _JOINING else p.lower() for p in parts]
+    # A naming word of one or two letters is a scrap of a misread one ("time di" for "time limit"), but for the few
+    # short names screens use for what they count (offline 2026-10-11 "Time 3, time di 14" was said aloud).
+    if any(len(p) < 3 and p.lower() not in _SHORT_NAMES for p in naming):
+        return None
+    words = [p.lower() if p.lower() in _SHORT_NAMES else the_word(p) if p.lower() not in _JOINING else p.lower()
+             for p in parts]
     return " ".join(words) if all(words) else None
+
+
+#: The short names screens use for what they count.
+_SHORT_NAMES = frozenset({"hp", "xp", "mp", "lv", "lvl", "pts", "ft", "km", "mph", "ko", "no"})

@@ -27,3 +27,22 @@ def test_the_same_screen_is_left_longer_each_time_and_a_new_one_starts_afresh():
     assert waits[-1] == LEFT_ALONE_AT_MOST_S
     reflexes.said_now = "level two pick your parts"
     assert _left_alone_for(reflexes) == LEAVE_A_MOVING_MENU_S
+
+
+def test_a_click_begins_another_screen_and_what_was_left_alone_is_not_left_alone_on_it():
+    """LIVE 2026-10-11 a lander game's title, moving and answering to nothing, was left alone for a while; PLAY began the
+    game with the same few words on it, the leaving alone held, and the lander fell to the ground unplayed, four times."""
+    from types import SimpleNamespace
+
+    from core.skills.screen_pursuit_as_it_happens import AS_IT_HAPPENS
+    from core.skills.screen_pursuit_decision import _a_click_begins_another_screen
+
+    reflexes = SimpleNamespace(quiet_until=1e9)
+    token = AS_IT_HAPPENS.set(reflexes)
+    try:
+        _a_click_begins_another_screen("up")
+        assert reflexes.quiet_until == 1e9                       # a key pressed at the screen begins nothing
+        _a_click_begins_another_screen('click "PLAY"')
+        assert reflexes.quiet_until == 0.0
+    finally:
+        AS_IT_HAPPENS.reset(token)

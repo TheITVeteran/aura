@@ -97,6 +97,13 @@ def to_keep(keep: dict[str, Any]) -> dict[str, Any]:
         measures = {way: [found.across, found.down, found.held_s]
                     for way, tried in (shots.get("shots") or {}).items() if (found := tried.the_measure) is not None}
         held["by_shots"] = {"sends_from": list(shots["sends_from"]), "measures": measures}
+    if isinstance(keep.get("watched"), dict):
+        # What a recording of someone playing it showed (core/perception/watching_someone_play.py).
+        held["watched"] = keep["watched"]
+    choices = keep.get("choices")
+    if choices is not None and getattr(choices, "came_out", None):
+        # How each craft's choices came out here (core/agency/a_choice_and_its_reasons.py).
+        held["choices"] = {craft: dict(tally) for craft, tally in choices.came_out.items()}
     return held
 
 
@@ -126,6 +133,15 @@ def kept_from(held: dict[str, Any]) -> dict[str, Any]:
     held = validate_indexed_state(held, indexed_tables=INDEXED_TABLES)
     if isinstance(held, dict) and isinstance(held.get("by_shots"), dict) and held["by_shots"].get("sends_from"):
         keep["by_shots"] = _shots_kept_from(held["by_shots"])
+    if isinstance(held, dict) and isinstance(held.get("watched"), dict):
+        keep["watched"] = held["watched"]
+    if isinstance(held, dict) and isinstance(held.get("choices"), dict):
+        from collections import Counter
+
+        from core.agency.a_choice_and_its_reasons import ChoicesMade
+
+        keep["choices"] = ChoicesMade(came_out={str(craft): Counter({str(k): int(v) for k, v in tally.items()})
+                                                for craft, tally in held["choices"].items() if isinstance(tally, dict)})
     if not isinstance(held, dict) or not held.get("kinds"):
         return keep
     keep["kinds"] = [
