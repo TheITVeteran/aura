@@ -85,3 +85,28 @@ def test_where_the_situation_is_not_understood_the_settings_chosen_by_hand_are_p
         THE_GUIDE.reset(token)
     assert settings.kind == "" and settings.chosen == {}
     assert settings.get("throw every") == SETTINGS["throw every"].by_hand
+
+
+def test_a_place_that_wants_a_setting_beyond_every_choice_is_given_choices_past_them():
+    """The learner improves its own search: the best of the first choices, played enough, has choices added past it,
+    and the one that pays among those comes to be played."""
+    rng = random.Random(7)
+    settings = SettingsThatPaid("someone aiming from this side | it goes on without me | win | against someone")
+    for _ in range(160):
+        every = settings.choose(rng)["throw every"]
+        # The faster the throws the better, down to a tenth of a second.
+        well = max(0.0, 1.0 - abs(every - 0.1) * 4)
+        settings.paid(gains=round(10 * well), losses=10 - round(10 * well))
+    assert min(settings.choices("throw every")) < min(SETTINGS["throw every"].choices)
+    assert settings.best("throw every")[0] < 0.15
+
+
+def test_choices_are_drawn_closer_round_a_best_that_lies_between_others():
+    rng = random.Random(9)
+    settings = SettingsThatPaid("a body I steer with keys | it goes on without me | score | no one against")
+    for _ in range(80):
+        every = settings.choose(rng)["duck every"]
+        well = 0.9 if every == 0.5 else 0.2
+        settings.paid(gains=round(10 * well), losses=10 - round(10 * well))
+    added = set(settings.choices("duck every")) - set(SETTINGS["duck every"].choices)
+    assert added and all(0.3 < choice < 1.0 for choice in added)

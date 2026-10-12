@@ -58,6 +58,11 @@ BY_HAND_AHEAD = 1.0
 CARRIED_OVER = 0.5
 #: The fewest gains and losses in a stretch for it to say how a setting went.
 SAYS_HOW_IT_WENT = 2
+#: How many stretches the best choice must have been played in before the choices are drawn closer round it or carried
+#: past it; the most choices a setting may come to have; and how far past the last choice a new one goes.
+ZOOM_AFTER = 6.0
+MOST_CHOICES = 8
+FURTHER = 1.5
 
 
 def kind_of_situation(how: Any) -> str:
@@ -80,13 +85,17 @@ class SettingsThatPaid:
     went: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     chosen: dict[str, float] = field(default_factory=dict)
 
+    def choices(self, name: str) -> list[float]:
+        """The choices of a setting: those it began with and those its learning has added."""
+        return sorted({*SETTINGS[name].choices, *(float(choice) for choice in self.went.get(name, {}))})
+
     def choose(self, rng: random.Random | None = None) -> dict[str, float]:
         """This stretch's choice of every setting, each drawn by how it has paid."""
         rng = rng or random
         self.chosen = {}
         for name, setting in SETTINGS.items():
             best, highest = setting.by_hand, -1.0
-            for choice in setting.choices:
+            for choice in self.choices(name):
                 good, bad = self.went.get(name, {}).get(str(choice), [0.0, 0.0])
                 ahead = BY_HAND_AHEAD if choice == setting.by_hand else 0.0
                 draw = rng.betavariate(1.0 + good + ahead, 1.0 + bad)
@@ -109,13 +118,34 @@ class SettingsThatPaid:
             counts = self.went.setdefault(name, {}).setdefault(str(choice), [0.0, 0.0])
             counts[0] += well
             counts[1] += 1.0 - well
+            self._zoom(name)
         return True
 
-    def best(self, name: str) -> tuple[float, float] | None:
+    def _zoom(self, name: str) -> None:
+        """The improver improving its own search: where the best choice so far has been played enough, the choices are
+        carried past it if it is the last of them, and drawn closer round it if it lies between others (the zooming
+        bandit: Kleinberg, Slivkins and Upfal, 2008). What a setting can be is not fixed by whoever wrote the first
+        choices down: a place that wants throws faster than any of them is given faster ones to try."""
+        choices = self.choices(name)
+        best = self.best(name, at_least=ZOOM_AFTER)
+        if best is None or len(choices) >= MOST_CHOICES:
+            return
+        at = choices.index(best[0])
+        new: list[float] = []
+        if at == 0:
+            new.append(choices[0] / FURTHER)
+        elif at == len(choices) - 1:
+            new.append(choices[-1] * FURTHER)
+        else:
+            new.extend(((choices[at - 1] + best[0]) / 2, (best[0] + choices[at + 1]) / 2))
+        for choice in new:
+            self.went.setdefault(name, {}).setdefault(str(round(choice, 3)), [0.0, 0.0])
+
+    def best(self, name: str, at_least: float = 3.0) -> tuple[float, float] | None:
         """The choice of a setting that has paid best so far, and the share of stretches that went well with it; None
-        where none has been played enough to say."""
+        where none has been played ``at_least`` times to say."""
         tried = [(good / (good + bad), float(choice)) for choice, (good, bad) in self.went.get(name, {}).items()
-                 if good + bad >= 3.0]
+                 if good + bad >= at_least]
         if not tried:
             return None
         share, choice = max(tried)
