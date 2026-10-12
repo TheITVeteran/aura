@@ -349,3 +349,13 @@ def test_a_move_not_taken_is_made_again_slower_before_it_is_given_up(monkeypatch
     result = asyncio.run(play_a_board(game.look, game, "Checkers.", seconds=14.0, say=said.append))
     assert game.made >= 2 and result["ended"] == "out of time", (result, game.made, said)
     assert not any("wouldn't take" in line for line in said), said
+
+
+def test_a_grid_of_three_by_three_on_a_place_whose_words_speak_of_no_contest_is_no_board_game():
+    """Offline 2026-10-12 an alien maker's grid of nine parts to pick from was taken for three in a row."""
+    from core.agency.playing_a_board import a_board_game
+
+    board = a_board_in(_NoughtsAndCrosses().picture())
+    assert a_board_game(board, "TEXTURES SUIT THEMES RANDOMIZE I'M DONE! START OVER") == ""
+    assert a_board_game(board, "Get three in a row before the computer does!") == "placing"
+    assert a_board_game(board) == "placing"

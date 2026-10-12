@@ -58,6 +58,11 @@ _PLACING_NAMED = (
 _PLACING_SHAPES = {(3, 3): (3, False), (6, 7): (4, True), (15, 15): (5, False), (19, 19): (5, False)}
 
 
+#: Words that say a board is played against someone in turns.
+_A_CONTEST = re.compile(r"\b(?:turns?|your move|opponent|computer|versus|vs\.?|player (?:1|2|one|two)|in a row|"
+                        r"x'?s and o'?s|noughts|line up|beat|win)\b", re.I)
+
+
 def placing_said(board: Any, words: str = "") -> Any:
     """The placing family a board is, by its words first and else by its shape: a line of three on three by three, four
     dropped down the columns of six by seven, five on a large open board; None where it is no placing game."""
@@ -70,6 +75,12 @@ def placing_said(board: Any, words: str = "") -> Any:
             return Placing(line=line, falls=falls or bool(re.search(r"\bdrop\b|\bcolumn", words or "", re.I)))
     shaped = _PLACING_SHAPES.get((board.rows, board.columns))
     if shaped is None:
+        return None
+    # By its shape where nothing is said, or where what is said speaks of a contest in turns; not where the place has
+    # words and none of them do: offline 2026-10-12 an alien maker's grid of nine parts to pick from, its words
+    # "TEXTURES SUIT THEMES ... I'M DONE!", was taken for three in a row, and the time left went on searching moves on
+    # it, none made.
+    if (words or "").strip() and not _A_CONTEST.search(words or ""):
         return None
     # A placing game begins nearly empty, and a draughts board full of two facing sides is not one.
     held = sum(1 for row in board.cells for cell in row if cell)
