@@ -43,6 +43,21 @@ SHAPE_AGAIN_S = 45.0
 #: How long the same line, word for word, is not said again, in seconds.
 SAME_AGAIN_S = 300.0
 
+#: How soon after one line a remark made while playing may be said: a person playing and talking says something every
+#: few seconds, not five things in three (offline and live 2026-10-12: "That's me…", "I'm the black bar…", "I think I've
+#: noticed…", "The bar at the middle goes down…", "The black tree trunk is worth getting…" inside three seconds).
+PACE_S = 4.0
+#: Lines that are never held back for pace: what she does, what the place says or asks of her, how a go ended and what
+#: she made of it, how she understands the place, and the picking of what to play.
+_ALWAYS_SAID = re.compile(
+    r"^(?:That one ended|Round \d|That's \d+ run|There's nothing to win|I've given this one|My time with|It says|It asks|"
+    r"Its rules|Run \d|As I understand it|Now I understand|There are \d+ games|By your rule|Clicking|Pressing|Going |"
+    r"Carrying|Typing|Holding|The game has a button|My guide|I'm checking|Nothing I looked up|From |I looked up|"
+    r"This is like|Something is playing|I keep losing|Nothing I do|I won|I lost|My move)", re.I)
+#: Lines that are news each time, however like the last they are: how each go came out, each move made. Live 2026-10-12
+#: "Run 2 of 3: scored 10" was held back as a line like "Run 1 of 3: scored 190", and the second run went untold.
+_NEWS_EACH_TIME = re.compile(r"^(?:There's nothing to win in this one, only a score\. )?(?:Run \d+ of \d+|Round \d+|My move)")
+
 #: The share of a quote's words that must be words for it to be quoted.
 LEGIBLE = 0.6
 
@@ -237,6 +252,8 @@ class WhatAWatcherHears:
     names: set[str] = field(default_factory=set)
     #: Words the place has shown her, read whole: what a later misreading of one of them is mended to.
     seen: set[str] = field(default_factory=set)
+    #: When the last line was said.
+    said_at: float = -1e9
     shapes: dict[str, float] = field(default_factory=dict)
     lines: dict[str, float] = field(default_factory=dict)
 
@@ -266,10 +283,13 @@ class WhatAWatcherHears:
         if now - self.lines.get(said, -SAME_AGAIN_S) < SAME_AGAIN_S:
             logger.info("not said again: %r", said[:120])
             return None
-        if now - self.shapes.get(shape, -SHAPE_AGAIN_S) < SHAPE_AGAIN_S:
+        if now - self.shapes.get(shape, -SHAPE_AGAIN_S) < SHAPE_AGAIN_S and not _NEWS_EACH_TIME.match(said):
             logger.info("not said, a line like it was a moment ago: %r", said[:120])
             return None
-        self.lines[said], self.shapes[shape] = now, now
+        if now - self.said_at < PACE_S and not _ALWAYS_SAID.match(said):
+            logger.info("not said, a remark too soon after the last line: %r", said[:120])
+            return None
+        self.lines[said], self.shapes[shape], self.said_at = now, now, now
         return said
 
     def _quoted_legibly(self, said: str, names: frozenset[str]) -> str | None:

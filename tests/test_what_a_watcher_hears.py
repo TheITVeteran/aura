@@ -152,3 +152,23 @@ def test_a_sentence_is_ended_once():
     said = watcher.heard("There's nothing to win in this one; it answered: outlook good... and so is pizza!.", 0.0)
     assert said is not None and said.endswith("pizza!")
     assert watcher.heard("It said: maybe later....", 10.0).endswith("later...")
+
+
+@pytest.mark.unit
+def test_remarks_made_while_playing_come_at_a_human_pace_and_what_happens_is_always_said():
+    """Live 2026-10-12 five remarks were said inside three seconds of play."""
+    watcher = WhatAWatcherHears()
+    assert watcher.heard("That's me: the red kite at the left. It goes where the mouse goes.", 0.0)
+    assert watcher.heard("The green apples are worth getting: they add to my count.", 1.0) is None
+    assert watcher.heard("Clicking \"PLAY\" — to see what it does", 1.5)
+    assert watcher.heard("Round 2: lost. Again.", 2.0)
+    assert watcher.heard("The blue birds cost me. Keeping clear of them.", 6.5)
+
+
+@pytest.mark.unit
+def test_how_each_go_came_out_is_news_each_time():
+    """Live 2026-10-12 "Run 2 of 3: scored 10" was held back as a line like "Run 1 of 3: scored 190"."""
+    watcher = WhatAWatcherHears()
+    assert watcher.heard("There's nothing to win in this one, only a score. Run 1 of 3: scored 190. Again.", 0.0)
+    assert watcher.heard("There's nothing to win in this one, only a score. Run 2 of 3: scored 10. Again.", 20.0)
+    assert watcher.heard("Round 2: lost. Again.", 30.0) and watcher.heard("Round 3: lost. Again.", 40.0)
