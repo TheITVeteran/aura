@@ -46,6 +46,9 @@ SAME_AGAIN_S = 300.0
 #: The share of a quote's words that must be words for it to be quoted.
 LEGIBLE = 0.6
 
+#: How many words a line must have besides a quote she could not read for it to be said with that quote left out.
+SAID_WITHOUT_THE_QUOTE = 10
+
 #: Writing quoted in a line: in straight or curly quotes, or after "It says:". A single quote opens only after
 #: something not a letter, so the one in "I've" opens nothing.
 _QUOTED = re.compile(r"\"([^\"]+)\"|“([^”]+)”|(?<![A-Za-z])'([^']+)'(?![A-Za-z])")
@@ -279,21 +282,36 @@ class WhatAWatcherHears:
             return reading.group("lead") + mended
         said = _A_PLACE.sub(lambda m: f"{m.group(1)} at " + where_it_is(int(m.group(2)) / 100, int(m.group(3)) / 100), said)
         said = re.sub(r"\"((?:the shape|the one that stands out) at [^\"]+|the middle of the picture)\"", r"\1", said)
+        unread = []
         for match in list(_QUOTED.finditer(said)):
             text = match.group(1) or match.group(2) or match.group(3) or ""
             if text.startswith(("the shape at ", "the one that stands out at ", "the middle of the picture")):
                 continue
+            quoted = match.group(0)
             # A label's stray marks read off its edges ('START."') are not part of it; its own "!" or "?" is.
             trimmed = re.sub(r"[\s.,:;'\"“”‘’]+$|^[\s.,:;'\"“”‘’]+", "", text)
             if trimmed and trimmed != text and len(trimmed.split()) <= 4:
                 said = said.replace(text, trimmed, 1)
+                quoted = quoted.replace(text, trimmed, 1)
                 text = trimmed
             if legible_share(text, names) < LEGIBLE:
-                logger.info("not said, what it quotes could not be read: %r", said[:120])
-                return None
+                unread.append(quoted)
+                continue
             mended = _mended(text, names)
             if mended != text:
                 said = said.replace(text, mended, 1)
+        if unread:
+            # What she could not read is left out, and the rest said, as a person reading aloud passes over a word they
+            # cannot make out: offline 2026-10-12 what she made in a thing for making was never told, for a caption
+            # quoted in it. A line that is little more than the quote says nothing without it.
+            rest = said
+            for quoted in unread:
+                rest = rest.replace(quoted, " ", 1)
+            if len(re.findall(r"[A-Za-z]{2,}", rest)) < SAID_WITHOUT_THE_QUOTE:
+                logger.info("not said, what it quotes could not be read: %r", said[:120])
+                return None
+            for quoted in unread:
+                said = said.replace(quoted, "words I could not make out", 1)
         return re.sub(r'"{2,}', '"', said)
 
 

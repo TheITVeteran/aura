@@ -127,3 +127,14 @@ def test_what_a_program_names_things_by_is_not_said_to_the_person_watching(line,
     from core.language.what_a_watcher_hears import WhatAWatcherHears
 
     assert WhatAWatcherHears().heard(line, now=1.0) == heard
+
+
+@pytest.mark.unit
+def test_a_long_line_is_said_with_what_she_could_not_read_left_out():
+    """Offline 2026-10-12 what she made in a thing for making was never told, for a caption quoted in it."""
+    watcher = WhatAWatcherHears()
+    said = watcher.heard("There's nothing to win or score in this one; it's for making things. What I made shows a "
+                         "photo of a dog on a beach under the caption 'Xqzt Bvrk'.", 0.0)
+    assert said is not None and "photo of a dog on a beach" in said and "Xqzt" not in said
+    assert said.endswith("under the caption words I could not make out.")
+    assert watcher.heard('Clicking "trelalts hop" — to see what it does', 1.0) is None
