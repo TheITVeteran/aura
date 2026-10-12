@@ -235,3 +235,16 @@ async def test_a_key_that_drives_her_is_not_used_on_what_is_beside_her():
         assert not await use_controls_on_things(hands, run, moves, hers, [], 1.0)
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_key_said_to_confirm_input_is_not_used_on_things_whatever_form_its_verb_takes():
+    """Offline 2026-10-12 "Return confirms input" was taken for a key to use on things, and she walked up to each thing
+    in a platform game and pressed Return at it."""
+    from types import SimpleNamespace
+
+    from core.agency.using_a_control_on_a_thing import _the_controls_with_a_use
+
+    guide = SimpleNamespace(controls={"return": SimpleNamespace(act="confirms input", on="", key="return"),
+                                      "space": SimpleNamespace(act="opens doors", on="doors", key="space"),
+                                      "z": SimpleNamespace(act="launches bombs", on="", key="z")})
+    assert [control.key for control in _the_controls_with_a_use(guide)] == ["space"]

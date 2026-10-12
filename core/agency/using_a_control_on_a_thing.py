@@ -68,7 +68,8 @@ _ON_HER_OWN_GOING = frozenset({"boost", "speed", "accelerate", "increase", "incr
 #: Acts done to the game, not to a thing in it: pausing it, starting it, turning its sound off.
 _GAME_ACTS = frozenset({"pause", "unpause", "start", "begin", "restart", "continue", "resume", "mute", "unmute", "skip",
                         "quit", "exit", "play", "select", "choose", "confirm", "toggle", "reset", "retry", "save", "load",
-                        "zoom", "scroll", "view", "see", "read", "look", "show", "hide", "open the menu", "menu"})
+                        "zoom", "scroll", "view", "see", "read", "look", "show", "hide", "open the menu", "menu",
+                        "submit", "enter", "type", "input", "send"})
 #: Acts done from afar, aimed and timed where play shoots (core/agency/playing_as_it_happens.py), not beside a thing.
 _FROM_AFAR = frozenset({"shoot", "fire", "throw", "launch", "toss", "blast", "zap", "lob", "hurl"})
 #: Names for many things at once, and how a thing named one bears, as she knows it (core/cognition/what_things_are.py).
@@ -348,8 +349,19 @@ def _beside(mine: Any, spot: Any, missed: int = 0) -> bool:
 
 def _the_controls_with_a_use(guide: Any) -> list[Any]:
     return [c for c in getattr(guide, "controls", {}).values()
-            if c.act and c.act.split()[0].lower() not in _MOVING_ACTS | _ON_HER_OWN_GOING | _FROM_AFAR | _GAME_ACTS
+            if c.act and not _forms_of(c.act.split()[0].lower()) & (_MOVING_ACTS | _ON_HER_OWN_GOING | _FROM_AFAR | _GAME_ACTS)
             and (c.on or c.key != "the pointer")]
+
+
+def _forms_of(word: str) -> set[str]:
+    """A verb as written and as it is said of a key ("confirms", "launches", "moved"): offline 2026-10-12 "Return
+    confirms input" was taken for a key to use on things, and she walked up to each thing in a platform game and
+    pressed Return at it."""
+    forms = {word}
+    for ending in ("es", "s", "ed", "d", "ing"):
+        if word.endswith(ending) and len(word) > len(ending) + 2:
+            forms.add(word[: -len(ending)])
+    return forms
 
 
 def _known(name: str) -> tuple[str, str]:
