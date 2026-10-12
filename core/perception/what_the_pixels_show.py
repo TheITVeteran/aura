@@ -857,10 +857,11 @@ class Looker:
                     self.learn_what_was_read()
                 return cheap
             self.held_lessons = []
-        from core.perception.reading_closer import read_closer
+        from core.perception.reading_closer import read_closer, ways_on_at_the_edges
 
-        # Lettering a whole-screen reading got half right is read again from its own place (reading_closer.py).
-        layout = read_closer(image, recognize_text(image), recognize_text)
+        # Lettering a whole-screen reading got half right is read again from its own place (reading_closer.py); and
+        # where a page of prose has no way on read with it, its edges are read again for one.
+        layout = ways_on_at_the_edges(image, read_closer(image, recognize_text(image), recognize_text), recognize_text)
         self._remember_around(image, grids, layout)
         return self._read_placed(image, panels, grids, layout, learn=learn)
 

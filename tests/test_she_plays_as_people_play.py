@@ -269,3 +269,17 @@ def test_arrows_nobody_named_are_not_pressed_where_the_guide_knows_the_place_is_
         assert here.told == ("up", "down", "left", "right")
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_a_way_on_missed_by_one_reading_of_the_same_screen_is_still_there():
+    """Offline 2026-10-12 an instructions screen's CONTINUE was read in some looks and not in others, every decision fell
+    on a look without it, and the right arrow drawn beside it was pressed twenty-two times instead."""
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+
+    page = "Help Dexter find his missing robot. Look for special pairs of glasses hidden throughout the house."
+    here = WhatWorksHere()
+    here.looked_at([a_click_on("CONTINUE"), a_click_on("INSTRUCTIONS")], page)
+    here.looked_at([a_click_on("INSTRUCTIONS")], page)
+    assert a_click_on("CONTINUE") in here.on_screen
+    here.looked_at([a_click_on("PLAY")], "A different screen altogether with other words on it now.")
+    assert a_click_on("CONTINUE") not in here.on_screen

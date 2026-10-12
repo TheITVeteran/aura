@@ -22,7 +22,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["read_closer", "written_on"]
+__all__ = ["read_closer", "ways_on_at_the_edges", "written_on"]
 
 #: The most pieces read again in one look.
 CLOSER_AT_MOST = 4
@@ -121,3 +121,50 @@ def written_on(picture: Any, region: dict[str, Any], recognize: Callable[[Any], 
         while len(_remembered) > REMEMBERED:
             _remembered.popitem(last=False)
     return _remembered[seen]
+
+
+#: The strips along the bottom and the top of a picture, as shares of its height, where a way on is usually drawn; and
+#: the fewest words a screen reads for it to be a page of prose that a way on leads from.
+EDGE = 0.16
+PROSE_AT_LEAST = 15
+
+
+def ways_on_at_the_edges(picture: Any, layout: Sequence[dict[str, Any]],
+                         recognize: Callable[[Any], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """``layout`` with the ways on read along the picture's bottom and top edges, read again by themselves and larger,
+    where a page of prose was read and no way on with it. A person who has read a page of instructions and sees no way
+    on looks along the bottom for one: offline 2026-10-12 an instructions screen's CONTINUE and SKIP INSTRUCTIONS, in
+    a bar along its bottom, were not read with its paragraphs, an arrow drawn beside them was taken for a key, and the
+    right arrow was pressed twenty-two times over four minutes."""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    out = [dict(region) for region in layout]
+    texts = [" ".join(str(region.get("text") or "").split()) for region in out]
+    if any(0 < len(text) <= 40 and how_much_it_leads_on(text) > 1.0 for text in texts):
+        return out
+    if sum(len(text.split()) for text in texts) < PROSE_AT_LEAST:
+        return out
+    pixels = np.asarray(picture)
+    if pixels.ndim != 3 or pixels.size == 0:
+        return out
+    tall = pixels.shape[0]
+    for top, bottom in ((1.0 - EDGE, 1.0), (0.0, EDGE)):
+        strip = np.ascontiguousarray(pixels[int(top * tall):int(bottom * tall), :, :3])
+        if strip.shape[0] < 6:
+            continue
+        seen = ("the edge", strip[::4, ::4].tobytes())
+        if seen not in _remembered:
+            pieces = recognize(_enlarged(strip))
+            _remembered[seen] = repr([(str(p.get("text") or ""), float(p.get("x", 0)), float(p.get("y", 0)),
+                                       float(p.get("width", 0)), float(p.get("height", 0))) for p in pieces])
+            while len(_remembered) > REMEMBERED:
+                _remembered.popitem(last=False)
+        import ast
+
+        for text, x, y, width, height in ast.literal_eval(_remembered[seen]):
+            said = " ".join(text.split())
+            if 0 < len(said) <= 40 and how_much_it_leads_on(said) > 1.0:
+                y_share, h_share = top + y * (bottom - top), height * (bottom - top)
+                out.append({"text": said, "x": x, "y": y_share, "width": width, "height": h_share,
+                            "center_x": x + width / 2, "center_y": y_share + h_share / 2, "read_at_the_edge": True})
+    return out

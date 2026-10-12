@@ -192,6 +192,10 @@ def _not_worked_with_arrows() -> bool:
     return how.me.known() and not how.arrows_are_a_guess_worth_trying()
 
 
+#: How many looks a way on missed by the reading is kept for on a screen that stays the same.
+WAYS_ON_KEPT_LOOKS = 4
+
+
 def worth_trying(told: Sequence[str] = ()) -> tuple[str, ...]:
     """Everything she could try here, hers first and the rest after.
 
@@ -357,8 +361,23 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         self.noticed_taking(now)
         self.saw_looks(looks or {})
         self.on_screen = tuple(label for label in now if label in self.seen_before or _goes_on(label))
+        self.on_screen += self._ways_on_still_there(now, says)
         self.seen_before = now
         self.leads.looked(now, says, selector_view=selector_view)
+
+    def _ways_on_still_there(self, now: tuple[str, ...], says: str) -> tuple[str, ...]:
+        """The ways on read on this screen a look or two ago and missed by this reading, while the screen is the same: a
+        reading misses dark lettering some times and not others, and a way on is not gone for not being read once.
+        Offline 2026-10-12 an instructions screen's CONTINUE was read in some looks and not in others, every decision
+        fell on a look without it, and the right arrow drawn beside it was pressed twenty-two times instead."""
+        words = {word for word in re.findall(r"[a-z]{4,}", (says or "").lower())}
+        kept_words, kept = getattr(self, "_ways_on_kept", (set(), {}))
+        same = bool(words and kept_words) and len(words & kept_words) >= 0.6 * min(len(words), len(kept_words))
+        ways = {label: 0 for label in now if _goes_on(label)}
+        if same:
+            ways.update({label: age + 1 for label, age in kept.items() if label not in ways and age + 1 <= WAYS_ON_KEPT_LOOKS})
+        self._ways_on_kept = (words or kept_words, ways)
+        return tuple(label for label, age in ways.items() if age > 0 and label not in self.on_screen)
 
     # ── finding out ──────────────────────────────────────────────────────
 
