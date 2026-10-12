@@ -17,6 +17,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _emissions_require_distinct_input_receipts,
         _fresh_control_experiment_forgets_old_rejections,
     )
+    from core.agency.which_way_she_faces import _turn_observation_invariant
     from core.cognition.action_refinement import _bound_refinement_invariant
     from core.cognition.guidance_lifetime import _completed_guidance_invariant
     from core.cognition.procedure_binding import _choice_binding_invariant
@@ -59,6 +60,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("turns_require_settled_observations", "core/agency/which_way_she_faces.py",
+         "tests/test_a_turn_is_not_learned_from_unseen_motion.py", lambda: _turn_observation_invariant() == (),
+         "Stationary turning samples require settled observations; missing pictures cannot establish that a press moved nothing."),
         ("current_play_words_require_a_measured_frame", "core/skills/current_words_before_play.py",
          "tests/test_current_words_precede_play_interpretation.py", lambda: _current_play_words_invariant() == (),
          "Fast play handoff reads use current measured words; empty, old and future frames cannot remove a menu."),

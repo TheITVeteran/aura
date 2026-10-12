@@ -20,6 +20,8 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from core.verify import invariant
+
 __all__ = ["WhichWaySheFaces"]
 
 #: How fast, in working pixels a second, she must go for her going to say which way she faces.
@@ -64,6 +66,19 @@ def _spread(angles: list[float]) -> bool:
     return sum(abs(_wrap(a - most)) >= 2 * SPREAD for a in angles) >= 2
 
 
+@invariant("agency.turns_require_settled_observations", scope="agency",
+           owner="core/agency/which_way_she_faces.py", observational=False)
+def _turn_observation_invariant() -> tuple:
+    faces = WhichWaySheFaces()
+    for at in (0, .25, .3, .35, .4):
+        faces.saw(80, 0, "a", at)
+    faces.saw(0, 0, "b", .5)
+    for at in (.55, .8, .85, .9):
+        faces.saw(0, 80, "a", at)
+    assert not faces.turns, "an unmeasured press was assigned a turn"
+    return ()
+
+
 @dataclass
 class WhichWaySheFaces:
     """What her keys do to where she faces, learned from her going; and the key that takes her toward a place."""
@@ -80,8 +95,12 @@ class WhichWaySheFaces:
     #: Whether the key held takes her ahead (1) or back (-1), as read while it is held.
     sign: float | None = None
     going: list[tuple[float, float]] = field(default_factory=list)
+    #: Pictures taken after the held input had time to answer, including those in which she stood still.
+    settled_pictures: int = 0
     #: Turning keys pressed since she last went somewhere, each with how long it was held: what turned her.
     turned_by: list[tuple[str, float]] = field(default_factory=list)
+    #: Whether every stationary press since the last sighting was observed long enough to teach a turn.
+    turns_measured: bool = True
     #: Every key pressed, the last key a trial asked for, and the time of the latest picture.
     pressed: set[str] = field(default_factory=set)
     last_tried: str = ""
@@ -93,11 +112,15 @@ class WhichWaySheFaces:
         if held != self.held:
             self._let_go(at)
             self.held, self.held_since, self.going, self.sign = held, at, [], None
+            self.settled_pictures = 0
             if held:
                 self.pressed.add(held)
         # Just after a press she still goes as the last key had her going: in rooms with walls (offline 2026-10-11) a
         # press into a wall was read as a key that took her the way the key before it had.
-        if not held or math.hypot(vx, vy) < MOVING or at - self.held_since < SETTLE_S:
+        if not held or at - self.held_since < SETTLE_S:
+            return
+        self.settled_pictures += 1
+        if math.hypot(vx, vy) < MOVING:
             return
         self.going.append((vx, vy))
         # Whether this key takes her ahead or back: as it has before; else, for the first key she ever goes by, ahead,
@@ -116,16 +139,18 @@ class WhichWaySheFaces:
         if self.facing is None:
             # Turns made before she had ever gone anywhere turned her from a facing nobody saw.
             self.turned_by = []
+            self.turns_measured = True
         if self.facing is not None and self.turned_by:
             # Her facing moved by what the keys pressed since she last went did together: kept as one sample, and what
             # each key does is found from all the samples at once.
             held_for: dict[str, float] = defaultdict(float)
             for key, seconds in self.turned_by:
                 held_for[key] += seconds
-            if sum(held_for.values()) <= LONGEST_TURN_S:
+            if sum(held_for.values()) <= LONGEST_TURN_S and self.turns_measured:
                 self.turns.append((dict(held_for), _wrap(way - self.facing)))
                 del self.turns[:-60]
             self.turned_by = []
+            self.turns_measured = True
         self.facing = way
 
     def _turned_since(self) -> float:
@@ -149,8 +174,13 @@ class WhichWaySheFaces:
             if self.sign is not None:
                 self.along[key].append(self.sign * math.hypot(vx, vy))
                 del self.along[key][:-20]
-        elif not self.going:
+        else:
             self.turned_by.append((key, held_for))
+            # Offline 2026-10-12 presses lasting 0.06 s had no settled picture,
+            # and were read as stationary turns. Known rates still predict
+            # where a short press takes her; it teaches no new rate.
+            if self.going or self.settled_pictures < 2:
+                self.turns_measured = False
 
     # -- what it comes to --------------------------------------------------------
 
