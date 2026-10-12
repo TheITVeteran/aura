@@ -41,3 +41,16 @@ def test_one_of_several_things_asked_for_has_its_share_of_the_time(goal, many):
 
     assert _how_many_asked(goal) == many
     assert max(LEAST_SHARE_S, PLAY_UNTIL_WON_S / many) <= PLAY_UNTIL_WON_S
+
+
+def test_when_her_time_runs_out_she_says_how_far_she_got():
+    """Offline 2026-10-12 games that only keep a score were left with "its share of the time" and nothing of the 2400
+    points on the screen; a person leaving a game says how far they got."""
+    from core.skills.sovereign_browser_drawing import _where_it_stood
+
+    assert _where_it_stood([{"reached_end": False, "score": 2400}]) == " My run was still going, at 2400."
+    assert _where_it_stood([{"reached_end": False, "score": None, "gains": 3}]) == " My run was still going, at 3 by my own count."
+    said = _where_it_stood([{"reached_end": True, "score": 120}, {"reached_end": False, "score": 300}])
+    assert "My best was run 1, with 120" in said and said.endswith("The run in play stood at 300 when the time ran out.")
+    assert _where_it_stood([{"reached_end": False, "score": None}]) == ""
+    assert _where_it_stood([]) == ""

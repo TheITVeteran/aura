@@ -481,7 +481,7 @@ async def _played(page: Any, band: tuple[float, float, float, float], goal: str,
         # The screen's own words the first time; after that, the round counted: six of the same line read as one.
         await _between_runs(goal, reflexes, run, runs, keep, deadline)
     if time.monotonic() >= deadline and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
-        _tell("I've given this one its share of the time, and I leave it here.")
+        _tell("I've given this one its share of the time, and I leave it here." + _where_it_stood(runs))
         result["stopped_because"] = "its share of the time is up"
     elif until_won and not any(r["ended"] == "won" for r in runs) and not result.get("stopped_because"):
         # Played to be won and stopped short of it, with no end said: an end is said, and the page is not begun again.
@@ -1097,6 +1097,24 @@ def _the_best_of(runs: list[dict[str, Any]]) -> str:
                 + (f"; the others: {'; '.join(others)}." if others else "."))
     longest = max(range(len(runs)), key=lambda i: float(runs[i].get("took_s") or 0.0))
     return f"That's {len(runs)} run{'s' if len(runs) != 1 else ''}. No score was shown; my longest was run {longest + 1}, at {float(runs[longest].get('took_s') or 0.0):.0f} seconds."
+
+
+def _where_it_stood(runs: list[dict[str, Any]]) -> str:
+    """Where play stood when her time with a thing ran out, as a person leaving a game says how far they got: the runs
+    that ended, the best of them, and the one still in play with its score so far. '' where no score was shown or
+    counted. Offline 2026-10-12 games that only keep a score were left with "its share of the time" and nothing of the
+    2400 points on the screen."""
+    finished = [r for r in runs if r.get("reached_end")]
+    said = " " + _the_best_of(finished) if finished else ""
+    last = runs[-1] if runs else {}
+    if not runs or last.get("reached_end"):
+        return said
+    score = last.get("score")
+    so_far = str(score) if score is not None else f"{int(last.get('gains') or 0)} by my own count" if last.get("gains") else ""
+    if not so_far:
+        return said
+    return said + (f" The run in play stood at {so_far} when the time ran out." if finished else
+                   f" My run was still going, at {so_far}.")
 
 
 def _what_it_is_for(words: list[str]) -> str:
