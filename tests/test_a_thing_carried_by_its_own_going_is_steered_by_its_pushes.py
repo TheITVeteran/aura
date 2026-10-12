@@ -87,3 +87,29 @@ def test_carried_onto_a_still_thing_below_she_brakes_before_she_gets_there_and_g
     # Going left fast, a little to its right and above it: no more left, or she flies past it; she brakes.
     lander.x, lander.y, lander.vx, lander.vy = 160.0, 250.0, -120.0, 0.0
     assert _Choosing(moves, hers, meeting, keys).key("left")[0] == "right"
+
+
+
+def test_a_paddle_held_into_the_ends_of_its_way_is_not_carried_and_its_keys_move_it():
+    """Offline 2026-10-12 a paddle held up into the top and down into the bottom slowed to nothing at its long presses;
+    that slowing read as a push, the paddle was taken for a thing carried on by its own going, and no key was found to
+    move it. Let go of, it stopped dead, as nothing carried on by its own going does."""
+    import random
+
+    chance = random.Random(4)
+    paddle = _thing(1, 0, 20.0, 100.0)
+    moves = SimpleNamespace(shape=(400, 400), things={1: paddle},
+                            kinds=[Kind(0, np.zeros(64), 196.0, (200, 200, 200))])
+    hers = WhichIsHers()
+    at = 0.0
+    for _round in range(5):
+        for key in ("up", "", "down", "", "left", "", "right", ""):
+            hers.holding(key, at, trying=True)
+            for _ in range(int((chance.choice((0.45, 0.9, 1.5, 2.0)) if key in ("up", "down") else 0.45) / STEP)):
+                at += STEP
+                y = min(180.0, max(20.0, paddle.y + {"up": -130.0, "down": 130.0}.get(key, 0.0) * STEP))  # its way ends
+                paddle.vx, paddle.vy, paddle.y, paddle.seen = 0.0, (y - paddle.y) / STEP + chance.gauss(0, 4), y, at
+                hers.saw(moves, [], at)
+    assert hers.number == 1 and not hers.carried
+    moving = hers.keys_that_move_her(["up", "down", "left", "right"])
+    assert sorted(moving) == ["down", "up"] and moving["up"][1] < -20 < 20 < moving["down"][1]

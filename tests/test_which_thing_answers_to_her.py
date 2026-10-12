@@ -476,3 +476,26 @@ def test_fitted_velocity_without_resolved_displacement_cannot_name_the_body():
         fragment.seen = at
         hers.saw(_Moves([fragment]), [], at)
     assert hers.number is None
+
+
+def test_a_world_gone_the_key_s_own_way_as_one_is_her_going_with_the_rest_and_not_scenery():
+    """Offline 2026-10-12 a Pong's paddle, its ball and the other side's paddle all went up under "up" and down under
+    "down", the world went as one the key's way, and her paddle was put aside as scenery in half her games."""
+    paddle, other, ball, trail = _Thing(1, 0), _Thing(2, 1), _Thing(3, 2), _Thing(4, 2)
+    moves = _Moves([paddle, other, ball, trail])
+    hers = WhichIsHers()
+    at = 0.0
+    for step in range(240):
+        key = ("up", "", "down", "")[(step // 10) % 4]
+        hers.holding(key, at, trying=True)
+        at += 0.03
+        going = {"up": -80.0, "down": 80.0}.get(key, 0.0)
+        paddle.vx, paddle.vy = 0.0, going                          # hers goes the key's way, and rests when she rests
+        for thing, pace in ((other, 0.9), (ball, 1.1), (trail, 1.05)):
+            thing.vx, thing.vy = 30.0, going * pace if going else 60.0    # the others happen to go her way, and go on
+        for thing in moves.things.values():
+            thing.x += thing.vx * 0.03
+            thing.y += thing.vy * 0.03
+            thing.seen = at
+        hers.saw(moves, [], at)
+    assert hers.number == paddle.number

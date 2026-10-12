@@ -246,15 +246,35 @@ class _Speeds:
         return max(by_way, by_pace, self.by_push())
 
     def carried(self) -> bool:
-        """Whether it answers to her keys by how they push it, more than by the pace it goes under each: it is carried
-        on by its own going (see `pushes`)."""
+        """Whether it answers to her keys by how they push it, more than by the pace it goes under each, and goes on
+        when a key is let go: it is carried on by its own going (see `pushes`)."""
         f, gap = self.by_push()
-        return f >= ANSWERS and gap >= REALLY_MOVES and f > self._by_pace_alone()
+        return f >= ANSWERS and gap >= REALLY_MOVES and f > self._by_pace_alone() and not self._stops_when_let_go()
+
+    def _stops_when_let_go(self) -> bool:
+        """Whether, let go of while going, it mostly stopped dead: a paddle does, and a thing carried on by its own
+        going goes on as it was. Offline 2026-10-12 a paddle held into the ends of its way slowed alike at every long
+        press, that read as a push, and it was taken for a thing carried on by its own going."""
+        stopped = went_on = 0
+        presses = list(self.timed.items())
+        for ((key, _began), held), ((after, _then), rest) in zip(presses, presses[1:], strict=False):
+            if not key or after or len(held) < 2 or len(rest) < LET_GO_SEEN_AFTER + 2:
+                continue
+            going = math.hypot(*_mean([(vx, vy) for _t, vx, vy in held[-2:]]))
+            if going < REALLY_MOVES:
+                continue  # let go of up against something, or still: says nothing
+            # A picture or two after it is let go, past what the pictures a step behind still show of the press.
+            then = math.hypot(*_mean([(vx, vy) for _t, vx, vy in rest[LET_GO_SEEN_AFTER:LET_GO_SEEN_AFTER + 2]]))
+            stopped, went_on = (stopped + 1, went_on) if then < 0.5 * going else (stopped, went_on + 1)
+        return stopped >= 2 and stopped > went_on
 
     def _by_pace_alone(self) -> float:
+        """F over presses by pace, of those that were not mostly up against the end of its way: a paddle held into the
+        top goes nowhere under "up" there, and its slowing at every long press reads as a push. Offline 2026-10-12 a
+        paddle was taken that way for a thing carried on by its own going, and her keys then moved it nowhere."""
         presses: dict[str, list[tuple[float, float]]] = defaultdict(list)
-        for (key, _began), values in self.by_press.items():
-            if len(values) >= 2:
+        for (key, began), values in self.by_press.items():
+            if len(values) >= 2 and 2 * self.pinned_in.get((key, began), 0) < len(values):
                 presses[key].append(_mean(values))
         groups = {key: values for key, values in presses.items() if len(values) >= 2}
         return _contingency(groups)[0] if len(groups) >= 2 else 0.0
@@ -287,6 +307,10 @@ class _Speeds:
             if len(alike) < 2:
                 return 0.0, 0.0
         return middle
+
+
+#: How many pictures after a key is let go its thing is first looked at for going on: the first may still show the press.
+LET_GO_SEEN_AFTER = 2
 
 
 def _contingency(groups: dict[str, list[tuple[float, float]]]) -> tuple[float, float]:
@@ -819,8 +843,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         if not self.follows_pointer and not hidden:
             self._decide(moves, at)
         # However she was found (a trial of her keys, her presses moving her kind alike, set back after a loss), whether
-        # she is carried by her own going is what her own pushes say, looked at again as they come in.
-        if self.number is not None and not self.carried and at - self._carried_checked >= CARRIED_CHECKED_EVERY_S:
+        # she is carried by her own going is what her own pushes say, looked at again as they come in, either way: offline
+        # 2026-10-12 a paddle's first two presses into the top of its way read as a push, and kept for good, no key of
+        # hers was found to move it however many presses said otherwise.
+        if self.number is not None and at - self._carried_checked >= CARRIED_CHECKED_EVERY_S:
             self._carried_checked = at
             self.carried = self._hers.carried()
         elif self.number not in moves.things and not hidden:
@@ -1193,8 +1219,13 @@ def _how_the_world_went(hers: WhichIsHers) -> dict[tuple[str, float], tuple[floa
 def _goes_with_the_world(speeds: Any, world: dict[tuple[str, float], tuple[float, float]]) -> bool:
     """Whether a thing went as the world went in most of the presses the world went as one: scenery the view slides past,
     which answers her keys as all of the world does, and is not hers. Offline 2026-10-12 a samurai held his place in the
-    middle of a scrolling world while the platforms went by against each key, and a platform was taken for her."""
-    presses = [(press, _mean(values)) for press, values in speeds.by_press.items() if press in world and len(values) >= 2]
+    middle of a scrolling world while the platforms went by against each key, and a platform was taken for her.
+
+    The view slides against the key that moves her, never its own way: a world gone up as one under "up" is her paddle
+    and the ball and the other side's paddle all going up, and hers is among them (offline 2026-10-12 a paddle was put
+    aside as scenery that way in half her Pongs)."""
+    presses = [(press, _mean(values)) for press, values in speeds.by_press.items() if press in world and len(values) >= 2
+               and not _the_key_s_own_way(press[0], world[press])]
     if len(presses) < WITH_THE_WORLD_AT_LEAST:
         return False
     alike = sum(math.hypot(vx - world[press][0], vy - world[press][1]) < 0.35 * math.hypot(*world[press])
@@ -1204,6 +1235,12 @@ def _goes_with_the_world(speeds: Any, world: dict[tuple[str, float], tuple[float
 
 #: How many presses in which the world went as one a thing must be seen in to be told for scenery by them.
 WITH_THE_WORLD_AT_LEAST = 2
+
+
+def _the_key_s_own_way(key: str, going: tuple[float, float]) -> bool:
+    """Whether ``going`` is the way the key is named for."""
+    way, speed = WAYS.get(key), math.hypot(*going)
+    return way is not None and speed > 0.0 and (going[0] * way[0] + going[1] * way[1]) / speed >= ALONG
 
 
 def last_moved(hers: WhichIsHers) -> float:
