@@ -91,6 +91,8 @@ class OnAPage:
     watching: Any = field(default=None, init=False)
     _watching_over: Any = field(default=None, init=False)
     _pictures: Any = field(default=None, init=False)
+    #: The words of the screen the pointer was last swept over, and where it turned into a hand there.
+    _swept: Any = field(default=None, init=False)
 
     #: The longest she waits on what plays by itself inside one look, in seconds.
     WATCH_IN_A_LOOK_S = 5.0
@@ -104,7 +106,29 @@ class OnAPage:
             return {"ok": False, "text": "", "layout": [], "error": "her page could not be photographed"}
         seen.setdefault("ok", True)
         _what_the_stream_shows(seen, self.watching)
+        await self._where_the_pointer_turns(seen, over)
         return seen
+
+    async def _where_the_pointer_turns(self, seen: dict[str, Any], over: tuple[float, float, float, float] | None) -> None:
+        """Once a screen, the places on it where the pointer turns into a hand (core/perception/where_the_pointer_turns.py),
+        among the shapes she may click: a doorway or a hidden thing looks like nothing in particular."""
+        from core.perception.where_the_pointer_turns import where_the_pointer_turns
+
+        words = frozenset(w for w in str(seen.get("text") or "").lower().split() if len(w) >= 3)
+        known = self._swept
+        if known is not None and (known[0] == words or len(words & known[0]) >= 0.5 * max(1, min(len(words), len(known[0])))):
+            places = known[1]
+        else:
+            places = await where_the_pointer_turns(self.page, over)
+            self._swept = (words, places)
+        there = [(float(r.get("center_x", -1)), float(r.get("center_y", -1)))
+                 for r in [*(seen.get("shapes") or []), *(seen.get("layout") or [])] if isinstance(r, dict)]
+        for x, y in places:
+            if any(abs(x - a) < 0.05 and abs(y - b) < 0.05 for a, b in there):
+                continue
+            seen.setdefault("shapes", []).append({"text": f"the one that stands out at {round(x * 100)}% across, "
+                                                          f"{round(y * 100)}% down", "center_x": x, "center_y": y,
+                                                  "shape": True, "answers_the_pointer": True})
 
     async def _watch(self, over: tuple[float, float, float, float] | None) -> None:
         """Watch the part being read as a stream from the first look; and while something plays by itself, wait for it."""
