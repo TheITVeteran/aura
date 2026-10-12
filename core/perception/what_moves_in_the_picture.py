@@ -855,7 +855,7 @@ class WhatMoves:
         self._now = at
         if self._with_the_view(small):
             return happened
-        if self._the_same_screen_back(small, at):
+        if _the_same_screen_back(self, small, at):
             happened.append({"what": "same screen back", "at": at})
         elif self._a_new_screen(small):
             self._was = (at, self._backdrop, dict(self.things)) if self._backdrop is not None else None
@@ -989,26 +989,6 @@ class WhatMoves:
                           "support": painted.copy()})
         return found
 
-    def _the_same_screen_back(self, small: np.ndarray, at: float) -> bool:
-        """Whether the screen before the last new one is back: something thrown over the view has cleared, and what
-        was there is there again, with the things on it. A person hit by a splat on the glass does not take the room
-        behind it for another room: offline 2026-10-12 every hit in a food fight covered the view, was taken for a new
-        screen, ended her play, and had every figure in the room found afresh."""
-        if self._was is None:
-            return False
-        went, backdrop, things = self._was
-        if at - went > BACK_WITHIN_S or backdrop.shape != small.shape:
-            self._was = None
-            return False
-        from core.perception.picture_arithmetic import apart
-
-        if float((apart(small, backdrop).max(axis=2) > DIFFERENT_ENOUGH).mean()) > SAME_SCREEN_BACK:
-            return False
-        self._was = None
-        self._first, self._backdrop = [], backdrop
-        self.things = {**things, **self.things}
-        return True
-
     def _a_new_screen(self, small: np.ndarray) -> bool:
         if self._last is None or self._last.shape != small.shape:
             return self._last is not None
@@ -1054,3 +1034,24 @@ class WhatMoves:
     def moving(self, faster_than: float = 4.0) -> list[Thing]:
         """Things going faster than ``faster_than`` working pixels a second."""
         return [t for t in self.things.values() if math.hypot(t.vx, t.vy) > faster_than]
+
+
+def _the_same_screen_back(eyes: WhatMoves, small: np.ndarray, at: float) -> bool:
+    """Whether the screen before the last new one is back: something thrown over the view has cleared, and what
+    was there is there again, with the things on it. A person hit by a splat on the glass does not take the room
+    behind it for another room: offline 2026-10-12 every hit in a food fight covered the view, was taken for a new
+    screen, ended her play, and had every figure in the room found afresh."""
+    if eyes._was is None:
+        return False
+    went, backdrop, things = eyes._was
+    if at - went > BACK_WITHIN_S or backdrop.shape != small.shape:
+        eyes._was = None
+        return False
+    from core.perception.picture_arithmetic import apart
+
+    if float((apart(small, backdrop).max(axis=2) > DIFFERENT_ENOUGH).mean()) > SAME_SCREEN_BACK:
+        return False
+    eyes._was = None
+    eyes._first, eyes._backdrop = [], backdrop
+    eyes.things = {**things, **eyes.things}
+    return True
