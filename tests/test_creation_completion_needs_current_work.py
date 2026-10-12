@@ -120,3 +120,17 @@ def test_a_thing_made_by_choosing_and_its_own_finishing_control_is_made_by_her_a
         assert reflexes.over_because == pursuit.MADE_NOT_WON
     finally:
         pursuit.AS_IT_HAPPENS.reset(token)
+
+
+def test_carries_only_tried_do_not_make_a_place_one_of_placing():
+    """Offline 2026-10-11 pictures dragged onto an alien maker's title to see what they did made it a place of placing,
+    and its alien could never be done."""
+    reflexes = run()
+    reflexes.words = ["Create, customize and name your own alien hero!"]
+    token = pursuit.AS_IT_HAPPENS.set(reflexes)
+    try:
+        works = WhatWorksHere(did_something={'click "RANDOMIZE"': 3, 'click "DONE"': 1},
+                              carried_to={'drag "the object" to "BEN"': False})
+        assert pursuit.a_handed_over_run_is_over(reading(image(), 3), made=pursuit.CHANGES_MADE_AT_LEAST, can_do=works)
+    finally:
+        pursuit.AS_IT_HAPPENS.reset(token)

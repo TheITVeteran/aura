@@ -197,7 +197,9 @@ def _made_by_placing(can_do: Any) -> bool:
     to be a hand that puts things in place (core/agency/how_a_game_works.py). Elsewhere a thing for making is made by
     choosing and its own finishing control: offline 2026-10-11 an agent generator showed the agent card it made, nothing
     was placed in it, and she went on clicking for four minutes."""
-    if getattr(can_do, "carried_to", None) or getattr(can_do, "carrying_said", False):
+    # A carry that went where it was taken, not one tried to see what it does: offline 2026-10-11 pictures dragged onto
+    # an alien maker's title to see what they did made it a place of placing, and its alien could never be done.
+    if any(bool(went) for went in (getattr(can_do, "carried_to", None) or {}).values()) or getattr(can_do, "carrying_said", False):
         return True
     from core.cognition.a_guide_to_a_place import THE_GUIDE
 
