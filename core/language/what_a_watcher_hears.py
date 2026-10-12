@@ -260,6 +260,8 @@ class WhatAWatcherHears:
             logger.info("not said, it was the program's names, not words: %r", str(line)[:120])
             return None
         said = _the_move_once(said)
+        # One mark to end a sentence: a quote that ends on its own "!" or "..." is not ended again ("pizza!.").
+        said = re.sub(r"([!?…]|\.\.\.)\.(?=[\s\"'”’)]|$)", r"\1", said)
         shape = shape_of(said)
         if now - self.lines.get(said, -SAME_AGAIN_S) < SAME_AGAIN_S:
             logger.info("not said again: %r", said[:120])

@@ -144,3 +144,11 @@ def test_a_long_line_is_said_with_what_she_could_not_read_left_out():
 def test_a_line_mostly_of_quotes_is_not_said_with_one_left_out():
     watcher = WhatAWatcherHears()
     assert watcher.heard('Carrying "the red cup" to "Xqzt Bvrk" — to see what it does', 0.0) is None
+
+
+@pytest.mark.unit
+def test_a_sentence_is_ended_once():
+    watcher = WhatAWatcherHears()
+    said = watcher.heard("There's nothing to win in this one; it answered: outlook good... and so is pizza!.", 0.0)
+    assert said is not None and said.endswith("pizza!")
+    assert watcher.heard("It said: maybe later....", 10.0).endswith("later...")
