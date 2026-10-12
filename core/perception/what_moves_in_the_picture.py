@@ -561,6 +561,7 @@ class WhatMoves:
         return strict, grow(strict)
 
     def _blobs(self, small: np.ndarray, masks: tuple[np.ndarray, np.ndarray]) -> list[dict[str, Any]]:
+        from core.perception.parts_when_things_touch import parts_when_things_touch
         from core.perception.picture_arithmetic import pieces
 
         strict, mask = masks
@@ -576,17 +577,20 @@ class WhatMoves:
                 continue
             if self._a_ghost(small, x, y, w, h, inside):
                 continue
-            rows, cols = np.nonzero(inside)
-            top, left = y + int(rows.min()), x + int(cols.min())
-            bottom, right = y + int(rows.max()) + 1, x + int(cols.max()) + 1
-            pixels = small[y : y + h, x : x + w][inside]
-            found.append({
-                "x": (left + right) / 2.0, "y": (top + bottom) / 2.0,
-                "w": float(right - left), "h": float(bottom - top),
-                "look": _look_of(pixels),
-                "colour": self._colour_of(small, x, y, w, h, inside, pixels),
-                "patch": small[top:bottom, left:right].copy(),
-            })
+            parts = parts_when_things_touch(small[y:y + h, x:x + w], inside, left=x, top=y,
+                                           things=[*self.things.values(), *self.pending.values()], at=self._now)
+            for part in parts:
+                rows, cols = np.nonzero(part)
+                top, left = y + int(rows.min()), x + int(cols.min())
+                bottom, right = y + int(rows.max()) + 1, x + int(cols.max()) + 1
+                pixels = small[y : y + h, x : x + w][part]
+                found.append({
+                    "x": (left + right) / 2.0, "y": (top + bottom) / 2.0,
+                    "w": float(right - left), "h": float(bottom - top),
+                    "look": _look_of(pixels),
+                    "colour": self._colour_of(small, x, y, w, h, part, pixels),
+                    "patch": small[top:bottom, left:right].copy(),
+                })
         return found
 
     def _colour_of(self, small: np.ndarray, x: int, y: int, w: int, h: int, inside: np.ndarray, pixels: np.ndarray) -> tuple[int, int, int]:

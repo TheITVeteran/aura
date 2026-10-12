@@ -40,6 +40,7 @@ from core.agency.causal_identification import (
 )
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.what_follows_the_pointer import FollowsThePointer
+from core.perception.parts_when_things_touch import same_colour_mix
 from core.verify import invariant
 
 logger = logging.getLogger(__name__)
@@ -523,6 +524,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         self.not_mine: set[int] = set()
         self.lost_at = -math.inf
         self.last_shape: tuple[float, float] | None = None
+        self.last_look: tuple[float, ...] | None = None
         self._answered: dict[str, list[float]] = {}
         self._answered_by: int | None = None
         self._expecting: dict[str, tuple[float, float]] = {}
@@ -866,6 +868,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
             self.last_velocity = (mine.vx, mine.vy)
             self.last_size = mine.size
             self.last_shape = (mine.w, mine.h)
+            self.last_look = tuple(getattr(mine, "look", ())) or None
             self.kind = mine.kind
             for axis, value in enumerate((mine.x, mine.y)):
                 self.lowest[axis] = min(self.lowest[axis], value)
@@ -879,19 +882,25 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
         """
         candidates = [t for t in moves.things.values() if t.kind == self.kind and t.number not in self.not_mine
                       and self._her_shape(t) and self.last_seen is not None
+                      and same_colour_mix(self.last_look, getattr(t, "look", None)) is not False
                       and self._within_reach(t, at)]
         # Set back somewhere else just after a life was lost, she is the one thing of her kind and shape on the
         # screen, however far from where she was: offline 2026-10-09 she was set back at the start after every loss,
         # was too far from where she had been to be followed, and tried all her keys again to find herself. Only then:
         # without a loss to set her back, a lookalike far off is no more her than any other thing.
-        alone = [t for t in moves.things.values() if t.kind == self.kind and t.number not in self.not_mine and self._her_shape(t)]
+        alone = [t for t in moves.things.values() if t.kind == self.kind and t.number not in self.not_mine
+                 and self._her_shape(t) and same_colour_mix(self.last_look, getattr(t, "look", None)) is not False]
         if not candidates and len(alone) == 1 and self.just_set_back(at):
             candidates = alone
         if not candidates and self.last_seen is not None and self.last_size:
+            # Offline 2026-10-12 a body's track vanished over a painted mark,
+            # whose size and nearness made it hers. A changed kind needs the
+            # body's measured look too; otherwise the next key trial decides.
             candidates = [
                 t for t in moves.things.values()
                 if self._within_reach(t, at) and 0.5 < t.size / self.last_size < 2.0
                 and t.number not in self.not_mine and self._her_shape(t)
+                and same_colour_mix(self.last_look, getattr(t, "look", None)) is True
             ]
         if not candidates:
             return None

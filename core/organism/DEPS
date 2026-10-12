@@ -10,7 +10,7 @@
 # Everything else below is the closed-world list the generator wrote: what
 # this package imports today, and nothing else.
 
-description = "core.organism: measured claims may exercise named observation custody, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
+description = "core.organism: measured claims may exercise named observation custody, appearance parts, construction readiness, picked-outcome and spatial-relation canaries; other imports remain closed."
 
 include_rules = [
     # The registered knowledge-revision canary exercises the canonical store.
@@ -29,6 +29,7 @@ include_rules = [
     "+core.perception.visual_anchor",
     "+core.perception.visual_probe_cache", # Synthetic validation of scoped visual rejections.
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
+    "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.
     "+core.perception.where_the_words_point",
     # The pure offline readiness canary checks eligibility without dispatching input.
     "+core.skills.screen_step_evidence",

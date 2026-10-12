@@ -31,6 +31,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.foreground_appearance import _foreground_mask_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
+    from core.perception.parts_when_things_touch import _joined_parts_invariant
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
@@ -56,6 +57,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("joined_parts_keep_measured_pixels", "core/perception/parts_when_things_touch.py",
+         "tests/test_touching_things_keep_their_parts.py", lambda: _joined_parts_invariant() == (),
+         "Touching foreground parts retain measured pixels and separate only where recent appearance and motion distinguish them."),
         ("known_body_controls_set_trial_priority", "core/agency/how_a_game_works.py",
          "tests/test_known_body_controls_set_trial_priority.py", lambda: _known_body_controls_invariant() == (),
          "Known body inputs set control trial priority before incidental interface input guesses; unknown roles preserve uncertainty."),
