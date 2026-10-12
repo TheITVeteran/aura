@@ -53,7 +53,12 @@ HELD_FOR_S = 0.9
 PRESSED_FOR_S = 0.15
 #: Acts that move her, not done to a thing beside her: the way she is moved is learned and played elsewhere.
 _MOVING_ACTS = frozenset({"move", "steer", "go", "walk", "run", "guide", "control", "drive", "fly", "jump", "turn",
-                          "aim", "dodge", "avoid", "navigate", "travel", "roll", "skate", "ride"})
+                          "aim", "dodge", "avoid", "navigate", "travel", "roll", "skate", "ride",
+                          # Driving and flying words: offline 2026-10-11 "up to go forward" in a parking game was taken
+                          # for a key to use on the cars beside her.
+                          "forward", "forwards", "backward", "backwards", "back", "reverse", "accelerate", "speed",
+                          "brake", "slow", "stop", "rotate", "spin", "thrust", "boost", "hover", "glide", "dive",
+                          "climb up", "duck", "crouch", "slide", "hop", "leap", "sprint", "dash", "strafe"})
 #: Acts a control does to her own going, not to a thing beside her: LIVE 2026-10-11 a tunnel racer's "Right
 #: increases forward speed" and "Up to boost" had her saying "There's a grey bar next to me. Right is to increases
 #: forward speed, so I'm pressing right", at every thing that came beside her.

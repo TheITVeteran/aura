@@ -221,3 +221,11 @@ def test_a_place_its_guide_knows_is_worked_by_dragging_has_things_carried_though
         assert here.carrying_said and any(move.startswith("drag ") for move in here.available())
     finally:
         THE_GUIDE.reset(token)
+
+
+@pytest.mark.parametrize(("label", "said"), [("time di", None), ("Leuel", "level"), ("HP", "hp"), ("hits left", "hits left")])
+def test_a_scrap_of_a_misread_label_is_not_said_as_a_name(label, said):
+    """Offline 2026-10-11 "Time 3, time di 14" was said aloud of a parking game's counters."""
+    from core.language.words_of_the_language import words_of
+
+    assert words_of(label) == said
