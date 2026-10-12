@@ -74,6 +74,14 @@ def _current_entity():
     return hers, body, moves
 
 
+def _scrolling_evidence():
+    """The measured view passes opposite the movement input."""
+    evidence = _evidence()
+    evidence.by_press = {press: [(-vx, -vy) for vx, vy in values]
+                         for press, values in evidence.by_press.items()}
+    return evidence
+
+
 def test_the_live_kind_fallback_cannot_borrow_missing_entity_trials():
     hers, body, moves = _current_entity()
     hers._by_thing[body.number] = _evidence(left=0, right=0)
@@ -89,7 +97,7 @@ def test_the_live_kind_fallback_keeps_the_entitys_weak_result():
 def test_the_live_kind_fallback_rejects_measured_scenery():
     hers, body, moves = _current_entity()
     for number in range(1, 6):
-        hers._by_thing[number] = _evidence()
+        hers._by_thing[number] = _scrolling_evidence()
     assert hers._the_one_of_a_kind_that_answers(moves) is None
 
 
@@ -115,7 +123,7 @@ def test_a_kinds_repeated_tap_effects_cannot_install_an_unmeasured_entity():
 def test_a_kinds_repeated_tap_effects_preserve_the_entitys_scene_exclusion():
     hers, body, _moves = _current_entity()
     for number in range(1, 6):
-        hers._by_thing[number] = _evidence()
+        hers._by_thing[number] = _scrolling_evidence()
     hers.moved_by_her_presses(body, 10.)
     assert hers.number is None
 

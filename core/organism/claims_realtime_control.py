@@ -51,6 +51,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
+    from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.visual_probe_cache import _visual_probe_miss_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
@@ -77,6 +78,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("visible_corner_keeps_its_whole_connected_patch", "core/perception/the_whole_patch_around_a_visible_corner.py",
+         "tests/test_a_visible_corner_keeps_the_whole_patch.py", lambda: _whole_patch_invariant() == (),
+         "A foreground corner can recover its bounded connected colour patch when a measured surrounding floor distinguishes it."),
         ("point_identity_needs_current_pixels", "core/perception/points_that_keep_their_motion.py",
          "tests/test_points_keep_their_observed_motion.py", lambda: _point_identity_invariant() == (),
          "Bounded point tracks retain measured identities across consecutive frames and retire them on occlusion, gaps or resets."),

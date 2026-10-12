@@ -66,6 +66,8 @@ def a_recent_thing_inside(picture: np.ndarray, inside: np.ndarray, *,
         if x0 >= x1 or y0 >= y1:
             continue
         own_here = remaining[y0:y1, x0:x1] & (look[bins[y0:y1, x0:x1]] >= .1 * look.max())
+        if not _whole_connected_support(own_here, x0, y0, x1, y1, wide, tall):
+            continue
         own_count = int(own_here.sum())
         if not max(3, .25 * thing.size) <= own_count <= 2 * thing.size:
             continue
@@ -79,6 +81,23 @@ def a_recent_thing_inside(picture: np.ndarray, inside: np.ndarray, *,
     if remaining_count:
         parts.append(remaining)
     return parts
+
+
+def _whole_connected_support(inside: np.ndarray, left: int, top: int, right: int, bottom: int,
+                             wide: int, tall: int) -> bool:
+    """The search window cannot cut a piece from scenery or join separate patches.
+
+    Offline 2026-10-12 a moving search window cut changing fragments from a
+    wall. Their centres moved with the window although the wall stood still.
+    A component reaching an interior window edge has no measured full extent.
+    """
+    from scipy import ndimage
+
+    if ((left > 0 and inside[:, 0].any()) or (right < wide and inside[:, -1].any())
+            or (top > 0 and inside[0].any()) or (bottom < tall and inside[-1].any())):
+        return False
+    _labels, count = ndimage.label(inside, structure=np.ones((3, 3), bool))
+    return count == 1
 
 
 def connected_parts_before_rejecting(picture: np.ndarray, inside: np.ndarray, *,

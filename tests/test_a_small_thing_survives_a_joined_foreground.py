@@ -108,3 +108,34 @@ def test_new_proposals_are_bounded_before_their_masks_are_kept():
 
 def test_the_joined_foreground_invariant():
     assert _small_joined_thing_invariant() == ()
+
+
+def test_a_search_window_cannot_cut_a_moving_fragment_from_a_stationary_wall():
+    picture = np.full((40, 60, 3), 80, np.uint8)
+    picture[12:16, :] = 240
+    inside = np.ones((40, 60), bool)
+    body = _body()
+    body.w = 8
+    for x in (20., 25., 30.):
+        body.x = x
+        parts = a_recent_thing_inside(picture, inside, left=0, top=0, things=[body], at=.1)
+        assert len(parts) == 1 and np.array_equal(parts[0], inside)
+
+
+def test_separate_colour_matches_cannot_be_combined_into_one_measured_body():
+    picture = np.full((30, 40, 3), 80, np.uint8)
+    picture[12:16, 16:18] = picture[12:16, 22:24] = 240
+    inside = np.ones((30, 40), bool)
+    parts = a_recent_thing_inside(picture, inside, left=0, top=0, things=[_body()], at=.1)
+    assert len(parts) == 1 and np.array_equal(parts[0], inside)
+
+
+def test_a_complete_component_at_the_edge_of_the_view_still_supplies_its_visible_part():
+    body = _body()
+    body.x = 1.
+    picture = np.full((30, 40, 3), 80, np.uint8)
+    picture[12:16, :3] = 240
+    inside = np.ones((30, 40), bool)
+    parts = a_recent_thing_inside(picture, inside, left=0, top=0, things=[body], at=.1)
+    assert len(parts) == 2 and int(parts[0].sum()) == 12
+    assert np.array_equal(np.sum(parts, axis=0), inside)

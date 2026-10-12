@@ -248,6 +248,7 @@ def _without_what_stands_out(still: np.ndarray) -> np.ndarray:
     never moved was part of the backdrop, and could be neither seen nor gone to.
     """
     from core.perception.picture_arithmetic import apart, median, pieces
+    from core.perception.the_whole_patch_around_a_visible_corner import complete_visible_patches
 
     tall, wide = still.shape[:2]
     reach = max(3, (min(tall, wide) // 12) | 1)
@@ -263,7 +264,8 @@ def _without_what_stands_out(still: np.ndarray) -> np.ndarray:
             continue
         inside = labels == label
         backdrop[inside] = floor[inside]
-    return backdrop
+    return complete_visible_patches(still, backdrop, difference=DIFFERENT_ENOUGH,
+                                    largest=LARGEST * tall * wide, longest=THIN_BAR_REACHES * reach)
 
 
 def _back_in_sight(moves: WhatMoves, thing: Thing, at: float) -> Thing | None:
