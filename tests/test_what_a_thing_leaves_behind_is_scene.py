@@ -88,9 +88,11 @@ def _moves_with(things):
 
 
 def _pressed(hers, number, key, vx, vy, n):
+    """Three pictures of a press, each where its going took it: a speed is seen as a thing going from place to place."""
     speeds = hers._by_thing.setdefault(number, _Speeds())
-    for _ in range(3):
-        speeds.add(key, vx, vy, press=float(n))
+    for step in range(3):
+        at = float(n) + step / FPS
+        speeds.add(key, vx, vy, press=float(n), position=(50.0 + vx * at, 50.0 + vy * at))
 
 
 def _rested(hers, number, vx=0.0, vy=0.0, n=100):

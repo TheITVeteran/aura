@@ -246,11 +246,19 @@ def test_what_her_presses_bring_out_is_not_taken_for_her():
     from types import SimpleNamespace
 
     from core.agency.playing_as_it_happens import _found_by_her_presses
-    from core.agency.which_one_answers_to_her import Makes, WhichIsHers
+    from core.agency.which_one_answers_to_her import Makes, WhichIsHers, _Speeds
 
     hers = WhichIsHers()
     hers.makes["x"] = Makes("x", 5, 300.0, 0.0, 6)
-    run = SimpleNamespace(presses=SimpleNamespace(curves={"x": object()}, kinds_it_moves=lambda far: {5, 6}))
+    run = SimpleNamespace(presses=SimpleNamespace(curves={"x": object()}, kinds_it_moves=lambda far: {5, 6},
+                                                  numbers_it_moves=lambda far, numbers=None: set(), entity_presses=()))
+    # The girl's own presses moved her each its way, and the shot went its way at every press too: a thing is hers by
+    # its own going, and what her presses bring out goes alike at every one of them.
+    for number in (3, 40):
+        own = hers._by_thing.setdefault(number, _Speeds())
+        for n, (key, vx) in enumerate((("left", -60.0), ("right", 60.0)) * 2):
+            for step in range(3):
+                own.add(key, vx, 0.0, press=float(n), position=(100.0 + vx * (n + step / 30), 80.0))
     shot = SimpleNamespace(number=40, kind=5, born=9.8)
     girl = SimpleNamespace(number=3, kind=6, born=1.0)
     _found_by_her_presses(run, SimpleNamespace(things={40: shot, 3: girl}), hers, 10.0)

@@ -1061,7 +1061,7 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
     # -- what she knows ----------------------------------------------------
 
     def thing(self, moves: Any) -> Any:
-        return moves.things.get(self.number) if self.number is not None else None
+        return getattr(moves, "things", {}).get(self.number) if self.number is not None else None
 
     def way_of(self, key: str) -> tuple[float, float] | None:
         """How fast her thing goes while ``key`` is held, in working pixels a second."""
