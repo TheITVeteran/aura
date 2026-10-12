@@ -21,6 +21,17 @@ A_BODY_PX = 6
 
 __all__ = ["FollowsThePointer"]
 
+#: How many pictures of a thing make a sighting, where the place's words say the pointer moves her.
+TOLD_SAMPLES = 12
+
+
+def _told_the_pointer_moves_her() -> bool:
+    """Whether the guide to the place holds that its pointer moves the player's own thing."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    pointer = getattr(THE_GUIDE.get(), "pointer", None) or {}
+    return bool(pointer.get("moves"))
+
 
 class FollowsThePointer:
     """Where the pointer has been, and the thing that goes with it."""
@@ -52,7 +63,7 @@ class FollowsThePointer:
         best: list[bool | None] = [None, None]
         for lag in POINTER_LAGS_S:
             pairs = [(p[0], p[1], x, y) for at, x, y in seen if (p := self._pointer_at(at - lag)) is not None]
-            if len(pairs) < 20:
+            if len(pairs) < (TOLD_SAMPLES if _told_the_pointer_moves_her() else 20):
                 continue
             for axis, value in enumerate(_measured_along(pairs, extent)):
                 if value or (value is False and best[axis] is None):
@@ -99,8 +110,13 @@ class FollowsThePointer:
         # body the pointer moves (a boat, a basket) is bigger. LIVE 2026-10-11 a 3x2 thing was taken for her in a boat
         # game, and the boat was never steered.
         following = []
+        # Where the place's words say the pointer moves her ("use the mouse to move Mac"), a sighting is a finding, and
+        # fewer pictures make one: offline 2026-10-11 an egg-catching game's rounds were lost in under ten seconds
+        # each, while the two sightings asked of what might be chance were still being made.
+        told = _told_the_pointer_moves_her()
         for kind, seen in self._followed.items():
-            if kind not in nearest or len(seen) < 20 or max(nearest[kind].w, nearest[kind].h) < A_BODY_PX:
+            if kind not in nearest or len(seen) < (TOLD_SAMPLES if told else 20) \
+                    or max(nearest[kind].w, nearest[kind].h) < A_BODY_PX:
                 continue
             along = tuple(bool(v) for v in self._with_the_pointer(seen, _extent(moves)))
             if any(along):
@@ -110,7 +126,7 @@ class FollowsThePointer:
             # finding. Tested every few pictures at a few delays, chance
             # agreement turns up now and then (offline 2026-10-04, the other
             # paddle during a long Pong game), and seldom twice running.
-            if self._sighted != kind:
+            if self._sighted != kind and not told:
                 self._sighted = kind
                 seen.clear()
                 continue

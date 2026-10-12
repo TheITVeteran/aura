@@ -33,3 +33,28 @@ def test_a_thing_going_its_own_way_while_the_pointer_is_swept_does_not_head_for_
     assert _chases_along(pairs)[0] is not True
     still = [(x, 80.0, 60.0, 40.0) for x in pointer]
     assert _chases_along(still) == (None, None)
+
+
+def test_where_the_words_say_the_mouse_moves_her_one_sighting_over_fewer_pictures_is_a_finding():
+    """Offline 2026-10-11 an egg-catching game's rounds were lost in under ten seconds each while she found her body."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+    from core.cognition.a_guide_to_a_place import THE_GUIDE, TOLD, Guide
+
+    guide = Guide(place="a place")
+    guide.take_in(TOLD, ["Use the mouse to move Mac. Click to throw the ball."])
+    token = THE_GUIDE.set(guide)
+    try:
+        hers = WhichIsHers()
+        mac = SimpleNamespace(number=7, kind=3, x=120.0, y=150.0, w=12.0, h=20.0, seen=0.0, moved=True)
+        moves = SimpleNamespace(things={7: mac}, shape=(160, 240))
+        for k in range(16):
+            at = k * 0.06
+            px = 120 + 90 * math.sin(k / 2.5)
+            hers.pointed(px, 80.0, at)
+            mac.x, mac.seen = px, at
+            hers._what_follows_the_pointer(moves, at)
+        assert hers.follows_pointer and hers.number == 7
+    finally:
+        THE_GUIDE.reset(token)
