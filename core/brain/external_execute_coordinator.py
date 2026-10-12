@@ -1351,6 +1351,9 @@ class ExternalExecuteCoordinator:
                 state = "UNKNOWN_EFFECT"
                 reason = "dispatched_effect_unverified"
                 bounded["manual_reconciliation_required"] = True
+                bounded["retry_safe"] = False
+                bounded["replay_payload"].update(manual_reconciliation_required=True, retry_safe=False)
+                bounded["replay_payload_sha256"] = _canonical_sha256(bounded["replay_payload"])
             else:
                 state = "FAILED"
                 reason = "effect_failed_before_verification"

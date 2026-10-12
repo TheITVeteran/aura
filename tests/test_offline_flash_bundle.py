@@ -85,3 +85,29 @@ def test_a_programs_other_files_are_fetched_from_its_archive_item_and_kept_with_
     (bundle / "games" / "0" / "include" / "level1.txt").write_bytes(b"changed")
     with pytest.raises(ValueError):
         check_bundle(bundle)
+
+
+@pytest.mark.parametrize("size,data", [(5, b"bad"), (2, b"oversized"), (-1, b"bad"), ("unknown", b"bad")])
+def test_dependency_extent_failure_remains_unresolved(tmp_path, size, data):
+    from tools.prepare_offline_flash_bundle import fetch_dependencies
+
+    manifest = _bundle(tmp_path)
+    manifest["cases"][0]["archive_identifier"] = "a-program"
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    fetched = fetch_dependencies(tmp_path, list_files=lambda _id: [{"name": "level.txt", "size": size}], fetch=lambda _url: data)
+    assert not fetched["cases"][0]["dependencies"]
+    assert "level.txt" in fetched["cases"][0]["dependency_errors"]
+    assert fetched["dependency_completeness"].startswith("unestablished")
+    assert not (tmp_path / "games" / "0" / "level.txt").exists()
+
+
+def test_a_dependency_cannot_borrow_another_cases_file(tmp_path):
+    manifest = _bundle(tmp_path)
+    other = tmp_path / "games" / "1"
+    other.mkdir(parents=True)
+    data = b"different case"
+    (other / "level.txt").write_bytes(data)
+    manifest["cases"][0]["dependencies"] = {"../1/level.txt": hashlib.sha256(data).hexdigest()}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="differs"):
+        check_bundle(tmp_path)

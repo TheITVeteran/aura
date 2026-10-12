@@ -27,8 +27,9 @@ def check_bundle(directory: Path) -> dict:
         if actual != case["program"]["sha256"]:
             raise ValueError(f"program {number} differs from its retained original")
         for name, expected in (case.get("dependencies") or {}).items():
-            source = (directory / "games" / str(number) / name).resolve()
-            if not source.is_relative_to(directory.resolve()) or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
+            folder = (directory / "games" / str(number)).resolve()
+            source = (folder / name).resolve()
+            if not source.is_relative_to(folder) or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
                 raise ValueError(f"a file of program {number} ({name}) differs from the one fetched")
     for name, expected in manifest["emulator"]["files"].items():
         source = (directory / "ruffle" / name).resolve()

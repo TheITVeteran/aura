@@ -34,6 +34,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
     from core.perception.where_the_words_point import _named_places_invariant
+    from core.runtime.action_executor import _terminal_effect_flags_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
     from core.runtime.what_she_learned import (
         _indexed_knowledge_invariant,
@@ -48,6 +49,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("receipts_keep_terminal_effect_flags", "core/runtime/action_executor.py",
+         "tests/test_external_completion_keeps_its_terminal_outcome.py", lambda: _terminal_effect_flags_invariant() == (),
+         "Post-action receipt flags preserve the durable transaction's effect and reconciliation outcome."),
         ("relations_require_unique_finite_entities", "core/perception/relations_between_things.py",
          "tests/test_spatial_relations_require_unique_current_entities.py", lambda: _relations_require_unique_finite_entities() == (),
          "Spatial completion evidence abstains when object names are ambiguous or their geometry is unmeasured."),

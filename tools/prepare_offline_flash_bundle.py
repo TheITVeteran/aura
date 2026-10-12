@@ -162,16 +162,27 @@ MAX_DEPENDENCY_BYTES = 32 * 1024 * 1024
 FETCH_TIMEOUT_S = 60
 
 
+def _download_dependency(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S) as answer:
+        data = answer.read(MAX_DEPENDENCY_BYTES + 1)
+    if len(data) > MAX_DEPENDENCY_BYTES:
+        raise ValueError("dependency exceeds the bounded reader")
+    return data
+
+
 def _item_files(identifier: str) -> list[dict]:
-    with urllib.request.urlopen(f"https://archive.org/metadata/{identifier}", timeout=FETCH_TIMEOUT_S) as answer:
-        return list(json.loads(answer.read()).get("files") or [])
+    with urllib.request.urlopen(f"https://archive.org/metadata/{urllib.request.quote(identifier, safe='')}", timeout=FETCH_TIMEOUT_S) as answer:
+        data = answer.read(4 * 1024 * 1024 + 1)
+    if len(data) > 4 * 1024 * 1024:
+        raise ValueError("archive metadata exceeds the bounded reader")
+    return list(json.loads(data).get("files") or [])
 
 
 def fetch_dependencies(output: Path, list_files=_item_files, fetch=None) -> dict:
     """Each verified case's other files, from the archive item its program came from: kept under ``games/<case>/`` by
     their own paths, with their hashes, in the manifest. A file that is the program itself, the item's record, too
     large, or that leaves the case's folder is not kept."""
-    fetch = fetch or (lambda url: urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_S).read())
+    fetch = fetch or _download_dependency
     manifest = json.loads((output / "manifest.json").read_text())
     for case in manifest["cases"]:
         identifier = case.get("archive_identifier") or ""
@@ -187,23 +198,31 @@ def fetch_dependencies(output: Path, list_files=_item_files, fetch=None) -> dict
         folder = (output / "games" / str(case["id"])).resolve()
         for item in files:
             name = str(item.get("name") or "")
-            if (not name or name.endswith(_RECORD) or name == program or name.lower().endswith(".swf") and "/" not in name
-                    and int(item.get("size") or 0) == int(case["program"]["bytes"])):
+            try:
+                size = int(item.get("size") or 0)
+            except (TypeError, ValueError):
+                case.setdefault("dependency_errors", {})[name] = "invalid declared extent"
                 continue
-            if int(item.get("size") or 0) > MAX_DEPENDENCY_BYTES:
+            if (not name or name.endswith(_RECORD) or name == program or name.lower().endswith(".swf") and "/" not in name
+                    and size == int(case["program"]["bytes"])):
+                continue
+            if not 0 <= size <= MAX_DEPENDENCY_BYTES:
+                case.setdefault("dependency_errors", {})[name] = "declared extent exceeds the bounded reader"
                 continue
             target = (folder / name).resolve()
             if not target.is_relative_to(folder):
                 continue
             try:
-                data = fetch(f"https://archive.org/download/{identifier}/{urllib.request.quote(name)}")
-            except OSError as error:
+                data = fetch(f"https://archive.org/download/{urllib.request.quote(identifier, safe='')}/{urllib.request.quote(name)}")
+                if len(data) > MAX_DEPENDENCY_BYTES or size and len(data) != size:
+                    raise ValueError("downloaded extent differs from the bounded archive record")
+            except (OSError, ValueError) as error:
                 case.setdefault("dependency_errors", {})[name] = f"{type(error).__name__}: {error}"
                 continue
             write_bytes(target, data)
             kept[name] = hashlib.sha256(data).hexdigest()
         case["dependencies"] = kept
-    manifest["dependency_completeness"] = "each case's other files fetched from the archive item its program came from"
+    manifest["dependency_completeness"] = "unestablished; listed archive dependencies retained with hashes and explicit fetch errors"
     write_bytes(output / "manifest.json", json.dumps(manifest, indent=2).encode())
     return manifest
 

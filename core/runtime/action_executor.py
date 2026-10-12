@@ -61,6 +61,7 @@ from core.state.state_gateway import get_state_gateway
 from core.utils.task_tracker import (
     get_task_tracker,  # noqa: F401  (read at call time by the lifted module)
 )
+from core.verify.invariants import invariant
 
 from .action_executor_steps import _RunsTheActionSteps
 
@@ -2149,6 +2150,25 @@ async def _abandon_external_dispatch(
         )
 
 
+def _keep_terminal_effect_flags(result: dict[str, Any], completed: Mapping[str, Any]) -> None:
+    terminal = completed.get("result") or {}
+    names = ("transport_succeeded", "effect_verified", "retry_safe", "manual_reconciliation_required")
+    if any(type(terminal.get(name)) is not bool for name in names):
+        raise ValueError("terminal external execution flags are unavailable")
+    result.update({name: terminal[name] for name in names})
+
+
+@invariant("runtime.receipts_keep_terminal_effect_flags", scope="runtime",
+           owner="core/runtime/action_executor.py", observational=False)
+def _terminal_effect_flags_invariant() -> tuple:
+    flags = dict(transport_succeeded=False, effect_verified=False, retry_safe=False, manual_reconciliation_required=True)
+    result = {**flags, "manual_reconciliation_required": False, "steps": ["retained"]}
+    _keep_terminal_effect_flags(result, {"result": flags})
+    assert all(result[name] is value for name, value in flags.items())
+    assert result["steps"] == ["retained"]
+    return ()
+
+
 async def _complete_external_execution_transaction(
     *,
     coordinator: Any,
@@ -2171,6 +2191,9 @@ async def _complete_external_execution_transaction(
             dispatch_attempt_id=dispatch_attempt_id,
         )
         result["external_execution_transaction"] = completed
+        # Completion can classify an unverified dispatch as requiring
+        # reconciliation. The following receipt must use that durable outcome.
+        _keep_terminal_effect_flags(result, completed)
     except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
         effect_may_have_occurred = (
             result.get("transport_succeeded") is True
