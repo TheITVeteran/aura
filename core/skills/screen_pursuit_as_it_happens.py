@@ -83,7 +83,14 @@ def worked_by_typing(keep: dict[str, Any], guide: Any, named: Any) -> str:
     after: by typing what it asks; '' for anywhere else, a game that only asked her name before play among them, and
     for a screen that names keys of its own. Offline 2026-10-12 a riddler's answer screen played its animation, was
     taken for play, and arrows were pressed at it for thirty-six seconds, twice, while the answer it gave went unread."""
-    if not keep.get("typed") or named or guide is None:
+    if not keep.get("typed") or named:
+        return ""
+    # What play showed outweighs what its words were taken to say: she typed an answer to a question, or the place
+    # answered what she typed (live 2026-10-12 a riddler was read as a game of following a sequence, and was played with
+    # keys for three minutes after it had answered).
+    if keep.get("answered") or keep.get("asked_a_question"):
+        return "typing what it asks"
+    if guide is None:
         return ""
     return "typing what it asks" if "questions" in (getattr(guide, "mechanics", None) or {}) else ""
 
@@ -1191,7 +1198,7 @@ class PlayingAsItHappens:
         """Where the screen's words ask for words typed, typed (core/agency/typing_what_is_asked.py), twice at most for
         one ask. Whether anything was typed."""
         from core.agency.typing_what_is_asked import type_what_is_asked
-        from core.language.words_asked_for import QUESTION, words_asked_for
+        from core.language.words_asked_for import ANSWER, QUESTION, words_asked_for
         from core.perception.what_the_pixels_show import recognize_text
 
         asked = words_asked_for(self.words[-1]) if self.words else None
@@ -1220,6 +1227,8 @@ class PlayingAsItHappens:
             # DENTLTY" until then, was reported as the machine's answer).
             self.keep["typed_kind"], self.keep["typed_on"] = str(done.get("kind") or ""), " ".join(self.words[-12:])
             self.keep["typed_asked_by"] = asked.asked_by
+            # A question she put, or one put to her that she answered: a place of questions and answers.
+            self.keep["asked_a_question"] = self.keep.get("asked_a_question") or done.get("kind") in (QUESTION, ANSWER)
             if done.get("kind") == QUESTION:
                 self.keep["answered"] = await _what_it_answered(self.look, recognize_text)
         return bool(done.get("typed"))

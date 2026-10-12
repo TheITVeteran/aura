@@ -340,3 +340,6 @@ def test_a_place_of_questions_she_has_answered_by_typing_is_not_played_with_keys
     assert worked_by_typing({"typed": "Aura"}, a_game, []) == ""          # a game that only asked her name first
     assert worked_by_typing({}, asks, []) == ""                           # nothing typed yet
     assert worked_by_typing({"typed": "Aura"}, asks, ["space"]) == ""     # its screen names a key to press
+    # What play showed outweighs what its words were taken to say.
+    assert worked_by_typing({"typed": "Aura", "asked_a_question": True}, a_game, []) == "typing what it asks"
+    assert worked_by_typing({"typed": "Aura", "answered": "DEEP ORANGE"}, None, []) == "typing what it asks"

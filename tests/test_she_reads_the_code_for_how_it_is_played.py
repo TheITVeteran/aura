@@ -89,3 +89,17 @@ def test_what_is_said_of_a_manual_names_how_it_is_won_and_what_the_screens_do_no
                                                "hidden": ["A crate pushed into a corner cannot be moved again"]})
     assert said == ["From its code: it's won when every crate is on a marked square; what its screens don't say: "
                     "a crate pushed into a corner cannot be moved again."]
+
+
+def test_what_a_reading_of_a_program_says_of_the_program_is_not_how_it_is_played():
+    """Live 2026-10-12 she said aloud "From its code: it's won when The code does not show an explicit win condition;
+    progression ends at frame 196 then jumps to 197 and 113", and took it for how the thing was won."""
+    from core.cognition.a_guide_to_a_place import Guide
+    from core.cognition.reading_the_code import take_in_the_code
+
+    guide = Guide(place="a place")
+    said = take_in_the_code(guide, {"win": "The code does not show an explicit win condition; progression ends at frame 196",
+                                    "lose": "the timer reaches zero before every lamp is lit",
+                                    "hidden": ["variable score2 is set at frame 12"]})
+    assert said == ["From its code: it's lost when the timer reaches zero before every lamp is lit."]
+    assert guide.win == [] and guide.lose == ["the timer reaches zero before every lamp is lit"]

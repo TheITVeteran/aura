@@ -137,6 +137,20 @@ def _without_spoilers(manual: dict[str, Any]) -> dict[str, Any]:
     return {k: clean(v) for k, v in manual.items()}
 
 
+#: What a reading of a program says of the program rather than of play: what it could not find there, and its insides.
+_OF_THE_CODE = re.compile(r"\b(?:the code|in code|frames?\s*\d+|frame label|variables?|functions?|gotoAndPlay|gotoAndStop|"
+                          r"_root|timeline|actionscript|does(?:n't| not) (?:show|say|make)|not (?:explicit|shown|clear|"
+                          r"stated|defined)|no explicit|unclear|unknown|cannot (?:tell|be determined))\b", re.I)
+
+
+def _of_play(said: str) -> str:
+    """A thing a reading of a program said, where it says something of play a person could go by; '' where it speaks of
+    the program instead. Live 2026-10-12 she said aloud "From its code: it's won when The code does not show an explicit
+    win condition; progression ends at frame 196 then jumps to 197 and 113", and took it for how the thing is won."""
+    said = " ".join(str(said or "").split())
+    return "" if not said or _OF_THE_CODE.search(said) else said
+
+
 def take_in_the_code(guide: Any, manual: dict[str, Any]) -> list[str]:
     """A manual made from a program's code, into the guide at the program's standing: its goal where the place has
     said none, how it is won and lost, its controls and mechanics as the program's, and the rest as lines for her to
@@ -145,14 +159,15 @@ def take_in_the_code(guide: Any, manual: dict[str, Any]) -> list[str]:
 
     if not manual:
         return []
-    goal, win, lose = (str(manual.get(k) or "") for k in ("goal", "win", "lose"))
+    goal, win, lose = (_of_play(str(manual.get(k) or "")) for k in ("goal", "win", "lose"))
     if goal and not guide.goals:
         guide.goals.append(goal)
     for said, kept in ((win, guide.win), (lose, guide.lose)):
         if said and said not in kept:
             kept.append(said)
     controls = [f"{c['control']} to {c['does']}" for c in manual.get("controls") or [] if c and c.get("does")]
-    steps, hidden = list(manual.get("steps") or []), list(manual.get("hidden") or [])
+    steps = [step for step in (_of_play(str(s)) for s in manual.get("steps") or []) if step]
+    hidden = [what for what in (_of_play(str(h)) for h in manual.get("hidden") or []) if what]
     guide.take_in(PROGRAM, [*controls, *steps, *hidden], passages=[])
     tools = [f"{t['name']} ({t['does']})" if t.get("does") else t["name"] for t in manual.get("tools") or [] if t]
     lines = [("How to play it: " + " → ".join(steps)) if steps else "",
