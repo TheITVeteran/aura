@@ -176,3 +176,33 @@ def test_a_place_understood_as_for_making_is_known_when_her_time_runs_out():
         finally:
             THE_GUIDE.reset(token)
     assert _a_place_for_making() is False
+
+
+def test_what_a_machine_answered_is_what_is_new_on_it_not_the_label_over_it(monkeypatch):
+    """Offline 2026-10-12 a machine that answered a name with a made-up one, under a lit label saying what it was, was
+    said to have answered the label, twice. Nothing here is that machine: a box that answers a word with another."""
+    import asyncio
+
+    import core.perception.her_eyes as eyes
+    import core.skills.sovereign_browser_drawing as drawing
+
+    class _Page:
+        viewport_size = {"width": 100, "height": 100}
+
+        async def screenshot(self, clip):
+            import io
+
+            from PIL import Image
+
+            out = io.BytesIO()
+            Image.new("RGB", (100, 100), (20, 20, 20)).save(out, format="PNG")
+            return out.getvalue()
+
+    async def seen(prompt, image, **_kw):
+        return '{"answered": "YOUR LUCKY COLOUR"}'                    # the lit label, not the answer
+
+    monkeypatch.setattr(eyes, "look_with_her_eyes", seen)
+    keep = {"typed": "Maple", "typed_kind": "a name", "typed_on": "TYPE A WORD HERE GO YOUR LUCKY COLOUR",
+            "answered": "TYPE A WORD HERE TRY AGAIN DEEP ORANGE YOUR LUCKY COLOUR"}
+    said = asyncio.run(drawing._what_was_made_as_seen(_Page(), (0.0, 0.0, 1.0, 1.0), {"words": ""}, [], [], keep))
+    assert said.endswith("it answered: DEEP ORANGE.")

@@ -976,8 +976,16 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
         logging.getLogger(__name__).info("her eyes could not say what she made: %s", str(why)[:160])
     typed = str((keep or {}).get("typed") or "")
     if typed:
-        # A thing that answers what is put to it: what she asked, and what it answered, as it shows it.
-        answered = shows or str((keep or {}).get("answered") or "")[:160] or str(run.get("words") or "")[:160]
+        # A thing that answers what is put to it: what she asked, and what it answered, as it shows it. Its answer is
+        # what is new on it since she put the question, read first from its words, then from her eyes where what they
+        # quote was not there before; the label over the answer is not the answer: offline 2026-10-12 a machine that
+        # answered "THE FIST" over "YOUR SECRET IDENTITY" was said to have answered "YOUR SECRET IDENTITY", twice.
+        from core.skills.screen_pursuit_as_it_happens import _the_new_part
+
+        before = f"{(keep or {}).get('typed_on') or ''} {typed}"
+        read = str((keep or {}).get("answered") or "")
+        answered = ((_the_new_part(read, before) if read else "") or (_the_new_part(shows, before) if shows else "")
+                    or read[:160] or shows or str(run.get("words") or "")[:160])
         gave = (f"I gave it my name, {typed!r}" if (keep or {}).get("typed_kind") == "a name" else f"I asked it {typed!r}")
         # A word in capitals stays in capitals: lowered by its first letter ("lYOUR") it reads as a program's name.
         opening = answered if answered[:2].isupper() else f"{answered[:1].lower()}{answered[1:]}"
