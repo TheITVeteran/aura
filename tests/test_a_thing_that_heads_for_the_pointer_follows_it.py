@@ -58,3 +58,31 @@ def test_where_the_words_say_the_mouse_moves_her_one_sighting_over_fewer_picture
         assert hers.follows_pointer and hers.number == 7
     finally:
         THE_GUIDE.reset(token)
+
+
+def test_of_the_parts_that_follow_the_pointer_the_one_her_eyes_took_for_her_comes_before_the_biggest():
+    """Offline 2026-10-11 the ball a boy held was bigger than any one part of him her eyes followed, was taken for her,
+    and was thrown."""
+    from types import SimpleNamespace
+
+    from core.agency.which_one_answers_to_her import WhichIsHers
+    from core.cognition.a_guide_to_a_place import THE_GUIDE, TOLD, Guide
+
+    guide = Guide(place="a place")
+    guide.take_in(TOLD, ["Use the mouse to move Mac. Click to throw the ball."])
+    guide.seen.mine = (3, "a boy")
+    token = THE_GUIDE.set(guide)
+    try:
+        hers = WhichIsHers()
+        boy = SimpleNamespace(number=7, kind=3, x=120.0, y=150.0, w=8.0, h=12.0, seen=0.0, moved=True)
+        ball = SimpleNamespace(number=8, kind=5, x=126.0, y=140.0, w=14.0, h=14.0, seen=0.0, moved=True)
+        moves = SimpleNamespace(things={7: boy, 8: ball}, shape=(160, 240))
+        for k in range(16):
+            at = k * 0.06
+            px = 120 + 90 * math.sin(k / 2.5)
+            hers.pointed(px, 80.0, at)
+            boy.x, boy.seen, ball.x, ball.seen = px, at, px + 6, at
+            hers._what_follows_the_pointer(moves, at)
+        assert hers.follows_pointer and hers.number == 7
+    finally:
+        THE_GUIDE.reset(token)

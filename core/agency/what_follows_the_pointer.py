@@ -33,6 +33,14 @@ def _told_the_pointer_moves_her() -> bool:
     return bool(pointer.get("moves"))
 
 
+def _the_kind_her_eyes_took() -> int | None:
+    """The kind of thing her eyes took for her in the place before her, where they have (core/cognition/what_things_are.py)."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    mine = getattr(getattr(THE_GUIDE.get(), "seen", None), "mine", None)
+    return mine[0] if isinstance(mine, tuple) and mine else None
+
+
 class FollowsThePointer:
     """Where the pointer has been, and the thing that goes with it."""
 
@@ -121,7 +129,11 @@ class FollowsThePointer:
             along = tuple(bool(v) for v in self._with_the_pointer(seen, _extent(moves)))
             if any(along):
                 following.append((float(nearest[kind].w) * float(nearest[kind].h), kind, seen, along))
-        for _size, kind, seen, along in sorted(following, key=lambda one: -one[0])[:1]:
+        # The parts of a body move together, and a thing it holds moves with it until it is let go: the part her eyes
+        # took for her, told by the place's words who she is, comes before the biggest. Offline 2026-10-11 the ball a boy
+        # held was bigger than any one part of him her eyes followed, was taken for her, and was thrown.
+        eyed = _the_kind_her_eyes_took()
+        for _size, kind, seen, along in sorted(following, key=lambda one: (one[1] != eyed, -one[0]))[:1]:
             # Once is a sighting; the same again on pictures taken since is a
             # finding. Tested every few pictures at a few delays, chance
             # agreement turns up now and then (offline 2026-10-04, the other
