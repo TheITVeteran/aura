@@ -51,6 +51,10 @@ LARGEST = 0.25
 
 #: Most of the picture changing at once is a new screen, not movement.
 NEW_SCREEN = 0.45
+#: A new screen that, within this long, gives way to a picture this little unlike the screen before it was something
+#: over the view, not another screen: a splat, a flash, a word thrown up across it.
+BACK_WITHIN_S = 1.5
+SAME_SCREEN_BACK = 0.3
 
 #: How long the first look at a screen lasts before anything on it is taken
 #: for a thing. Its middle value per pixel is the first backdrop.
@@ -355,6 +359,8 @@ class WhatMoves:
         from core.perception.what_the_points_on_a_thing_say import WhatThePointsSay
 
         self.on_things = WhatThePointsSay()
+        #: The screen before the last new one, while it may yet come back: (when it went, its backdrop, its things).
+        self._was: tuple[float, np.ndarray, dict[int, Thing]] | None = None
         self.width = width
         self.scale = 1.0
         self.shape: tuple[int, int] = (0, 0)
@@ -849,7 +855,10 @@ class WhatMoves:
         self._now = at
         if self._with_the_view(small):
             return happened
-        if self._a_new_screen(small):
+        if self._the_same_screen_back(small, at):
+            happened.append({"what": "same screen back", "at": at})
+        elif self._a_new_screen(small):
+            self._was = (at, self._backdrop, dict(self.things)) if self._backdrop is not None else None
             self._start_again()
             happened.append({"what": "new screen", "at": at})
             happened.extend(what_happened("gone", thing, at) for thing in self.things.values() if thing.announced)
@@ -979,6 +988,26 @@ class WhatMoves:
                           "look": _look_of(np.asarray([colour])), "colour": colour, "patch": patch.copy(),
                           "support": painted.copy()})
         return found
+
+    def _the_same_screen_back(self, small: np.ndarray, at: float) -> bool:
+        """Whether the screen before the last new one is back: something thrown over the view has cleared, and what
+        was there is there again, with the things on it. A person hit by a splat on the glass does not take the room
+        behind it for another room: offline 2026-10-12 every hit in a food fight covered the view, was taken for a new
+        screen, ended her play, and had every figure in the room found afresh."""
+        if self._was is None:
+            return False
+        went, backdrop, things = self._was
+        if at - went > BACK_WITHIN_S or backdrop.shape != small.shape:
+            self._was = None
+            return False
+        from core.perception.picture_arithmetic import apart
+
+        if float((apart(small, backdrop).max(axis=2) > DIFFERENT_ENOUGH).mean()) > SAME_SCREEN_BACK:
+            return False
+        self._was = None
+        self._first, self._backdrop = [], backdrop
+        self.things = {**things, **self.things}
+        return True
 
     def _a_new_screen(self, small: np.ndarray) -> bool:
         if self._last is None or self._last.shape != small.shape:

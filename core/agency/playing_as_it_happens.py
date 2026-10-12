@@ -786,6 +786,8 @@ def _over(run: _Run, moves: WhatMoves, happened: list[dict[str, Any]], at: float
     acts = sum(run.input_key_downs.values()) + run.pointed + run.pointer_moves
     if any(h.get("what") == "new screen" for h in happened):
         run.new_screen_at, run.acts_at_new_screen = at, acts
+    if any(h.get("what") == "same screen back" for h in happened):
+        run.new_screen_at = -math.inf  # something over the view cleared: the screen did not change
     # Motion seen in this picture, not a thing carried on along its last speed
     # because it was not seen.
     if any(thing.seen == at for thing in moves.moving(faster_than=8.0)):
