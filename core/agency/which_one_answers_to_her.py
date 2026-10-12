@@ -35,13 +35,14 @@ from typing import Any
 from core.agency.causal_identification import (
     UNSEEN_AT_MOST_S,
     CausalIdentification,
-    CausalWitness,
     within_observed_reach,
 )
+from core.agency.controls_measured_on_one_thing import motion_is_resolved, own_control_witness
 from core.agency.controls_ready_for_the_motion_model import has_a_measured_response
 from core.agency.finding_her_another_way import FoundAnotherWay
 from core.agency.what_follows_the_pointer import FollowsThePointer
 from core.perception.parts_when_things_touch import same_colour_mix
+from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX
 from core.verify import invariant
 
 logger = logging.getLogger(__name__)
@@ -732,6 +733,8 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
             thing = moves.things.get(number)
             if thing is None or number in self.not_mine or not self._her_shape(thing):
                 continue
+            if not motion_is_resolved(speeds, TOLD_FROM_STANDING_PX):
+                continue
             agreed: list[tuple[float, float]] = []
             against = False
             for (key, _began), values in speeds.by_press.items():
@@ -833,12 +836,10 @@ class WhichIsHers(FollowsThePointer, FoundAnotherWay):
                 continue
             if self._outlines.a_gauge(number) or _goes_with_the_world(speeds, world):
                 continue
-            f, widest = speeds.ratio()
-            trials: dict[str, int] = defaultdict(int)
-            for (key, _press), values in speeds.by_press.items():
-                if len(values) >= 2:
-                    trials[key] += 1
-            witnesses.append(CausalWitness(number, self.identification.epoch, tuple(sorted(trials.items())), f, widest))
+            witness = own_control_witness(number, speeds, epoch=self.identification.epoch,
+                                           movement_over=TOLD_FROM_STANDING_PX)
+            if witness is not None:
+                witnesses.append(witness)
         # Keep an established control identity until its own response disproves
         # it. A competing object's old trial score cannot revoke a response
         # she is still measuring on her own object.
@@ -1120,6 +1121,8 @@ def gone_the_ways_of_the_keys(hers: WhichIsHers, moves: Any) -> int | None:
     world = _how_the_world_went(hers)
     for number, speeds in hers._by_thing.items():
         if number not in moves.things or number in hers.not_mine:
+            continue
+        if not motion_is_resolved(speeds, TOLD_FROM_STANDING_PX):
             continue
         # What her keys move rests when she rests. A thing that goes on going between her presses (a ball, a falling
         # thing, the other side's paddle) can go three keys' ways by chance and none against: measured offline

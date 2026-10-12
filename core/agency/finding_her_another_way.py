@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from core.agency.controls_measured_on_one_thing import own_control_witness, own_trajectory_witness
+from core.perception.what_moves_in_the_picture import TOLD_FROM_STANDING_PX
 
 logger = logging.getLogger("core.agency.which_one_answers_to_her")
 
@@ -50,7 +51,7 @@ class FoundAnotherWay:
             number = things[0].number
             own = self._by_thing.get(number)
             witness = own_control_witness(number, own, epoch=self.identification.epoch,
-                                           a_gauge=_a_gauge(self, number),
+                                           a_gauge=_a_gauge(self, number), movement_over=TOLD_FROM_STANDING_PX,
                                            with_the_world=own is not None and _goes_with_the_world(own, world))
             if witness is not None:
                 witnesses.append(witness)
@@ -70,7 +71,7 @@ class FoundAnotherWay:
         from core.agency.which_one_answers_to_her import _goes_with_the_world, _how_the_world_went
 
         own = self._by_thing.get(thing.number)
-        witness = own_control_witness(thing.number, own, epoch=self.identification.epoch,
+        witness = own_control_witness(thing.number, own, epoch=self.identification.epoch, movement_over=TOLD_FROM_STANDING_PX,
                                        with_the_world=own is not None and _goes_with_the_world(own, _how_the_world_went(self)))
         if own is not None and _goes_with_the_world(own, _how_the_world_went(self)):
             return

@@ -17,7 +17,7 @@ from core.verify import invariant
 
 def own_control_witness(identity: Hashable, evidence: Any, *, epoch: int,
                         excluded: bool = False, a_gauge: bool = False,
-                        with_the_world: bool = False) -> CausalWitness | None:
+                        with_the_world: bool = False, movement_over: float = 0.) -> CausalWitness | None:
     """Read only the current entity's independent press samples, or leave its control unknown.
 
     Earlier samples from another member of its kind cannot supply a trial,
@@ -25,6 +25,8 @@ def own_control_witness(identity: Hashable, evidence: Any, *, epoch: int,
     continuity is lost; a kind's longer history remains a discovery aid.
     """
     if identity is None or evidence is None or excluded or a_gauge or with_the_world:
+        return None
+    if movement_over > 0 and not motion_is_resolved(evidence, movement_over):
         return None
     trials: dict[str, int] = defaultdict(int)
     for (key, began), values in evidence.by_press.items():
@@ -117,4 +119,33 @@ def _trajectory_control_invariant() -> tuple:
     assert witness is not None and witness.effect > 20 and witness.statistic > 20
     assert own_trajectory_witness(body, trials, epoch=4) is None
     assert own_trajectory_witness(body, [trials[0], trials[0], trials[1], trials[1]], epoch=3) is None
+    return ()
+
+
+def motion_is_resolved(evidence: Any, least: float) -> bool:
+    """Velocity derived from pixels needs an observed excursion beyond the tracker resolution.
+
+    Offline 2026-10-12 a nearly stationary fragment's fitted acceleration
+    passed a control test. Its measured positions had never left the pixel
+    uncertainty. Differentiating that uncertainty did not create movement.
+    """
+    low, high = getattr(evidence, "lowest", None), getattr(evidence, "highest", None)
+    if low is None or high is None or len(low) != 2 or len(high) != 2:
+        return False
+    if not all(math.isfinite(value) for value in (*low, *high, least)) or least <= 0:
+        return False
+    return max(upper - lower for lower, upper in zip(low, high, strict=True)) > least
+
+
+@invariant("agency.pixel_control_requires_resolved_displacement", scope="agency",
+           owner="core/agency/controls_measured_on_one_thing.py", observational=False)
+def _resolved_motion_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    evidence = SimpleNamespace(lowest=(50., 50.), highest=(53., 50.))
+    assert not motion_is_resolved(evidence, 4.)
+    evidence.highest = (70., 50.)
+    assert motion_is_resolved(evidence, 4.)
+    evidence.lowest = (math.inf, math.inf)
+    assert not motion_is_resolved(evidence, 4.)
     return ()

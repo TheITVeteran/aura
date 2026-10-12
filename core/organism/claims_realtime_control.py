@@ -11,6 +11,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     )
     from core.agency.controls_measured_on_one_thing import (
         _own_control_witness_invariant,
+        _resolved_motion_invariant,
         _trajectory_control_invariant,
     )
     from core.agency.controls_ready_for_the_motion_model import _model_readiness_invariant
@@ -75,6 +76,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("pixel_control_requires_resolved_displacement", "core/agency/controls_measured_on_one_thing.py",
+         "tests/test_which_thing_answers_to_her.py", lambda: _resolved_motion_invariant() == (),
+         "Pixel-derived control evidence requires observed displacement beyond the tracker resolution before assigning a new body identity."),
         ("entity_control_cannot_borrow_kind_evidence", "core/agency/controls_measured_on_one_thing.py",
          "tests/test_a_kind_cannot_lend_a_controls_identity.py", lambda: _own_control_witness_invariant() == (),
          "A kind's control prior cannot replace an entity's missing input trials or measured exclusions."),

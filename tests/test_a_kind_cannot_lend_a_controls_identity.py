@@ -19,7 +19,7 @@ def _evidence(*, left=2, right=2, statistic=80., effect=60.):
     for key, count, vx in (("left", left, -30.), ("right", right, 30.)):
         for index in range(count):
             by_press[(key, index + (0. if key == "left" else 10.))] = [(vx, 0.), (vx, 0.)]
-    return SimpleNamespace(by_press=by_press, ratio=lambda: (statistic, effect))
+    return SimpleNamespace(by_press=by_press, ratio=lambda: (statistic, effect), lowest=(0., 0.), highest=(50., 50.))
 
 
 def _choose(witness):
@@ -125,3 +125,28 @@ def test_a_kinds_tap_effects_can_install_its_independently_measured_entity():
     hers._by_thing[body.number] = _evidence()
     hers.moved_by_her_presses(body, 10.)
     assert hers.number == body.number and hers.kind == body.kind
+
+
+def test_acceleration_fitted_from_subpixel_jitter_cannot_establish_control():
+    hers, body, moves = _current_entity()
+    own = _evidence(statistic=1000., effect=1000.)
+    own.lowest, own.highest = (50., 50.), (53., 50.)
+    hers._by_thing[body.number] = own
+    assert hers._the_one_of_a_kind_that_answers(moves) is None
+    assert own_control_witness(body.number, own, epoch=0, movement_over=4.) is None
+
+
+def test_unmeasured_positions_cannot_support_a_pixel_derived_control_claim():
+    own = _evidence()
+    own.lowest, own.highest = (float("inf"), float("inf")), (-float("inf"), -float("inf"))
+    assert own_control_witness(1, own, epoch=0, movement_over=4.) is None
+
+
+def test_resolved_motion_claim_runs_its_registered_measurement():
+    from core.organism.claims_realtime_control import install_realtime_control_claims
+    from core.organism.model_validation import ValidationSuite
+
+    suite = ValidationSuite()
+    install_realtime_control_claims(suite)
+    check = next(item for item in suite.tests() if item.name == "pixel_control_requires_resolved_displacement")
+    assert check.predict(None) is True

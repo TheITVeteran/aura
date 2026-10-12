@@ -39,6 +39,8 @@ def _run(trying: bool, ball_follows_keys: bool):
         ball.vx = 150.0 if (step // 25) % 2 else -150.0
         ball.vy = mine.vy * 1.5 if ball_follows_keys else (80.0 if (step // 7) % 2 else -80.0)
         for thing in (mine, ball):
+            thing.x += thing.vx * .03
+            thing.y += thing.vy * .03
             thing.seen = at
         hers.saw(moves, [], at)
     return hers
@@ -198,6 +200,8 @@ def test_lost_from_sight_she_is_found_again_by_trying_her_keys():
         rival.vy = 60.0 if (step // 13) % 2 else -60.0
         ball.vx, ball.vy = 150.0, (80.0 if (step // 7) % 2 else -80.0)
         for thing in (mine, ball, rival):
+            thing.x += thing.vx * .03
+            thing.y += thing.vy * .03
             thing.seen = at
         hers.saw(moves, [], at)
     assert hers.number == 7 and not hers.lost()
@@ -317,7 +321,7 @@ def test_control_discovery_keeps_only_settled_free_trial_measurements():
         key = "q" if press % 2 else "a"
         for _ in range(4):
             trials.add(key, 0.0, 80.0 if key == "q" else 0.0,
-                       press=press, pinned=key == "a")
+                       press=press, pinned=key == "a", position=(50., 50. + 8 * press))
     hers._decide(_Moves([mine]))
     assert hers.number == mine.number
     assert hers.way_of("q") == (0.0, 80.0)
@@ -373,6 +377,8 @@ def test_lost_she_knows_herself_by_how_her_keys_move_her_in_two_presses():
         mine.vy = -120.0 if key == "up" else 0.0
         rival.vy = 90.0 if step % 6 < 3 else -90.0  # a lookalike going its own way, as the other side's does
         for thing in (mine, still, rival):
+            thing.x += thing.vx * .03
+            thing.y += thing.vy * .03
             thing.seen = at
         hers.saw(moves, [], at)
     assert hers.number == 7
@@ -455,3 +461,18 @@ def test_in_a_world_that_scrolls_the_scenery_going_by_against_her_keys_is_not_he
             thing.seen = at
         hers.saw(moves, [], at)
     assert hers.number not in {thing.number for thing in scenery}
+
+
+def test_fitted_velocity_without_resolved_displacement_cannot_name_the_body():
+    fragment = _Thing(1, 0)
+    hers = WhichIsHers()
+    at = 0.
+    for step in range(150):
+        key = ("up", "down", "")[(step // 10) % 3]
+        hers.holding(key, at, trying=True)
+        at += .03
+        fragment.vy = {"up": -120., "down": 120., "": 0.}[key]
+        fragment.y = 50. + (step % 3)
+        fragment.seen = at
+        hers.saw(_Moves([fragment]), [], at)
+    assert hers.number is None
