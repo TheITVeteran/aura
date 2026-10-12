@@ -181,6 +181,23 @@ def _no_body_to_find() -> bool:
     return understood(guide).has_a_body() is False
 
 
+#: How often what she understands of the place (someone against her, a body of hers) is looked at again in play.
+UNDERSTOOD_EVERY_S = 1.0
+
+
+def _how_it_stands(run: Any, at: float) -> tuple[bool, bool]:
+    """Whether the place is played against someone, and whether it puts no body of hers in the picture, as she
+    understands it: looked at again once a second, not every picture."""
+    kept = getattr(run, "how_it_stands", None)
+    if kept is None or at - kept[0] >= UNDERSTOOD_EVERY_S:
+        kept = (at, _against_someone(), _no_body_to_find())
+        try:
+            run.how_it_stands = kept
+        except AttributeError:
+            return kept[1], kept[2]
+    return kept[1], kept[2]
+
+
 @dataclass
 class _Run:
     keys: list[str]
@@ -195,6 +212,8 @@ class _Run:
     countering: str = ""
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
+    #: What she understands of the place, looked at again now and then: when, someone against her, no body of hers.
+    how_it_stands: tuple[float, bool, bool] | None = None
     #: The one she last threw at, against someone: where it was, when, and how big.
     thrown_at: tuple[float, float, float, float] | None = None
     #: When her thing was last seen to go, and how many presses of the keys that move it she had made by then.
@@ -1341,7 +1360,10 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
         await _click_the_picture(hands, run, moves, at)
         if run.last_click == at:
             return
-    if choosing.mine is None and not hers.follows_pointer:
+    # Where she understands no body of hers is in the picture, a thing taken for hers in a round before does not slow
+    # her throws to the pace of finding out what a click does: offline 2026-10-12 a food fight was thrown at five
+    # times a second in its first round and once a second in every round after.
+    if (choosing.mine is None or _how_it_stands(run, at)[1]) and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
     if not trying_the_pointer and run.trying < 2 * len(run.keys) and not hers.keys_known(run.keys) and not hers.follows_pointer:
         await _try_the_keys(hands, run, hers, at, moves)
@@ -1707,7 +1729,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         run.last_trigger_began = time.monotonic()
         await hands.tap(away[0])
         run.taps += 1
-    against = _against_someone()
+    against = _how_it_stands(run, at)[0]
     # Against someone, as fast as the place takes throws: offline 2026-10-12 a food fight was lost each round throwing
     # every 0.6 s at the opponent, and won throwing at him five times a second, the place taking what it would.
     every = THROW_AT_SOMEONE_S if against else THROW_WHILE_FINDING_S
