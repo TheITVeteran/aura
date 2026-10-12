@@ -50,6 +50,54 @@ async def _keep_reading(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers, 
         run.reading = asyncio.ensure_future(_read())
 
 
+#: The most readings a stretch keeps, and how many of its first it always keeps: what was there as it began.
+READINGS_KEPT = 400
+FIRST_READINGS_KEPT = 100
+
+
+def kept_reading(run: _Run, when: float, said: str) -> None:
+    """A reading kept with when its picture was taken: the first ones always, then the latest. Offline 2026-10-11 a
+    stretch stopped keeping what it read at its four hundredth reading, about a minute in, and a GAME OVER after that
+    was never read."""
+    if not said:
+        return
+    if len(run.words_read) >= READINGS_KEPT:
+        del run.words_read[FIRST_READINGS_KEPT]
+    run.words_read.append((when, said))
+
+
+#: The most lines of writing read in play that are remembered as already taken in for what they tell her to do.
+LINES_HEARD_KEPT = 600
+
+
+def rules_as_told_since(run: _Run, rules: Any) -> Any:
+    """The rules, with what the screen has told her since play began: a lesson in play says one thing at a time ("USE
+    WASD TO MOVE", then "NOW USE YOUR MOUSE TO AIM AND SHOOT THE EVIL PIN!"), and each is taken in as it is read.
+    Offline 2026-10-11 a bowling game's second lesson came up mid-stretch, was never taken in, and she never aimed."""
+    from core.agency.what_the_rules_said import WhatTheRulesSaid
+
+    if not run.words_read or run.words_read[-1][0] <= run.rules_read_at:
+        return rules
+    # A reading's lines are one screen's words: a lesson set out over two lines ("NOW USE YOUR MOUSE TO" / "AND SHOOT
+    # THE EVIL PIN!") says what neither line says alone.
+    readings: dict[float, list[str]] = {}
+    for when, said in run.words_read:
+        if when > run.rules_read_at:
+            readings.setdefault(when, []).append(said)
+    fresh = list(dict.fromkeys(" ".join(lines) for lines in readings.values()))
+    fresh = [said for said in fresh if said not in run.lines_heard]
+    run.rules_read_at = run.words_read[-1][0]
+    if len(run.lines_heard) > LINES_HEARD_KEPT:
+        run.lines_heard.clear()
+    run.lines_heard.update(fresh)
+    told = [said for said in fresh if WhatTheRulesSaid.read(said).instructions]
+    if not told:
+        return rules
+    rules = WhatTheRulesSaid.read(" ".join([getattr(rules, "words", "") or "", *told]).strip())
+    run.pointer_trigger = rules.a_click_is_a_shot
+    return rules
+
+
 def _read_the_words(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers,
                     moves: WhatMoves, regions: list[dict[str, Any]], when: float, say: Any = None) -> None:
     """The same counter semantics for renderer text and text read from pixels."""
@@ -58,9 +106,7 @@ def _read_the_words(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers,
 
     run.regions_read = list(regions)
     for region in regions:
-        said = " ".join(str(region.get("text") or "").lower().split())
-        if said and len(run.words_read) < 400:
-            run.words_read.append((when, said))
+        kept_reading(run, when, " ".join(str(region.get("text") or "").lower().split()))
     # What play says as it goes may change how it is played (a new power, a new stage): the guide hears it.
     for line in heard_in_play([str(region.get("text") or "") for region in regions])[:1]:
         _say(run, say, line, when, once=line)

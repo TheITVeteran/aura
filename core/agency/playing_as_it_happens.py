@@ -78,6 +78,7 @@ from core.agency.reading_while_playing import (  # noqa: F401  (re-exported: the
     _read_the_bars,
     _read_the_words,
     _what_is_writing,
+    rules_as_told_since,
 )
 from core.agency.the_controls_a_game_names import controls_named_in
 from core.agency.using_a_control_on_a_thing import (
@@ -218,8 +219,11 @@ class _Run:
     first_moving: float = math.inf
     #: When writing that says the round is over was first read in play.
     over_read_at: float = math.inf
-    #: Every reading's words, with when its picture was taken.
+    #: Every reading's words, with when its picture was taken; the latest reading taken in for what it tells her to do,
+    #: and the lines already taken in.
     words_read: list[tuple[float, str]] = field(default_factory=list)
+    rules_read_at: float = -math.inf
+    lines_heard: set[str] = field(default_factory=set)
     #: The bars on the screen that fill and empty (core/perception/how_full_a_bar_is.py), the last words read with where
     #: each stood, and how much she has left: the lowest of her bars that are worse lower, 1 where none is known.
     bars: Any = None
@@ -1214,6 +1218,7 @@ async def _play_as_it_happens(
             if getattr(picture, "drawing_scene", None) is None:
                 _counters_without_reading(run, moves, hers, meeting, at)
             await _keep_reading(run, meeting, hers, moves, picture, at, read_words, say=say)
+            rules = rules_as_told_since(run, rules)
             run.shown.look(picture, at)
             violations = motion_checks.see(moves, happened, at, hers.number)
             if violations:
