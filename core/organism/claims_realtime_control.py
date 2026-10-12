@@ -397,11 +397,15 @@ def install_realtime_control_claims(suite: Any) -> None:
 def _visual_motion_claims() -> tuple:
     """Measured foreground and point continuity claims."""
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
+    from core.perception.reading_again_after_loss import _reading_renewal_invariant
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.what_moves_in_the_picture import _missing_points_invariant
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("lost_readings_are_refreshed_without_duplicate_requests", "core/perception/reading_again_after_loss.py",
+         "tests/test_a_body_guess_keeps_its_observed_track.py", lambda: _reading_renewal_invariant() == (),
+         "An unresolved reading can be refreshed after measured loss; unread frames, active requests and current ownership do not authorize another request."),
         ("missing_points_do_not_relax_object_identity", "core/perception/what_moves_in_the_picture.py",
          "tests/test_points_keep_their_observed_motion.py", lambda: _missing_points_invariant() == (),
          "Missing point support cannot relax measured shape and appearance continuity or lend an identity through a shared kind."),

@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 
 from core.agency.what_meeting_things_does import AVOID, MEET, SHOOT
+from core.perception.reading_again_after_loss import ReadingAgain
 from core.perception.what_things_look_like import EVERY_S
 
 __all__ = ["SeeingInPlay", "a_pointer_seen", "a_stance_said", "colour_name", "describe", "i_go_where_the_mouse_goes", "named_for_its_part", "plural", "seen_in_play", "shape_name", "still_looking_at",
@@ -252,6 +253,7 @@ class SeeingInPlay:
     avatar_asking: Any = None
     avatar: Any = None
     avatar_observation: Any = None
+    avatar_renewal: ReadingAgain = field(default_factory=ReadingAgain)
     began: float | None = None
     avatar_said: bool = False
 
@@ -353,7 +355,7 @@ ANSWERED_BY_PX = 4.0
 
 def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any, hers: Any, meeting: Any, picture: Any,
                          at: float, tell: Callable[[str, str], Any]) -> None:
-    """Her eyes asked once a game which thing is the player's own, told what the place calls her; what they point at
+    """Her eyes asked which thing is the player's own, told what the place calls her; what they point at
     said, kept for her keys to be tried on, and taken for her where her trials have found nothing that answers."""
     import asyncio
 
@@ -364,10 +366,14 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     if _no_body_of_hers(run, guide):
         return
     observation = seeing.avatar_observation
+    measured = bool(getattr(moves, "seeing", False) and getattr(moves, "_last_at", None) == at)
     if observation is not None:
-        measured = getattr(moves, "seeing", True) and getattr(moves, "_last_at", at) == at
-        observation.follow(moves, at, measured=bool(measured))
-    if seeing.avatar_asking is None and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
+        observation.follow(moves, at, measured=measured)
+    pending = seeing.avatar_asking is not None and not seeing.avatar_asking.done()
+    usable = observation is not None and observation.thing(moves, at) is not None
+    needed = getattr(hers, "number", None) is None and not getattr(hers, "follows_pointer", False)
+    refresh = seeing.avatar_renewal.due(at, pending=pending, measured=measured, usable=usable, needed=needed)
+    if refresh and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -375,6 +381,8 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         names = [*guide.names.get("me", [])[:2],
                  *[name for name, said in guide.seen.cast.items() if said.get("side") == "you"][:1]]
         frame = np.array(picture)[..., :3]
+        seeing.avatar_renewal.began(at)
+        seeing.avatar = None
         observation = seeing.avatar_observation = ABodySeenThen(moves, at)
 
         async def looked() -> None:
@@ -394,6 +402,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
             if seeing.avatar_asking is task:
                 seeing.avatar_asking = None
                 seeing.avatar_observation = None
+                seeing.avatar_renewal = ReadingAgain()
 
         retire_when_closed(task, release)
         return

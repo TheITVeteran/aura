@@ -32,6 +32,7 @@ include_rules = [
     "+core.perception.foreground_appearance", # Synthetic validation of bounded appearance masks.
     "+core.perception.parts_when_things_touch", # Synthetic validation of measured parts at a meeting.
     "+core.perception.points_that_keep_their_motion", # Pure checks of visible point identity and bounded lifetime.
+    "+core.perception.reading_again_after_loss", # Pure checks of measured loss and bounded request renewal.
     "+core.perception.the_whole_patch_around_a_visible_corner", # Pure check of connected support around initial foreground seeds.
     "+core.perception.what_moves_in_the_picture",
     "+core.perception.what_the_points_on_a_thing_say", # Pure check of current owned points before reading approach or identity.

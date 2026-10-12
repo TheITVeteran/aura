@@ -265,7 +265,7 @@ async def test_delayed_avatar_publication_is_retired_and_can_be_requested_in_a_n
 
     monkeypatch.setattr(where_i_am_on_screen, "where_the_avatar_is", look)
     async with guidance_work():
-        _who_i_am_to_my_eyes(None, seeing, guide, SimpleNamespace(things={1: object()}), None, None,
+        _who_i_am_to_my_eyes(None, seeing, guide, SimpleNamespace(things={1: object()}, seeing=True, _last_at=3.), None, None,
                             np.zeros((8, 12, 3), np.uint8), 3., lambda *_: None)
         task = seeing.avatar_asking
         await asyncio.wait_for(started.wait(), 1)
@@ -276,7 +276,7 @@ async def test_delayed_avatar_publication_is_retired_and_can_be_requested_in_a_n
 
     monkeypatch.setattr(where_i_am_on_screen, "where_the_avatar_is", fresh)
     async with guidance_work():
-        _who_i_am_to_my_eyes(None, seeing, guide, SimpleNamespace(things={1: object()}), None, None,
+        _who_i_am_to_my_eyes(None, seeing, guide, SimpleNamespace(things={1: object()}, seeing=True, _last_at=4.), None, None,
                             np.zeros((8, 12, 3), np.uint8), 4., lambda *_: None)
         await asyncio.wait_for(seeing.avatar_asking, 1)
         assert seeing.avatar.what == "current avatar"

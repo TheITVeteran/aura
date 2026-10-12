@@ -133,3 +133,90 @@ async def test_live_naming_bootstraps_once_and_never_overrides_causal_identity(m
         moves.things, moves._last_at = {2: replacement}, 8.3
         _who_i_am_to_my_eyes(run, seeing, guide, moves, hers, meeting, picture, 8.3, say)
         assert hers.number is None
+
+
+def test_a_lost_reading_waits_for_measured_absence_and_never_duplicates_a_request():
+    from core.perception.reading_again_after_loss import ReadingAgain, _reading_renewal_invariant
+
+    assert _reading_renewal_invariant() == ()
+    reading = ReadingAgain()
+    absent = dict(pending=False, measured=True, usable=False, needed=True)
+    assert reading.due(1., **absent)
+    reading.began(1.)
+    assert not reading.due(20., pending=True, measured=True, usable=False, needed=True)
+    assert not reading.due(21., **absent)
+    assert not reading.due(35., **absent)
+    assert reading.due(36., **absent)
+    assert not reading.due(37., pending=False, measured=False, usable=False, needed=True)
+    assert not reading.due(37.1, **absent)
+    assert reading.due(37.5, **absent)
+    assert not reading.due(38., pending=False, measured=True, usable=True, needed=True)
+    assert not reading.due(39., pending=False, measured=True, usable=False, needed=False)
+    assert not reading.due(float('nan'), **absent)
+    assert not reading.due(1., **absent)
+
+
+@pytest.mark.asyncio
+async def test_a_retired_visual_answer_is_reobserved_on_a_fresh_frame(monkeypatch):
+    from core.agency.naming_what_she_sees import SeeingInPlay, _who_i_am_to_my_eyes
+    from core.agency.which_one_answers_to_her import WhichIsHers
+    from core.cognition.a_guide_to_a_place import TOLD, Guide
+    from core.cognition.guidance_lifetime import guidance_work
+    from core.perception import where_i_am_on_screen
+
+    unblock = asyncio.Event()
+    frames = []
+    async def eyes(picture, _names):
+        frames.append(picture.copy())
+        await unblock.wait()
+        return Avatar("body", (.1, .1, .2, .2))
+    monkeypatch.setattr(where_i_am_on_screen, "where_the_avatar_is", eyes)
+    guide = Guide()
+    guide.take_in(TOLD, "Use the arrow keys to move.")
+    seeing = SeeingInPlay(began=0.)
+    run = SimpleNamespace(keys=["left", "right"], trying=4,
+                          presses=SimpleNamespace(moves_anything=lambda _px: True))
+    meeting = SimpleNamespace(stance=lambda _kind: "", known=lambda _kind: False)
+    body, hers = _body(), WhichIsHers()
+    picture = np.zeros((100, 100, 3), np.uint8)
+    def look(moves, at):
+        _who_i_am_to_my_eyes(run, seeing, guide, moves, hers, meeting, picture, at, lambda *_args: None)
+
+    async with guidance_work():
+        look(_moves(body), 2.)
+        first_request = seeing.avatar_asking
+        await asyncio.sleep(0)
+        look(_moves(at=2.1), 2.1)
+        unblock.set()
+        await asyncio.wait_for(first_request, 1.)
+        replacement = _body(2, at=2.2)
+        look(_moves(replacement, at=2.2), 2.2)
+        assert hers.number is None and seeing.avatar_observation.thing(_moves(replacement), 2.2) is None
+        replacement.seen = 4.
+        look(_moves(replacement, at=4.), 4.)
+        assert seeing.avatar_asking is first_request
+        picture[:] = 120
+        replacement.seen = 4.3
+        look(_moves(replacement, at=4.3), 4.3)
+        assert seeing.avatar_asking is not first_request
+        await asyncio.wait_for(seeing.avatar_asking, 1.)
+        assert len(frames) == 2 and frames[0].max() == 0 and frames[1].min() == 120
+        for tick in range(44, 91):
+            at = tick / 10
+            replacement.x, replacement.seen = 15. + 5. * (at - 4.3), at
+            look(_moves(replacement, at=at), at)
+        assert hers.number == 2
+        hers.number = 7
+        replacement.seen = 12.
+        look(_moves(replacement, at=12.), 12.)
+        assert hers.number == 7 and len(frames) == 2
+
+
+def test_refreshing_an_observation_has_a_registered_measurement():
+    from core.organism.claims_realtime_control import install_realtime_control_claims
+    from core.organism.model_validation import ValidationSuite
+
+    suite = ValidationSuite()
+    install_realtime_control_claims(suite)
+    check = next(item for item in suite.tests() if item.name == "lost_readings_are_refreshed_without_duplicate_requests")
+    assert check.predict(None) is True
