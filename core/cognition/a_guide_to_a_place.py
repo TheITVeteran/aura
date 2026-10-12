@@ -204,6 +204,10 @@ class Guide:
     #: The board game she settled the place is, where it is one: its family, the variation of it, and which side is hers
     #: (core/agency/playing_a_board.py).
     board: dict[str, Any] = field(default_factory=dict)
+    #: How the place works, axis by axis, as last worked out from what it has said (core/agency/how_a_game_works.py);
+    #: and what her play there has shown of each, which outweighs what was said.
+    how: Any = None
+    how_seen: dict[str, Any] = field(default_factory=dict)
 
     # -- taking things in ---------------------------------------------------------------------------------------
 
@@ -492,17 +496,20 @@ class Guide:
                     self.named_in[key] = sentence[:200]
             keys, pointer = controls_named_in(sentence, keys_without_words=(), during_play=True)
             act, on = _the_act_and_what_on(sentence)
+            own = _each_controls_own_act(sentence)
             for key in keys:
                 known = self.controls.get(key)
                 if known is None or _TRUST.get(source, 0) >= _TRUST.get(known.source, 0):
-                    self.controls[key] = Control(key, act or (known.act if known else ""), source, at,
-                                                 on=on or (known.on if known else ""))
+                    act_of, on_of = own.get(key, (act, on))
+                    self.controls[key] = Control(key, act_of or (known.act if known else ""), source, at,
+                                                 on=on_of or (known.on if known else ""))
                     self.named_in[key] = sentence[:200]
             if pointer:
                 known = self.controls.get("the pointer")
                 if known is None or _TRUST.get(source, 0) >= _TRUST.get(known.source, 0):
-                    self.controls["the pointer"] = Control("the pointer", act or (known.act if known else ""), source, at,
-                                                           on=on or (known.on if known else ""))
+                    act_of, on_of = own.get("the pointer", (act, on))
+                    self.controls["the pointer"] = Control("the pointer", act_of or (known.act if known else ""), source,
+                                                           at, on=on_of or (known.on if known else ""))
                 # What the pointer moves is kept apart from what a click does: LIVE 2026-10-11 "USE THE MOUSE TO MOVE
                 # MAC. THEN CLICK TO THROW THE BALL" kept only the throw, the pointer was taken to aim, and Mac was
                 # never moved while the eggs fell.
@@ -881,6 +888,40 @@ def _the_act_and_what_on(sentence: str) -> tuple[str, str]:
         before = _NAMED_BEFORE.search(sentence or "")
         on = before.group(1).lower() if before else ""
     return act, "" if on in _NOT_WHAT_ON else on
+
+
+def _each_controls_own_act(sentence: str) -> dict[str, tuple[str, str]]:
+    """Where a sentence names controls in clauses of their own, each with an act ("use the arrow keys to move and SPACE
+    to jump"), each control's act is its own clause's, the pointer's under "the pointer" (a click's clause before one
+    that only names the mouse); {} where it names them in one clause. A clause with no act of its own runs on into the
+    next ("left and right to rotate"). Offline 2026-10-11 space was taken to move."""
+    from core.agency.the_controls_a_game_names import controls_named_in
+
+    clauses: list[str] = []
+    for part in re.split(r"\s*[,;]\s*", sentence or ""):
+        held = ""
+        for piece in re.split(r"\s+(?:and then|and|then)\s+", part):
+            held = f"{held} and {piece}" if held else piece
+            if _the_act_and_what_on(held)[0]:
+                clauses.append(held)
+                held = ""
+        if held and clauses:
+            clauses[-1] = f"{clauses[-1]} and {held}"
+        elif held:
+            clauses.append(held)
+    own: dict[str, tuple[str, str]] = {}
+    naming = 0
+    for clause in clauses:
+        keys, pointer = controls_named_in(clause, keys_without_words=(), during_play=True)
+        act, on = _the_act_and_what_on(clause)
+        if not (keys or pointer) or not act:
+            continue
+        naming += 1
+        for key in keys:
+            own.setdefault(key, (act, on))
+        if pointer and ("the pointer" not in own or re.search(r"\bclick", clause, re.I)):
+            own["the pointer"] = (act, on)
+    return own if naming >= 2 else {}
 
 
 _A_CONTROL_WORD = re.compile(r"\b(?:press|click|tap|hit|hold|use|push|type|touch)\b", re.I)

@@ -426,6 +426,13 @@ def _no_body_of_hers(run: Any, guide: Any) -> bool:
     """Whether the place puts no body of hers in the picture: a click is her shot, no key she has moves anything, and
     nothing is said to follow the pointer. Her eyes are not asked which one is her there: offline 2026-10-11 a food
     fight seen over a table had its opponent said to be her ("That looks like me: the muscular man")."""
+    if guide is not None and hasattr(guide, "controls"):
+        # As she understands the place (core/agency/how_a_game_works.py), where she understands what she is in it.
+        from core.agency.how_a_game_works import understood
+
+        body = understood(guide).has_a_body()
+        if body is not None:
+            return not body
     keys = set(getattr(run, "keys", ()) or ())
     moves = (getattr(guide, "pointer", None) or {}).get("moves")
     return bool(getattr(run, "pointer_trigger", False)) and not keys & _MOVING_KEYS and not moves

@@ -53,10 +53,25 @@ def _a_key_is_meant(lowered: str, way: str) -> bool:
     import re
 
     words = re.findall(r"[a-z]+", lowered)
-    if any(word == way and _KEY_CUES & set(words[max(0, at - 2):at + 3]) and not _NOT_A_KEY_AFTER & set(words[at + 1:at + 4])
-           and not _holding_down_another(words, at) for at, word in enumerate(words)):
+    if any(word == way and (_KEY_CUES & set(words[max(0, at - 2):at + 3]) or _cued_through_a_list(words, at))
+           and not _NOT_A_KEY_AFTER & set(words[at + 1:at + 4]) and not _holding_down_another(words, at)
+           for at, word in enumerate(words)):
         return True
     return any(_for_an_act(re.findall(r"[a-z0-9]+", clause), way) for clause in re.split(r"[.,;:!?()]", lowered))
+
+
+def _cued_through_a_list(words: list[str], at: int) -> bool:
+    """Whether a way at ``at`` is one of a list of ways ("left and right", "up, down") said after a word for pressing or
+    using: "press left and right to steer", "use left and right to move" name both (offline 2026-10-11, "right" was
+    taken for no key). A way alone after "use" is not ("use up your lives")."""
+    ways, joining = ("up", "down", "left", "right"), ("and", "or", "the")
+    first = last = at
+    while first > 0 and (words[first - 1] in ways or words[first - 1] in joining):
+        first -= 1
+    while last + 1 < len(words) and (words[last + 1] in ways or words[last + 1] in joining):
+        last += 1
+    listed = sum(word in ways for word in words[first:last + 1])
+    return first > 0 and listed >= 2 and words[first - 1] in (*_KEY_CUES, "use", "using")
 
 
 def _holding_down_another(words: list[str], at: int) -> bool:

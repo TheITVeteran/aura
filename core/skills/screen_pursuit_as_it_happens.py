@@ -65,6 +65,53 @@ def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
     return any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said))
 
 
+def _what_she_understands_said(keep: dict[str, Any], guide: Any, read: str) -> None:
+    """How she understands the place works (core/agency/how_a_game_works.py), said once a game as play begins, for
+    whoever watches to hear what she is going by."""
+    place = str(getattr(guide, "place", "") or id(guide))
+    if guide is None or keep.get("understanding_said") == place:
+        return
+    from core.agency.how_a_game_works import understood
+
+    said = understood(guide, also=read).said()
+    if said:
+        keep["understanding_said"] = place
+        _said_while_playing(said)
+
+
+def _what_play_showed_of_how_it_works(stretch: dict[str, Any]) -> None:
+    """What a stretch of play showed of how the place works, kept on its guide (core/agency/how_a_game_works.py): a body
+    her keys moved, or one that followed her pointer; and said where it changes what she understands."""
+    from core.agency.how_a_game_works import seen_to_answer, understood
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None:
+        return
+    before = understood(guide).said()
+    if stretch.get("follows_the_pointer"):
+        seen_to_answer(guide, "the pointer")
+    elif stretch.get("keys_that_move_her"):
+        seen_to_answer(guide, "keys")
+    now = understood(guide).said()
+    if now and now != before:
+        _said_while_playing(now.replace("As I understand it:", "Now I understand it better:", 1))
+
+
+def _it_goes_on_without_her(reflexes: Any) -> bool:
+    """Whether, as she understands the place (core/agency/how_a_game_works.py), it goes on without her: from all its
+    guide has read and what is on the screens before her, and what her play there has shown."""
+    said = " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None:
+        return _played_in_time(said)
+    from core.agency.how_a_game_works import understood
+
+    return understood(guide, also=said).goes_on_without_her()
+
+
 def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
     """Whether the screen before her is one of play in a place whose words put her in a situation played in time
     (dodging, shooting what comes, catching): no way on is shown on it (``labels``, the screen's writing, where it has
@@ -73,7 +120,7 @@ def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
     spent sweeping the pointer over it and waiting for it to stand still after a click."""
     from core.language.a_way_on import how_much_it_leads_on
 
-    if reflexes is None or not _played_in_time(" ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])):
+    if reflexes is None or not _it_goes_on_without_her(reflexes):
         return False
     if labels is None:
         return not reflexes.way_on_shown
@@ -88,6 +135,12 @@ async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bo
         return False
     moves = await watched(reflexes.look)
     reflexes.still_screen = None if moves else (reflexes.said_now, time.monotonic())
+    if moves and not reflexes.way_on_shown:
+        # A screen with no way on that goes on by itself is play going on without her: kept for every part of her.
+        from core.agency.how_a_game_works import seen_going_on_by_itself
+        from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+        seen_going_on_by_itself(THE_GUIDE.get(), True)
     return moves
 
 
@@ -792,6 +845,7 @@ class PlayingAsItHappens:
         self.keep["named_keys"], self.keep["pointer_named"] = keys, pointer_first
         keys = tried_in_turn(keys, " ".join(self.words[-2:]))
         logger.info("it moves on its own: playing it as it happens with %s%s", keys, " and the pointer" if pointer_first else "")
+        _what_she_understands_said(self.keep, guide, read)
         # The person's ask, apart from the screen's words: what she plays for is theirs first.
         self.keep["asked"] = self.goal
         stretch = await play_as_it_happens(
@@ -802,6 +856,7 @@ class PlayingAsItHappens:
             waits_for_her=self.under_her_hand,
         )
         self.stretches.append(stretch)
+        _what_play_showed_of_how_it_works(stretch)
         # A view of a bigger world she had not been in is somewhere new, as a screen she had not seen is.
         self.new_screens += int(stretch.get("new_views") or 0)
         self._judge(AS_IT_HAPPENS_WAY, stretch)
