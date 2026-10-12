@@ -41,6 +41,10 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
     the counter redrawn as her bar went down. ``not_numbers`` and ``not_kinds`` are left out: her own thing, and the
     kinds her own presses bring out."""
     mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds]
+    # Someone gets about; a thing that only sways where it hangs (a lamp, a flag, a sign) is part of the room: offline
+    # 2026-10-11 throws went at a swinging lamp while the opponent ran to and fro below it.
+    about = [thing for thing in mine if _gets_about(thing)]
+    mine = about or mine
     figures = [thing for thing in mine if getattr(thing, "moved", False) or math.hypot(thing.vx, thing.vy) > GOING]
     least = A_FIGURE * max((float(thing.size) for thing in figures), default=0.0)
     shown = [thing for thing in mine if at - float(getattr(thing, "born", at)) <= JUST_SHOWN_S
@@ -50,6 +54,20 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
         if lot:
             return max(lot, key=lambda thing: float(thing.size))
     return None
+
+
+#: How far, in its own sizes, a thing's path must reach for it to get about and not sway where it is.
+GETS_ABOUT = 0.5
+
+
+def _gets_about(thing: Any) -> bool:
+    """Whether a thing's path, over the pictures her eyes keep of it, reaches half its own size or more; a thing not yet
+    followed long enough to tell is taken to."""
+    path = [point for point in (getattr(thing, "path", ()) or ()) if len(point) >= 3]
+    if len(path) < OVER:
+        return True
+    xs, ys = [point[1] for point in path], [point[2] for point in path]
+    return math.hypot(max(xs) - min(xs), max(ys) - min(ys)) >= GETS_ABOUT * math.sqrt(max(1.0, float(thing.size)))
 
 
 def comes_at_her(things: Iterable[Any]) -> bool:

@@ -82,14 +82,13 @@ def _keys_of_play(guide: Any, read: str) -> list[str]:
 def _what_she_understands_said(keep: dict[str, Any], guide: Any, read: str) -> None:
     """How she understands the place works (core/agency/how_a_game_works.py), said once a game as play begins, for
     whoever watches to hear what she is going by."""
-    place = str(getattr(guide, "place", "") or id(guide))
-    if guide is None or keep.get("understanding_said") == place:
+    if guide is None or getattr(guide, "how_said", None) is None:
         return
     from core.agency.how_a_game_works import understood
 
     said = understood(guide, also=read).said()
-    if said:
-        keep["understanding_said"] = place
+    if said and said != guide.how_said:
+        guide.how_said = said
         _said_while_playing(said)
 
 
@@ -108,7 +107,8 @@ def _what_play_showed_of_how_it_works(stretch: dict[str, Any]) -> None:
     elif stretch.get("keys_that_move_her"):
         seen_to_answer(guide, "keys")
     now = understood(guide).said()
-    if now and now != before:
+    if now and now != before and now != getattr(guide, "how_said", now):
+        guide.how_said = now
         _said_while_playing(now.replace("As I understand it:", "Now I understand it better:", 1))
 
 

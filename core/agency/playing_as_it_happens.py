@@ -157,6 +157,18 @@ RECHECK_CONTROLS_S = 5.0
 _POINTER_TRIAL = ((0.2, 0.5), (0.8, 0.5), (0.5, 0.2), (0.5, 0.8), (0.3, 0.3), (0.7, 0.7))
 
 
+def _no_body_to_find() -> bool:
+    """Whether she understands the place before her puts no body of hers in the picture (core/agency/how_a_game_works.py)."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import understood
+
+    return understood(guide).has_a_body() is False
+
+
 @dataclass
 class _Run:
     keys: list[str]
@@ -1059,6 +1071,10 @@ async def _play_as_it_happens(
                contest=keep.get("contest") or ContestStands(), waits_for_her=waits_for_her,
                in_time=played_in_time(situations), longest_still=float(keep.get("longest_still") or 0.0))
     run.pointer_trigger = rules is not None and rules.a_click_is_a_shot
+    if _no_body_to_find():
+        # Where she understands there is no body of hers in the picture, the pointer is not swept to see what follows
+        # it: offline 2026-10-11 a food fight's throws went out between sweeps of the pointer across the room.
+        run.pointed = 2 * len(_POINTER_TRIAL)
     run.burst_keys = keys_pressed_fast(told)
     run.building_up = builds_up(told)
     from core.agency.what_meeting_things_does import says_to_come_gently

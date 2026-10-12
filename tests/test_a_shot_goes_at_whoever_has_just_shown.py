@@ -99,3 +99,13 @@ def test_where_a_click_is_her_shot_and_nothing_moves_her_there_is_no_body_of_her
     assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=True, keys=["w", "a", "s", "d"]), SimpleNamespace(pointer={}))
     assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=True, keys=[]), SimpleNamespace(pointer={"moves": "mac"}))
     assert not _no_body_of_hers(SimpleNamespace(pointer_trigger=False, keys=["space"]), SimpleNamespace(pointer={}))
+
+
+def test_a_thing_that_only_sways_where_it_hangs_is_part_of_the_room() -> None:
+    """Offline 2026-10-11 throws went at a swinging lamp while the opponent ran to and fro below it."""
+    lamp = SimpleNamespace(**{**vars(_thing(1, 120, 10, vx=30.0, born=0.0, size=2900.0)), "moved": True,
+                              "path": deque([(t, 120 + (-1) ** t * 3, 10) for t in range(10)])})
+    runner = SimpleNamespace(**{**vars(_thing(2, 200, 80, vx=20.0, born=0.0, size=2500.0)), "moved": True,
+                                "path": deque([(t, 100 + 15 * t, 80) for t in range(10)])})
+    assert what_the_shot_goes_at([lamp, runner], 10.0).number == 2
+    assert what_the_shot_goes_at([lamp], 10.0).number == 1, "where nothing else is there, what moves is still thrown at"

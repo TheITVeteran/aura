@@ -208,6 +208,8 @@ class Guide:
     #: and what her play there has shown of each, which outweighs what was said.
     how: Any = None
     how_seen: dict[str, Any] = field(default_factory=dict)
+    #: What she last said of how the place works, so it is said again only where it has changed.
+    how_said: str = ""
 
     # -- taking things in ---------------------------------------------------------------------------------------
 
