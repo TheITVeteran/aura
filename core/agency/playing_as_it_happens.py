@@ -220,6 +220,9 @@ class _Run:
     thrown_at: tuple[float, float, float, float] | None = None
     #: When her thing was last seen to go, and how many presses of the keys that move it she had made by then.
     answered: tuple[float, int] = (-math.inf, 0)
+    #: When anything of hers last answered her: what is read after it, on a stretch ended by nothing answering, is not
+    #: the game's.
+    answered_at: float = -math.inf
     last_moving: float = 0.0
     #: Whether the place's words put her in a situation played in time, and the longest it has gone still between
     #: movements while played: its own rhythm, against which a stillness is or is not an ending.
@@ -843,6 +846,7 @@ def _nothing_answers(run: _Run, hers: WhichIsHers, meeting: WhatMeetingDoes, at:
     # a game's animated title was taken for her, no key moved him, and she played the title for a minute before START.
     moving = hers.keys_that_move_her(run.keys) if hers.kind is not None else {}
     answers = hers.kind is not None and (hers.follows_pointer or (bool(moving) and _answers_now(run, hers, moving, at)))
+    run.answered_at = (at if hers.follows_pointer else max(run.answered_at, run.answered[0])) if answers else run.answered_at
     # Where she understands no body of hers is in the picture, nothing is there to answer her: what she does is aimed
     # from outside it. Offline 2026-10-12 a food fight she was holding her own in was handed back mid-round, every round,
     # at the moment a title screen would have been.
@@ -1914,10 +1918,16 @@ def _the_words_of_play(run: _Run, ended: str) -> set[str]:
     readings are taken from pictures a step behind) is that screen's. LIVE
     2026-10-04 "to play again" was read in the seconds the end screen stood,
     kept as a word of play, and so the restart that ended a won game was taken
-    for the game's furniture and she started another.
+    for the game's furniture and she started another. A stretch ended by
+    nothing answering her, after something had, ended on what does not answer
+    since: offline 2026-10-12 an
+    end screen that kept moving stood for seconds before the stretch gave up on
+    it, its "Play Again" was kept as play's, and her third run went uncounted.
     """
     still = ended.startswith(("nothing on the screen", "the screen changed"))
     cutoff = run.last_moving - END_SCREEN_MARGIN_S if still else run.over_read_at - END_SCREEN_MARGIN_S if ended == SAID_IT_IS_OVER else math.inf
+    if ended.startswith(("nothing here answers", "nothing I touch")) and run.answered_at > -math.inf:
+        cutoff = run.answered_at - END_SCREEN_MARGIN_S
     # Nor the screen it began on, read before anything had moved: a stretch
     # begun as the last game's end screen gave way is not that screen's game.
     return {said for when, said in run.words_read if run.first_moving <= when < cutoff}

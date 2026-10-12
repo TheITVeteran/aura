@@ -107,6 +107,32 @@ def test_writing_that_says_the_round_is_over_ends_the_stretch_and_is_not_a_word_
     assert not _said_it_is_over(begun_on_one)
 
 
+def test_what_is_read_after_nothing_answers_her_any_more_is_not_a_word_of_play():
+    """Offline 2026-10-12 the thing that went with her pointer was gone under an end screen that kept moving; the stretch
+    gave up on it seconds later, its "Play Again" was kept as play's, and the run it ended went uncounted."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import _nothing_answers, _Run, _the_words_of_play
+    from core.agency.which_one_answers_to_her import WhichIsHers
+
+    run = _Run(keys=[], began=0.0)
+    run.first_moving = 0.5
+    meeting = SimpleNamespace(verdicts=[{"what": "loss"}], evidence={})
+    run.gains, run.losses = 1, 2
+    hers = WhichIsHers()
+    hers.seen_to_be_her(SimpleNamespace(number=4, kind=2), 1.0, "white thing")
+    hers.follows_pointer = True
+    assert not _nothing_answers(run, hers, meeting, 25.0)                 # her pointer's thing goes with it
+    hers.follows_pointer = False                                          # the game is over: nothing goes with it
+    run.words_read = [(3.0, "20"), (24.0, "20"), (27.0, "game over"), (27.0, "play again")]
+    ended = _nothing_answers(run, hers, meeting, 40.0)
+    assert ended == "nothing here answers to me, and it is going against me"
+    assert _the_words_of_play(run, ended) == {"20"}
+    never = _Run(keys=[], began=0.0)                                      # nothing ever answered: all read is kept
+    never.first_moving, never.words_read = 0.5, [(3.0, "restart"), (27.0, "20")]
+    assert _the_words_of_play(never, "nothing here answers to me while it moves") == {"restart", "20"}
+
+
 def test_the_end_screen_a_stretch_begins_on_is_not_its_end_however_long_the_first_reading_takes():
     """LIVE 2026-10-09 a stretch begun under an end screen still up read its "TRY AGAIN" first at 2.5 s, took it for
     the round's end, and ended at once, round after round."""
