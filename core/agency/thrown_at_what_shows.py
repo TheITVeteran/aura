@@ -15,7 +15,7 @@ import math
 from collections.abc import Collection, Iterable
 from typing import Any
 
-__all__ = ["A_FIGURE", "JUST_SHOWN_S", "comes_at_her", "what_the_shot_goes_at", "where_the_one_thrown_at_is"]
+__all__ = ["A_FIGURE", "HOLD_FOR_A_STOP_S", "JUST_SHOWN_S", "HowLongAThrowTakes", "how_long_throws_take", "led", "comes_at_her", "what_the_shot_goes_at", "where_the_one_thrown_at_is"]
 
 #: How long after it comes into sight a thing is one that has just shown, in seconds: about as long as one stays up.
 JUST_SHOWN_S = 1.5
@@ -160,3 +160,86 @@ def comes_at_her(things: Iterable[Any]) -> bool:
         if len(sizes) >= OVER and sizes[-OVER] > 0.0 and sizes[-1] >= GROWN * sizes[-OVER] and sizes[-1] >= sizes[-2]:
             return True
     return False
+
+
+#: The fewest landings seen before how long a throw takes is known, the most kept, and the longest a throw is waited
+#: for; how near where it was aimed a thing must come into sight to be the throw landing, in the picture's own pixels;
+#: what a throw is taken to take until one is seen.
+LANDINGS_KNOWN = 2
+LANDINGS_KEPT = 8
+LANDS_WITHIN_S = 1.5
+LANDS_NEAR_PX = 14.0
+TAKES_AT_FIRST_S = 0.08
+
+
+class HowLongAThrowTakes:
+    """How long a throw of hers takes to land where it was aimed, learned by watching where she aimed: what comes into
+    sight there, a moment after the throw, is the throw landing (a splat, a puff, a hole). Offline 2026-10-12 a food
+    fight's opponent ran to and fro; each throw landed where he had been when she threw, a splat a moment later where
+    she clicked, and his bar never went down."""
+
+    def __init__(self) -> None:
+        self.waiting: list[tuple[float, float, float]] = []
+        self.landings: list[float] = []
+
+    def thrown(self, at: float, x: float, y: float) -> None:
+        self.waiting = [*self.waiting[-5:], (at, x, y)]
+
+    def saw(self, things: Iterable[Any], at: float) -> None:
+        """What came into sight, for the throws still waited for."""
+        kept = []
+        for thrown_at, x, y in self.waiting:
+            landed = [float(thing.born) - thrown_at for thing in things
+                      if 0.0 < float(getattr(thing, "born", -1e9)) - thrown_at <= LANDS_WITHIN_S
+                      and math.hypot(thing.x - x, thing.y - y) <= LANDS_NEAR_PX]
+            if landed:
+                self.landings = [*self.landings[-(LANDINGS_KEPT - 1):], min(landed)]
+            elif at - thrown_at <= LANDS_WITHIN_S:
+                kept.append((thrown_at, x, y))
+        self.waiting = kept
+
+    def seconds(self) -> float:
+        """How long a throw takes, as seen: the middle of the landings seen, once there are enough."""
+        if len(self.landings) < LANDINGS_KNOWN:
+            return TAKES_AT_FIRST_S
+        ordered = sorted(self.landings)
+        return ordered[len(ordered) // 2]
+
+
+def how_long_throws_take(run: Any, moves: Any, at: float) -> Any:
+    """What she has seen of how long her throws take to land, brought up to the picture before her."""
+    takes = getattr(run, "throw_takes", None)
+    if takes is None:
+        takes = HowLongAThrowTakes()
+        try:
+            run.throw_takes = takes
+        except AttributeError:
+            pass
+    takes.saw(moves.things.values(), at)
+    return takes
+
+
+#: The longest a throw is held for someone running to stop, in seconds.
+HOLD_FOR_A_STOP_S = 0.5
+
+
+def led(run: Any, target: Any, at: float) -> tuple[float, float] | None:
+    """Where to throw at ``target`` so the throw lands where it will be: led by how long her throws take to land (seen,
+    else a moment). Where it would go further than its own size before the throw lands, the throw is held a moment for
+    it to stop, as someone running to and fro does to throw; held long enough, it is thrown led. None while it is held.
+    Offline 2026-10-12 every throw landed where a running opponent had been."""
+    takes = getattr(run, "throw_takes", None)
+    lead = min(1.0, takes.seconds()) if takes is not None else TAKES_AT_FIRST_S
+    speed = math.hypot(target.vx, target.vy)
+    if speed <= 8.0:
+        run.held_since = None
+        return target.x, target.y
+    if speed * lead > math.sqrt(max(1.0, float(target.size))):
+        held = getattr(run, "held_since", None)
+        if held is None:
+            run.held_since = at
+            return None
+        if at - held < HOLD_FOR_A_STOP_S:
+            return None
+    run.held_since = None
+    return target.where_at(lead)

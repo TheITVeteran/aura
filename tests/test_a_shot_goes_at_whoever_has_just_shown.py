@@ -177,3 +177,23 @@ def test_the_one_thrown_at_is_found_again_where_it_was_under_another_number() ->
     assert (x, y) == (320, 205) and seen is again
     assert where_the_one_thrown_at_is([elsewhere], last, 10.4, 600) is None                 # out of sight: not thrown at
     assert where_the_one_thrown_at_is([elsewhere, again], last, 11.5, 600) is None          # too long ago to be there still
+
+
+def test_how_long_a_throw_takes_is_learned_from_where_it_lands_and_a_runner_is_led_or_waited_for() -> None:
+    """Offline 2026-10-12 a food fight's opponent ran to and fro; each throw landed where he had been when she threw,
+    a splat a moment later where she clicked, and his bar never went down."""
+    from core.agency.thrown_at_what_shows import HOLD_FOR_A_STOP_S, HowLongAThrowTakes
+    from core.agency.thrown_at_what_shows import led as _led
+
+    takes = HowLongAThrowTakes()
+    for k, shot in enumerate((1.0, 2.0, 3.0)):
+        takes.thrown(shot, 100.0 + k, 60.0)
+        takes.saw([SimpleNamespace(born=shot + 0.4, x=101.0 + k, y=61.0)], shot + 0.5)
+    assert takes.seconds() == pytest.approx(0.4)
+    run = SimpleNamespace(throw_takes=takes, held_since=None)
+    runner = SimpleNamespace(x=100.0, y=60.0, vx=120.0, vy=0.0, size=400.0,
+                             where_at=lambda after: (100.0 + 120.0 * after, 60.0))
+    assert _led(run, runner, 10.0) is None, "running further than his size before it lands: wait for him to stop"
+    assert _led(run, runner, 10.0 + HOLD_FOR_A_STOP_S) == pytest.approx((148.0, 60.0)), "or, held long enough, lead him"
+    standing = SimpleNamespace(x=100.0, y=60.0, vx=0.0, vy=0.0, size=400.0, where_at=lambda after: (100.0, 60.0))
+    assert _led(run, standing, 11.0) == (100.0, 60.0)

@@ -242,6 +242,10 @@ class _Run:
     pointer_trigger: bool = False
     taps: int = 0
     clicks: int = 0
+    #: How long her throws take to land, as seen (core/agency/thrown_at_what_shows.py), and since when a throw at someone
+    #: running has been held for them to stop.
+    throw_takes: Any = None
+    held_since: float | None = None
     #: When her last few shots were made, by the pictures' clock: what comes into sight just after one is that shot.
     shots_at: list[float] = field(default_factory=list)
     #: What a legend on the place's screens drew and said of each thing (core/perception/what_a_legend_shows.py).
@@ -1715,7 +1719,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     shooter holding one arrow at a time to see what moved, and never fired. A press of the fire key moves nothing, so
     the finding goes on as before, and what each press brings out beside her is how she learns it fires.
     """
-    from core.agency.thrown_at_what_shows import comes_at_her
+    from core.agency.thrown_at_what_shows import comes_at_her, how_long_throws_take
 
     if rules is None:
         return
@@ -1741,6 +1745,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     every = THROW_AT_SOMEONE_S if against else THROW_WHILE_FINDING_S
     if not rules.a_click_is_a_shot or not hasattr(hands, "click") or at - run.last_click < every:
         return
+    takes = how_long_throws_take(run, moves, at)
     aimed = _where_to_throw(run, moves, hers, at, against)
     if aimed is None:
         return
@@ -1748,6 +1753,7 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
     await hands.click(min(1.0, max(0.0, aimed[0] / max(1, wide))), min(1.0, max(0.0, aimed[1] / max(1, tall))))
     run.last_click, run.clicks = at, getattr(run, "clicks", 0) + 1
     run.shots_at = [*getattr(run, "shots_at", ())[-5:], at]
+    takes.thrown(at, aimed[0], aimed[1])
 
 
 def _where_to_throw(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: float, against: bool) -> tuple[float, float] | None:
@@ -1756,7 +1762,11 @@ def _where_to_throw(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: float, a
     where it was though the eye has lost it and found it under another number. Offline 2026-10-12 a food fight's
     opponent, turning and crouching, was found afresh every few looks, taken each time for her own throw just come
     into sight, and nineteen asks in twenty found no one to throw at."""
-    from core.agency.thrown_at_what_shows import what_the_shot_goes_at, where_the_one_thrown_at_is
+    from core.agency.thrown_at_what_shows import (
+        led,
+        what_the_shot_goes_at,
+        where_the_one_thrown_at_is,
+    )
 
     target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
                                    not_kinds={made.kind for made in hers.makes.values()},
@@ -1764,7 +1774,7 @@ def _where_to_throw(run: _Run, moves: WhatMoves, hers: WhichIsHers, at: float, a
     if target is not None:
         if against:
             run.thrown_at = (target.x, target.y, at, float(target.size))
-        return target.where_at(CLICK_LANDS_S) if math.hypot(target.vx, target.vy) > 8.0 else (target.x, target.y)
+        return led(run, target, at)
     if not against:
         return None
     found = where_the_one_thrown_at_is(moves.things.values(), getattr(run, "thrown_at", None), at, moves.shape[1])
