@@ -102,7 +102,7 @@ def grader_for(kind: str):
     return lambda returned, truth: grade(returned, truth)[0]
 
 
-def logged_proposer(output: Path, decode, *, thinking: bool):
+def logged_proposer(output: Path, decode, *, thinking: bool | str):
     """Proposals decoded once and logged with their text, keyed by the request's hash.
 
     ``decode(requests, on_record)`` decodes and calls ``on_record(position,
@@ -114,7 +114,10 @@ def logged_proposer(output: Path, decode, *, thinking: bool):
     for log_path in sorted((output / "requests").glob("round*.jsonl")):
         for line in log_path.read_text(encoding="utf-8").splitlines():
             logged = json.loads(line)
-            if logged.get("thinking", True) == thinking and "public_text" in logged:
+            logged_mode = logged.get("thinking", True)
+            same = logged_mode == thinking or (logged_mode is True and thinking == "open") \
+                or (logged_mode is False and thinking == "closed")
+            if same and "public_text" in logged:
                 before[logged["request_sha256"]] = logged
 
     def proposals(requests: list[str], round_index: int) -> list[str]:
@@ -167,7 +170,12 @@ def main() -> int:
                         help="tell her model it may import core/reasoning/mechanisms.py, and what it offers")
     parser.add_argument("--no-thinking", action="store_true",
                         help="decode proposals with her private channel closed (writing a procedure is not a reply)")
+    parser.add_argument("--answer-tokens", type=int, default=0,
+                        help="close a proposal's private channel when only this many of --max-tokens remain, "
+                             "so it writes its code (tools/g12_batched.decode_with_thinking_budget)")
     args = parser.parse_args()
+    if args.answer_tokens and args.no_thinking:
+        raise SystemExit("--answer-tokens closes an open private channel; it has no meaning with --no-thinking")
 
     from core.learning.procedures_from_solved_examples import (
         ProcedureBook,
@@ -216,7 +224,7 @@ def main() -> int:
         from mlx_lm import load
 
         from core.runtime.model_lane_control import standalone_model_lane
-        from tools.g12_batched import decode_stream
+        from tools.g12_batched import decode_stream, decode_with_thinking_budget
 
         model_path = args.model.expanduser().resolve(strict=True)
         context = standalone_model_lane(owner_id=f"g09-induce:{output.name}", model_path=str(model_path),
@@ -226,11 +234,17 @@ def main() -> int:
         model, tokenizer = load(str(model_path))
 
         def decode(requests: list[str], on_record) -> None:
-            decode_stream(model, tokenizer, [[{"role": "user", "content": r}] for r in requests],
-                          max_tokens=args.max_tokens, width=args.batch, on_record=on_record,
-                          thinking=not args.no_thinking)
+            conversations = [[{"role": "user", "content": r}] for r in requests]
+            if args.answer_tokens:
+                decode_with_thinking_budget(model, tokenizer, conversations, max_tokens=args.max_tokens,
+                                            answer_tokens=args.answer_tokens, width=args.batch, on_record=on_record)
+            else:
+                decode_stream(model, tokenizer, conversations, max_tokens=args.max_tokens, width=args.batch,
+                              on_record=on_record, thinking=not args.no_thinking)
 
-        cached = logged_proposer(output, decode, thinking=not args.no_thinking)
+        # A proposal logged under one decoding is not reused under another.
+        mode = "closed" if args.no_thinking else (f"open-budget-{args.answer_tokens}" if args.answer_tokens else "open")
+        cached = logged_proposer(output, decode, thinking=mode)
 
         def propose(requests: list[str]) -> list[str]:
             started = time.monotonic()

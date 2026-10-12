@@ -221,3 +221,72 @@ def test_metadata_evaluation_flattens_real_mlx_arrays_without_a_model() -> None:
     assert cache.left_padding.tolist() == [-256]
     assert cache.lengths.tolist() == [256]
     assert cache[0].tolist() == [[1.0]] and cache[1].tolist() == [[2.0]]
+
+
+def test_a_sequence_still_thinking_at_its_budget_has_its_channel_closed_and_writes_its_reply(monkeypatch) -> None:
+    """Three requests: one ends in budget; one is cut mid-thought and closed; one is cut mid-reply and continued."""
+    import importlib
+
+    import mlx.core as mx
+
+    generate = importlib.import_module("mlx_lm.generate")
+
+    import core.brain.llm.chat_format as chat_format
+    from tools.g12_batched import decode_with_thinking_budget
+
+    vocab = {1: "a", 2: "b", 11: "think", 12: "</think>", 13: "code", 0: "", 20: "\n</think>\n\n"}
+    seen: list[tuple[list[list[int]], list[int]]] = []
+
+    class FakeGenerator:
+        def __init__(self, model, *, stop_tokens, completion_batch_size, prefill_batch_size):
+            self.stream = generate.generation_stream
+            self._prompt_batch = SimpleNamespace(prompt_cache=[])
+            self._generation_batch = SimpleNamespace(prompt_cache=[])
+
+        def insert(self, prompts, max_tokens):
+            seen.append(([list(p) for p in prompts], list(max_tokens)))
+            self.uids = list(range(len(prompts)))
+            if len(seen) == 1:  # the first budget: 3 tokens each
+                plan = {0: [11, 12, 0], 1: [11, 11, 11], 2: [12, 13, 13]}
+                reasons = {0: ["stop"], 1: ["length"], 2: ["length"]}
+            else:  # what is left: replies
+                plan = {0: [13, 0], 1: [13, 13]}
+                reasons = {0: ["stop"], 1: ["length"]}
+            self.steps = []
+            for step in range(3):
+                row = []
+                for uid in self.uids:
+                    if step < len(plan[uid]):
+                        last = step == len(plan[uid]) - 1
+                        row.append(SimpleNamespace(uid=uid, token=plan[uid][step],
+                                                   finish_reason=reasons[uid][0] if last else None))
+                self.steps.append(row)
+            self.steps.append([])
+            return self.uids
+
+        def next_generated(self):
+            return self.steps.pop(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(generate, "BatchGenerator", FakeGenerator)
+    monkeypatch.setattr(chat_format, "render_chat_template", lambda *a, **k: "prompt")
+    monkeypatch.setattr(mx, "synchronize", lambda *a, **k: None)
+    monkeypatch.setattr(mx, "clear_cache", lambda: None)
+
+    def encode(text, add_special_tokens=False):
+        return [20] if text == "\n</think>\n\n" else [1, 2]
+
+    tokenizer = SimpleNamespace(eos_token_ids=[0], encode=encode, decode=lambda ids: "".join(vocab[i] for i in ids))
+    records: dict[int, dict] = {}
+    decode_with_thinking_budget(object(), tokenizer, [[{"role": "user", "content": c}] for c in "xyz"],
+                                max_tokens=5, answer_tokens=2, width=8,
+                                on_record=lambda index, record: records.__setitem__(index, record))
+    assert seen[0][1] == [3, 3, 3] and seen[1][1] == [2, 2]
+    # The cut mid-thought request is continued from its own text plus the closing marker; the other is not closed.
+    assert seen[1][0][0] == [1, 2, 11, 11, 11, 20] and seen[1][0][1] == [1, 2, 12, 13, 13]
+    assert records[0]["termination"] == "stop" and not records[0]["thinking_closed_by_budget"]
+    assert records[1]["thinking_closed_by_budget"] and records[1]["public_text"] == "code"
+    assert records[1]["termination"] == "stop" and records[1]["generated_tokens"] == 5
+    assert records[2]["public_text"] == "codecodecodecode" and not records[2]["thinking_closed_by_budget"]

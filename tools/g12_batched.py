@@ -83,17 +83,9 @@ def render_tokens(tokenizer: Any, conversation: list, *, thinking: bool = True) 
     return [int(t) for t in tokenizer.encode(prompt, add_special_tokens=False)]
 
 
-def decode_stream(
-    model: Any,
-    tokenizer: Any,
-    conversations: Sequence[list],
-    *,
-    max_tokens: int,
-    width: int,
-    on_record: Any,
-    thinking: bool = True,
-) -> None:
-    """Decode every conversation in fixed groups of ``width``, handing each record over as it finishes.
+def _decode_token_groups(model: Any, tokenizer: Any, prompts: Sequence[list[int]], *, max_tokens: int, width: int,
+                         on_finish: Any) -> None:
+    """Greedy decodes of token prompts in fixed groups of ``width``.
 
     Each group gets its own generator, prefilled once before any of it
     generates, and nothing new is admitted while it generates; the next group
@@ -101,23 +93,21 @@ def decode_stream(
     new prompts into a generating batch kernel-panicked the Mac in the GPU
     driver (IOGPUGroupMemory::remove_memory_object, the panicked task this
     process); fixed groups have no panic on record. A group's buffers are
-    released after the GPU has finished with them. ``on_record(index,
-    record)`` receives the conversation's index and the fields decode_public
-    returns; ``seconds`` runs from that sequence's first generated token.
+    released after the GPU has finished with them. ``on_finish(index, tokens,
+    finish_reason, seconds, group_size)`` is called as each sequence ends;
+    ``tokens`` excludes the stop token and ``seconds`` runs from its first
+    generated token.
     """
     import gc
 
     import mlx.core as mx
     from mlx_lm.generate import BatchGenerator
 
-    from core.brain.llm.chat_format import split_native_thinking_generation
-
-    prompts = [render_tokens(tokenizer, conversation, thinking=thinking) for conversation in conversations]
     for first in range(0, len(prompts), max(1, width)):
         group = list(range(first, min(first + max(1, width), len(prompts))))
         generator = BatchGenerator(model, stop_tokens=[[token] for token in tokenizer.eos_token_ids],
                                    completion_batch_size=len(group), prefill_batch_size=len(group))
-        uids = generator.insert([prompts[index] for index in group], [max_tokens] * len(group))
+        uids = generator.insert([list(prompts[index]) for index in group], [max_tokens] * len(group))
         index_of = {uid: index for uid, index in zip(uids, group, strict=True)}
         tokens: dict[int, list[int]] = {uid: [] for uid in uids}
         started: dict[int, float] = {}
@@ -130,19 +120,8 @@ def decode_stream(
                         tokens[uid].append(int(response.token))
                     if response.finish_reason is None:
                         continue
-                    raw = tokenizer.decode(tokens[uid])
-                    channels = split_native_thinking_generation(raw, native_thinking=thinking)
-                    finish = "stop" if response.finish_reason == "stop" else "token_limit"
-                    on_record(index_of[uid], {
-                        "public_text": channels.surface,
-                        "raw_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
-                        "prompt_tokens": len(prompts[index_of[uid]]),
-                        "generated_tokens": len(tokens[uid]),
-                        "termination": finish if channels.boundary_closed else "native_thinking_incomplete",
-                        "seconds": round(time.monotonic() - started[uid], 3),
-                        "batch_size": len(group),
-                        "batching": "fixed_groups",
-                    })
+                    on_finish(index_of[uid], tokens[uid], response.finish_reason,
+                              round(time.monotonic() - started[uid], 3), len(group))
                     tokens[uid] = []
         finally:
             generator.close()
@@ -150,6 +129,112 @@ def decode_stream(
             mx.synchronize()
             gc.collect()
             mx.clear_cache()
+
+
+def decode_stream(
+    model: Any,
+    tokenizer: Any,
+    conversations: Sequence[list],
+    *,
+    max_tokens: int,
+    width: int,
+    on_record: Any,
+    thinking: bool = True,
+) -> None:
+    """Decode every conversation in fixed groups of ``width``, handing each record over as it finishes.
+
+    ``on_record(index, record)`` receives the conversation's index and the
+    fields decode_public returns (see _decode_token_groups for the grouping).
+    """
+    from core.brain.llm.chat_format import split_native_thinking_generation
+
+    prompts = [render_tokens(tokenizer, conversation, thinking=thinking) for conversation in conversations]
+
+    def finished(index: int, generated: list[int], reason: str, seconds: float, group_size: int) -> None:
+        raw = tokenizer.decode(generated)
+        channels = split_native_thinking_generation(raw, native_thinking=thinking)
+        finish = "stop" if reason == "stop" else "token_limit"
+        on_record(index, {
+            "public_text": channels.surface,
+            "raw_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+            "prompt_tokens": len(prompts[index]),
+            "generated_tokens": len(generated),
+            "termination": finish if channels.boundary_closed else "native_thinking_incomplete",
+            "seconds": seconds,
+            "batch_size": group_size,
+            "batching": "fixed_groups",
+        })
+
+    _decode_token_groups(model, tokenizer, prompts, max_tokens=max_tokens, width=width, on_finish=finished)
+
+
+#: What her chat template writes to close the private channel (chat_template.jinja).
+CLOSE_THINKING = "\n</think>\n\n"
+
+
+def decode_with_thinking_budget(
+    model: Any,
+    tokenizer: Any,
+    conversations: Sequence[list],
+    *,
+    max_tokens: int,
+    answer_tokens: int,
+    width: int,
+    on_record: Any,
+) -> None:
+    """Decode with the private channel open, closing it for any sequence that is still thinking
+    when only ``answer_tokens`` of its ``max_tokens`` remain (budget forcing, Muennighoff et al.
+    2025, "s1: Simple test-time scaling").
+
+    Every sequence first decodes up to ``max_tokens - answer_tokens``. One that ends there is
+    done. One cut there continues for up to ``answer_tokens`` more from its own text, re-read as
+    its prompt; if its private channel was still open, the template's closing marker is written
+    first, so what follows is its reply. The record says whether the channel was closed for it.
+    """
+    from core.brain.llm.chat_format import split_native_thinking_generation
+
+    if not 0 < answer_tokens < max_tokens:
+        raise ValueError("answer_tokens must leave some of max_tokens for thinking")
+    prompts = [render_tokens(tokenizer, conversation, thinking=True) for conversation in conversations]
+    close = [int(t) for t in tokenizer.encode(CLOSE_THINKING, add_special_tokens=False)]
+
+    def emit(index: int, generated: list[int], reason: str, seconds: float, group_size: int, forced: bool) -> None:
+        raw = tokenizer.decode(generated)
+        channels = split_native_thinking_generation(raw, native_thinking=True)
+        finish = "stop" if reason == "stop" else "token_limit"
+        on_record(index, {
+            "public_text": channels.surface,
+            "raw_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+            "prompt_tokens": len(prompts[index]),
+            "generated_tokens": len(generated),
+            "termination": finish if channels.boundary_closed else "native_thinking_incomplete",
+            "thinking_closed_by_budget": forced,
+            "seconds": seconds,
+            "batch_size": group_size,
+            "batching": "fixed_groups",
+        })
+
+    cut: dict[int, tuple[list[int], float, bool]] = {}
+
+    def first_finished(index: int, generated: list[int], reason: str, seconds: float, group_size: int) -> None:
+        if reason == "stop":  # done within the first budget: handed over now
+            emit(index, list(generated), reason, seconds, group_size, False)
+            return
+        forced = "</think>" not in tokenizer.decode(generated)
+        cut[index] = (list(generated) + (close if forced else []), seconds, forced)
+
+    _decode_token_groups(model, tokenizer, prompts, max_tokens=max_tokens - answer_tokens, width=width,
+                         on_finish=first_finished)
+    order = sorted(cut)
+
+    def second_finished(position: int, generated: list[int], reason: str, seconds: float, group_size: int) -> None:
+        index = order[position]
+        joined, first_seconds, forced = cut[index]
+        emit(index, joined + list(generated), reason, first_seconds + seconds, group_size, forced)
+
+    if order:
+        _decode_token_groups(model, tokenizer, [prompts[i] + cut[i][0] for i in order], max_tokens=answer_tokens,
+                             width=width, on_finish=second_finished)
 
 
 def decode_batch(
