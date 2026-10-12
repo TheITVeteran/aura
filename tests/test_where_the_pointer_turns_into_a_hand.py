@@ -165,3 +165,27 @@ def test_what_the_pointer_turns_into_a_hand_over_is_offered_though_nothing_else_
     offered = _what_answers_the_pointer(observation, ("v", "space"))
     assert a_click_on("start") in offered and a_click_on("Candy Machine") not in offered
     assert _what_answers_the_pointer(observation, (a_click_on("start"),)).count(a_click_on("start")) == 1
+
+
+def test_a_screen_taken_for_play_that_stands_the_same_a_while_is_looked_over_with_the_pointer(monkeypatch):
+    """Offline 2026-10-12 an instructions screen whose backdrop moved, read once without its way on, was taken for play,
+    and she pressed one key on it for three and a half minutes, the key having done nothing every time."""
+    from types import SimpleNamespace
+
+    import core.skills.screen_pursuit_as_it_happens as reflexes_module
+    from core.skills.screen_pursuit_as_it_happens import (
+        STUCK_ON_PLAY_S,
+        stuck_on_one_screen_of_play,
+    )
+
+    now = [100.0]
+    monkeypatch.setattr(reflexes_module.time, "monotonic", lambda: now[0])
+    reflexes = SimpleNamespace(play_screen=None)
+    words = "Find the lost kite in the garden. Use your mouse to look about."
+    assert not stuck_on_one_screen_of_play(reflexes, words)
+    now[0] += STUCK_ON_PLAY_S / 2
+    assert not stuck_on_one_screen_of_play(reflexes, words)
+    now[0] += STUCK_ON_PLAY_S / 2 + 1.0
+    assert stuck_on_one_screen_of_play(reflexes, words)
+    assert not stuck_on_one_screen_of_play(reflexes, "LEVEL 2 Score 40 Lives 3 Time 59")   # another screen begins again
+    assert not stuck_on_one_screen_of_play(None, words)

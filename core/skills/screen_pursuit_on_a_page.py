@@ -141,14 +141,17 @@ class OnAPage:
             AS_IT_HAPPENS,
             a_hand_among_things,
             a_screen_of_play_in_time,
+            stuck_on_one_screen_of_play,
         )
 
         reflexes = AS_IT_HAPPENS.get()
         labels = [str(r.get("text") or "") for r in seen.get("layout") or () if isinstance(r, dict)]
         if reflexes is not None:
             reflexes.play_in_sight = a_screen_of_play_in_time(reflexes, labels)
-        # Where she is a hand among things, what answers the pointer is what she plays with, clock or none.
-        if not getattr(reflexes, "play_in_sight", False) or a_hand_among_things():
+        # Where she is a hand among things, what answers the pointer is what she plays with, clock or none; and where
+        # one screen of play has stood a while, the same, she looks it over with the pointer.
+        if (not getattr(reflexes, "play_in_sight", False) or a_hand_among_things()
+                or stuck_on_one_screen_of_play(reflexes, str(seen.get("text") or ""))):
             await self._where_the_pointer_turns(seen, over)
         return seen
 

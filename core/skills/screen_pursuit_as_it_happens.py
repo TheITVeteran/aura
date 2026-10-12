@@ -308,6 +308,25 @@ async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bo
     return moves
 
 
+#: How long one screen taken for play may stand, the same words on it, before she looks it over with the pointer.
+STUCK_ON_PLAY_S = 15.0
+
+
+def stuck_on_one_screen_of_play(reflexes: Any, said: str) -> bool:
+    """Whether the screen taken for play has stood, the same in its words, for STUCK_ON_PLAY_S while she played it: a
+    person whose keys have done nothing for a while moves the mouse over the screen to see what it answers. Offline
+    2026-10-12 an instructions screen whose backdrop moved, read once without its "CONTINUE", was taken for play, and
+    she pressed right on it for three and a half minutes, right having done nothing every time."""
+    if reflexes is None:
+        return False
+    now = time.monotonic()
+    kept = reflexes.play_screen
+    if kept is None or not _the_same_screen(kept[0], said):
+        reflexes.play_screen = (said, now)
+        return False
+    return now - kept[1] >= STUCK_ON_PLAY_S
+
+
 def _the_same_screen(before: Any, said: Any) -> bool:
     """Whether a screen read now is one read before, a reading a little differently made being the same screen."""
     return (isinstance(before, str) and isinstance(said, str)
@@ -480,6 +499,8 @@ class PlayingAsItHappens:
     answer_the_pointer: list[tuple[float, float]] = field(default_factory=list)
     #: Whether the screen last read is one of play in a place played in time (`a_screen_of_play_in_time`).
     play_in_sight: bool = False
+    #: The words of the screen of play last read, and since when they have stood (`stuck_on_one_screen_of_play`).
+    play_screen: tuple[str, float] | None = None
     #: Screens this run reached that the game had not shown her before, told apart by their words.
     new_screens: int = 0
     #: Her bearings on the last screen she took in (core/cognition/her_bearings.py).
