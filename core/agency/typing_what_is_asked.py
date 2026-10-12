@@ -120,8 +120,11 @@ def places_to_type(asked: WordsAsked, regions: list[dict[str, Any]], picture: An
     wide = max(float(region.get("width", 0.2) or 0.2), 0.05)
     above, below = (x, max(0.0, y - tall - A_LINE_AWAY)), (x, min(1.0, y + tall + A_LINE_AWAY))
     right = (min(1.0, x + wide / 2 + A_LINE_AWAY), y)
+    # "Here" in a heading ("YOUR NAME HERE") labels the box drawn under it: offline 2026-10-11 the Riddler's heading was
+    # clicked, the name typed there went nowhere, and a click a line lower, in the box, took it.
+    under = (x, min(1.0, y + tall))
     said = {"above": [above], "over this": [above], "below": [below], "beneath": [below], "underneath": [below],
-            "to the right": [right], "here": [(x, y)]}.get(asked.where)
+            "to the right": [right], "here": [under, (x, y)]}.get(asked.where)
     order = _fields_near(picture, region) + (said or [right, below, (x, y), above])
     return list(dict.fromkeys(order))
 
@@ -159,7 +162,8 @@ async def type_what_is_asked(
         return {"typed": "", "why": "the picture could not be taken"}
     regions = read_words(seen[0])
     landed_at = None
-    for place in places_to_type(asked, regions, seen[0]):
+    places = places_to_type(asked, regions, seen[0])
+    for place in places:
         await hands.click(*place)
         await hands.type_text(text)
         after = await look()
@@ -170,7 +174,12 @@ async def type_what_is_asked(
         for _ in text:
             await hands.tap("backspace")
     if landed_at is None:
-        logger.info("typed %r in every place the screen points to, and saw it in none", text)
+        # Writing in a field may be too small or too strange a face to read back: it is typed again where a field is
+        # likeliest and left there, not taken out everywhere. Offline 2026-10-11 a name typed into the right box, in
+        # green segments, was read as nothing, rubbed out, and the box sent empty.
+        logger.info("typed %r in every place the screen points to, and saw it in none; leaving it in the first", text)
+        await hands.click(*places[0])
+        await hands.type_text(text)
     if say is not None:
         say(f"It asks for {asked.kind}; I'm typing {text!r}.")
     sender = _the_sender(asked, regions)
@@ -180,7 +189,44 @@ async def type_what_is_asked(
     else:
         await hands.tap(asked.sent_by_key or "return")
         sent = asked.sent_by_key or "return"
+        if not asked.sent_by_key:
+            sent = await _sent_by_the_button_beside(look, hands, landed_at or places[0], sent)
     return {"typed": text, "kind": asked.kind, "landed_at": landed_at, "sent_by": sent}
+
+
+#: How near the field, as a share of the picture, a control that sends what was typed is drawn; and how much of the
+#: picture must change for Return to have done something.
+SENDER_WITHIN = 0.3
+SCREEN_CHANGED = 0.2
+
+
+async def _sent_by_the_button_beside(look: Callable[[], Awaitable[Any]], hands: Any, field: tuple[float, float],
+                                     sent: str) -> str:
+    """Where Return changed nothing, the control drawn nearest the field is pressed: offline 2026-10-11 a name machine's
+    GO was read run into the words drawn behind it ("ETRYGOAIN"), no control was found by its name, Return did nothing,
+    and the name sat in its box unsent. How it was sent."""
+    import asyncio
+    import math
+
+    import numpy as np
+
+    from core.perception.shapes_that_look_pressable import pressable_shapes
+
+    before = await look()
+    await asyncio.sleep(0.8)
+    after = await look()
+    if before is None or after is None:
+        return sent
+    # Changed is most of the picture changed: a caret blinking or a figure breathing is the same screen.
+    a, b = (np.asarray(seen[0])[:, :, :3].astype(np.int16) for seen in (before, after))
+    if a.shape != b.shape or (np.abs(a - b).max(axis=2) > 40).mean() > SCREEN_CHANGED:
+        return sent
+    shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(after[0])]
+    near = sorted((math.dist(place, field), place) for place in shapes if 0.03 < math.dist(place, field) <= SENDER_WITHIN)
+    if not near:
+        return sent
+    await hands.click(*near[0][1])
+    return f"the control beside it at {near[0][1]}"
 
 
 def _shows(written: str, text: str) -> bool:

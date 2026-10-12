@@ -970,7 +970,7 @@ async def _what_was_made_as_seen(page: Any, band: tuple[float, float, float, flo
     typed = str((keep or {}).get("typed") or "")
     if typed:
         # A thing that answers what is put to it: what she asked, and what it answered, as it shows it.
-        answered = shows or str(run.get("words") or "")[:160]
+        answered = shows or str((keep or {}).get("answered") or "")[:160] or str(run.get("words") or "")[:160]
         return (f"There's nothing to win or score in this one; it answers what you ask it. I asked it {typed!r}, and "
                 f"it answered: {answered[:1].lower()}{answered[1:]}.")
     if not shows:

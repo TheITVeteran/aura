@@ -21,6 +21,8 @@ def test_what_each_screen_asks_for_is_read_off_its_words():
     assert words_asked_for("Type your answer and press Enter.").sent_by_key == "return"
     assert words_asked_for("Enter the secret code").kind == CODE
     assert words_asked_for("Use the arrow keys to move. Collect the stars.") is None
+    # A drawn heading read with a stray letter on its front (offline 2026-10-11 the Riddler's "FYOUR NAME HERE").
+    assert words_asked_for("FYOUR NAME HERE ETRYCOAIN GOUR SECRET DENTLTY").kind == NAME
 
 
 def test_she_types_her_name_a_question_or_an_answer_she_has_and_nothing_she_does_not():
@@ -38,6 +40,11 @@ def test_the_place_the_words_point_to_comes_first():
     regions = [{"text": "TYPE YOUR QUESTION ABOVE", "center_x": 0.5, "center_y": 0.6, "height": 0.04, "width": 0.4}]
     (x, y), *_rest = places_to_type(asked, regions)
     assert x == pytest.approx(0.5) and y < 0.6
+    # "Here" in a heading labels the box drawn under it (offline 2026-10-11 the Riddler's YOUR NAME HERE).
+    asked = words_asked_for("YOUR NAME HERE")
+    regions = [{"text": "YOUR NAME HERE", "center_x": 0.64, "center_y": 0.3, "height": 0.084, "width": 0.37}]
+    (x, y), *_rest = places_to_type(asked, regions)
+    assert x == pytest.approx(0.64) and 0.35 < y < 0.45
 
 
 class _Oracle:
@@ -103,13 +110,21 @@ def test_a_waiting_screen_that_asks_for_words_has_them_typed_on_her_page(monkeyp
             await oracle.tap(key)
 
     monkeypatch.setattr(reflexes, "_said_while_playing", lambda line: None)
+    monkeypatch.setattr(reflexes, "ANSWER_SHOWS_S", 0.0)
     monkeypatch.setattr("core.perception.what_the_pixels_show.recognize_text", oracle.words)
     playing = _OnHerPage(page=None, band=(0, 0, 1, 1), goal="play it until you win", ends_at=time.monotonic() + 30)
     playing.words = ['Try to type only "Yes" or "No" questions. Click "Ask." TYPE YOUR QUESTION ABOVE']
     assert asyncio.run(playing._typed_what_it_asks())
     assert oracle.typed == "Will I win?" and oracle.answered
-    assert asyncio.run(playing._typed_what_it_asks())
-    assert not asyncio.run(playing._typed_what_it_asks()), "the same ask is typed for twice at most"
+    # What it answered is kept as it showed it, and a question answered is the thing done once (offline 2026-10-11 a
+    # fortune teller answered, she clicked on for two minutes, and what it had said was gone when she came to say it).
+    assert playing.keep.get("answered")
+    assert playing.run_is_over({"text": "TYPE YOUR QUESTION ABOVE"}) and playing.over_because == reflexes.MADE_NOT_WON
+    # Typed once is answered (offline 2026-10-11 a name left in its box was typed into again, "AuAurara"), however the
+    # ask is misread the next time.
+    assert not asyncio.run(playing._typed_what_it_asks()), "what was typed is not typed again"
+    playing.words = ['Try to type only "Yes" or "No" questions. Click "Ask." TYPE YOUR QUESTI0N ABOVE']
+    assert not asyncio.run(playing._typed_what_it_asks()), "nor again for a misreading of the same ask"
 
 
 def test_the_box_drawn_under_the_words_that_ask_is_clicked_first_in_its_middle():

@@ -142,6 +142,8 @@ TRYING_OUT_MOST_S = 240.0
 
 #: Why a run of a thing for making is over.
 MADE_NOT_WON = "it is for making things, and I have tried it out"
+#: How long a question put to a thing is given to be answered before the answer is read off the screen.
+ANSWER_SHOWS_S = 2.5
 MAKING_STALLED = "no created work was verified before the making attempt's time ran out"
 
 #: Words that say a screen teaches how to play: it is read and gone on from, not played on. LIVE 2026-10-09 a game's
@@ -477,6 +479,10 @@ class PlayingAsItHappens:
         """Whether she has played, and the screen now offers a way to start again it did not offer at first."""
         if self.over_because:
             return True
+        if self.keep.get("answered"):
+            # A question put to a thing that answers questions, and answered, is the thing done once.
+            self.over_because, self.ending_words = MADE_NOT_WON, str(self.keep["answered"])
+            return True
         from core.language.how_a_game_ended import what_it_asks_of_a_player
 
         # Menus and backgrounds can change without producing work. Use the
@@ -641,6 +647,11 @@ class PlayingAsItHappens:
         # a game played without one (a food fight seen from behind the player's own eyes) goes.
         if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:
             _logged_leaving_alone(self, now)
+            return
+        # A screen that asks for words typed is answered before it is played or gone on from: offline 2026-10-11 a name
+        # field's caret blinked, the screen was taken for one that moves on its own, and its GO was clicked for five
+        # minutes with no name in the field.
+        if await self._typed_what_it_asks():
             return
         # Once a place has asked for what it shows to be done again, a showing is watched for before anything else: the
         # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
@@ -820,22 +831,28 @@ class PlayingAsItHappens:
         """Where the screen's words ask for words typed, typed (core/agency/typing_what_is_asked.py), twice at most for
         one ask. Whether anything was typed."""
         from core.agency.typing_what_is_asked import type_what_is_asked
-        from core.language.words_asked_for import words_asked_for
+        from core.language.words_asked_for import QUESTION, words_asked_for
         from core.perception.what_the_pixels_show import recognize_text
 
         asked = words_asked_for(self.words[-1]) if self.words else None
         if asked is None:
             return False
+        # Counted by what is asked for, not by how the screen happened to be read: a name asked for is typed twice at
+        # most, however many misreadings of its heading there are.
         tries = self.keep.setdefault("typed_for", {})
-        if tries.get(asked.asked_by, 0) >= 2:
+        if tries.get(asked.kind, 0) >= 2:
             return False
-        tries[asked.asked_by] = tries.get(asked.asked_by, 0) + 1
+        tries[asked.kind] = tries.get(asked.kind, 0) + 1
         done = await type_what_is_asked(asked, self.look, recognize_text, self, goal=self.goal,
                                         answer=_an_answer_she_has, say=_said_while_playing)
         logger.info("typed what the screen asks for: %s", done)
         if done.get("typed"):
-            # What she put to it, for saying what it answered: a thing asked once has its question and its answer.
+            # What she put to it, for saying what it answered: a thing asked once has its question and its answer. Typed
+            # once is answered: offline 2026-10-11 a name typed and left in its box was typed into again, "AuAurara".
+            tries[asked.kind] = 2
             self.keep["typed"] = str(done["typed"])
+            if done.get("kind") == QUESTION:
+                self.keep["answered"] = await _what_it_answered(self.look, recognize_text)
         return bool(done.get("typed"))
 
     async def _by_shots(self, now: float) -> None:
@@ -854,7 +871,7 @@ class PlayingAsItHappens:
         logger.info("it waits for her to send something: playing it by shots")
         shots = self.keep.setdefault("by_shots", {})
         stretch = await play_by_shots(self.look, self, seconds=min(STRETCH_S, self.ends_at - now), keep=shots,
-                                      say=_said_while_playing, read_words=recognize_text)
+                                      say=_said_while_playing, read_words=recognize_text, aim_at=_where_it_goes(told))
         logger.info("shots played: %s", stretch)
         record = {"pictures": stretch.get("shots", 0), "gains": stretch.get("gains", 0), "losses": 0,
                   "seconds": time.monotonic() - now, "ended": stretch.get("ended"), "by_shots": stretch}
@@ -900,6 +917,37 @@ def _without_labels(said: str, labels: set) -> str:
     for label in sorted(labels, key=len, reverse=True):
         said = re.sub(rf"(?<!\w){re.escape(label)}(?!\w)", "\n", said)
     return said
+
+
+async def _what_it_answered(look: Any, read_words: Any) -> str:
+    """The screen's words once a question she put has gone in: its answer, kept as it showed it. Offline 2026-10-11 a
+    fortune teller answered, she clicked on through its screens, and what it had said was gone when she came to say
+    it."""
+    import asyncio
+
+    import numpy as np
+
+    await asyncio.sleep(ANSWER_SHOWS_S)
+    seen = await look()
+    if seen is None:
+        return ""
+    regions = await asyncio.to_thread(read_words, np.asarray(seen[0])[:, :, 2::-1].copy())
+    return " ".join(" ".join(str(region.get("text") or "").split()) for region in regions).strip()
+
+
+def _where_it_goes(told: str) -> Any:
+    """Where what she sends is to end up, as the pastime the place names says (a golf ball, into the hole), where that
+    can be found on the picture (core/cognition/what_a_pastime_is_played_with.py): what anyone knows of a game named for
+    golf before they play it. None where the place names no pastime."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+    from core.cognition.what_a_pastime_is_played_with import pastime_named_in, where_it_goes
+
+    guide = THE_GUIDE.get()
+    pastime = pastime_named_in(" ".join([str(getattr(guide, "place", "") or ""), told]))
+    if pastime is None or not pastime.toward_looks:
+        return None
+    logger.info("a place of %s: what she sends goes to the %s", pastime.name, pastime.toward)
+    return lambda picture: where_it_goes(pastime, picture)
 
 
 def _logged_leaving_alone(reflexes: PlayingAsItHappens, now: float) -> None:
