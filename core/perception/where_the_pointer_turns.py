@@ -109,9 +109,13 @@ async def where_the_pointer_turns(page: Any, over: tuple[float, float, float, fl
     return places
 
 
-#: How much finer a place the pointer turned over is swept again, and the least cells a place covers to be swept again.
+#: How much finer a place the pointer turned over is swept again, and the least cells a place covers to be swept again;
+#: and the longest the finer sweeps of one screen may take, all together, in seconds: a sweep is inside a reading of
+#: the screen, and a reading has seconds of its own (offline 2026-10-11 a screen of hidden things, a hand nearly all
+#: over, was swept finer for longer than its reading was allowed three times running, and the game was left).
 FINER = 3
 SPLIT_FROM_CELLS = 3
+FINER_AT_MOST_S = 1.5
 
 
 async def _split_finer(page: Any, hands: set[tuple[int, int]], over: tuple[float, float, float, float],
@@ -120,11 +124,13 @@ async def _split_finer(page: Any, hands: set[tuple[int, int]], over: tuple[float
     things side by side with a little between them are told apart: offline 2026-10-11 a corridor of doors, a row of six
     at a time, was found as one place a row, and the middle of each row was clicked over and over. [] where nothing
     is split."""
+    import time
+
     left, top, right, bottom = over
     width, height = size
-    split, places = False, []
+    split, places, began = False, [], time.monotonic()
     for group in sorted(_groups(hands), key=len, reverse=True)[:MOST]:
-        if len(group) < SPLIT_FROM_CELLS:
+        if len(group) < SPLIT_FROM_CELLS or time.monotonic() - began >= FINER_AT_MOST_S:
             places.append(((sum(c for c, _ in group) / len(group) + 0.5) / ACROSS, (sum(r for _, r in group) / len(group) + 0.5) / DOWN))
             continue
         columns = [c for c, _ in group]
@@ -134,6 +140,8 @@ async def _split_finer(page: Any, hands: set[tuple[int, int]], over: tuple[float
         finer: set[tuple[int, int]] = set()
         try:
             for row in range(high):
+                if time.monotonic() - began >= FINER_AT_MOST_S * 1.5:
+                    break
                 for column in range(wide):
                     x = (left + (right - left) * (c0 + (column + 0.5) / FINER) / ACROSS) * width
                     y = (top + (bottom - top) * (r0 + (row + 0.5) / FINER) / DOWN) * height
