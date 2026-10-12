@@ -54,3 +54,14 @@ def test_when_her_time_runs_out_she_says_how_far_she_got():
     assert "My best was run 1, with 120" in said and said.endswith("The run in play stood at 300 when the time ran out.")
     assert _where_it_stood([{"reached_end": False, "score": None}]) == ""
     assert _where_it_stood([]) == ""
+
+
+def test_a_run_is_measured_by_whatever_name_the_game_keeps_its_measure():
+    """Offline 2026-10-12 a launching game kept each launch's "Total", and its runs were told as unscored."""
+    from types import SimpleNamespace
+
+    from core.skills.sovereign_browser_drawing import _the_score_of
+
+    played = SimpleNamespace(stretches=[{"pictures": 40, "counters": {"Total": "156", "Lives": "3"}}])
+    assert _the_score_of({"words": ""}, played) == 156
+    assert _the_score_of({"words": ""}, SimpleNamespace(stretches=[{"pictures": 40, "counters": {"Lives": "3"}}])) is None

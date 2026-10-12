@@ -1043,7 +1043,9 @@ def _the_score_of(run: Mapping[str, Any], reflexes: Any) -> int | None:
         return written
     for stretch in reversed([s for s in getattr(reflexes, "stretches", []) if s.get("pictures")]):
         for name, value in (stretch.get("counters") or {}).items():
-            if re.search(r"score|points|pts", str(name), re.I) and str(value).replace(",", "").isdigit():
+            # A run's measure by whatever name the game keeps it: a score, points, a total, how far or how high it went
+            # (offline 2026-10-12 a launching game kept each launch's "Total", and its runs were told as unscored).
+            if re.search(r"score|points|pts|total|distance|height", str(name), re.I) and str(value).replace(",", "").isdigit():
                 return int(str(value).replace(",", ""))
     return None
 
