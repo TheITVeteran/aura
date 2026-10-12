@@ -64,7 +64,7 @@ def test_what_was_learned_is_carried_to_the_next_game_of_the_kind_and_discounted
 
 
 def test_the_kind_of_situation_is_how_she_understands_the_game_never_its_name():
-    from core.agency.how_a_game_works import AIMS_FROM_HERE, AGAINST_SOMEONE, RUNS, HowItWorks
+    from core.agency.how_a_game_works import AGAINST_SOMEONE, AIMS_FROM_HERE, RUNS, HowItWorks
 
     how = HowItWorks()
     assert kind_of_situation(how) == ""
