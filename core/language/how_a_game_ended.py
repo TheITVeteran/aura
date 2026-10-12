@@ -138,7 +138,9 @@ def how_it_ended_in(parts: list[str]) -> str:
     stated = set(readings) - {""}
     if len(stated) > 1:
         return ""
-    return next(iter(stated)) if stated else how_it_ended(words)
+    # Where no piece says who won, the pieces are read on from one to the next as well, as a person reads them: a reader
+    # that split "GAME" from "OVER" left every run of a game unread (offline 2026-10-12, five runs, each over).
+    return next(iter(stated)) if stated else how_it_ended(words) or how_it_ended(" ".join(parts))
 
 
 def _who_it_says_won(text: str) -> str | None:

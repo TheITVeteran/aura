@@ -76,3 +76,12 @@ def test_a_file_name_is_not_words_run_together():
     assert not _has_punctuation_join_artifact("the original is beside it as pong.html.before-repair. Nothing was lost")
     assert not _has_punctuation_join_artifact("I saved the letter as report.docx on your Desktop")
     assert _has_punctuation_join_artifact("it works.great job here")
+
+
+def test_an_ending_split_across_pieces_of_writing_is_read_on_from_one_to_the_next():
+    """Offline 2026-10-12 a reader split "GAME" from "OVER", and every run of a game went unread."""
+    from core.language.how_a_game_ended import how_it_ended_in
+
+    assert how_it_ended_in(["GAME", "OVER", "CONTINUE"]) == "lost"
+    assert how_it_ended_in(["LEVEL", "COMPLETE", "NEXT"]) == how_it_ended_in(["LEVEL COMPLETE", "NEXT"])
+    assert how_it_ended_in(["SCORE", "120", "LIVES", "3"]) == ""
