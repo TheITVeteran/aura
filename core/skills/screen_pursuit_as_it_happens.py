@@ -1052,16 +1052,20 @@ class PlayingAsItHappens:
         # Counted by what is asked for, not by how the screen happened to be read: a name asked for is typed twice at
         # most, however many misreadings of its heading there are.
         tries = self.keep.setdefault("typed_for", {})
-        if tries.get(asked.kind, 0) >= 2:
+        # One ask however its words are misread, but the screen's own numbering makes another ("Player 2" after "Player
+        # 1"): offline 2026-10-11 a golf game asked the second player's name, and OK was pressed thirty times with none.
+        numbered = " ".join(re.findall(r"\d+", asked.said or asked.asked_by))
+        which = f"{asked.kind}:{numbered}"
+        if tries.get(which, 0) >= 2:
             return False
-        tries[asked.kind] = tries.get(asked.kind, 0) + 1
+        tries[which] = tries.get(which, 0) + 1
         done = await type_what_is_asked(asked, self.look, recognize_text, self, goal=self.goal,
                                         answer=_an_answer_she_has, say=_said_while_playing)
         logger.info("typed what the screen asks for: %s", done)
         if done.get("typed"):
             # What she put to it, for saying what it answered: a thing asked once has its question and its answer. Typed
             # once is answered: offline 2026-10-11 a name typed and left in its box was typed into again, "AuAurara".
-            tries[asked.kind] = 2
+            tries[which] = 2
             self.keep["typed"] = str(done["typed"])
             # What the place had shown before she typed, all its screens' readings: a label read cleanly only after is
             # no answer for having been misread before (offline 2026-10-11 "YOUR SECRET IDENTITY", read "GOUR SECRET

@@ -378,7 +378,9 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
             self.turned_over(what_is_clicked(name) or "")
             from core.language.a_way_on import confirms
 
-            if changed and self.choosing_here and not confirms(what_is_clicked(name) or ""):
+            # Clicking one of the choices is choosing, though all it does is light up: offline 2026-10-11 a golf game's
+            # "1 Player" lit up a little, was taken to have done nothing, and the choice beside it was clicked after.
+            if self.choosing_here and not confirms(what_is_clicked(name) or ""):
                 self.chose_here = True
             if changed and self.paused_here and not self._was_paused:
                 self.paused_by = name

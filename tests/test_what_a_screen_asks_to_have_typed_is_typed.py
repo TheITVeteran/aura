@@ -290,3 +290,37 @@ def test_a_label_read_cleanly_only_after_typing_is_no_answer():
     assert not _answered_since_typed(machine, {"text": "YOUR NAME HERE Aura TRY AGAIN YOUR SECRET IDENTITY"})
     assert _answered_since_typed(machine, {"text": "YOUR NAME HERE TRY AGAIN THE PUZZLE BARON YOUR SECRET IDENTITY"}) == \
         "THE PUZZLE BARON"
+
+
+def test_a_second_numbered_ask_for_a_name_is_typed_into_and_a_misread_one_is_not(monkeypatch):
+    import time
+
+    """Offline 2026-10-11 a golf game asked the second player's name, and OK was pressed thirty times with none."""
+    from core.skills import screen_pursuit_as_it_happens as reflexes
+
+    typed = []
+
+    async def typing(asked, *a, **k):
+        typed.append(asked.asked_by)
+        return {"typed": "Aura", "kind": asked.kind}
+
+    monkeypatch.setattr("core.agency.typing_what_is_asked.type_what_is_asked", typing)
+    monkeypatch.setattr(reflexes, "_said_while_playing", lambda line: None)
+    playing = reflexes.PlayingAsItHappens(None, (0, 0, 1, 1), "play it", time.monotonic() + 30)
+    playing.words = ["Player 1 Enter your name. OK"]
+    assert asyncio.run(playing._typed_what_it_asks())
+    playing.words = ["Player 1 Enter your narne. OK"]
+    assert not asyncio.run(playing._typed_what_it_asks()), "the same ask, misread"
+    playing.words = ["Player 2 Enter your name. OK"]
+    assert asyncio.run(playing._typed_what_it_asks()), "the next player's"
+    assert len(typed) == 2
+
+
+def test_a_choice_that_only_lights_up_is_a_choice_made():
+    from core.agency.what_i_can_do_here import WhatWorksHere, a_click_on
+
+    here = WhatWorksHere()
+    here.asked_for_by("Please select number of players", (a_click_on("1 Player"), a_click_on("2 Players")))
+    assert here.choosing_here
+    here.tried(a_click_on("1 Player"), changed=False)
+    assert here.chose_here
