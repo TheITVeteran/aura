@@ -6,12 +6,15 @@ separate facts, including when a plan is replaced while the input is in flight.
 """
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import Any
 
 from core.runtime.skill_contract import PredicateOperator, PredicateState, SemanticPredicate
 from core.verify.invariants import invariant
+
+logger = logging.getLogger("Aura.ScreenPursuit.Effects")
 
 
 def owned_response_state(pending: dict[str, Any], observation: dict[str, Any]) -> PredicateState | None:
@@ -302,6 +305,10 @@ def settle_step(pending: dict[str, Any], observation: dict[str, Any], clickable:
 
         receipt = verify_transfer(intent, observation)
         pending["transfer_receipt"] = receipt
+        answer = (receipt.attempt_id, receipt.state.value, receipt.reason)
+        if pending.get("transfer_said") != answer:
+            pending["transfer_said"] = answer
+            logger.info("transfer %s observed %s: %s", *answer)
         if receipt.state is PredicateState.UNKNOWN:
             epochs = pending.setdefault("verification_epochs", set())
             if after.get("capture_epoch") and after["capture_epoch"] != before.get("capture_epoch"):

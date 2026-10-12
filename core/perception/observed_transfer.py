@@ -18,6 +18,8 @@ import numpy as np
 from core.runtime.skill_contract import PredicateState
 from core.verify.invariants import invariant
 
+from .foreground_appearance import foreground_mask, valid_mask
+
 MAX_EDGE = 960
 PATCH_EDGE = 16
 MAX_REGIONS = 128
@@ -129,6 +131,7 @@ class TransferReceipt:
     work_epoch: str
     appearance: bytes = field(default=b"", repr=False)
     pixel_size: tuple[int, int] = (0, 0)
+    appearance_mask: bytes = field(default=b"", repr=False)
 
     def as_memory(self) -> dict[str, Any]:
         """Store a bounded witness; current validation is still required after loading."""
@@ -145,6 +148,7 @@ class TransferReceipt:
             "after_at": self.after_at, "work_epoch": self.work_epoch,
             "appearance": base64.b64encode(self.appearance).decode("ascii"),
             "pixel_size": list(self.pixel_size),
+            "appearance_mask": base64.b64encode(self.appearance_mask).decode("ascii"),
         }
 
     @classmethod
@@ -193,12 +197,21 @@ class TransferReceipt:
             appearance = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error):
             return None
+        encoded_mask = value.get("appearance_mask", "")
+        if not isinstance(encoded_mask, str) or len(encoded_mask) > 4 * math.ceil(PATCH_EDGE * PATCH_EDGE / 3):
+            return None
+        try:
+            mask = base64.b64decode(encoded_mask, validate=True)
+        except (ValueError, binascii.Error):
+            return None
+        if mask and (not valid_mask(mask, PATCH_EDGE) or not appearance):
+            return None
         raw_box = value.get("effect_bbox")
         box = _box(dict(zip(("x", "y", "width", "height"), raw_box, strict=True))) if isinstance(raw_box, list) and len(raw_box) == 4 else None
         source_at, destination_at = _point(value.get("source_at")), _point(value.get("destination_at"))
         if state == PredicateState.SATISFIED and (
                 effect not in {"moved", "copied"} or box is None or source_at is None or destination_at is None
-                or not _distinctive(appearance) or not value["before_epoch"] or not value["after_epoch"]
+                or not _distinctive(appearance, mask) or not value["before_epoch"] or not value["after_epoch"]
                 or value["before_epoch"] == value["after_epoch"]):
             return None
         if appearance and len(appearance) != PATCH_EDGE * PATCH_EDGE * 3:
@@ -211,7 +224,7 @@ class TransferReceipt:
         return cls(attempt_id, value["move"], value["source"], value["destination"], source_at,
                    destination_at, state, effect, box, value["reason"], value["before_epoch"],
                    value["after_epoch"], tuple(surface), bounds, after_at, value["work_epoch"], appearance,
-                   tuple(pixel_size))
+                   tuple(pixel_size), mask)
 
 
 def _number(value: Any) -> float | None:
@@ -364,29 +377,32 @@ def _patch(picture: PixelSnapshot, box: Box) -> bytes:
     return crop[rows[:, None], cols[None, :]].tobytes()
 
 
-def _difference(a: bytes, b: bytes) -> np.ndarray:
-    return np.abs(np.frombuffer(a, np.uint8).astype(np.float32)
-                  - np.frombuffer(b, np.uint8).astype(np.float32)) / 255.0
+def _difference(a: bytes, b: bytes, mask: bytes = b"") -> np.ndarray:
+    difference = np.abs(np.frombuffer(a, np.uint8).astype(np.float32)
+                        - np.frombuffer(b, np.uint8).astype(np.float32)) / 255.0
+    return difference.reshape(-1, 3)[np.frombuffer(mask, np.uint8).astype(bool)].ravel() if mask else difference
 
 
-def _matches(a: bytes, b: bytes) -> bool:
+def _matches(a: bytes, b: bytes, mask: bytes = b"") -> bool:
     if not a or len(a) != len(b):
         return False
-    difference = _difference(a, b)
+    difference = _difference(a, b, mask)
     return float(np.mean(difference)) <= APPEARANCE_ERROR and float(np.quantile(difference, 0.90)) <= APPEARANCE_TAIL_ERROR
 
 
-def _distinctive(patch: bytes) -> bool:
+def _distinctive(patch: bytes, mask: bytes = b"") -> bool:
     if len(patch) != PATCH_EDGE * PATCH_EDGE * 3:
         return False
     values = np.frombuffer(patch, np.uint8).reshape(-1, 3).astype(np.float32) / 255.0
+    if mask:
+        values = values[np.frombuffer(mask, np.uint8).astype(bool)]
     return float(np.mean(np.std(values, axis=0))) >= MIN_SPATIAL_VARIATION
 
 
-def _changed(a: bytes, b: bytes) -> bool:
+def _changed(a: bytes, b: bytes, mask: bytes = b"") -> bool:
     if not a or len(a) != len(b):
         return False
-    difference = _difference(a, b)
+    difference = _difference(a, b, mask)
     fraction = float(np.mean(difference.reshape(-1, 3).mean(axis=1) >= CHANGED_PIXEL_ERROR))
     return float(np.mean(difference)) >= MIN_LOCAL_CHANGE and fraction >= MIN_CHANGED_FRACTION
 
@@ -397,7 +413,8 @@ def _radii(expected: Box, picture: PixelSnapshot, *, retained: bool) -> tuple[in
             min(maximum, max(round(expected[3] * picture.height * share), minimum)))
 
 
-def _matching_boxes(screen: ScreenSnapshot, appearance: bytes, expected: Box, *, retained: bool = False) -> tuple[Box, ...]:
+def _matching_boxes(screen: ScreenSnapshot, appearance: bytes, expected: Box, *, retained: bool = False,
+                    mask: bytes = b"") -> tuple[Box, ...]:
     """Find distinct matching occupants around a measured endpoint, with bounded pixel search."""
     picture = screen.picture
     if picture is None:
@@ -415,7 +432,7 @@ def _matching_boxes(screen: ScreenSnapshot, appearance: bytes, expected: Box, *,
         patch = _patch(picture, box)
         if not patch or len(patch) != len(appearance):
             return
-        error = float(np.mean(_difference(appearance, patch)))
+        error = float(np.mean(_difference(appearance, patch, mask)))
         scored.append((error, box))
 
     for region in screen.regions:
@@ -441,18 +458,18 @@ def _matching_boxes(screen: ScreenSnapshot, appearance: bytes, expected: Box, *,
             break
         if (retained and _overlap(box, expected) < MIN_RETAINED_OVERLAP):
             continue
-        if _matches(appearance, _patch(picture, box)) and not any(_overlap(box, present) >= 0.35 for present in matches):
+        if _matches(appearance, _patch(picture, box), mask) and not any(_overlap(box, present) >= 0.35 for present in matches):
             matches.append(box)
     return tuple(matches)
 
 
 def _receipt(intent: TransferIntent, after: ScreenSnapshot, state: PredicateState, reason: str,
-             *, effect: str = "unknown", box: Box | None = None, appearance: bytes = b"") -> TransferReceipt:
+             *, effect: str = "unknown", box: Box | None = None, appearance: bytes = b"", mask: bytes = b"") -> TransferReceipt:
     return TransferReceipt(intent.attempt_id, intent.move, intent.source, intent.destination,
                            intent.source_at, intent.destination_at, state, effect, box, reason,
                            intent.before.epoch, after.epoch, intent.before.surface, intent.before.bounds,
                            after.capture_at, intent.before.work_epoch, appearance,
-                           (after.picture.width, after.picture.height) if after.picture is not None else (0, 0))
+                           (after.picture.width, after.picture.height) if after.picture is not None else (0, 0), mask)
 
 
 def verify_transfer(intent: TransferIntent, after: Mapping[str, Any] | ScreenSnapshot) -> TransferReceipt:
@@ -482,7 +499,8 @@ def verify_transfer(intent: TransferIntent, after: Mapping[str, Any] | ScreenSna
     if source is None:
         return _receipt(intent, after, unknown, reason)
     appearance = _patch(before.picture, source.bbox)
-    if not _distinctive(appearance):
+    mask = foreground_mask(appearance, PATCH_EDGE)
+    if not _distinctive(appearance, mask):
         return _receipt(intent, after, unknown, "the source appearance is too small or visually ambiguous")
     dx = intent.destination_at[0] - intent.source_at[0]
     dy = intent.destination_at[1] - intent.source_at[1]
@@ -491,7 +509,7 @@ def verify_transfer(intent: TransferIntent, after: Mapping[str, Any] | ScreenSna
         return _receipt(intent, after, unknown, "the expected destination extent is outside the measured picture")
     if _overlap(source.bbox, expected) >= 0.35:
         return _receipt(intent, after, unknown, "source and destination extents overlap too much to measure transfer")
-    matches = _matching_boxes(after, appearance, expected)
+    matches = _matching_boxes(after, appearance, expected, mask=mask)
     if len(matches) > 1:
         return _receipt(intent, after, unknown, "multiple source-like occupants occur near the destination")
     if not matches:
@@ -499,26 +517,27 @@ def verify_transfer(intent: TransferIntent, after: Mapping[str, Any] | ScreenSna
     occupied = matches[0]
     old_target = _patch(before.picture, occupied)
     new_target = _patch(after.picture, occupied)
-    if _matches(appearance, old_target):
+    if _matches(appearance, old_target, mask):
         return _receipt(intent, after, no, "this source-like occupant was already at the destination", effect="none")
-    if not _changed(old_target, new_target):
+    if not _changed(old_target, new_target, mask):
         return _receipt(intent, after, unknown, "the destination patch has no distinct new occupancy")
     source_now = _patch(after.picture, source.bbox)
-    if _matches(appearance, source_now):
+    if _matches(appearance, source_now, mask):
         effect = "copied"
-    elif _changed(appearance, source_now):
+    elif _changed(appearance, source_now, mask):
         effect = "moved"
     else:
         return _receipt(intent, after, unknown, "the original source cannot be matched or measured as displaced")
     return _receipt(intent, after, PredicateState.SATISFIED,
                     "a unique source appearance newly occupies the delivered destination",
-                    effect=effect, box=occupied, appearance=new_target)
+                    effect=effect, box=occupied, appearance=new_target, mask=mask)
 
 
 def revalidate_placement(receipt: TransferReceipt, current: Mapping[str, Any] | ScreenSnapshot) -> PredicateState:
     """Check a retained placement against independent current pixels at its measured place."""
     current = freeze_screen(current)
     if (receipt.state != PredicateState.SATISFIED or receipt.effect_bbox is None or not receipt.appearance
+            or receipt.appearance_mask and not valid_mask(receipt.appearance_mask, PATCH_EDGE)
             or current.picture is None or not current.settled or current.occluded
             or current.surface != receipt.surface or current.bounds != receipt.bounds
             or current.work_epoch != receipt.work_epoch or current.capture_at is None
@@ -526,13 +545,13 @@ def revalidate_placement(receipt: TransferReceipt, current: Mapping[str, Any] | 
         return PredicateState.UNKNOWN
     if (current.picture.width, current.picture.height) != receipt.pixel_size:
         return PredicateState.UNKNOWN
-    matches = _matching_boxes(current, receipt.appearance, receipt.effect_bbox, retained=True)
+    matches = _matching_boxes(current, receipt.appearance, receipt.effect_bbox, retained=True, mask=receipt.appearance_mask)
     if len(matches) == 1:
         return PredicateState.SATISFIED
     if len(matches) > 1:
         return PredicateState.UNKNOWN
     now = _patch(current.picture, receipt.effect_bbox)
-    return PredicateState.UNSATISFIED if _changed(receipt.appearance, now) else PredicateState.UNKNOWN
+    return PredicateState.UNSATISFIED if _changed(receipt.appearance, now, receipt.appearance_mask) else PredicateState.UNKNOWN
 
 
 @invariant("perception.transfer_requires_measured_occupancy", scope="perception",

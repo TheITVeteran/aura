@@ -28,6 +28,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     )
     from core.perception.drawn_objects import _object_candidates_invariant
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
+    from core.perception.foreground_appearance import _foreground_mask_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
@@ -54,6 +55,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("foreground_masks_require_measured_support", "core/perception/foreground_appearance.py",
+         "tests/test_transfer_identity_survives_background_changes.py", lambda: _foreground_mask_invariant() == (),
+         "Appearance masks exclude only a measured flat exterior while retaining bounded foreground support and enclosed highlights."),
         ("creation_completion_requires_current_work", "core/skills/screen_step_evidence.py",
          "tests/test_creation_completion_needs_current_work.py", lambda: _creation_completion_invariant() == (),
          "Construction-based making completion requires independently reobserved placed work; navigation and historical activity cannot establish it."),
