@@ -223,7 +223,7 @@ def test_once_is_a_sign_and_twice_is_shown():
     assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == []
     who.met(7, "gain")
     who.met(7, "gain")
-    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: getting it counted."]
+    assert who.to_say([coin, spike], lambda thing: f"kind {thing.kind}") == ["The kind 7 is worth getting: it adds to my count."]
 
 
 def test_what_a_kind_did_is_weighed_against_what_it_did_not():

@@ -343,7 +343,7 @@ class WhoIsWho:
             return Designation(FRIENDLY, True, "losing it cost me")
         if kept.gains and kept.gains * NOTHINGS_TO_A_GAIN >= kept.nothings:
             shown = kept.gains >= SHOWN_AFTER and kept.gains >= 2 * kept.nothings
-            return Designation(PRIZE, shown, "getting it counted" if shown else "getting it seemed to count")
+            return Designation(PRIZE, shown, "it adds to my count" if shown else "it seems to add to my count")
         if kept.took >= TAKEN_FOR_SURE:
             return Designation(RIVAL, True, "it takes what I'm after, and meeting it costs me nothing")
         if kept.stopped and not kept.losses:

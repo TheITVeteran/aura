@@ -316,6 +316,18 @@ def seen_in_play(run: Any, moves: Any, hers: Any, meeting: Any, picture: Any, at
         _make_of(run, seeing, guide, moves, hers, meeting, kind, what, known, cast, at, tell)
 
 
+#: Words that name only a shape, not what a thing is.
+_ONLY_A_SHAPE = frozenset({"square", "squares", "circle", "circles", "rectangle", "rectangles", "triangle", "triangles",
+                           "oval", "shape", "shapes", "object", "objects", "thing", "things", "blob", "dot", "dots",
+                           "line", "lines", "bar", "bars", "block", "blocks", "tile", "tiles"})
+
+
+def names_only_a_shape(what: str) -> bool:
+    """Whether a name says only what shape a thing is ("a square", "red bars"), not what it is."""
+    words = str(what or "").lower().split()
+    return bool(words) and words[-1] in _ONLY_A_SHAPE
+
+
 def _make_of(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any, hers: Any, meeting: Any, kind: int, what: str,
              known: Any, cast: dict[str, str], at: float, tell: Callable[[str, str], Any]) -> None:
     """What a kind turned out to be, made something of: a stance until meeting it says, and a thought said once."""
@@ -337,6 +349,10 @@ def _make_of(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any, hers: Any, 
     if _not_moved_about(guide) and bears in _TO_A_BODY:
         return
     if not any(t.kind == kind for t in moves.things.values()):
+        return
+    # A shape and nothing more ("a square", "a red bar") names nothing a watcher would want remarked on: offline
+    # 2026-10-12 "That looks like a square. Maybe it's a platform I can walk on or a tile to avoid" in fourteen games.
+    if names_only_a_shape(what):
         return
     thought = (cast.get("what") and f"{what}: {cast['what']}") or (known.thought if known else "") or _THOUGHT_OF[bears]
     line = f"That looks like {_a(what)}." + (f" {thought[:1].upper()}{thought[1:].rstrip('.')}." if thought else "")

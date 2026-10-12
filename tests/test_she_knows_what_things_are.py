@@ -366,3 +366,12 @@ def test_a_name_her_eyes_give_is_taken_only_where_the_place_says_it():
     assert guide.has_said("Big Shot") and guide.has_said("Bloo")
     assert not guide.has_said("Big Shot Checkers") and not guide.has_said("Littlest Pet Shop")
     assert not guide.has_said("")
+
+
+def test_a_name_that_says_only_a_shape_is_not_remarked_on():
+    """Offline 2026-10-12 "That looks like a square. Maybe it's a platform I can walk on or a tile to avoid" was said in
+    fourteen games."""
+    from core.agency.naming_what_she_sees import names_only_a_shape
+
+    assert names_only_a_shape("square") and names_only_a_shape("red bars") and names_only_a_shape("Thing")
+    assert not names_only_a_shape("zombie") and not names_only_a_shape("treasure chest") and not names_only_a_shape("")
