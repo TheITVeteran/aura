@@ -7,8 +7,8 @@ left, as many of them as there is supply for. The bar is set from the chances se
 the time left (as often as they have come), the share there is supply for, counting what refills in that time; the
 bar is the value only that share of chances have reached. More supply than chances, and every chance is taken.
 
-Which key spends which counter is found the way a gain is put to a meeting: the counter falls just after the key is
-pressed, press after press. Nothing here knows a game, a key or a supply.
+Which key spends which counter is found from the presses: the counter falls just after most of them, press after
+press. Nothing here knows a game, a key or a supply.
 """
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ __all__ = ["SpendingASupply"]
 #: How soon after a press a counter must fall to have been spent by it, and how many such falls make it the key's.
 SPENT_WITHIN_S = 0.4
 SPENT_TIMES = 3
+
+#: What share of a key's presses its counter must fall after, to be the counter it spends.
+MOST_PRESSES = 0.6
 
 #: The time a supply is to last where there is no clock: a run's length, as believed.
 LAST_S = 60.0
@@ -56,11 +59,17 @@ class SpendingASupply:
             self.last[label] = float(value)
 
     def spends(self, key: str) -> str | None:
-        """The counter this key spends: the one that has fallen just after it was pressed, time after time."""
+        """The counter this key spends: the one that falls just after most of its presses, time after time. Most of the
+        presses, not most of the falls: a key pressed several times a second has a press just before every fall of
+        anything, and her lives were taken to be spent by her fire key, and her shots rationed as if each cost a life
+        (offline 2026-10-12, the charge world)."""
+        presses = list(self.presses.get(key, ()))
+        if len(presses) < SPENT_TIMES:
+            return None
         found = None
         for label, falls in self.falls.items():
-            times = sum(1 for press in self.presses.get(key, ()) if any(0.0 <= fall - press <= SPENT_WITHIN_S for fall in falls))
-            if times >= SPENT_TIMES and (found is None or times > found[1]):
+            times = sum(1 for press in presses if any(0.0 <= fall - press <= SPENT_WITHIN_S for fall in falls))
+            if times >= SPENT_TIMES and times >= MOST_PRESSES * len(presses) and (found is None or times > found[1]):
                 found = (label, times)
         return found[0] if found else None
 
