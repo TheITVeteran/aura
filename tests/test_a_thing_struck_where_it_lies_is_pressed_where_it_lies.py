@@ -325,3 +325,30 @@ def test_things_let_go_from_a_place_that_stays_put_are_sent_from_it_again_not_pr
     assert field.strokes >= 4, (field.strokes, field.pressed)
     at_rest = [press for press in field.pressed if any(math.dist(press, lying) < 0.025 for lying in field.lying)]
     assert len(at_rest) <= 1, at_rest
+
+
+class _Repainted(_Field):
+    """The next field, its ball painted otherwise than the last field's."""
+
+    async def look(self):
+        picture, now = await super().look()
+        if self.ball is not None:
+            _disc(picture, tuple(self.ball), 5, (40, 200, 60))
+        return picture, now
+
+
+def test_what_she_sends_not_in_sight_screen_after_screen_is_found_afresh():
+    """Offline 2026-10-12 a golf ball known by its paint was not found on the next hole, and shots were begun and given
+    up forty times without one being taken."""
+    keep: dict = {}
+    first = _Field()
+    asyncio.run(play_by_shots(first.look, first, seconds=40.0, keep=keep, read_words=first.words,
+                              aim_at=lambda _picture, _hers: first.mouth, ways=("pull",), her_name="Kes"))
+    assert first.holed == 1 and keep.get("lies_where_struck")
+    second = _Repainted(name="")
+    for _ in range(6):
+        asyncio.run(play_by_shots(second.look, second, seconds=8.0, keep=keep, read_words=second.words,
+                                  aim_at=lambda _picture, _hers: second.mouth, ways=("pull",)))
+        if second.strokes:
+            break
+    assert second.strokes >= 1, keep.get("out_of_sight")

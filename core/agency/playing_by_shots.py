@@ -311,6 +311,9 @@ MARKED_BY = 0.5
 #: How many shots in a row may send nothing before what sends is looked for afresh.
 MISSES_BEFORE_LOOKING_AGAIN = 3
 
+#: How many screens of play in a row may show nothing of what she sends before it is found afresh.
+OUT_OF_SIGHT_AT_MOST = 3
+
 #: How long after a thing of hers went from sight it, or another, is waited for before the place is left to say what
 #: comes next. A thing taken up and carried off is set down again: offline 2026-10-12 a saucer over a golf course
 #: lifted her ball, and three seconds on she was pressing the veins of an eyeball that were its colour.
@@ -644,9 +647,21 @@ async def play_by_shots(
         hers = _where_hers_is(things, keep, sent_nothing)
         aim = aim_at(seen[0], hers) if aim_at is not None else None
         if hers is None and keep.get("lies_where_struck") and keep.get("sends_what") is not None:
-            # She knows what she sends here, and it is not on this screen: nothing else is pressed to find out.
-            ended = "nothing of hers is in sight"
-            break
+            # She knows what she sends here, and it is not on this screen: nothing else is pressed to find out. But not
+            # look after look: what she sends may look otherwise here (another hole's light, another ball), and after
+            # a few screens of play without it, it is found afresh. Offline 2026-10-12 a golf ball known by its paint
+            # was not found on the next hole, and shots were begun and given up forty times without one being taken.
+            keep["out_of_sight"] = int(keep.get("out_of_sight") or 0) + 1
+            if keep["out_of_sight"] < OUT_OF_SIGHT_AT_MOST:
+                ended = "nothing of hers is in sight"
+                break
+            keep["out_of_sight"] = 0
+            for known in ("sends_what", "sends_wide", "lies_where_struck", "sends_from", "rests_at", "first_sent_from"):
+                keep.pop(known, None)
+            to_try = None
+            continue
+        if hers is not None:
+            keep["out_of_sight"] = 0
         if hers is None:
             if to_try is None:
                 places = _places_to_send_from(seen[0], keep, things=things, marker=marker, not_from=sent_nothing,
