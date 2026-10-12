@@ -48,10 +48,8 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.foreground_appearance import _foreground_mask_invariant
     from core.perception.observed_transfer import _transfer_receipts_require_evidence
     from core.perception.parts_when_things_touch import _joined_parts_invariant
-    from core.perception.points_that_keep_their_motion import _point_identity_invariant
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
-    from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.visual_anchor import _remembered_labels_invariant
     from core.perception.visual_probe_cache import _visual_probe_miss_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
@@ -78,12 +76,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
-        ("visible_corner_keeps_its_whole_connected_patch", "core/perception/the_whole_patch_around_a_visible_corner.py",
-         "tests/test_a_visible_corner_keeps_the_whole_patch.py", lambda: _whole_patch_invariant() == (),
-         "A foreground corner can recover its bounded connected colour patch when a measured surrounding floor distinguishes it."),
-        ("point_identity_needs_current_pixels", "core/perception/points_that_keep_their_motion.py",
-         "tests/test_points_keep_their_observed_motion.py", lambda: _point_identity_invariant() == (),
-         "Bounded point tracks retain measured identities across consecutive frames and retire them on occlusion, gaps or resets."),
+        *_visual_motion_claims(),
         ("pixel_control_requires_resolved_displacement", "core/agency/controls_measured_on_one_thing.py",
          "tests/test_which_thing_answers_to_her.py", lambda: _resolved_motion_invariant() == (),
          "Pixel-derived control evidence requires observed displacement beyond the tracker resolution before assigning a new body identity."),
@@ -399,3 +392,22 @@ def install_realtime_control_claims(suite: Any) -> None:
         test=name, owner=owner, asserted_in=owner, evidence=Evidence.MEASURED_SYNTHETIC,
         evidence_note="Lane ownership measured; autonomous repair and use require separate live evidence.",
     ))
+
+
+def _visual_motion_claims() -> tuple:
+    """Measured foreground and point continuity claims."""
+    from core.perception.points_that_keep_their_motion import _point_identity_invariant
+    from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
+    from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
+
+    return (
+        ("point_meaning_requires_current_owned_support", "core/perception/what_the_points_on_a_thing_say.py",
+         "tests/test_the_points_on_a_thing_say_how_soon_it_arrives.py", lambda: _point_meaning_invariant() == (),
+         "Point-derived approach and identity require current owned pixels; absent support and ambiguous or expired owners remain unknown."),
+        ("visible_corner_keeps_its_whole_connected_patch", "core/perception/the_whole_patch_around_a_visible_corner.py",
+         "tests/test_a_visible_corner_keeps_the_whole_patch.py", lambda: _whole_patch_invariant() == (),
+         "A foreground corner can recover its bounded connected colour patch when a measured surrounding floor distinguishes it."),
+        ("point_identity_needs_current_pixels", "core/perception/points_that_keep_their_motion.py",
+         "tests/test_points_keep_their_observed_motion.py", lambda: _point_identity_invariant() == (),
+         "Bounded point tracks retain measured identities across consecutive frames and retire them on occlusion, gaps or resets."),
+    )

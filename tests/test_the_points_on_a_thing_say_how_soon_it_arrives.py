@@ -29,7 +29,8 @@ def _tile(x: float, y: float, half: float) -> np.ndarray:
 
 
 def _thing(x: float, y: float, half: float, born: float, seen: float) -> SimpleNamespace:
-    return SimpleNamespace(born=born, seen=seen, box=lambda: (x - half - 1, y - half - 1, x + half + 1, y + half + 1))
+    return SimpleNamespace(born=born, seen=seen, box=lambda: (x - half - 1, y - half - 1, x + half + 1, y + half + 1),
+                           support=np.ones((int(np.ceil(2 * half + 2)), int(np.ceil(2 * half + 2))), bool))
 
 
 def _watched(frames):
@@ -77,3 +78,53 @@ def test_what_comes_at_her_is_judged_by_its_points_where_they_were_followed():
     assert comes_at_her([SimpleNamespace(closing_s=0.4, sizes=[10.0] * 4)])
     assert not comes_at_her([SimpleNamespace(closing_s=float("inf"), sizes=growing_outline)])   # its outline only swells
     assert comes_at_her([SimpleNamespace(closing_s=None, sizes=growing_outline)])               # no points: by outline
+
+
+def _expanding_points(at):
+    from core.perception.points_that_keep_their_motion import SeenPoint
+
+    return [SeenPoint(i, 10 + x * (1 + at), 10 + y * (1 + at),
+                      10 + x * (.9 + at), 10 + y * (.9 + at), 0., round(at - .1, 6), at, 0., 4)
+            for i, (x, y) in enumerate(((-3, -3), (3, -3), (-3, 3), (3, 3)))]
+
+
+def test_points_missing_now_cannot_keep_an_old_closing_estimate():
+    said = WhatThePointsSay()
+    for at in (.1, .2, .3):
+        said.see(_expanding_points(at), {1: _thing(10, 10, 9, 0., at)}, at)
+    assert said.closing_s(1) is not None
+    said.see([], {1: _thing(10, 10, 9, 0., .4)}, .4)
+    assert said.closing_s(1) is None
+
+
+def test_a_predicted_box_cannot_remeasure_points_or_renew_its_appearance():
+    said = WhatThePointsSay()
+    for at in (.1, .2, .3):
+        said.see(_expanding_points(at), {1: _thing(10, 10, 9, 0., at)}, at)
+    said.see(_expanding_points(.4), {1: _thing(10, 10, 9, 0., .3)}, .4)
+    assert said.closing_s(1) is None and said.carried[1][2] == .3
+
+
+def test_background_points_do_not_measure_the_object_or_link_its_identity():
+    said = WhatThePointsSay()
+    for at in (.1, .2, .3):
+        body = _thing(10, 10, 9, 0., at)
+        body.support[:] = False
+        said.see(_expanding_points(at), {1: body}, at)
+    assert said.closing_s(1) is None and not said.carried[1][0]
+
+
+def test_old_or_competing_point_owners_cannot_name_a_new_object():
+    said = WhatThePointsSay()
+    names = frozenset(range(4))
+    said.carried[1] = (names, 0., 0.)
+    assert said._the_one_it_carries(2, names, {}, 1.) is None
+    said.carried[1] = (names, 0., .9)
+    said.carried[2] = (names, .2, .9)
+    assert said._the_one_it_carries(3, names, {}, 1.) is None
+
+
+def test_the_owned_current_point_invariant():
+    from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
+
+    assert _point_meaning_invariant() == ()
