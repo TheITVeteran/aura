@@ -223,6 +223,9 @@ async def _searched_the_places(reflexes: Any, now: float) -> bool:
                                    held=search["held"], paired=search["paired"])
     if done.get("ended") == "the screen turned over":
         search["held"], search["paired"] = {}, set()
+    if done.get("ended") == "the view moved":
+        # The places are found again where the view now is; what was behind each goes with it.
+        reflexes.answer_the_pointer = []
     reflexes.played_at = time.monotonic()
     return bool(done.get("opened") or done.get("pairs"))
 

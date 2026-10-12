@@ -50,8 +50,11 @@ def test_each_place_is_opened_once_in_reading_order_and_what_each_held_is_kept(m
     held: dict = {}
     done = asyncio.run(search_the_places(boxes.look, boxes, boxes.places, seconds=30, held=held))
     assert done["opened"] == 6 and len(held) == 6
-    assert boxes.clicks[:6] == [(round(x, 2), round(y, 2)) for x, y in boxes.places]
-    assert done["pairs"] == 2, "the two reds and the two greens are opened together"
+    at = [(round(x, 2), round(y, 2)) for x, y in boxes.places]
+    # Each in reading order, and where what one held was behind another already opened, that other next, as a person
+    # playing pairs does: the second red sends her back to the first, the second green to the first green.
+    assert boxes.clicks == [at[0], at[1], at[2], at[3], at[0], at[4], at[5], at[2]]
+    assert done["pairs"] == 2
 
 
 def test_what_two_places_held_alike_is_a_pair_and_what_looks_closed_is_nothing_found():
@@ -62,3 +65,20 @@ def test_what_two_places_held_alike_is_a_pair_and_what_looks_closed_is_nothing_f
     pairs = alike_pairs(held, closed=signature(_Boxes().picture(), boxes.places[0]))
     assert {frozenset(pair) for pair in pairs} == {frozenset((boxes.places[0], boxes.places[3])),
                                                    frozenset((boxes.places[2], boxes.places[5]))}
+
+
+def test_a_view_that_moves_over_a_building_carries_what_was_found_with_it():
+    """Offline 2026-10-11 a building of doors scrolled between floors as she opened them, and all she had found behind
+    them was forgotten each time."""
+    from core.agency.searching_among_places import _moved, how_far_the_view_moved
+
+    rows = np.random.default_rng(3).integers(0, 255, size=(300, 1, 3)).astype(np.uint8)
+    world = np.repeat(rows, 200, axis=1)
+    before, after = world[50:250], world[80:280]          # the view moved down the world: things moved up the picture
+    down = how_far_the_view_moved(before, after)
+    assert down == pytest.approx(-30 / 200, abs=0.02)
+    assert how_far_the_view_moved(before, before) is None
+    held = {(0.5, 0.5): np.ones(27), (0.5, 0.05): np.ones(27)}
+    paired: set = set()
+    _moved(held, paired, down)
+    assert set(held) == {(0.5, round(0.5 + down, 4))}, "what went out of the view is forgotten, the rest moves with it"
