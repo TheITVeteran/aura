@@ -42,6 +42,15 @@ FACING = 0.8
 #: The fewest times a sign must have come before a loss to be a tell.
 FEWEST = 2
 
+#: How much farther from her than the nearest thing that changed before a loss a thing may have been, and its change
+#: still be held to have come before it. A person who is hurt looks to what was beside them, not to everything on the
+#: screen that moved: offline 2026-10-12 eight tells were learned in five seconds from the coins, bars and dogs all over
+#: a busy picture, every one of them having changed somewhere before the same few losses.
+NEARER_BY = 1.5
+#: How long after one tell is said another may be: a person learning a game says what they have found as they find it,
+#: not eight of them in a breath.
+SAID_APART_S = 8.0
+
 #: How many changes may stand out before losses at once and each still be taken at its first few: more than this, and
 #: each needs more before it is read as a tell. Every change in a crowded picture comes before a loss sometime; offline
 #: 2026-10-10 five were learned in one second from the same few losses ("when the cyan eyes stop", "when the brown
@@ -66,8 +75,10 @@ class WarningSigns:
     looks: dict[int, deque] = field(default_factory=dict)
     #: (kind, sign) -> [times followed by a loss, times not].
     counts: dict[tuple[int, str], list[int]] = field(default_factory=lambda: defaultdict(lambda: [0, 0]))
-    #: Signs shown and not yet settled: (kind, sign, at).
-    pending: list[tuple[int, str, float]] = field(default_factory=list)
+    #: Signs shown and not yet settled: (kind, sign, at, how far from her the thing was).
+    pending: list[tuple[int, str, float, float]] = field(default_factory=list)
+    #: Every sign shown lately, as (at, how far from her): what was nearest before each loss.
+    shown_lately: deque = field(default_factory=lambda: deque(maxlen=2000))
     #: thing number -> when it last showed a tell.
     warned: dict[int, float] = field(default_factory=dict)
     losses: list[float] = field(default_factory=list)
@@ -75,6 +86,7 @@ class WarningSigns:
     showing_now: dict[int, set[str]] = field(default_factory=dict)
     began: float | None = None
     said: set[tuple[int, str]] = field(default_factory=set)
+    said_at: float | None = None
 
     def saw(self, things: dict[int, Any], mine: Any, at: float, verdicts: list[dict[str, Any]] = ()) -> list[tuple[int, str]]:
         """One picture: each thing's changes noted, losses taken from the verdicts, and signs settled. The tells shown."""
@@ -86,9 +98,12 @@ class WarningSigns:
                 continue
             changes = set(self._changes(number, thing, mine, at))
             begun, self.showing_now[number] = changes - self.showing_now.get(number, set()), changes
+            apart = (math.hypot(float(mine.x) - float(thing.x), float(mine.y) - float(thing.y)) if mine is not None
+                     else math.inf)
             for sign in sorted(begun):
                 kind = int(getattr(thing, "kind", -1))
-                self.pending.append((kind, sign, at))
+                self.pending.append((kind, sign, at, apart))
+                self.shown_lately.append((at, apart))
                 if self.is_a_tell(kind, sign):
                     self.warned[number] = at
                     shown.append((kind, sign))
@@ -127,14 +142,22 @@ class WarningSigns:
         return out
 
     def _settle(self, at: float) -> None:
+        """Each sign shown long enough ago is held to have come before a loss or not. Before a loss, only the changes in
+        the things nearest her count as coming before it: the nearer thing is the likelier cause, and a change across
+        the picture at the same moment is explained by it, not added to it."""
         waiting = []
-        for kind, sign, when in self.pending:
+        for kind, sign, when, apart in self.pending:
             if at - when < WARNS_WITHIN_S:
-                waiting.append((kind, sign, when))
+                waiting.append((kind, sign, when, apart))
                 continue
-            followed = any(when < lost <= when + WARNS_WITHIN_S for lost in self.losses)
+            followed = any(when < lost <= when + WARNS_WITHIN_S and apart <= NEARER_BY * self._nearest_before(lost)
+                           for lost in self.losses)
             self.counts[(kind, sign)][0 if followed else 1] += 1
         self.pending = waiting[-400:]
+
+    def _nearest_before(self, lost: float) -> float:
+        """How near her the nearest thing was that changed in the time before a loss within which a sign warns of it."""
+        return min((apart for when, apart in self.shown_lately if lost - WARNS_WITHIN_S <= when < lost), default=math.inf)
 
     def _by_chance(self) -> float:
         """How often a loss follows any moment within the time a sign warns: the share of play such stretches cover."""
@@ -171,12 +194,15 @@ class WarningSigns:
         closing = (vx * dx + vy * dy) / apart if apart > 0 else 0.0
         return closing > 0 and apart / closing < within_s
 
-    def news(self, name_of: Any) -> list[str]:
-        """What she has newly learned to read, said once each and one at a time, the surest first: "When the red ones
-        stop, they hurt: I'll get clear"."""
+    def news(self, name_of: Any, at: float | None = None) -> list[str]:
+        """What she has newly learned to read, said once each and one at a time, the surest first, some seconds apart:
+        "When the red ones stop, they hurt: I'll get clear"."""
+        if at is not None and self.said_at is not None and at - self.said_at < SAID_APART_S:
+            return []
         new = [(kind, sign) for (kind, sign) in list(self.counts) if (kind, sign) not in self.said and self.is_a_tell(kind, sign)]
         if not new:
             return []
+        self.said_at = at
         kind, sign = max(new, key=lambda pair: (self.counts[pair][0] / sum(self.counts[pair]), self.counts[pair][0]))
         self.said.add((kind, sign))
         return [f"When {name_of(kind)} {_as_said(sign)}, harm follows: I'll get clear when I see it."]
@@ -198,7 +224,7 @@ def read_the_signs(signs: WarningSigns | None, moves: Any, mine: Any, verdicts: 
         name = named_for_its_part(moves, kind, sample, "avoid")
         return name if name[:1].isupper() else f"the {plural(name)}"
 
-    for line in signs.news(name_of):
+    for line in signs.news(name_of, at):
         say_once(line)
 
 
