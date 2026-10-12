@@ -32,6 +32,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.relations_between_things import _relations_require_unique_finite_entities
     from core.perception.the_drawing_as_objects import _scene_requires_a_matching_complete_frame
     from core.perception.visual_anchor import _remembered_labels_invariant
+    from core.perception.visual_probe_cache import _visual_probe_miss_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
     from core.perception.where_the_words_point import _named_places_invariant
     from core.runtime.action_executor import _terminal_effect_flags_invariant
@@ -52,6 +53,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("visual_probe_misses_require_current_pixels", "core/perception/visual_probe_cache.py",
+         "tests/test_visual_probe_misses_require_current_pixels.py", lambda: _visual_probe_miss_invariant() == (),
+         "A failed visual probe suppresses repeated work only for matching measured pixels and interpretation inputs within its lifetime."),
         ("stalled_making_is_not_completion", "core/skills/sovereign_browser_drawing.py",
          "tests/test_making_timeout_does_not_make_an_artifact.py", lambda: _stalled_making_invariant() == (),
          "An unchanged making task's timeout ends its attempt without establishing a produced artifact."),

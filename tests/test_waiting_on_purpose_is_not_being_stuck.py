@@ -68,10 +68,12 @@ def test_what_an_end_announces_is_read_and_a_way_on_from_it_is_pressed(label, re
     assert (how_much_it_leads_on(label) < 0.7) is read
 
 
-def test_a_screen_found_no_well_is_not_watched_again_while_it_stays_the_same_screen(monkeypatch):
+def test_a_screen_found_no_well_is_not_watched_again_with_the_same_pixels_before_expiry(monkeypatch):
     """LIVE-like 2026-10-11 a scrapbook's page was watched for eight seconds, for a well, before every click on it."""
     import asyncio
     from types import SimpleNamespace
+
+    import numpy as np
 
     import core.agency.playing_a_well as wells
     import core.skills.screen_pursuit_as_it_happens as pursuit
@@ -82,15 +84,17 @@ def test_a_screen_found_no_well_is_not_watched_again_while_it_stays_the_same_scr
         watched.append(1)
         return None
 
+    async def look():
+        return np.zeros((10, 10, 3), dtype=np.uint8), 100.0
+
     monkeypatch.setattr(wells, "a_well_with_a_piece_coming_down", no_well)
-    reflexes = SimpleNamespace(no_well_here=False, keep={}, look=None, said_now="SCOOBY-DOO PUBLIC LIBRARY NEW PHOTO",
+    reflexes = SimpleNamespace(no_well_here=False, keep={}, look=look, words=[], said_now="A LIBRARY NEW PHOTO",
                                waited_at_a_well=0.0)
     assert not asyncio.run(pursuit._played_a_well(reflexes, 100.0))
-    reflexes.said_now = "SCOOBY-D0O PUBLIC LIBRARY NEW PH0TO"                    # read a little differently
-    assert not asyncio.run(pursuit._played_a_well(reflexes, 200.0))
+    reflexes.said_now = "A LIBRARY NEW PH0TO"                    # read a little differently; pixels unchanged
+    assert not asyncio.run(pursuit._played_a_well(reflexes, 104.0))
     assert len(watched) == 1
-    reflexes.said_now = "LEVEL 1 SCORE 0"                                         # another screen
-    asyncio.run(pursuit._played_a_well(reflexes, 300.0))
+    asyncio.run(pursuit._played_a_well(reflexes, 113.0))                            # the rejection has expired
     assert len(watched) == 2
 
 

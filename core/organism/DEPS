@@ -27,6 +27,7 @@ include_rules = [
     "+core.perception.drawn_objects",
     "+core.perception.watching_it_happen",
     "+core.perception.visual_anchor",
+    "+core.perception.visual_probe_cache", # Synthetic validation of scoped visual rejections.
     "+core.perception.where_the_words_point",
     # The pure offline readiness canary checks eligibility without dispatching input.
     "+core.skills.screen_step_evidence",

@@ -920,11 +920,9 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     place has said (core/agency/playing_a_board.py); whether it was. Looked for every few seconds, not every look."""
     from core.agency.playing_a_board import a_board_game, play_a_board
     from core.perception.a_board_seen import a_board_in
+    from core.perception.visual_probe_cache import VisualProbeMiss, VisualProbeWitness
 
     if now - float(reflexes.keep.get("board_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
-        return False
-    # A screen looked over and found no board is not looked over again while it stays the same screen.
-    if _the_same_screen(reflexes.keep.get("no_board_on"), getattr(reflexes, "said_now", None)):
         return False
     reflexes.keep["board_looked_for_at"] = now
     seen = await reflexes.look()
@@ -934,10 +932,17 @@ async def _played_a_board(reflexes: PlayingAsItHappens, now: float) -> bool:
     heard += [w for w in reflexes.words if w not in heard]
     del heard[:-WORDS_KEPT]
     words = " ".join([*heard, str(reflexes.keep.get("counsel") or "")])
+    context = (id(getattr(reflexes, "page", None)), tuple(getattr(reflexes, "band", ())),
+               reflexes.keep.get("hers_in", ""))
+    witness = VisualProbeWitness.measure(seen[0], context=context, inputs=words) if seen is not None else None
+    rejected = reflexes.keep.get("no_board_on")
+    if isinstance(rejected, VisualProbeMiss) and rejected.applies(witness, now=now):
+        return False
     board = a_board_in(seen[0]) if seen is not None else None
     if board is None or not a_board_game(board, words):
-        reflexes.keep["no_board_on"] = getattr(reflexes, "said_now", None)
+        reflexes.keep["no_board_on"] = VisualProbeMiss(witness, now) if witness is not None else None
         return False
+    reflexes.keep.pop("no_board_on", None)
     logger.info("a board of two sides in turns (%s): playing it by search", a_board_game(board, words))
     stretch = await play_a_board(reflexes.look, reflexes, words, seconds=max(1.0, min(STRETCH_S, reflexes.ends_at - now)),
                                  say=_said_while_playing)
@@ -982,20 +987,33 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
         a_well_with_a_piece_coming_down,
         play_a_well,
     )
+    from core.perception.visual_probe_cache import VisualProbeMiss, VisualProbeWitness
 
     if reflexes.no_well_here or int(reflexes.keep.get("no_well_found", 0)) >= NO_WELL_AFTER \
             or now - float(reflexes.keep.get("well_looked_for_at", -1e9)) < BOARD_LOOKED_FOR_EVERY_S:
         return False
-    # A screen watched and found no well with a piece coming down it is not watched again while it stays the same
-    # screen: LIVE-like 2026-10-11 a scrapbook's page, its ground like a well's, was watched for eight seconds before
-    # every one of her clicks on it.
-    if _the_same_screen(reflexes.keep.get("no_well_on"), getattr(reflexes, "said_now", None)) \
-            and not reflexes.keep.get("well_keys"):
-        return False
     reflexes.keep["well_looked_for_at"] = now
+    first = await reflexes.look()
+    context = (id(getattr(reflexes, "page", None)), tuple(getattr(reflexes, "band", ())),
+               reflexes.keep.get("hers_in", ""))
+    inputs = " ".join([*getattr(reflexes, "words", []), str(reflexes.keep.get("counsel") or "")])
+    witness = VisualProbeWitness.measure(first[0], context=context, inputs=inputs) if first is not None else None
+    rejected = reflexes.keep.get("no_well_on")
+    if isinstance(rejected, VisualProbeMiss) and rejected.applies(witness, now=now) and not reflexes.keep.get("well_keys"):
+        return False
+    last = first
+
+    async def watching():
+        nonlocal first, last
+        if first is not None:
+            last, first = first, None
+        else:
+            last = await reflexes.look()
+        return last
+
     empty: list[Any] = []
     try:
-        well = await a_well_with_a_piece_coming_down(reflexes.look, reflexes.keep.get("well_seen"), empty)
+        well = await a_well_with_a_piece_coming_down(watching, reflexes.keep.get("well_seen"), empty)
     except _A_FAULT_OF_HERS as why:
         # Looking for a well is never what ends a game: LIVE 2026-10-11 a fault in it ended every game she opened.
         from core.runtime.errors import record_degradation
@@ -1010,8 +1028,10 @@ async def _played_a_well(reflexes: PlayingAsItHappens, now: float) -> bool:
             reflexes.waited_at_a_well += waited
             reflexes.keep["well_looked_for_at"] = -1e9
             return True
-        reflexes.keep["no_well_on"] = getattr(reflexes, "said_now", None)
+        witness = VisualProbeWitness.measure(last[0], context=context, inputs=inputs) if last is not None else None
+        reflexes.keep["no_well_on"] = VisualProbeMiss(witness, now) if witness is not None else None
         return False
+    reflexes.keep.pop("no_well_on", None)
     reflexes.keep["well_seen"] = well
     logger.info("a well %d across and %d down with a piece coming down it: playing it by where each piece lands best",
                 well.columns, well.rows)
