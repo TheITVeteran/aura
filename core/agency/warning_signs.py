@@ -47,6 +47,8 @@ FEWEST = 2
 #: screen that moved: offline 2026-10-12 eight tells were learned in five seconds from the coins, bars and dogs all over
 #: a busy picture, every one of them having changed somewhere before the same few losses.
 NEARER_BY = 1.5
+#: How soon after a tell begins it is got out of the way of, at the latest.
+ANSWERED_WITHIN_S = 0.3
 #: How long after one tell is said another may be: a person learning a game says what they have found as they find it,
 #: not eight of them in a breath.
 SAID_APART_S = 8.0
@@ -87,6 +89,8 @@ class WarningSigns:
     began: float | None = None
     said: set[tuple[int, str]] = field(default_factory=set)
     said_at: float | None = None
+    #: When the last tell she got out of the way of began.
+    answered: float = -math.inf
 
     def saw(self, things: dict[int, Any], mine: Any, at: float, verdicts: list[dict[str, Any]] = ()) -> list[tuple[int, str]]:
         """One picture: each thing's changes noted, losses taken from the verdicts, and signs settled. The tells shown."""
@@ -183,6 +187,16 @@ class WarningSigns:
         when = self.warned.get(int(getattr(thing, "number", -1)))
         return when is not None and at - when <= WARNS_WITHIN_S
 
+    def just_shown(self, at: float) -> bool:
+        """Whether a tell began a moment ago and has not yet been got out of the way of: once for each. A person who
+        has learned that the one across from them draws back before he throws ducks as he draws back, not when the
+        throw lands, which is too fast to see."""
+        newest = max(self.warned.values(), default=None)
+        if newest is None or at - newest > ANSWERED_WITHIN_S or newest <= self.answered:
+            return False
+        self.answered = newest
+        return True
+
     def closing_in(self, thing: Any, mine: Any, within_s: float) -> bool:
         """Whether a thing is coming at her fast enough to arrive within ``within_s``, by how fast the gap closes."""
         looks = self.looks.get(int(getattr(thing, "number", -1)))
@@ -209,12 +223,15 @@ class WarningSigns:
 
 
 def read_the_signs(signs: WarningSigns | None, moves: Any, mine: Any, verdicts: list[dict[str, Any]], at: float,
-                   say_once: Any) -> None:
+                   say_once: Any, *, out_of_the_way: bool = False) -> None:
     """One picture of play: each thing's changes held against the losses that followed, and a tell newly learned said
-    once, the kind named as play names what to keep clear of. Only where a thing of hers is in play: with no body to get
-    clear with, a change before a loss tells her nothing she can act on, and her own presses are what the losses follow
-    (offline 2026-10-10 a game of timing presses to a needle learned "when the white bars stop, harm follows")."""
-    if signs is None or mine is None:
+    once, the kind named as play names what to keep clear of. Only where a thing of hers is in play, or where, with no
+    body of hers in the picture, a key gets her out of the way (``out_of_the_way``): with neither, a change before a
+    loss tells her nothing she can act on, and her own presses are what the losses follow (offline 2026-10-10 a game of
+    timing presses to a needle learned "when the white bars stop, harm follows"). Offline 2026-10-12 a food fight's
+    opponent drew back over his head before every throw, the throw landed a sixth of a second after it left his hand,
+    and she, with a key to duck and no body in the picture, never learned to duck as he drew back."""
+    if signs is None or (mine is None and not out_of_the_way):
         return
     signs.saw(moves.things, mine, at, verdicts)
     from core.agency.naming_what_she_sees import named_for_its_part, plural

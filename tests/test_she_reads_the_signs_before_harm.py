@@ -141,3 +141,38 @@ def test_tells_found_together_are_said_some_seconds_apart():
     assert len(signs.news(lambda kind: f"the kind {kind} things", at=10.0)) == 1
     assert signs.news(lambda kind: f"the kind {kind} things", at=11.0) == []
     assert len(signs.news(lambda kind: f"the kind {kind} things", at=30.0)) == 1
+
+
+def test_with_no_body_of_hers_and_a_key_to_duck_she_learns_the_tell_and_ducks_as_it_begins():
+    """Offline 2026-10-12 a food fight's opponent drew back before every throw, the throw landed a sixth of a second
+    after it left his hand, and she, with a key to duck and no body in the picture, never learned to duck as he drew
+    back. Nothing here is that game: someone across the way stands still a moment before each hit to her bar."""
+    from types import SimpleNamespace
+
+    from core.agency.warning_signs import read_the_signs
+
+    def across(at_rest: bool) -> SimpleNamespace:
+        return SimpleNamespace(kinds=[], things={7: Thing(number=7, kind=3, x=200.0, y=80.0, w=30.0, h=50.0,
+                                                vx=0.0 if at_rest else 40.0, vy=0.0, still=at_rest)})
+
+    said: list[str] = []
+    signs, losses, at = WarningSigns(), [], 0.0
+    read_the_signs(signs, across(False), None, losses, at, said.append)        # no body, no key: nothing is read
+    assert signs.began is None
+    for _round in range(4):
+        for _ in range(8):
+            read_the_signs(signs, across(False), None, losses, at, said.append, out_of_the_way=True)
+            at += 0.1
+        losses.append({"what": "loss", "at": at + 0.4})
+        for _ in range(6):
+            read_the_signs(signs, across(True), None, losses, at, said.append, out_of_the_way=True)
+            at += 0.1
+        for _ in range(25):
+            read_the_signs(signs, across(False), None, losses, at, said.append, out_of_the_way=True)
+            at += 0.1
+    assert signs.is_a_tell(3, STOPS) and said
+    for _ in range(8):
+        read_the_signs(signs, across(False), None, losses, at, said.append, out_of_the_way=True)
+        at += 0.1
+    read_the_signs(signs, across(True), None, losses, at, said.append, out_of_the_way=True)
+    assert signs.just_shown(at + 0.1) and not signs.just_shown(at + 0.15)       # once for each tell

@@ -1150,7 +1150,7 @@ async def _play_as_it_happens(
     run.reach = keep.get("reach") or HowFarThingsReach()
     from core.agency.warning_signs import WarningSigns, read_the_signs
 
-    run.signs = keep.get("signs") or WarningSigns()
+    run.signs, run.bars = keep.get("signs") or WarningSigns(), keep.get("bars")  # a person knows her bar again
     from core.agency.a_choice_and_its_reasons import ChoicesMade
 
     run.choices = keep.get("choices") or ChoicesMade()
@@ -1264,7 +1264,8 @@ async def _play_as_it_happens(
             await _let_go_of_presses(hands, run, at)
             meeting.saw(moves, hers, happened, at, choosing.line() if choosing.mine is not None else None)
             read_the_signs(run.signs, moves, choosing.mine, meeting.verdicts, at,
-                           lambda line, at=at: _say(run, say, line, at, once=line))
+                           lambda line, at=at: _say(run, say, line, at, once=line),
+                           out_of_the_way=bool(rules is not None and rules.dodge_keys) and _how_it_stands(run, at)[1])
             run.choices.settle(at, met=meeting._met, gains=run.gains, losses=run.losses,
                                mine_at=(choosing.mine.x, choosing.mine.y) if choosing.mine is not None else None,
                                say=lambda line, at=at: _say(run, say, line, at, once=line))
@@ -1310,7 +1311,7 @@ async def _play_as_it_happens(
         keep["keys_never_absent"] = run.shown.done()
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
-                 "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
+                 "where_clicks_pay": run.clicks_pay, "presses": run.presses, "timing": run.timing, "reach": run.reach, "signs": run.signs, "bars": run.bars, "noticing": run.noticing, "seeing": run.seeing, "using": run.using,
                  "longest_still": run.longest_still,
                  "said_once": run.said, "leading": run.leading, "choices": run.choices, "pressures": run.pressures, "gone_for": run.gone_for,
                  "faces": run.faces, "comes": run.comes, "way_through": run.way_through,
@@ -1732,8 +1733,10 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         hers.tapped(fire, time.monotonic(), began=began)
         run.last_trigger_began, run.taps = began, run.taps + 1
         return
-    if away and at - run.last_trigger_began >= GOT_OUT_OF_THE_WAY_EVERY_S and comes_at_her(moves.things.values()):
-        # With no body of hers in the place, what comes at her grows; the key for getting out of the way is pressed.
+    if away and at - run.last_trigger_began >= GOT_OUT_OF_THE_WAY_EVERY_S and (
+            comes_at_her(moves.things.values()) or getattr(run, "signs", None) is not None and run.signs.just_shown(at)):
+        # With no body of hers in the place, what comes at her grows, or someone shows what comes before harm: the key
+        # for getting out of the way is pressed.
         run.last_trigger_began = time.monotonic()
         await hands.tap(away[0])
         run.taps += 1
