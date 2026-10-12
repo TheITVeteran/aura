@@ -64,10 +64,35 @@ async def what_to_type(asked: WordsAsked, *, goal: str = "",
         return _a_question_about(goal)
     if asked.kind == SEARCH:
         return _what_is_sought(goal) or None
+    if asked.kind == ANSWER:
+        given = the_answer_it_gives(asked.said or asked.asked_by)
+        if given:
+            return given
     if asked.kind == ANSWER and answer is not None:
         said = await answer(asked.asked_by)
         return " ".join(str(said).split())[:60] if said else None
     return None
+
+
+#: A question a place asks and answers itself: "Answer? YOUR NAME!", "The answer is: a shadow".
+_IT_ANSWERS = re.compile(r"(?:(?<!your )(?<!an )(?<!the )\banswer\s*[?:]|\bthe answer is\s*:?|\bsolution\s*:)\s*"
+                         r"([A-Za-z][A-Za-z' ]{0,38}?)\s*[.!]", re.I)
+#: An answer that is the player's own: what she types for it is hers.
+_HERS = re.compile(r"^(?:your|my) (?:own )?name$|^(?:you|yourself|me|myself)$", re.I)
+
+
+def the_answer_it_gives(said: str, *, as_given: bool = False) -> str:
+    """Where a place asks a question and gives the answer itself, that answer, the player's own resolved to hers (a
+    riddle whose answer is "your name" is answered with her name); "" where it gives none. Offline 2026-10-11 the
+    Riddler's machine asked "What is everything to you and nothing to anyone else? Answer? YOUR NAME!", a riddle that
+    is its instruction, and she said she had no answer to give."""
+    found = _IT_ANSWERS.search(" ".join(str(said or "").split()))
+    if not found:
+        return ""
+    given = " ".join(found.group(1).split()).strip(" '")
+    if not given or given.lower() in ("the", "a", "an", "your", "is"):
+        return ""
+    return given if as_given or not _HERS.match(given) else HER_NAME
 
 
 def _region_of(regions: list[dict[str, Any]], words: str) -> dict[str, Any] | None:
@@ -161,6 +186,15 @@ async def type_what_is_asked(
     if seen is None:
         return {"typed": "", "why": "the picture could not be taken"}
     regions = read_words(seen[0])
+    given = the_answer_it_gives(asked.said or asked.asked_by) if asked.kind == ANSWER else ""
+    if given and not _fields_near(seen[0], _region_of(regions, asked.asked_by) or {}):
+        # A question it asks and answers itself, with nowhere to type on the screen, is told, not answered: what it
+        # comes to is what is asked for next (a riddle whose answer is your name, before the box for a name).
+        if say is not None:
+            raw = the_answer_it_gives(asked.said or asked.asked_by, as_given=True).lower()
+            say(f"It asks a riddle, {asked.asked_by!r}, and answers it itself: {raw}."
+                + (f" So it wants mine: {given}." if raw != given.lower() else ""))
+        return {"typed": "", "why": "it answered its own question", "it_answered": text}
     landed_at = None
     places = places_to_type(asked, regions, seen[0])
     for place in places:

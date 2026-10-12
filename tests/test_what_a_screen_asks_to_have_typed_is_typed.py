@@ -221,3 +221,46 @@ def test_an_answer_is_told_by_words_of_the_language_not_by_misread_lettering():
                "typed_asked_by": "YOUR NAME HERE ETRYGOAIN GOUR SECRET DENTIY"}
     assert _answered_since_typed(machine, {"text": "NAME HERE … RABBLE ROUSER YOUR"})
     assert not _answered_since_typed(machine, {"text": "FYOUR NAME HERE AurA *TRYGOAIN GOUR SECRETJDENTLFY"})
+
+
+def test_a_riddle_a_place_answers_itself_is_understood_and_the_players_own_answer_is_hers():
+    """Offline 2026-10-11 the Riddler's machine asked "What is everything to you and nothing to anyone else? Answer?
+    YOUR NAME!", a riddle that is its instruction, and she said she had no answer to give."""
+    from core.agency.typing_what_is_asked import HER_NAME, the_answer_it_gives, what_to_type
+
+    riddle = "Riddle me this: What is everything to you and nothing to anyone else? Answer? YOUR NAME!"
+    assert the_answer_it_gives(riddle) == HER_NAME
+    assert the_answer_it_gives("The answer is: a shadow.") == "a shadow"
+    assert the_answer_it_gives("Type your answer below.") == "" and the_answer_it_gives("Give your answer and press GO.") == ""
+    asked = words_asked_for(riddle)
+    assert asked is not None and asyncio.run(what_to_type(asked)) == HER_NAME
+
+
+def test_a_riddle_answered_on_a_screen_with_nowhere_to_type_is_told_not_typed():
+    import numpy as np
+
+    from core.agency.typing_what_is_asked import type_what_is_asked
+
+    riddle = "Riddle me this: What is everything to you and nothing to anyone else? Answer? YOUR NAME!"
+    picture = np.full((60, 80, 3), 30, dtype=np.uint8)
+    said, typed = [], []
+
+    async def look():
+        return (picture, 0.0)
+
+    class _Hands:
+        async def click(self, x, y):
+            pass
+
+        async def type_text(self, text):
+            typed.append(text)
+
+        async def tap(self, key):
+            pass
+
+    done = asyncio.run(type_what_is_asked(words_asked_for(riddle), look,
+                                          lambda _p: [{"text": riddle, "center_x": 0.5, "center_y": 0.4,
+                                                       "x": 0.1, "y": 0.35, "width": 0.8, "height": 0.1}],
+                                          _Hands(), say=said.append))
+    assert done["why"] == "it answered its own question" and not typed
+    assert said and "Aura" in said[0]

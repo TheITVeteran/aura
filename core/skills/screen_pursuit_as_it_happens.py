@@ -1360,13 +1360,32 @@ def _keep_what_she_learned(page: Any, keep: dict[str, Any]) -> None:
     remember(_this_game(page), to_keep(keep))
 
 
+#: How long her model is given to answer a question a place asks where the place waits for her answer.
+ANSWER_WHILE_IT_WAITS_S = 75.0
+
+
+def _time_to_answer() -> float:
+    """How long her model may take over a question a place asks: a place that waits for her answer is given the time a
+    thought takes; one that goes on without her, only a moment. Offline 2026-10-11 a riddle on a screen that waited was
+    not put to her model at all, since it needed some thirty-five seconds and was allowed twenty."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is not None and hasattr(guide, "controls"):
+        from core.agency.how_a_game_works import understood
+
+        if understood(guide).goes_on_without_her():
+            return ANSWER_WITHIN_S
+    return ANSWER_WHILE_IT_WAITS_S
+
+
 async def _an_answer_she_has(question: str) -> str | None:
     """Her answer to a question a screen asks, from her model as one witness, within a few seconds; else none."""
     from core.cognition.taking_stock import from_her_model
     from core.rebuilding.her_model import ask_her_model
 
     try:
-        heard = await from_her_model(ask_her_model)([question], ANSWER_WITHIN_S)
+        heard = await from_her_model(ask_her_model)([question], _time_to_answer())
     except (RuntimeError, OSError, ValueError, TypeError, AttributeError, TimeoutError) as why:
         logger.info("no answer to %r: %s", question[:80], why)
         return None

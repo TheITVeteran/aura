@@ -60,6 +60,8 @@ class WordsAsked:
     where: str = ""
     sent_by: str = ""
     sent_by_key: str = ""
+    #: Everything the screen said, around the words that asked: a question a place asks may be answered after it.
+    said: str = ""
 
 
 def _sentences(text: str) -> list[str]:
@@ -95,4 +97,4 @@ def words_asked_for(text: str) -> WordsAsked | None:
                 sent_by = clicked.group(1).strip()
             if sent_by or sent_by_key:
                 break
-    return WordsAsked(kind, sentence, where.group(1).lower() if where else "", sent_by, sent_by_key)
+    return WordsAsked(kind, sentence, where.group(1).lower() if where else "", sent_by, sent_by_key, said)
