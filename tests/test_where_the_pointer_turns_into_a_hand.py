@@ -90,3 +90,19 @@ def test_a_screen_of_play_in_time_is_played_the_moment_it_is_seen():
     finally:
         AS_IT_HAPPENS.reset(token)
     assert reflexes.moves == 2 and len(looks) == 2
+
+
+def test_a_place_whose_words_say_how_it_is_played_has_no_board_or_well_looked_for():
+    """Offline 2026-10-11, timed: a food fight's play began four and a half seconds late, spent looking for a board and
+    for a piece coming down a well."""
+    from types import SimpleNamespace
+
+    from core.skills.screen_pursuit_as_it_happens import _played_neither_by_turns_nor_by_pieces
+
+    fight = SimpleNamespace(words=["TAKE AIM WITH YOUR MOUSE AND CLICK TO THROW. DODGE FOOD BY PRESSING THE SPACE BAR."],
+                            keep={})
+    assert _played_neither_by_turns_nor_by_pieces(fight)
+    board = SimpleNamespace(words=["Jump your pieces over your opponent's pieces to capture them."], keep={})
+    assert not _played_neither_by_turns_nor_by_pieces(board)
+    tiles = SimpleNamespace(words=["Rotate the falling blocks to complete lines."], keep={})
+    assert not _played_neither_by_turns_nor_by_pieces(tiles)

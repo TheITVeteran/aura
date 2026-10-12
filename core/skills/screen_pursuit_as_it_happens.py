@@ -49,6 +49,22 @@ def _played_in_time(said: str) -> bool:
     return played_in_time(situations_in(said))
 
 
+#: The situations a place's words may put her in that are played neither by turns on a board nor by pieces coming down
+#: a well.
+_NEITHER_A_BOARD_NOR_A_WELL = frozenset({"shooting what comes", "keeping clear of what comes", "a fight at close quarters",
+                                         "keeping something away from whoever is after it"})
+
+
+def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
+    """Whether the place's words say it is played as one of the situations that is neither a board nor a well: then
+    neither is looked for, each a watch of its own. Offline 2026-10-11, timed, a food fight's play began four and a
+    half seconds late, spent looking for a board and for a piece coming down a well."""
+    from core.agency.situations_she_knows import situations_in
+
+    said = " ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])
+    return any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said))
+
+
 def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
     """Whether the screen before her is one of play in a place whose words put her in a situation played in time
     (dodging, shooting what comes, catching): no way on is shown on it (``labels``, the screen's writing, where it has
@@ -681,11 +697,13 @@ class PlayingAsItHappens:
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
         if not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
-        # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py).
-        if await _played_a_board(self, now):
+        # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py); a well with a piece
+        # coming down it is played by where each piece lands best (core/agency/playing_a_well.py). Neither is looked for
+        # where the place's words say it is played some other way.
+        otherwise = _played_neither_by_turns_nor_by_pieces(self)
+        if not otherwise and await _played_a_board(self, now):
             return
-        # A well with a piece coming down it is played by where each piece lands best (core/agency/playing_a_well.py).
-        if await _played_a_well(self, now):
+        if not otherwise and await _played_a_well(self, now):
             return
         # The way the place says it is played, before what the world does by itself: a thrower bobbing where he stands
         # is not a world to steer (core/agency/the_way_it_is_played.py).
