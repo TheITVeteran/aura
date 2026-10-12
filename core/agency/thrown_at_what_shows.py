@@ -11,9 +11,12 @@ Nothing here knows a game. A thing is whatever her eyes follow in the picture (c
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Collection, Iterable
 from typing import Any
+
+logger = logging.getLogger("Aura.ThrownAtWhatShows")
 
 __all__ = ["A_FIGURE", "HOLD_FOR_A_STOP_S", "JUST_SHOWN_S", "HowLongAThrowTakes", "how_long_throws_take", "led", "comes_at_her", "what_the_shot_goes_at", "where_the_one_thrown_at_is"]
 
@@ -203,7 +206,11 @@ class HowLongAThrowTakes:
         if len(self.landings) < LANDINGS_KNOWN:
             return TAKES_AT_FIRST_S
         ordered = sorted(self.landings)
-        return ordered[len(ordered) // 2]
+        middle = ordered[len(ordered) // 2]
+        if getattr(self, "_said", None) != round(middle, 1):
+            self._said = round(middle, 1)
+            logger.info("her throws take %.2fs to land, from %d seen", middle, len(ordered))
+        return middle
 
 
 def how_long_throws_take(run: Any, moves: Any, at: float) -> Any:
@@ -219,8 +226,12 @@ def how_long_throws_take(run: Any, moves: Any, at: float) -> Any:
     return takes
 
 
-#: The longest a throw is held for someone running to stop, in seconds.
+#: The longest a throw is held for someone running to stop, in seconds: briefly, since standing still is not always
+#: when someone can be hit (offline 2026-10-12 a throw landed square on an opponent standing with his arms up, and his
+#: bar did not move), and throws not thrown are chances not taken.
 HOLD_FOR_A_STOP_S = 0.5
+#: How far, in its own sizes, a target may go before a throw lands for the throw to go at it as it stands.
+STILL_ENOUGH = 0.5
 
 
 def led(run: Any, target: Any, at: float) -> tuple[float, float] | None:
@@ -231,9 +242,9 @@ def led(run: Any, target: Any, at: float) -> tuple[float, float] | None:
     takes = getattr(run, "throw_takes", None)
     lead = min(1.0, takes.seconds()) if takes is not None else TAKES_AT_FIRST_S
     speed = math.hypot(target.vx, target.vy)
-    if speed <= 8.0:
+    if speed * lead <= STILL_ENOUGH * math.sqrt(max(1.0, float(target.size))):
         run.held_since = None
-        return target.x, target.y
+        return target.where_at(lead) if speed > 8.0 else (target.x, target.y)
     if speed * lead > math.sqrt(max(1.0, float(target.size))):
         held = getattr(run, "held_since", None)
         if held is None:
