@@ -53,6 +53,7 @@ from core.agency.choosing_where_to_be import (  # noqa: F401 (the existing decis
     _times_to,
     goes_with,
 )
+from core.agency.countering_motion_as_it_appears import CounteringMotion
 from core.agency.holding_to_charge import Charging
 from core.agency.how_far_her_blow_reaches import BLOW_EVERY_S as BLOW_EVERY_S
 from core.agency.how_far_her_blow_reaches import HerBlows
@@ -208,9 +209,8 @@ class _Run:
     held_trying: bool = False
     trying: int = 0
     tried_at: float = 0.0
-    #: How many holds and rests have gone to the key that points against a going, and which key that was.
-    countered: int = 0
-    countering: str = ""
+    #: The finite experiment that waits for measured motion before trying to counter it.
+    counter_trial: CounteringMotion = field(default_factory=CounteringMotion)
     #: When she last found the thing she took for hers was not.
     lost_at: float = -math.inf
     #: What she understands of the place, looked at again now and then: when, someone against her, no body of hers.
@@ -275,6 +275,8 @@ class _Run:
     #: Every reading's words, with when its picture was taken; the latest reading taken in for what it tells her to do,
     #: and the lines already taken in.
     words_read: list[tuple[float, str]] = field(default_factory=list)
+    #: The first picture whose words were read, even if it had no writing.
+    word_picture_read_at: float | None = None
     rules_read_at: float = -math.inf
     lines_heard: set[str] = field(default_factory=set)
     #: The bars on the screen that fill and empty (core/perception/how_full_a_bar_is.py), the last words read with where
@@ -527,18 +529,25 @@ async def _try_the_keys(hands: Any, run: _Run, hers: WhichIsHers, at: float, mov
     """Hold each key in turn, with a rest between, to see what answers. The key that points against the way the
     biggest moving thing is going is held first, and again after one rest (core/agency/the_key_against_its_going.py):
     LIVE 2026-10-11 a lander down in five seconds was never found to be hers in ten goes of four seconds a round."""
+    from core.agency.a_response_worth_measuring_again import response_worth_repeating
     from core.agency.the_key_against_its_going import FIRST, against_its_going
+    from core.agency.which_one_answers_to_her import PUSHED_FOR_S, REALLY_MOVES, SETTLE_S
 
     if at - run.tried_at < TRY_A_KEY_S:
         return
-    against = against_its_going(run.keys, getattr(moves, "things", {}).values(), 2.0 * TOLD_FROM_STANDING_PX) \
-        if run.countered < FIRST else ""
-    if against or 0 < run.countered < FIRST:
-        run.countering = against or run.countering
-        key = run.countering if run.countered % 2 == 0 else ""
-        run.countered += 1
-    else:
-        run.countered = FIRST
+    if not hasattr(run, "counter_trial"):
+        run.counter_trial = CounteringMotion()
+    key = run.counter_trial.choose(run.keys, getattr(moves, "things", {}).values(), at,
+                                   held=getattr(run, "held", ""), held_since=run.held_since,
+                                   epoch=getattr(getattr(hers, "identification", None), "epoch", 0),
+                                   settle_s=SETTLE_S, step_s=TRY_A_KEY_S, steps=FIRST,
+                                   wait_s=4 * len(run.keys) * TRY_A_KEY_S,
+                                   against=lambda keys, things: against_its_going(keys, things, 2.0 * TOLD_FROM_STANDING_PX),
+                                   measured=(lambda keys, things: response_worth_repeating(keys, things, hers, moves.shape,
+                                                 at, run.held_since, seconds=TRY_A_KEY_S, steps=FIRST,
+                                                 effect_over=REALLY_MOVES / PUSHED_FOR_S))
+                                             if hers is not None and hasattr(moves, "shape") else None)
+    if key is None:
         turn = run.trying % (2 * len(run.keys))
         run.trying += 1
         key = run.keys[turn // 2] if turn % 2 == 0 else ""
@@ -1898,11 +1907,12 @@ def _said_it_is_over(run: _Run) -> str:
     """Writing read in play that says a round is over ("TRY AGAIN", "GAME OVER") and was not there as it began: the
     stretch hands the screen back. LIVE 2026-10-09 an end screen's stars twinkled, and she played on at it for half a
     minute."""
+    from core.agency.words_read_with_their_picture import first_word_picture_at
     from core.language.how_a_game_ended import says_a_round_is_over, what_says_the_game_is_over
 
     # What the first reading of the stretch found was there as it began, however long that reading took.
-    first = min((when for when, _said in run.words_read), default=run.began)
-    began = max(run.began + OVER_READ_AFTER_S, first + 0.5)
+    first = first_word_picture_at(run)
+    began = max(run.began + OVER_READ_AFTER_S, (run.began if first is None else first) + 0.5)
     there = {said for when, said in run.words_read if when < began}
     for when, said in run.words_read[-12:]:
         # A round over, or the game: offline 2026-10-12 a racer's "Your final score" came up mid-stretch, and she played

@@ -3,10 +3,13 @@ from typing import Any
 
 
 def install_realtime_control_claims(suite: Any) -> None:
+    from core.agency.a_body_seen_then import _body_seen_then_invariant
+    from core.agency.a_response_worth_measuring_again import _provisional_response_invariant
     from core.agency.body_trials_keep_the_world import _body_trial_phase_invariant
     from core.agency.causal_identification import (
         _stale_and_ambiguous_identity_witnesses_remain_unknown,
     )
+    from core.agency.countering_motion_as_it_appears import _counter_trial_measurement_invariant
     from core.agency.deliberate_action import _unmeasured_response_invariant
     from core.agency.giving_a_trial_time import _control_trial_time_invariant
     from core.agency.how_a_game_works import _known_body_controls_invariant
@@ -19,6 +22,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         _fresh_control_experiment_forgets_old_rejections,
     )
     from core.agency.which_way_she_faces import _turn_observation_invariant
+    from core.agency.words_read_with_their_picture import _word_picture_start_invariant
     from core.cognition.action_refinement import _bound_refinement_invariant
     from core.cognition.guidance_lifetime import _completed_guidance_invariant
     from core.cognition.procedure_binding import _choice_binding_invariant
@@ -30,6 +34,7 @@ def install_realtime_control_claims(suite: Any) -> None:
         ValidationTest,
         boolean_score,
     )
+    from core.perception.a_small_thing_in_a_joined_patch import _small_joined_thing_invariant
     from core.perception.drawn_objects import _object_candidates_invariant
     from core.perception.eyes_of_their_own import _child_capture_custody_invariant
     from core.perception.foreground_appearance import _foreground_mask_invariant
@@ -62,6 +67,21 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("provisional_responses_do_not_establish_identity", "core/agency/a_response_worth_measuring_again.py",
+         "tests/test_a_cold_control_loop_preserves_time_to_measure.py", lambda: _provisional_response_invariant() == (),
+         "A fresh pulse and neutral interval can select a bounded independent repeat without granting body identity; missing or competing measurements abstain."),
+        ("visual_avatar_guess_keeps_its_observed_track", "core/agency/a_body_seen_then.py",
+         "tests/test_a_body_guess_keeps_its_observed_track.py", lambda: _body_seen_then_invariant() == (),
+         "A visual body guess follows its captured observed track; absence or changed appearance retires it and causal identity takes precedence."),
+        ("an_empty_reading_still_measures_the_initial_screen", "core/agency/words_read_with_their_picture.py",
+         "tests/test_an_empty_reading_still_saw_the_world.py", lambda: _word_picture_start_invariant() == (),
+         "A completed empty word reading establishes the initial picture; pending or unavailable readings remain unmeasured."),
+        ("counter_trials_wait_for_measured_neutral_motion", "core/agency/countering_motion_as_it_appears.py",
+         "tests/test_counter_trials_wait_for_measured_motion.py", lambda: _counter_trial_measurement_invariant() == (),
+         "Initial counter trials wait for fresh settled unheld motion, preserve ordinary exploration and terminate within their finite input and observation budget."),
+        ("joined_foreground_keeps_a_distinct_small_thing", "core/perception/a_small_thing_in_a_joined_patch.py",
+         "tests/test_a_small_thing_survives_a_joined_foreground.py", lambda: _small_joined_thing_invariant() == (),
+         "Joined foreground is separated before an area rejection; floor correction leaves visibly distinct minority pixels outside the backdrop."),
         ("body_trials_preserve_their_interaction_phase", "core/agency/body_trials_keep_the_world.py",
          "tests/test_body_trials_leave_interface_controls_available.py", lambda: _body_trial_phase_invariant() == (),
          "Known body trials exclude explicit resets and text-entry controls while preserving unknown inputs and interface availability."),

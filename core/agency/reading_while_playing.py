@@ -102,8 +102,10 @@ def _read_the_words(run: _Run, meeting: WhatMeetingDoes, hers: WhichIsHers,
                     moves: WhatMoves, regions: list[dict[str, Any]], when: float, say: Any = None) -> None:
     """The same counter semantics for renderer text and text read from pixels."""
     from core.agency.playing_as_it_happens import _say
+    from core.agency.words_read_with_their_picture import kept_word_picture
     from core.cognition.a_guide_to_a_place import heard_in_play
 
+    kept_word_picture(run, when)
     run.regions_read = list(regions)
     for region in regions:
         kept_reading(run, when, " ".join(str(region.get("text") or "").lower().split()))

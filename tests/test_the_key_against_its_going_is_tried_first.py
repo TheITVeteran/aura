@@ -18,8 +18,9 @@ pytestmark = pytest.mark.unit
 ARROWS = ["up", "down", "left", "right"]
 
 
-def _thing(vx: float, vy: float, size: float = 30.0, moved: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(vx=vx, vy=vy, w=size, h=size, moved=moved)
+def _thing(vx: float, vy: float, size: float = 30.0, moved: bool = True, *, at: float = 0.0) -> SimpleNamespace:
+    return SimpleNamespace(vx=vx, vy=vy, w=size, h=size, moved=moved, born=-1.0,
+                           seen=at, path=[(at - 0.1, 10.0, 10.0 - vy * 0.1), (at, 10.0, 10.0)])
 
 
 def test_the_arrow_against_the_way_the_biggest_moving_thing_goes() -> None:
@@ -40,15 +41,16 @@ def test_it_is_held_twice_running_before_the_others_have_their_turns(monkeypatch
 
     async def hold(_hands, run, _hers, key, at, *, trying=False):
         held.append(key)
-        run.held_since = at
+        run.held, run.held_since = key, at
 
     monkeypatch.setattr(play, "_hold", hold)
-    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held_since=0.0, countered=0, countering="")
-    falling = SimpleNamespace(things={1: _thing(0.0, 120.0)})
+    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=-1.0)
 
     async def tried(times: int) -> None:
         for step in range(times):
-            await play._try_the_keys(None, run, None, float(step), falling)
+            at = step * 0.5
+            falling = SimpleNamespace(things={1: _thing(0.0, 120.0, at=at)})
+            await play._try_the_keys(None, run, None, at, falling)
 
     asyncio.run(tried(FIRST + 4))
     assert held[:FIRST] == ["up", "", "up", ""]
@@ -60,10 +62,10 @@ def test_with_nothing_going_her_keys_are_tried_in_their_order(monkeypatch: pytes
 
     async def hold(_hands, run, _hers, key, at, *, trying=False):
         held.append(key)
-        run.held_since = at
+        run.held, run.held_since = key, at
 
     monkeypatch.setattr(play, "_hold", hold)
-    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held_since=0.0, countered=0, countering="")
+    run = SimpleNamespace(keys=list(ARROWS), trying=0, tried_at=-10.0, held="", held_since=0.0)
     still = SimpleNamespace(things={})
 
     async def tried() -> None:
@@ -72,3 +74,26 @@ def test_with_nothing_going_her_keys_are_tried_in_their_order(monkeypatch: pytes
 
     asyncio.run(tried())
     assert held == ["up", "", "down", ""]
+
+
+def test_a_blank_first_picture_leaves_a_later_measured_motion_trial_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    held: list[str] = []
+
+    async def hold(_hands, run, _hers, key, at, *, trying=False):
+        held.append(key)
+        run.held, run.held_since = key, at
+
+    monkeypatch.setattr(play, "_hold", hold)
+    run = SimpleNamespace(keys=["left", "up", "right"], trying=0, tried_at=-10.0, held="", held_since=None)
+
+    async def tried() -> None:
+        for step in range(8):
+            at = step * 0.5
+            things = {} if step == 0 else {1: _thing(0.0, 120.0, at=at)}
+            await play._try_the_keys(None, run, None, at, SimpleNamespace(things=things))
+
+    asyncio.run(tried())
+    assert held[:2] == ["left", ""]
+    assert held[2:6] == ["up", "", "up", ""]
+    assert held[6:] == ["up", ""]
+    assert run.counter_trial.done

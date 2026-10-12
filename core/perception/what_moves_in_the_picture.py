@@ -561,6 +561,11 @@ class WhatMoves:
         return strict, grow(strict)
 
     def _blobs(self, small: np.ndarray, masks: tuple[np.ndarray, np.ndarray]) -> list[dict[str, Any]]:
+        from core.perception.a_small_thing_in_a_joined_patch import (
+            a_recent_thing_inside,
+            connected_parts_before_rejecting,
+            keep_pixels_apart_from_the_floor,
+        )
         from core.perception.parts_when_things_touch import parts_when_things_touch
         from core.perception.picture_arithmetic import pieces
 
@@ -570,19 +575,32 @@ class WhatMoves:
         found = []
         for label in range(1, count):
             x, y, w, h, area = (int(v) for v in stats[label])
-            if area < SMALLEST or area > LARGEST * area_of_all:
+            if area < SMALLEST:
                 continue
             inside = (labels[y : y + h, x : x + w] == label) & (strict[y : y + h, x : x + w] > 0)
             if int(inside.sum()) < SMALLEST:
                 continue
-            if self._a_ghost(small, x, y, w, h, inside):
+            before_cleaning = int(inside.sum())
+            inside = keep_pixels_apart_from_the_floor(small, inside, left=x, top=y,
+                                                      backdrop=self._backdrop, difference=DIFFERENT_ENOUGH / 2)
+            if int(inside.sum()) < SMALLEST:
                 continue
             parts = parts_when_things_touch(small[y:y + h, x:x + w], inside, left=x, top=y,
                                            things=[*self.things.values(), *self.pending.values()], at=self._now)
-            for part in parts:
+            separated = [piece for part in parts for piece in a_recent_thing_inside(
+                small[y:y + h, x:x + w], part, left=x, top=y,
+                things=[*self.things.values(), *self.pending.values()], at=self._now)]
+            islands = [island for part in separated for island in connected_parts_before_rejecting(
+                small[y:y + h, x:x + w], part, largest=LARGEST * area_of_all,
+                cleaned=int(inside.sum()) != before_cleaning)]
+            for part in islands:
+                if int(part.sum()) < SMALLEST or int(part.sum()) > LARGEST * area_of_all:
+                    continue
                 rows, cols = np.nonzero(part)
                 top, left = y + int(rows.min()), x + int(cols.min())
                 bottom, right = y + int(rows.max()) + 1, x + int(cols.max()) + 1
+                if (bottom - top) * (right - left) > LARGEST * area_of_all:
+                    continue
                 pixels = small[y : y + h, x : x + w][part]
                 found.append({
                     "x": (left + right) / 2.0, "y": (top + bottom) / 2.0,
@@ -607,29 +625,6 @@ class WhatMoves:
         apart = np.abs(pixels.astype(np.float32) - floor).max(axis=1)
         core = pixels[apart >= 0.75 * float(apart.max())]
         return tuple(int(c) for c in np.median(core, axis=0))
-
-    def _a_ghost(self, small: np.ndarray, x: int, y: int, w: int, h: int, inside: np.ndarray) -> bool:
-        """Whether a difference is the backdrop being wrong rather than something being there.
-
-        Where a thing that stood still during the first look has since moved
-        away, the backdrop still shows it and the picture shows floor. What is
-        there now looks like what is around it now, and nothing on screen is a
-        thing that looks like its own surroundings. The backdrop is put right.
-        """
-        tall, wide = small.shape[:2]
-        top, bottom = max(0, y - 2), min(tall, y + h + 2)
-        left, right = max(0, x - 2), min(wide, x + w + 2)
-        ring = np.ones((bottom - top, right - left), dtype=bool)
-        ring[y - top : y - top + h, x - left : x - left + w] = False
-        if not ring.any():
-            return False
-        around = np.median(small[top:bottom, left:right][ring].astype(np.float32), axis=0)
-        now = small[y : y + h, x : x + w][inside].astype(np.float32)
-        if float(np.abs(np.median(now, axis=0) - around).max()) >= DIFFERENT_ENOUGH / 2:
-            return False
-        region = self._backdrop[y : y + h, x : x + w]
-        region[inside] = now
-        return True
 
     # -- following things --------------------------------------------------
 

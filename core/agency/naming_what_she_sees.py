@@ -251,6 +251,7 @@ class SeeingInPlay:
     #: when play began, and whether it has been said.
     avatar_asking: Any = None
     avatar: Any = None
+    avatar_observation: Any = None
     began: float | None = None
     avatar_said: bool = False
 
@@ -356,11 +357,16 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
     said, kept for her keys to be tried on, and taken for her where her trials have found nothing that answers."""
     import asyncio
 
-    from core.perception.where_i_am_on_screen import where_the_avatar_is, which_thing_is_shown
+    from core.agency.a_body_seen_then import ABodySeenThen
+    from core.perception.where_i_am_on_screen import where_the_avatar_is
 
     seeing.began = at if seeing.began is None else seeing.began
     if _no_body_of_hers(run, guide):
         return
+    observation = seeing.avatar_observation
+    if observation is not None:
+        measured = getattr(moves, "seeing", True) and getattr(moves, "_last_at", at) == at
+        observation.follow(moves, at, measured=bool(measured))
     if seeing.avatar_asking is None and at - seeing.began >= AVATAR_ASKED_AFTER_S and getattr(moves, "things", None):
         try:
             asyncio.get_running_loop()
@@ -369,6 +375,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         names = [*guide.names.get("me", [])[:2],
                  *[name for name, said in guide.seen.cast.items() if said.get("side") == "you"][:1]]
         frame = np.array(picture)[..., :3]
+        observation = seeing.avatar_observation = ABodySeenThen(moves, at)
 
         async def looked() -> None:
             from core.cognition.guidance_lifetime import question_work
@@ -377,6 +384,7 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
                 avatar = await where_the_avatar_is(frame, names)
                 stamp.check()
                 seeing.avatar = avatar
+                observation.bind(avatar)
 
         from core.cognition.guidance_lifetime import create_guidance_task, retire_when_closed
 
@@ -385,12 +393,14 @@ def _who_i_am_to_my_eyes(run: Any, seeing: SeeingInPlay, guide: Any, moves: Any,
         def release() -> None:
             if seeing.avatar_asking is task:
                 seeing.avatar_asking = None
+                seeing.avatar_observation = None
 
         retire_when_closed(task, release)
         return
     if seeing.avatar is None:
         return
-    thing = which_thing_is_shown(seeing.avatar, moves)
+    observation = seeing.avatar_observation
+    thing = observation.thing(moves, at) if observation is not None else None
     if thing is None:
         return
     what = seeing.avatar.what
