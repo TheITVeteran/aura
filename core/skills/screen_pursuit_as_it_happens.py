@@ -49,6 +49,21 @@ def _played_in_time(said: str) -> bool:
     return played_in_time(situations_in(said))
 
 
+def a_screen_of_play_in_time(reflexes: Any, labels: Any = None) -> bool:
+    """Whether the screen before her is one of play in a place whose words put her in a situation played in time
+    (dodging, shooting what comes, catching): no way on is shown on it (``labels``, the screen's writing, where it has
+    not been read into ``reflexes`` yet). Such a screen is not waited on to come to rest, nor swept with the pointer:
+    offline 2026-10-11 a food fight's round of ten seconds was over before play began, sixteen seconds after it showed,
+    spent sweeping the pointer over it and waiting for it to stand still after a click."""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    if reflexes is None or not _played_in_time(" ".join([*reflexes.words[-6:], str(reflexes.keep.get("counsel") or "")])):
+        return False
+    if labels is None:
+        return not reflexes.way_on_shown
+    return not any(0 < len(label) <= 40 and how_much_it_leads_on(label) > 1.0 for label in labels)
+
+
 async def _it_moves_on_its_own(reflexes: PlayingAsItHappens, watched: Any) -> bool:
     """Whether the screen moves on its own, watched afresh only where the screen is another, or a while has passed."""
     known = reflexes.still_screen

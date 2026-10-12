@@ -1286,9 +1286,10 @@ def _how_long_to_wait() -> float:
     # A world found going on under her hand never comes to rest, and is not waited on to: offline 2026-10-11 a food
     # fight's first round went on for twelve seconds after an arrow was pressed, watched for a rest that never came,
     # and was lost before she threw once.
-    from .screen_pursuit_as_it_happens import AS_IT_HAPPENS
+    from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_screen_of_play_in_time
 
-    if getattr(AS_IT_HAPPENS.get(), "under_her_hand", False):
+    reflexes = AS_IT_HAPPENS.get()
+    if getattr(reflexes, "under_her_hand", False) or a_screen_of_play_in_time(reflexes):
         return GOING_ON_ANSWERS_S
     longest = max(_ANSWERS) if _ANSWERS else _ANSWERING_TOOK["longest"]
     return max(1.0, longest * 2) if longest else 4.0

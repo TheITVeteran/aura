@@ -114,6 +114,11 @@ class OnAPage:
         among the shapes she may click: a doorway or a hidden thing looks like nothing in particular."""
         from core.perception.where_the_pointer_turns import where_the_pointer_turns
 
+        from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_screen_of_play_in_time
+
+        labels = [str(r.get("text") or "") for r in seen.get("layout") or () if isinstance(r, dict)]
+        if a_screen_of_play_in_time(AS_IT_HAPPENS.get(), labels):
+            return
         words = frozenset(w for w in str(seen.get("text") or "").lower().split() if len(w) >= 3)
         known = self._swept
         if known is not None and (known[0] == words or len(words & known[0]) >= 0.5 * max(1, min(len(words), len(known[0])))):
