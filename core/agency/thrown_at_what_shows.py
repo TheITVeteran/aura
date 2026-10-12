@@ -155,10 +155,22 @@ def _gets_about(thing: Any) -> bool:
     return math.hypot(max(xs) - min(xs), max(ys) - min(ys)) >= GETS_ABOUT * math.sqrt(max(1.0, float(thing.size)))
 
 
-def comes_at_her(things: Iterable[Any]) -> bool:
-    """Whether something is coming at her out of the picture: it has grown by a third over the last pictures of it,
-    and went on growing to the last."""
+#: How soon a thing must be arriving, by how fast the marks on it spread, to be coming at her.
+ARRIVES_WITHIN_S = 1.0
+
+
+def comes_at_her(things: Iterable[Any], within_s: float = ARRIVES_WITHIN_S) -> bool:
+    """Whether something is coming at her out of the picture. Where the marks on it were followed, by when it will
+    arrive at the rate they spread apart (core/perception/points_followed.py), as an eye judges a thing looming; else
+    by its outline: it has grown by a third over the last pictures of it, and went on growing to the last. Offline
+    2026-10-12 the outlines of a food fight's flying food and turning opponent grew and shrank picture by picture, and
+    something was taken to be coming at her nearly all the time."""
     for thing in things:
+        closing = getattr(thing, "closing_s", None)
+        if closing is not None:
+            if closing <= within_s:
+                return True
+            continue
         sizes = [float(size) for size in getattr(thing, "sizes", ())]
         if len(sizes) >= OVER and sizes[-OVER] > 0.0 and sizes[-1] >= GROWN * sizes[-OVER] and sizes[-1] >= sizes[-2]:
             return True

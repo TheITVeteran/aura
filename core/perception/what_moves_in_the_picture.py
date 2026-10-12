@@ -168,6 +168,9 @@ class Thing:
     again: bool = False
     #: Pixels assigned to this object inside its measured patch; holes remain scenery.
     support: np.ndarray | None = field(default=None, repr=False, compare=False)
+    #: How soon it will arrive, by how fast the points on it spread (core/perception/what_the_points_on_a_thing_say.py):
+    #: inf where they are not spreading, None where too few were followed to say.
+    closing_s: float | None = None
 
     @property
     def size(self) -> float:
@@ -347,6 +350,9 @@ class WhatMoves:
 
         self.points = FollowingPoints()
         self._point_motion: dict = {}
+        from core.perception.what_the_points_on_a_thing_say import WhatThePointsSay
+
+        self.on_things = WhatThePointsSay()
         self.width = width
         self.scale = 1.0
         self.shape: tuple[int, int] = (0, 0)
@@ -432,6 +438,7 @@ class WhatMoves:
         self._drawn.clear()
         self.points.clear()
         self._point_motion.clear()
+        self.on_things.forget()
         self.screens += 1
 
     def _drift(self, small: np.ndarray, dt: float) -> None:
@@ -880,7 +887,18 @@ class WhatMoves:
                 happened.append(what_happened("appeared", thing, at))
         happened.extend(self._shown_not_scenery(dt))
         self._drift(small, dt)
+        self._what_the_points_say(at)
         return happened
+
+    def _what_the_points_say(self, at: float) -> None:
+        """How soon each thing will arrive, by its points; and a thing found again under another name, carrying the
+        points of one lost, is that one, there since it first was (core/perception/what_the_points_on_a_thing_say.py)."""
+        for number, (_lost, born) in self.on_things.see(self.points.points, self.things, at).items():
+            thing = self.things.get(number)
+            if thing is not None and born < thing.born:
+                thing.born = born
+        for number, thing in self.things.items():
+            thing.closing_s = self.on_things.closing_s(number)
 
     def _with_the_view(self, small: np.ndarray) -> bool:
         """How the view itself moved: where it goes by, the scenery going by is not things coming and going
