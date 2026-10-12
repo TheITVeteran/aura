@@ -742,7 +742,7 @@ class PlayingAsItHappens:
         # A place whose words name the pointer only to click on things, drag them or start is clicked through by the
         # pursuit, however its scenery moves (core/agency/the_controls_a_game_names.py the_pointer_only_clicks).
         only_clicks = the_pointer_only_clicks(said)
-        in_time = _played_in_time(said) and not only_clicks
+        in_time = (_played_in_time(said) or _it_goes_on_without_her(self)) and not only_clicks
         # A place played in time is not left quiet but on its menus: a stretch with no body of hers found in it is how
         # a game played without one (a food fight seen from behind the player's own eyes) goes.
         if (now < self.quiet_until and not held.holding() and not (in_time and not self.way_on_shown)) or now >= self.ends_at:

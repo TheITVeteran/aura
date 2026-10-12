@@ -33,14 +33,17 @@ A_FIGURE = 0.25
 
 
 def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Collection[int] = (),
-                          not_kinds: Collection[int] = ()) -> Any | None:
+                          not_kinds: Collection[int] = (), against_someone: bool = False) -> Any | None:
     """The thing to send the shot at: the biggest of those that have just shown and stand where they showed; where
     none has, the biggest of those going somewhere; and where nothing goes, the biggest that has moved, standing for a
     moment; None where there is none of these. What has just shown is someone only where it is near the size of what
     moves: offline 2026-10-11 a food fight's opponent ran to and fro the whole round, and each throw went at a speck of
     the counter redrawn as her bar went down. ``not_numbers`` and ``not_kinds`` are left out: her own thing, and the
     kinds her own presses bring out."""
-    mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds]
+    # What grows is coming at her, to be got out of the way of, not thrown at: offline 2026-10-11 her throws went at the
+    # food flying at her face.
+    mine = [thing for thing in things if thing.number not in not_numbers and thing.kind not in not_kinds
+            and not _growing(thing)]
     # Someone gets about; a thing that only sways where it hangs (a lamp, a flag, a sign) is part of the room: offline
     # 2026-10-11 throws went at a swinging lamp while the opponent ran to and fro below it.
     about = [thing for thing in mine if _gets_about(thing)]
@@ -50,10 +53,24 @@ def what_the_shot_goes_at(things: Iterable[Any], at: float, *, not_numbers: Coll
     shown = [thing for thing in mine if at - float(getattr(thing, "born", at)) <= JUST_SHOWN_S
              and math.hypot(thing.vx, thing.vy) <= GOING and float(thing.size) >= least]
     going = [thing for thing in mine if math.hypot(thing.vx, thing.vy) > GOING]
-    for lot in (shown, going, figures):
+    # Where the place is played against someone, the one who has been there all along and gets about is who is thrown
+    # at, before whatever has just shown (a splat on her own screen, her own throw in flight): offline 2026-10-11 a food
+    # fight's opponent ran to and fro the whole round and was hardly thrown at.
+    there = [thing for thing in figures if at - float(getattr(thing, "born", at)) >= THERE_ALL_ALONG_S
+             and at - float(getattr(thing, "seen", at)) <= SEEN_JUST_NOW_S] if against_someone else []
+    for lot in (there, shown, going, figures):
         if lot:
             return max(lot, key=lambda thing: float(thing.size))
     return None
+
+
+#: How long a thing has been in sight to have been there all along, and how lately it must have been seen to be there now.
+THERE_ALL_ALONG_S = 2.0
+SEEN_JUST_NOW_S = 0.3
+
+
+def _growing(thing: Any) -> bool:
+    return comes_at_her([thing])
 
 
 #: How far, in its own sizes, a thing's path must reach for it to get about and not sway where it is.

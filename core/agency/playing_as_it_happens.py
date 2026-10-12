@@ -157,6 +157,18 @@ RECHECK_CONTROLS_S = 5.0
 _POINTER_TRIAL = ((0.2, 0.5), (0.8, 0.5), (0.5, 0.2), (0.5, 0.8), (0.3, 0.3), (0.7, 0.7))
 
 
+def _against_someone() -> bool:
+    """Whether she understands the place is played against someone on the other side (core/agency/how_a_game_works.py)."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import understood
+
+    return understood(guide).against_someone()
+
+
 def _no_body_to_find() -> bool:
     """Whether she understands the place before her puts no body of hers in the picture (core/agency/how_a_game_works.py)."""
     from core.cognition.a_guide_to_a_place import THE_GUIDE
@@ -1683,7 +1695,8 @@ async def _fire_while_finding_herself(hands: Any, run: _Run, hers: WhichIsHers, 
         return
     # At whoever has just shown, before whatever is going across (core/agency/thrown_at_what_shows.py).
     target = what_the_shot_goes_at(moves.things.values(), at, not_numbers=(hers.number,),
-                                   not_kinds={made.kind for made in hers.makes.values()})
+                                   not_kinds={made.kind for made in hers.makes.values()},
+                                   against_someone=_against_someone())
     if target is None:
         return
     tall, wide = moves.shape

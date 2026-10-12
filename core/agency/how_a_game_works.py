@@ -30,6 +30,7 @@ from typing import Any
 
 __all__ = [
     "AIMS_FROM_A_BODY",
+    "AGAINST_SOMEONE",
     "AIMS_FROM_HERE",
     "FOLLOWS",
     "MAKES",
@@ -62,6 +63,9 @@ PLACES = "a hand that puts things in place"
 POINTS = "a hand among things"
 MAKES = "someone making something"
 UNKNOWN = ""
+
+# Who else is there.
+AGAINST_SOMEONE = "someone on the other side"
 
 # Whether it waits for her.
 WAITS = "it waits for me"
@@ -109,6 +113,8 @@ class HowItWorks:
     me: Answer = field(default_factory=Answer)
     tempo: Answer = field(default_factory=Answer)
     counts: Answer = field(default_factory=Answer)
+    #: Who else is there: someone on the other side, played against, or no one.
+    against: Answer = field(default_factory=Answer)
     #: What each input does, as said: "the pointer" -> "throw", "space" -> "dodge food".
     inputs: dict[str, str] = field(default_factory=dict)
 
@@ -124,6 +130,10 @@ class HowItWorks:
         """Whether the arrows, which nothing named, are worth pressing to see what they do: not where she is known to
         be worked some other way."""
         return not self.me.known() or self.me.value in (STEERED, AIMS_FROM_A_BODY, TIMES)
+
+    def against_someone(self) -> bool:
+        """Whether the place is played against someone on the other side, as far as she understands it."""
+        return self.against.value == AGAINST_SOMEONE and self.against.sure >= SAID_SURE
 
     def goes_on_without_her(self) -> bool:
         """Whether every moment she spends looking or thinking is a moment the game goes on: a move is not waited on to
@@ -141,6 +151,8 @@ class HowItWorks:
             parts.append("; ".join(f"{key} to {act}" for key, act in list(self.inputs.items())[:3]))
         if self.tempo.value:
             parts.append(self.tempo.value)
+        if self.against.value:
+            parts.append("there's someone on the other side")
         if self.counts.value:
             parts.append({"win": "there's a win to be had", "score": "it keeps a score",
                           "make": "it's for making something"}.get(self.counts.value, self.counts.value))
@@ -207,6 +219,7 @@ def how_it_works(said: str, guide: Any = None, rules: Any = None) -> HowItWorks:
     how = HowItWorks()
     how.inputs = _inputs(guide)
     _what_counts(how, said)
+    _who_else(how, said)
     _what_i_am(how, said, guide, rules)
     _whether_it_waits(how, said)
     return how
@@ -228,6 +241,18 @@ def _inputs(guide: Any) -> dict[str, str]:
         if len(acts) == 1 and None not in acts:
             out = {name: acts.pop(), **{key: act for key, act in out.items() if key not in keys}}
     return out
+
+
+#: Words that put someone on the other side: an opponent, a rival, "you against", "beat him", "the first to".
+_AGAINST = re.compile(r"\b(?:you against|against (?:the|your|him|her|them|a|an)\b|opponents?|rivals?|versus|vs\.?|"
+                      r"enem(?:y|ies)|the other (?:side|player|team|one)|the first to|beat (?:him|her|them|the \w+)|"
+                      r"before (?:he|she|they) (?:does|do|can))", re.I)
+
+
+def _who_else(how: HowItWorks, said: str) -> None:
+    against = _AGAINST.search(said)
+    if against:
+        how.against.held_to(AGAINST_SOMEONE, SAID_SURE, f"its words say {against.group(0)!r}")
 
 
 def _what_counts(how: HowItWorks, said: str) -> None:

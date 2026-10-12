@@ -109,3 +109,27 @@ def test_a_thing_that_only_sways_where_it_hangs_is_part_of_the_room() -> None:
                                 "path": deque([(t, 100 + 15 * t, 80) for t in range(10)])})
     assert what_the_shot_goes_at([lamp, runner], 10.0).number == 2
     assert what_the_shot_goes_at([lamp], 10.0).number == 1, "where nothing else is there, what moves is still thrown at"
+
+
+def test_against_someone_the_one_there_all_along_is_thrown_at_and_what_grows_never_is() -> None:
+    """Offline 2026-10-11, throw by throw on the pictures: in a food fight her throws went at the food flying at her face,
+    at the splat on her own screen and at her own throws in flight, and hardly at the opponent running to and fro."""
+    opponent = SimpleNamespace(**{**vars(_thing(1, 120, 70, vx=40.0, born=1.0, size=2700.0)), "moved": True, "seen": 10.0,
+                                  "path": deque([(t, 80 + 6 * t, 70) for t in range(10)])})
+    splat = _thing(2, 100, 60, born=9.8, size=9000.0)
+    incoming = _thing(3, 60, 90, vx=5.0, born=9.5, size=900.0, sizes=(300, 420, 560, 700, 900))
+    assert what_the_shot_goes_at([opponent, splat, incoming], 10.0, against_someone=True).number == 1
+    assert what_the_shot_goes_at([incoming], 10.0) is None, "what comes at her is got out of the way of"
+    assert what_the_shot_goes_at([opponent, splat], 10.0).number == 2, "with no one on the other side, who has just shown"
+
+
+def test_words_that_put_someone_on_the_other_side_are_understood() -> None:
+    from core.agency.how_a_game_works import understood
+    from core.cognition.a_guide_to_a_place import SCREEN, Guide
+
+    duel = Guide(place="a duel")
+    duel.take_in(SCREEN, "You against your favorite stars! The first to splat the other five times wins.")
+    assert understood(duel).against_someone()
+    gallery = Guide(place="a gallery")
+    gallery.take_in(SCREEN, "Click on the targets as they pop up.")
+    assert not understood(gallery).against_someone()
