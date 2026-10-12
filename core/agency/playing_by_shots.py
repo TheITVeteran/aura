@@ -704,6 +704,14 @@ async def play_by_shots(
         if ended_at is None:
             if hers is None:
                 continue
+            if keep.get("lies_where_struck") and keep.get("first_sent_from") is not None and not keep.get("tried_first_place"):
+                # Pressed where what she sent lies, and nothing went: it may be one of many let go from a place that
+                # stays put, come to lie where the place shows them (tops spinning in a ring). The place the first was
+                # sent from is tried once. Offline 2026-10-12 tops let go into a ring were taken for the one thing she
+                # sends, and she pressed them where they lay for a whole game.
+                keep["tried_first_place"], keep["lies_where_struck"] = True, False
+                keep["sends_from"] = keep["first_sent_from"]
+                continue
             shots_by_way[way].took(shot)
             misses += 1
             if misses >= MISSES_BEFORE_LOOKING_AGAIN:
@@ -720,12 +728,18 @@ async def play_by_shots(
             to_try = None
             tell("Pressing there and letting go sends it; now finding how hard and which way.")
         keep["sends_from"], keep["sends_by"] = start, way
+        if keep.get("first_sent_from") is None:
+            keep["first_sent_from"] = start
         if painted is not None:
             keep["sends_what"], keep["sends_wide"] = painted, as_wide
-        if became[0] in (RESTS, THERE):
-            # Seen lying somewhere new, it is one thing struck where it lies; one where she pressed, it is sent from a
-            # place that stays put.
-            keep["lies_where_struck"] = became[0] == RESTS
+        if became[0] == THERE or (keep.get("tried_first_place") and keep.get("lies_where_struck") is False
+                                  and math.dist(start, tuple(keep["first_sent_from"])) <= ONE_PLACE):
+            # One is where she pressed it (a tee a new ball is set on), or the place the first was sent from has sent
+            # again: things are sent from it one after another, wherever the ones already sent have come to lie.
+            keep["lies_where_struck"] = False
+        elif became[0] == RESTS:
+            # Seen lying somewhere new, it is one thing struck where it lies.
+            keep["lies_where_struck"] = True
         keep["rests_at"] = ended_at if became[0] == RESTS else None
         shots_by_way.setdefault(way, Shots(way=way)).took(shot)
         if shot.got_there:
@@ -733,7 +747,7 @@ async def play_by_shots(
             tell("That's the measure of it.")
     if keep.get("lies_where_struck") and ended in _HERS_IS_ELSEWHERE_AFTER:
         # The next screen puts her thing somewhere of its own: where it was pressed on this one says nothing of that.
-        keep["sends_from"] = keep["rests_at"] = None
+        keep["sends_from"] = keep["rests_at"] = keep["first_sent_from"] = None
     # A thing of hers got where it was to go: that is getting somewhere, whether or not the place counts it in sight.
     return {"shots": taken, "sent": sent, "gains": gains + got_there, "got_there": got_there, "ended": ended,
             "sends_from": keep.get("sends_from"),

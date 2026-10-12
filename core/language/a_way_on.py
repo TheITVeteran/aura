@@ -178,6 +178,9 @@ def how_much_it_leads_on(label: str) -> float:
 
 #: Words that ask a person to choose: a player, a ball, a level, a character.
 _CHOOSE = re.compile(r"\b(?:please )?(?:select|choose|pick) (?:a |an |the |your |number )"
+                     # Or the same with its space misread: offline 2026-10-12 a heading with a sparkle drawn on it read
+                     # "CHOOSETYOUR CHARACTER", and the two characters under it were left unchosen.
+                     r"|\b(?:select|choose|pick)\w?your\b"
                      # Or a screen headed by what is chosen on it: LIVE 2026-10-11 a "LEVEL SELECT" screen was taken for
                      # play, and she pulled and let go at its levels for three minutes.
                      r"|\b(?:level|stage|world|character|player|mode|map|track|song|difficulty|team)\s+"

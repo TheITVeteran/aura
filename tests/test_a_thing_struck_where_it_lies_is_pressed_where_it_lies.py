@@ -275,3 +275,53 @@ def test_a_thing_of_her_paint_and_another_size_is_not_her_thing():
     bigger = StandsOut(0.4, 0.4, 0.0469, (250, 60, 12), 90.0)
     assert _painted_like([hers, veins, bigger], (250, 60, 12), 0.0187) == [hers]
     assert len(_painted_like([hers, veins, bigger], (250, 60, 12))) == 3
+
+
+class _Launcher(_Field):
+    """Things let go one after another from a place that stays put: each comes to lie out on the field and answers to
+    nothing there, and the next is ready at the place a moment after."""
+
+    def __init__(self) -> None:
+        super().__init__(carries=6.0)
+        self.home, self.lying, self.flying = tuple(self.ball), [], None
+        self.ready_at = 0.0
+
+    async def look(self):
+        self.now += 1 / 30
+        if self.flying is not None:
+            self.flying[0] = min(0.97, max(0.03, self.flying[0] + self.velocity[0] / 30))
+            self.flying[1] = min(0.97, max(0.12, self.flying[1] + self.velocity[1] / 30))
+            self.velocity = [v * 0.9 for v in self.velocity]
+            if math.hypot(*self.velocity) < 0.01:
+                self.lying.append(tuple(self.flying))
+                self.flying, self.velocity, self.ready_at = None, [0.0, 0.0], self.now + 1.0
+        self.ball = list(self.home) if self.flying is None and self.now >= self.ready_at else None
+        picture = np.full((TALL, WIDE, 3), GROUND, np.uint8)
+        picture[:40] = (120, 190, 220)
+        picture[8:34, 10:150] = (250, 250, 205)
+        _disc(picture, (24 / WIDE, 21 / TALL), 10, PALER)
+        for at in [*self.lying, *([tuple(self.flying)] if self.flying else []), *([tuple(self.ball)] if self.ball else [])]:
+            _disc(picture, at, 5, HERS)
+        return picture, self.now
+
+    async def release(self):
+        if self.pressed_at is not None and self.ball is not None:
+            pull = (self.pointer[0] - self.pressed_at[0], self.pointer[1] - self.pressed_at[1])
+            far = math.hypot(*pull)
+            if far > 0.005:
+                reach = min(far, 0.14) / far
+                self.velocity = [-self.carries * pull[0] * reach, -self.carries * pull[1] * reach]
+                self.flying, self.ball = list(self.ball), None
+                self.strokes += 1
+        self.pressed_at = None
+
+
+def test_things_let_go_from_a_place_that_stays_put_are_sent_from_it_again_not_pressed_where_they_lie():
+    """Offline 2026-10-12 tops let go into a ring lay spinning there, were taken for the one thing she sends, and she
+    pressed them where they lay for a whole game."""
+    field = _Launcher()
+    asyncio.run(play_by_shots(field.look, field, seconds=30.0, keep={}, read_words=field.words, ways=("pull",),
+                              her_name="Kes"))
+    assert field.strokes >= 4, (field.strokes, field.pressed)
+    at_rest = [press for press in field.pressed if any(math.dist(press, lying) < 0.025 for lying in field.lying)]
+    assert len(at_rest) <= 1, at_rest

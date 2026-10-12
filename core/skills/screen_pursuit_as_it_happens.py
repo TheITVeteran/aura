@@ -33,10 +33,11 @@ logger = logging.getLogger("Aura.ScreenPursuit.AsItHappens")
 __all__ = ["AS_IT_HAPPENS", "PlayingAsItHappens", "a_handed_over_run_is_over", "looked_at_as_it_happens"]
 
 
-def _a_different_screen(said: str, before: str) -> bool:
+def _a_different_screen(said: str, before: str, *, shortest: int = 3) -> bool:
     """Whether two readings of a screen are of different screens: little of the words of either is in the other (a
-    reading a little differently made is the same screen)."""
-    now, then = set(re.findall(r"[a-z]{3,}", said.lower())), set(re.findall(r"[a-z]{3,}", before.lower()))
+    reading a little differently made is the same screen). Words shorter than ``shortest`` letters are not counted."""
+    word = re.compile(rf"[a-z]{{{shortest},}}")
+    now, then = set(word.findall(said.lower())), set(word.findall(before.lower()))
     return len(now & then) < 0.5 * max(1, min(len(now), len(then))) if now or then else False
 
 
@@ -892,17 +893,26 @@ class PlayingAsItHappens:
         # screen after PLAY was still read as the title it replaced, taken for a menu, and the pursuit pressed a key to
         # see what it did while the first arrow was being shown (offline 2026-10-11). Where nothing is shown, as on a
         # menu, the watching gives up in a moment and the menu is gone on from as before.
-        if self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
+        # What it shows may be coming along a line, each sign a key to be held as it gets there: that is played as it
+        # happens (core/agency/signs_that_come_along.py), and is not waited on to light up and stop. Offline 2026-10-12
+        # a book of arrows sent them down a strip; she watched for a showing to end, pressed a key to have it shown
+        # again, and the three arrows that went by in the meantime were her three lives.
+        # Seen once in a game, it is known for the game: the next screen of play is played from its first moment.
+        known = bool(self.keep.get("signs_going"))
+        if not known and self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
         if not self.under_her_hand and self._a_menu_first():
             return
         # A screen whose words ask for what it shows to be done again is watched, and followed, before it is played.
-        if not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
+        # Asked afresh: the watch just made may have found signs coming.
+        if not self.keep.get("signs_going") and not self.keep.get("asked_to_follow") and await self._did_again_what_it_showed():
             return
+        coming = bool(self.keep.get("signs_going"))
+        in_time = in_time or coming
         # A board of two sides in turns is searched, not steered (core/agency/playing_a_board.py); a well with a piece
         # coming down it is played by where each piece lands best (core/agency/playing_a_well.py). Neither is looked for
         # where the place's words say it is played some other way.
-        otherwise = _played_neither_by_turns_nor_by_pieces(self)
+        otherwise = coming or _played_neither_by_turns_nor_by_pieces(self)
         if not otherwise and await _played_a_board(self, now):
             return
         if not otherwise and await _played_a_well(self, now):
@@ -958,7 +968,7 @@ class PlayingAsItHappens:
             return
         # What its lesson asks is said by the place itself, and outweighs a key a screen happened to name.
         done_by = done_by or said_not_steered(guide) or done_by_its_lesson(guide)
-        if done_by:
+        if done_by and not coming:
             # Nothing it says names a control for moving, and what it is says it is done by another way: what moves on
             # it is left moving, and the screen is acted on as a screen (core/cognition/what_this_place_is.py).
             logger.info("it moves on its own, but it is done by %s, not steered: leaving it to be acted on", done_by)
@@ -1059,9 +1069,20 @@ class PlayingAsItHappens:
             self.held_to().choose([FOLLOW], " ".join(self.words[-6:]))
             self._judge(FOLLOW, record)
 
-        rounds = await follow(self.look, self, lights, keys=keys, clicks=bool(_CLICKED.search(said)),
-                              rounds_at_most=FOLLOW_AT_MOST, watch_s=WATCH_A_SHOWING_S, read_words=recognize_text,
-                              say=_said_while_playing, each_round=a_round)
+        from core.agency.signs_that_come_along import SignsAreComing, watching_for_signs
+
+        try:
+            rounds = await follow(watching_for_signs(self.look), self, lights, keys=keys,
+                                  clicks=bool(_CLICKED.search(said)), rounds_at_most=FOLLOW_AT_MOST,
+                                  watch_s=WATCH_A_SHOWING_S, read_words=recognize_text, say=_said_while_playing,
+                                  each_round=a_round)
+        except SignsAreComing as seen:
+            # What it shows comes along a line, each sign a key's: played as it happens, from this moment.
+            logger.info("signs are coming along a line, each a key's: playing it as it happens")
+            self.keep["signs_going"] = seen.args[0]
+            for key in keys:
+                await self.up(key)
+            return False
         if not rounds:
             logger.info("asked to follow what is shown, and nothing was shown in order")
         return bool(rounds)
@@ -1237,7 +1258,9 @@ async def _chose_what_it_asks(reflexes: PlayingAsItHappens) -> bool:
         words = await asyncio.to_thread(recognize_text, np.ascontiguousarray(picture[:, :, 2::-1]))
         # The screen in front of her now, not the one its words were last read from: offline 2026-10-12 a ball was
         # chosen, and on the hole's card that followed she "chose" a word of its name.
-        if not asks_to_choose(" ".join(str(region.get("text") or "") for region in words)):
+        now_says = " ".join(str(region.get("text") or "") for region in words)
+        # Not by its little words: "ROUND ONE" after "Choose a token, pick the one you like" shares only "one".
+        if not asks_to_choose(now_says) and _a_different_screen(now_says, said, shortest=4):
             return False
         taken = the_one_to_take(what_is_offered(picture, words, said), tried)
     except _A_FAULT_OF_HERS as why:

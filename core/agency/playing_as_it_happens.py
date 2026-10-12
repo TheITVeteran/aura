@@ -307,6 +307,8 @@ class _Run:
     counters_first: dict[str, Any] | None = None
     #: Keys the screen shows as pictures in play, and whether it asks for them now (core/agency/pressing_what_is_shown.py).
     shown: Any = None
+    #: Signs coming along a line, each a key's, the front one's key held (core/agency/signs_that_come_along.py).
+    coming: Any = None
     #: What each press does over the moment after it (core/agency/what_a_press_does.py), the things in the last
     #: picture, and presses made beside the key held, each with when to let it go.
     presses: Any = None
@@ -1107,8 +1109,9 @@ async def _play_as_it_happens(
     run.said = set(keep.get("said_once") or ())
     run.avoided_before = {kind for kind in meeting.evidence if meeting.stance(kind) == AVOID}
     from core.agency.pressing_what_is_shown import KeysShown
+    from core.agency.signs_that_come_along import SignsComing
 
-    run.shown = KeysShown(keep.get("keys_never_absent"))
+    run.shown, run.coming = KeysShown(keep.get("keys_never_absent")), SignsComing(keep.get("signs_going"))
     from core.agency.what_a_press_does import WhatAPressDoes
 
     run.presses = keep.get("presses") or WhatAPressDoes()
@@ -1251,6 +1254,7 @@ async def _play_as_it_happens(
             await _keep_reading(run, meeting, hers, moves, picture, at, read_words, say=say)
             rules = rules_as_told_since(run, rules)
             run.shown.look(picture, at)
+            run.coming.see(moves, picture, at)
             violations = motion_checks.see(moves, happened, at, hers.number)
             if violations:
                 ended = "runtime contract violated"
@@ -1279,6 +1283,8 @@ async def _play_as_it_happens(
                 logger.debug("letting go of %s failed: %s", key, why)
         if run.reading is not None:
             run.reading.cancel()
+        await run.coming.let_go(hands)
+        keep["signs_going"] = run.coming.known() or keep.get("signs_going")
         keep["keys_never_absent"] = run.shown.done()
     keep.update({"hers": hers, "meeting": meeting, "kinds": moves.kinds, "physics": physics, "meeting_with": run.meeting_with,
                  "contest": run.contest, "situation_known": run.situation_known, "said_lately": run.lately,
@@ -1298,6 +1304,11 @@ async def _play_as_it_happens(
 
 async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeting: WhatMeetingDoes,
                choosing: _Choosing, at: float, *, say: Any = None, rules: WhatTheRulesSaid | None = None) -> None:
+    # Signs coming along a line ask for the front one's key, held, and nothing else pressed (signs_that_come_along.py).
+    # Not where the place is played with the pointer: a row of targets crossing a gallery is no line of keys' signs.
+    if (run.coming is not None and not run.pointer_first and not run.pointer_trigger
+            and await run.coming.answered_now(hands, run, at, lambda line: _say(run, say, line, at, once="signs coming"))):
+        return
     # Keys the screen puts up mid-play are asked for now, before anything she had in mind (pressing_what_is_shown.py).
     if run.shown is not None and run.shown.asks(at):
         if run.held:
