@@ -55,7 +55,7 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
     """The kind's development or test problems as the G09 harness poses them, with their truths."""
     from tools.run_g09_organ import BBEH_SUFFIX
 
-    if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld"):
+    if kind in ("cruxeval", "lcb", "blocksworld", "mystery_blocksworld") or kind.startswith("dm_"):
         from tools.run_g09_organ import LOADERS
 
         tasks = sorted(LOADERS[kind](), key=lambda t: hashlib.sha256(t["id"].encode()).hexdigest())
@@ -65,6 +65,9 @@ def problems(kind: str, part: str) -> list[dict[str, Any]]:
 
             return [{"key": t["id"], "problem": t["request"], "truth": t["truth"],
                      "answer_text": plan_as_text(t["truth"]["ground_truth_plan"], kind)} for t in half]
+        if kind.startswith("dm_"):
+            return [{"key": t["id"], "problem": t["request"], "truth": t["truth"], "answer_text": t["truth"]}
+                    for t in half]
         return [{"key": t["id"], "problem": t["request"], "truth": t["truth"], "answer_text": t["truth"]["output"]}
                 for t in half]
     if kind.startswith("bbeh_"):
@@ -97,7 +100,7 @@ def test_ids(domain: str) -> set[str]:
         kinds = ["calendar"]
     elif domain == "trip":
         kinds = ["trip"]
-    elif domain in ("cruxeval", "meeting", "lcb", "blocksworld", "mystery_blocksworld"):
+    elif domain in ("cruxeval", "meeting", "lcb", "blocksworld", "mystery_blocksworld") or domain.startswith("dm_"):
         kinds = [domain]
     else:
         raise ValueError(f"no development and test split is defined for {domain}")
@@ -121,6 +124,10 @@ def grader_for(kind: str):
         from tools.planbench_restated import grade as grade_plan
 
         return lambda returned, truth: grade_plan(returned, truth)[0]
+    if kind.startswith("dm_"):
+        from tools.run_g09_organ import grade_dm
+
+        return lambda returned, truth: grade_dm(returned, truth)[0]
     grade = {"calendar": grade_planning, "trip": grade_trip, "cruxeval": grade_cruxeval, "meeting": grade_meeting,
              "lcb": grade_lcb}[kind]
     return lambda returned, truth: grade(returned, truth)[0]

@@ -53,8 +53,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+#: Four DeepMind mathematics modules (Saxton et al. 2019), drawn by random.Random(20261012) from its 56.
+DM_MODULES = ("algebra__linear_1d", "algebra__linear_2d_composed", "comparison__sort_composed", "polynomials__evaluate")
 DOMAINS = ("math", "code", "planning", "knowledge", "transfer", "bbeh", "trip", "aime", "cruxeval", "meeting", "lcb",
-           "blocksworld", "mystery_blocksworld")
+           "blocksworld", "mystery_blocksworld", *(f"dm_{module}" for module in DM_MODULES))
 BENCH = Path("~/.aura/benchmarks").expanduser()
 #: EvalPlus's own request for a chat model.
 CODE_REQUEST = ("Please provide a self-contained Python script that solves the following problem "
@@ -199,6 +201,16 @@ def _cruxeval_tasks() -> list[dict[str, Any]]:
             for row in rows]
 
 
+def _dm_tasks(module: str) -> list[dict[str, Any]]:
+    """A DeepMind mathematics module's interpolation test set, each question asked as MATH-500 is asked of her."""
+    from tools.run_g12_math500 import INSTRUCTION
+
+    lines = (BENCH / f"g09/dm-math/mathematics_dataset-v1.0/interpolate/{module}.txt").read_text(
+        encoding="utf-8").splitlines()
+    return [{"id": f"dm_{module}:{index}", "request": f"{lines[2 * index]}\n\n{INSTRUCTION}",
+             "truth": lines[2 * index + 1].strip(), "group": module} for index in range(len(lines) // 2)]
+
+
 def _planbench_tasks(domain: str) -> list[dict[str, Any]]:
     """PlanBench plan generation, its one-shot query as the request (tools/planbench_restated.py)."""
     from tools.planbench_restated import tasks
@@ -250,7 +262,8 @@ LOADERS = {"math": _math_tasks, "code": _code_tasks, "planning": _planning_tasks
            "trip": _trip_tasks, "aime": _aime_tasks, "cruxeval": _cruxeval_tasks,
            "meeting": _meeting_tasks, "lcb": _lcb_tasks,
            "blocksworld": lambda: _planbench_tasks("blocksworld"),
-           "mystery_blocksworld": lambda: _planbench_tasks("mystery_blocksworld")}
+           "mystery_blocksworld": lambda: _planbench_tasks("mystery_blocksworld"),
+           **{f"dm_{module}": (lambda module=module: _dm_tasks(module)) for module in DM_MODULES}}
 
 
 def sample(tasks: list[dict[str, Any]], count: int, seed: int, excluded: set[str]) -> list[dict[str, Any]]:
@@ -554,6 +567,26 @@ from os.path import commonprefix
 from typing import List, Tuple, Dict, Set, Optional, Union, Any, Callable, Iterable, Iterator, Generator"""
 
 
+def grade_dm(text: str, truth: str) -> tuple[bool, str]:
+    """DeepMind mathematics' exact answer: the boxed answer equal to the target as text once spaces and
+    LaTeX dollar signs are dropped, or equal in value when both are numbers."""
+    from fractions import Fraction
+
+    answer = math_answer(text)
+    if answer is None:
+        return False, ""
+
+    def plain(value: str) -> str:
+        return value.replace("$", "").replace(" ", "").strip()
+
+    if plain(answer) == plain(truth):
+        return True, answer[:120]
+    try:
+        return Fraction(plain(answer)) == Fraction(plain(truth)), answer[:120]
+    except (ValueError, ZeroDivisionError):
+        return False, answer[:120]
+
+
 def _planbench_grade(text: str, truth: dict[str, Any]) -> tuple[bool, str]:
     from tools.planbench_restated import grade
 
@@ -584,7 +617,8 @@ GRADERS = {"math": grade_math, "code": grade_code, "planning": grade_planning,
            "trip": grade_trip, "aime": grade_math, "cruxeval": grade_cruxeval,
            "meeting": grade_meeting, "lcb": grade_lcb,
            "blocksworld": lambda text, truth: _planbench_grade(text, truth),
-           "mystery_blocksworld": lambda text, truth: _planbench_grade(text, truth)}
+           "mystery_blocksworld": lambda text, truth: _planbench_grade(text, truth),
+           **{f"dm_{module}": grade_dm for module in DM_MODULES}}
 
 
 # ── The run ────────────────────────────────────────────────────────────────
