@@ -260,8 +260,10 @@ def _inputs(guide: Any) -> dict[str, str]:
 
 
 #: Words that put someone on the other side: an opponent, a rival, "you against", "beat him", "the first to".
-_AGAINST = re.compile(r"\b(?:you against|against (?:the|your|him|her|them|a|an)\b|opponents?|rivals?|versus|vs\.?|"
-                      r"enem(?:y|ies)|the other (?:side|player|team|one)|the first to|beat (?:him|her|them|the \w+)|"
+#: Not enemies, which are what comes at her, nor the other side of a place, which is where she goes: offline 2026-10-12 a
+#: painting game with enemies about and a far side to reach was said to be played against someone.
+_AGAINST = re.compile(r"\b(?:you against|against (?:your|him|her|them)\b|opponents?|rivals?|versus|vs\.?|"
+                      r"the other (?:player|team)|the first to|beat (?:him|her|them)\b|"
                       r"before (?:he|she|they) (?:does|do|can))", re.I)
 
 

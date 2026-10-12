@@ -197,3 +197,14 @@ def test_how_long_a_throw_takes_is_learned_from_where_it_lands_and_a_runner_is_l
     assert _led(run, runner, 10.0 + HOLD_FOR_A_STOP_S) == pytest.approx((148.0, 60.0)), "or, held long enough, lead him"
     standing = SimpleNamespace(x=100.0, y=60.0, vx=0.0, vy=0.0, size=400.0, where_at=lambda after: (100.0, 60.0))
     assert _led(run, standing, 11.0) == (100.0, 60.0)
+
+
+def test_enemies_and_a_far_side_put_no_one_on_the_other_side() -> None:
+    """Offline 2026-10-12 a painting game with enemies about and a far side to reach was said to be played against
+    someone."""
+    from core.agency.how_a_game_works import understood
+    from core.cognition.a_guide_to_a_place import SCREEN, Guide
+
+    painting = Guide(place="a painting game")
+    painting.take_in(SCREEN, "Avoid the enemies and paint all the way to the other side.")
+    assert not understood(painting).against_someone()
