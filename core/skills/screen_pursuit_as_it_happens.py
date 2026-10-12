@@ -645,7 +645,10 @@ class PlayingAsItHappens:
         context.check()
         at = await self._at(x, y)
         context.check()
-        await self.page.mouse.click(*at)
+        # As a hand clicks, quickly: in play a click is a throw or a jump, and a moment's rest is a moment lost.
+        from core.skills.screen_pursuit_on_a_page import as_a_hand_clicks
+
+        await as_a_hand_clicks(self.page, *at, arrives_s=0.0, presses_s=0.04)
         self._focused = True
 
     async def point(self, x: float, y: float) -> None:

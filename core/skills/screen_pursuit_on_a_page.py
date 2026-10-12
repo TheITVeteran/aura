@@ -80,6 +80,36 @@ _FOCUS_THE_DRAWING = """
 """
 
 
+
+#: How long the pointer rests over a thing before it is pressed, and how long the button is held, as a hand's are: a
+#: button drawn by some engines answers only a pointer that came over it and a press that lasted. Offline 2026-10-12 a
+#: title's NEW GAME, clicked in an instant from nowhere, never started its game; arrived at, rested on and pressed, it did.
+HAND_ARRIVES_S = 0.12
+HAND_PRESSES_S = 0.08
+
+
+async def as_a_hand_clicks(page: Any, x: float, y: float, *, arrives_s: float = HAND_ARRIVES_S,
+                           presses_s: float = HAND_PRESSES_S) -> None:
+    """A click at page pixels (x, y) made as a hand makes one: the pointer comes over the place from just beside it,
+    rests there a moment, and the button goes down for a moment and up. The moments are the browser's own, not this
+    process's clock."""
+    mouse = page.mouse
+    if hasattr(mouse, "move"):
+        await mouse.move(x - 6, y - 4)
+        try:
+            await mouse.move(x, y, steps=3)
+        except TypeError:
+            await mouse.move(x, y)
+        rest = getattr(page, "wait_for_timeout", None)
+        if arrives_s and callable(rest):
+            await rest(int(arrives_s * 1000))
+    try:
+        await mouse.click(x, y, delay=int(presses_s * 1000))
+    except TypeError:
+        # Something that clicks only in an instant, clicks so.
+        await mouse.click(x, y)
+
+
 @dataclass
 class OnAPage:
     """One page of her own browser, as the surface a screen pursuit acts on."""
@@ -253,7 +283,7 @@ class OnAPage:
         try:
             context.check()
             window = watching.begin_act(f"click at {x:.2f}, {y:.2f}") if watching is not None else None
-            await self.page.mouse.click(left + x * wide, top + y * tall)
+            await as_a_hand_clicks(self.page, left + x * wide, top + y * tall)
             delivered = True
         except (RuntimeError, OSError, ValueError, TypeError, AttributeError):
             return False
