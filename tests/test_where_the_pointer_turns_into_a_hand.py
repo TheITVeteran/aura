@@ -68,6 +68,9 @@ def test_a_screen_of_play_in_time_is_played_the_moment_it_is_seen():
         def read(self, seen):
             pass
 
+        async def look(self):
+            return None      # a fresh reading before play that sees nothing new: play goes on as it was going
+
         async def read_a_legend(self):
             pass
 

@@ -813,6 +813,20 @@ NOTHING_ANSWERS_S = 10.0
 TOUCHING_TO_NO_END_S = 20.0
 
 
+#: How many turns at each key, a press and a rest, her trials have in all once her thing is found.
+KNOWN_BY = 4
+
+
+def _still_trying_keys(run: _Run, hers: WhichIsHers, choosing: Any, trying_the_pointer: bool) -> bool:
+    """Whether her keys are still being tried: two turns at each until her thing is found; then until each is known,
+    and no more than so many turns at each, known or not: a key held into a floor tells nothing however often it is
+    pressed. Offline 2026-10-12 a brawler on the ground was tried with "down" every half second for the rest of the
+    round, and never once punched the robots walking up to her."""
+    return bool(not trying_the_pointer and run.keys and not hers.follows_pointer
+                and ((choosing.mine is None and run.trying < 2 * len(run.keys))
+                     or (hers.kind is not None and not hers.keys_known(run.keys) and run.trying < KNOWN_BY * len(run.keys))))
+
+
 #: How many presses of the keys that moved her thing may go by with it not going, and for how long at least, before
 #: it is taken to answer to nothing now.
 UNANSWERED_PRESSES = 6
@@ -1371,9 +1385,7 @@ async def _act(hands: Any, run: _Run, moves: WhatMoves, hers: WhichIsHers, meeti
     # times a second in its first round and once a second in every round after.
     if (choosing.mine is None or _how_it_stands(run, at)[1]) and not hers.follows_pointer:
         await _fire_while_finding_herself(hands, run, hers, moves, rules, at)
-    if (not trying_the_pointer and run.keys and not hers.follows_pointer
-            and ((choosing.mine is None and run.trying < 2 * len(run.keys))
-                 or (hers.kind is not None and not hers.keys_known(run.keys)))):
+    if _still_trying_keys(run, hers, choosing, trying_the_pointer):
         await _try_the_keys(hands, run, hers, at, moves)
         return
     if await _a_facing_trial(hands, run, hers, choosing, at):

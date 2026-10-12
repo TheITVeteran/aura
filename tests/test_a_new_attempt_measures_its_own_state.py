@@ -300,3 +300,28 @@ def test_a_summary_keeps_the_observed_control_description_after_it_disappears():
                            identification=SimpleNamespace(receipts=[]))
     result = _what_it_came_to(run, SimpleNamespace(kinds=[]), hers, WhatMeetingDoes(), "new screen", began)
     assert result["hers"] == "blue bar"
+
+
+def test_a_key_pressed_into_the_floor_does_not_keep_her_trying_her_keys_for_good():
+    """Offline 2026-10-12 a brawler on the ground was tried with "down" every half second for the rest of the round: a
+    key held into a floor gives nothing to measure, it was never known, and her trials went on while robots walked up
+    and hit her. Her trials have so many turns at each key once her thing is found, known or not."""
+    from types import SimpleNamespace
+
+    from core.agency.playing_as_it_happens import KNOWN_BY, _Run, _still_trying_keys
+
+    hers = WhichIsHers()
+    hers.number, hers.kind = 7, 2
+    for key, way in (("left", (-80, 0)), ("right", (80, 0)), ("", (0, 0))):
+        for _ in range(12):
+            hers._hers.add(key, *way)
+    for _ in range(40):
+        hers._hers.add("down", 0, 0, pinned=True)                       # into the floor, every picture
+    keys = ["down", "left", "right"]
+    found = SimpleNamespace(mine=object())
+    assert not hers.keys_known(keys)
+    assert _still_trying_keys(_Run(keys=keys, began=0, trying=KNOWN_BY * len(keys) - 1), hers, found, False)
+    assert not _still_trying_keys(_Run(keys=keys, began=0, trying=KNOWN_BY * len(keys)), hers, found, False)
+    hers.number = hers.kind = None                                      # not found: two turns at each, as ever
+    assert _still_trying_keys(_Run(keys=keys, began=0, trying=1), hers, SimpleNamespace(mine=None), False)
+    assert not _still_trying_keys(_Run(keys=keys, began=0, trying=2 * len(keys)), hers, SimpleNamespace(mine=None), False)

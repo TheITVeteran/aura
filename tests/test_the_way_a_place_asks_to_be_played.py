@@ -142,6 +142,10 @@ class _Reflexes:
         self.held = HeldTo(way=SEND, stretches=[] if paying else [{}, {}, {}])
         self.ends_at = float("inf")
         self.way_on_shown = False
+        self.words, self.keep = [], {}
+
+    async def look(self):
+        return None  # a fresh reading before play that sees nothing new: play goes on as it was going
 
     async def while_it_moves(self):
         import time
