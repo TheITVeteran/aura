@@ -493,6 +493,7 @@ class PlayingAsItHappens:
     acts_that_changed: int = 0
     #: Whether the last screen read showed a label that goes on (Play, Start, Next): a menu, not a world to send into.
     way_on_shown: bool = False
+    menu_pixels: Any = None
     #: The short labels her screens have shown (a button's "LAUNCH", "Next"): words on their own, not what it says to do.
     labels_seen: set = field(default_factory=set)
     #: Play that knows when its game has stopped (a well nothing more comes down) said it has: with a way to start again
@@ -703,6 +704,9 @@ class PlayingAsItHappens:
                 glance_beside(self.look, guide, screen=said, then=lambda: ask_for_a_reading(
                     guide, getattr(guide, "ask_her_model", None), task=self.goal, tell=_said_while_playing))
         self.way_on_shown = any(0 < len(label) <= 40 and how_much_it_leads_on(label) > 1.0 for label in labels)
+        from core.skills.current_words_before_play import remember_menu_pixels
+
+        remember_menu_pixels(self, observation, menu=self.way_on_shown or reads_as_rules(said))
         self.labels_seen.update(label for label in labels if 0 < len(label.split()) <= 3)
         if said and (not self.words or self.words[-1] != said):
             self.words.append(said)

@@ -40,6 +40,7 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.perception.visual_probe_cache import _visual_probe_miss_invariant
     from core.perception.watching_it_happen import _response_window_keeps_its_evidence
     from core.perception.where_the_words_point import _named_places_invariant
+    from core.perception.words_kept_with_their_pixels import _kept_word_pixels_invariant
     from core.runtime.action_executor import _terminal_effect_flags_invariant
     from core.runtime.executors import _interactive_and_receipt_workers_are_separate
     from core.runtime.what_she_learned import (
@@ -60,6 +61,9 @@ def install_realtime_control_claims(suite: Any) -> None:
     from core.skills.sovereign_browser_picking import _picked_outcomes_invariant
 
     for name, owner, fixture, probe, statement in (
+        ("kept_words_need_their_captured_pixels", "core/perception/words_kept_with_their_pixels.py",
+         "tests/test_old_menu_words_keep_their_pixels.py", lambda: _kept_word_pixels_invariant() == (),
+         "Retained word readings can be contradicted by measured appearance changes; absent pixels and changed view geometry stay unknown."),
         ("turns_require_settled_observations", "core/agency/which_way_she_faces.py",
          "tests/test_a_turn_is_not_learned_from_unseen_motion.py", lambda: _turn_observation_invariant() == (),
          "Stationary turning samples require settled observations; missing pictures cannot establish that a press moved nothing."),
