@@ -232,19 +232,26 @@ async def type_what_is_asked(
 #: picture must change for Return to have done something.
 SENDER_WITHIN = 0.3
 SCREEN_CHANGED = 0.2
+#: How many of the controls beside a field are tried in turn, how much more of the picture than was changing anyway
+#: must change, away from the control itself, for one to have sent it, and how far round the control its own lighting
+#: up reaches.
+SENDERS_TRIED = 3
+SENT_SHOWS = 0.003
+LIT_ITSELF = 0.08
 
 
 async def _sent_by_the_button_beside(look: Callable[[], Awaitable[Any]], hands: Any, field: tuple[float, float],
                                      sent: str) -> str:
-    """Where Return changed nothing, the control drawn nearest the field is pressed: offline 2026-10-11 a name machine's
-    GO was read run into the words drawn behind it ("ETRYGOAIN"), no control was found by its name, Return did nothing,
-    and the name sat in its box unsent. How it was sent."""
+    """Where Return changed nothing, the controls drawn beside the field are pressed in turn until one does something:
+    offline 2026-10-11 a name machine's GO was read run into the words drawn behind it ("ETRYGOAIN"), no control was
+    found by its name, Return did nothing, and the name sat in its box unsent. How it was sent.
+
+    What sends a field comes after it, below it or to its right, as a person reads: LIVE 2026-10-12 the nearest
+    control to a name box was the lever on its left, it was pulled three times and did nothing, and the GO under the
+    box was never pressed, so no secret identity was ever given."""
     import asyncio
-    import math
 
     import numpy as np
-
-    from core.perception.shapes_that_look_pressable import pressable_shapes
 
     before = await look()
     await asyncio.sleep(0.8)
@@ -255,20 +262,53 @@ async def _sent_by_the_button_beside(look: Callable[[], Awaitable[Any]], hands: 
     a, b = (np.asarray(seen[0])[:, :, :3].astype(np.int16) for seen in (before, after))
     if a.shape != b.shape or (np.abs(a - b).max(axis=2) > 40).mean() > SCREEN_CHANGED:
         return sent
+    # What changes on its own between two looks is no sign of a control having done anything.
+    anyway = _changed_away_from(before[0], after[0], field)
+    for place in _the_controls_beside(after[0], hands, field)[:SENDERS_TRIED]:
+        await hands.click(*place)
+        await asyncio.sleep(0.8)
+        now = await look()
+        if now is None or _changed_away_from(after[0], now[0], place) > anyway + SENT_SHOWS:
+            return f"the control beside it at {place}"
+        after = now
+    return sent
+
+
+def _the_controls_beside(picture: Any, hands: Any, field: tuple[float, float]) -> list[tuple[float, float]]:
+    """The controls drawn near a field, those after it first, each in order of nearness."""
+    import math
+
+    from core.perception.shapes_that_look_pressable import pressable_shapes
+
     # Not the box typed into: offline 2026-10-11 the shape "beside" a name was the box the name was in, and its GO, a
     # line below, was never pressed by it.
-    shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(after[0])
+    shapes = [(float(shape.get("center_x", 0.5)), float(shape.get("center_y", 0.5))) for shape in pressable_shapes(picture)
               if not _holds(shape, field)]
-    near = sorted((math.dist(place, field), place) for place in shapes if 0.03 < math.dist(place, field) <= SENDER_WITHIN)
     # Where the pointer turns into a hand is surer than how a thing looks: offline 2026-10-11 a machine's GO, bright
     # letters drawn over others, was no shape that looked pressable, and the pointer turned into a hand over it.
-    hands_over = [place for place in getattr(hands, "answer_the_pointer", ()) or ()
-                  if 0.03 < math.dist(place, field) <= SENDER_WITHIN]
-    near = sorted((math.dist(place, field), place) for place in hands_over) or near
-    if not near:
-        return sent
-    await hands.click(*near[0][1])
-    return f"the control beside it at {near[0][1]}"
+    hands_over = [tuple(place) for place in getattr(hands, "answer_the_pointer", ()) or ()]
+    near = [place for place in (hands_over or shapes) if 0.03 < math.dist(place, field) <= SENDER_WITHIN]
+    return sorted(near, key=lambda place: (not _after(place, field), math.dist(place, field)))
+
+
+def _after(place: tuple[float, float], field: tuple[float, float]) -> bool:
+    """Whether a place comes after a field as a person reads: below it, or to its right on its line."""
+    return place[1] > field[1] + 0.03 or (abs(place[1] - field[1]) <= 0.03 and place[0] > field[0])
+
+
+def _changed_away_from(before: Any, after: Any, place: tuple[float, float]) -> float:
+    """How much of the picture changed between two looks, leaving out round a place: a control lit up by being
+    pressed has not by that done anything."""
+    import numpy as np
+
+    a, b = (np.asarray(seen)[:, :, :3].astype(np.int16) for seen in (before, after))
+    if a.shape != b.shape:
+        return 1.0
+    changed = np.abs(a - b).max(axis=2) > 40
+    tall, wide = changed.shape
+    left, top = max(0, int((place[0] - LIT_ITSELF) * wide)), max(0, int((place[1] - LIT_ITSELF) * tall))
+    changed[top:max(top, int((place[1] + LIT_ITSELF) * tall)), left:max(left, int((place[0] + LIT_ITSELF) * wide))] = False
+    return float(changed.mean())
 
 
 def _holds(shape: dict[str, Any], place: tuple[float, float]) -> bool:

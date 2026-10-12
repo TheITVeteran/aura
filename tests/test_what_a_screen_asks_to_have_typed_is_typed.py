@@ -164,17 +164,13 @@ def test_a_place_that_answers_what_was_typed_on_the_screen_that_asked_is_done_an
 def test_what_sends_what_was_typed_is_not_the_box_it_was_typed_into(monkeypatch):
     """Offline 2026-10-11 the shape "beside" a name was the box the name was in, and its GO, a line below, was never
     pressed."""
-    import numpy as np
 
     from core.agency import typing_what_is_asked as typing
 
     shapes = [{"center_x": 0.63, "center_y": 0.35, "width": 0.4, "height": 0.1},
               {"center_x": 0.64, "center_y": 0.5, "width": 0.08, "height": 0.06}]
     monkeypatch.setattr("core.perception.shapes_that_look_pressable.pressable_shapes", lambda picture: shapes)
-    picture = np.zeros((40, 40, 3), dtype=np.uint8)
-
-    async def look():
-        return (picture, 0.0)
+    monkeypatch.setattr("asyncio.sleep", _no_wait)
 
     class _Hands:
         clicked: list = []
@@ -183,8 +179,53 @@ def test_what_sends_what_was_typed_is_not_the_box_it_was_typed_into(monkeypatch)
             self.clicked.append((x, y))
 
     hands = _Hands()
-    sent = asyncio.run(typing._sent_by_the_button_beside(look, hands, (0.64, 0.36), "return"))
+    sent = asyncio.run(typing._sent_by_the_button_beside(_a_machine(hands, answers_at=(0.64, 0.5)), hands, (0.64, 0.36),
+                                                         "return"))
     assert hands.clicked == [(0.64, 0.5)] and "0.64" in sent
+
+
+async def _no_wait(_seconds):
+    return None
+
+
+def _a_machine(hands, answers_at):
+    """A name machine's screen: still until the control at ``answers_at`` is pressed, when its answer is drawn lower."""
+    import numpy as np
+
+    async def look():
+        picture = np.zeros((100, 100, 3), dtype=np.uint8)
+        if answers_at in hands.clicked:
+            picture[80:90, 20:80] = 255
+        return (picture, 0.0)
+
+    return look
+
+
+def test_what_sends_a_field_comes_after_it_and_is_tried_until_something_answers(monkeypatch):
+    """LIVE 2026-10-12 the nearest control to a name box was the lever on its left, it was pulled three times and did
+    nothing, and the GO under the box was never pressed, so no secret identity was ever given."""
+    from core.agency import typing_what_is_asked as typing
+
+    monkeypatch.setattr("core.perception.shapes_that_look_pressable.pressable_shapes", lambda picture: [])
+    monkeypatch.setattr("asyncio.sleep", _no_wait)
+    lever, go, beside = (0.67, 0.30), (0.80, 0.40), (0.95, 0.29)
+
+    class _Hands:
+        answer_the_pointer = [lever, go, beside]
+
+        def __init__(self):
+            self.clicked = []
+
+        async def click(self, x, y):
+            self.clicked.append((x, y))
+
+    hands = _Hands()
+    sent = asyncio.run(typing._sent_by_the_button_beside(_a_machine(hands, answers_at=go), hands, (0.77, 0.29), "return"))
+    assert hands.clicked == [go] and "0.8" in sent                       # what comes after the box, not the lever beside it
+    nothing = _Hands()
+    sent = asyncio.run(typing._sent_by_the_button_beside(_a_machine(nothing, answers_at=(0.0, 0.0)), nothing, (0.77, 0.29),
+                                                         "return"))
+    assert sent == "return" and len(nothing.clicked) == 3                 # none did anything: not said to have sent it
 
 
 def test_where_the_pointer_turns_into_a_hand_beside_the_box_is_what_sends_it(monkeypatch):
