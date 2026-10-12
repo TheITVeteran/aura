@@ -27,6 +27,10 @@ __all__ = ["asks_to_choose", "confirms", "how_much_it_leads_on", "nearly_says", 
 _GOES_ON = re.compile(
     r"^(?:play(?:\s+(?:now|game|again))?|start(?:\s+game)?|begin|next|continue|resume|unpause|skip(?:\s+intro)?|ok(?:ay)?|go!?|"
     r"try\s+again\??|retry|replay|restart|again\??|"
+    # The same with what is gone on to or again ("Next Level", "Try this level again", "Replay Round"): offline
+    # 2026-10-11 a painting game's "TRY THIS LEVEL AGAIN" was read as no way on, and its end screen was never left.
+    r"(?:try|play|retry|replay|restart|next)(?:\s+(?:this|the|that|your))?\s+(?:level|round|stage|game|hole|race|course|"
+    r"mission|track|puzzle|page|room|day|night|wave)(?:\s+again)?\s*[>»!.]*|"
     r"enter|let'?s\s+go|ready|i'?m\s+ready|yes|accept|done|new\s+game|easy|normal|1\s*player|one\s+player|"
     r"(?:click|press|tap)\s+(?:here\s+)?to\s+(?:play|start|begin|continue)|(?:press|hit)\s+(?:any\s+key|space|enter|start))$",
     re.IGNORECASE,

@@ -107,3 +107,11 @@ def test_a_place_whose_words_put_her_in_a_situation_played_in_time_is_known_so_b
     from core.skills.screen_pursuit_as_it_happens import _played_in_time
 
     assert _played_in_time(said) is in_time
+
+
+@pytest.mark.parametrize("label", ["TRY THIS LEVEL AGAIN", "Next Level", "NEXT LEVEL >", "Replay Level", "Retry level"])
+def test_a_way_on_to_a_level_again_or_the_next_is_a_way_on(label):
+    """Offline 2026-10-11 a painting game's "TRY THIS LEVEL AGAIN" was read as no way on, and its end screen never left."""
+    from core.language.a_way_on import how_much_it_leads_on
+
+    assert how_much_it_leads_on(label) > 1.0
