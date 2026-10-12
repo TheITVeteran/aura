@@ -263,23 +263,35 @@ def _a_way_on_shown(picture: Any, read_words: Callable[[Any], list[dict[str, Any
     return ""
 
 
-#: The width a picture is looked over at for small round things, and how much of it one may cover.
+#: The width a picture is looked over at for small round things, and how much of it one may cover; and the finer look
+#: after it, for a ball a few pixels across (offline 2026-10-11 a golf ball sat on its tee three pixels wide at the
+#: first look, and she pressed every other round thing on the course).
 ROUND_THINGS_WIDTH = 300
 ROUND_THINGS_SIZES = (0.0002, 0.008)
+FINER_WIDTH = 600
+FINER_SIZES = (0.00005, 0.008)
 
 
 def _round_things(picture: Any) -> list[tuple[float, float]]:
     """Small, round, solid things that stand out from what is round them, as shares of the picture: what is sent is
     nearly always one (a ball, a top, a bird, a ball of laundry). LIVE 2026-10-09 a putt game's ball, sat on its tee,
-    was never among the places she pressed: what stood out there were a heading and the middle of the picture.
+    was never among the places she pressed: what stood out there were a heading and the middle of the picture. Those of
+    the first look first, then those only a finer look finds.
     """
+    first = _round_things_at(picture, ROUND_THINGS_WIDTH, ROUND_THINGS_SIZES)
+    finer = [place for place in _round_things_at(picture, FINER_WIDTH, FINER_SIZES)
+             if all(math.dist(place, other) > 0.02 for other in first)]
+    return [*first, *finer]
+
+
+def _round_things_at(picture: Any, width: int, sizes: tuple[float, float]) -> list[tuple[float, float]]:
     import numpy as np
 
     from core.perception.picture_arithmetic import median, pieces, shrink
 
     pixels = np.asarray(picture)
     tall, wide = pixels.shape[:2]
-    small = shrink(pixels, ROUND_THINGS_WIDTH, max(1, round(tall * ROUND_THINGS_WIDTH / wide))) if wide > ROUND_THINGS_WIDTH else pixels
+    small = shrink(pixels, width, max(1, round(tall * width / wide))) if wide > width else pixels
     high, across = small.shape[:2]
     around = median(small, 11)
     stands = np.abs(small.astype(np.int16) - around.astype(np.int16)).max(axis=2) > 50
@@ -288,7 +300,7 @@ def _round_things(picture: Any) -> list[tuple[float, float]]:
     for label in range(1, count):
         x, y, w, h, area = (int(v) for v in stats[label])
         share = area / (high * across)
-        if not ROUND_THINGS_SIZES[0] <= share <= ROUND_THINGS_SIZES[1] or not 0.6 <= w / max(1, h) <= 1.6:
+        if not sizes[0] <= share <= sizes[1] or not 0.6 <= w / max(1, h) <= 1.6:
             continue
         if area < 0.6 * w * h:
             continue
