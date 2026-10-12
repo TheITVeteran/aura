@@ -12,6 +12,7 @@ Nothing here knows a game.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -35,8 +36,12 @@ def what_a_bar_measures(bar: Any, regions: list[dict[str, Any]], wide: int, tall
             continue
         before = abs(y - (top + bottom) / 2) <= 0.06 and -0.02 <= left - x <= 0.25
         over = 0.0 <= top - y <= 0.1 and left - 0.05 <= x <= right + 0.05
+        # Two sides' bars are drawn mirrored, the right one's name after it: "YOU [bar]  [bar] JOHNNY".
+        after = abs(y - (top + bottom) / 2) <= 0.06 and -0.02 <= x - right <= 0.12
         if before or over:
             near.append((abs(y - (top + bottom) / 2) + abs(x - left), said))
+        elif after:
+            near.append((abs(y - (top + bottom) / 2) + abs(x - right), said))
     label = min(near)[1] if near else ""
     # Writing she could not make out does not name a bar: it is called by where it is. LIVE 2026-10-10 she said "The
     # Bl, Eld n Eldy bar goes down" of a bar under a game's misread title.
@@ -51,7 +56,30 @@ def what_a_bar_measures(bar: Any, regions: list[dict[str, Any]], wide: int, tall
 
     if label and (what_a_label_measures(label) in ("charging", "holding to sustain") or _a_button(label)):
         return label, "neither"
+    if label and _the_other_sides(label, regions, (top + bottom) / 2):
+        return label, "down is good"
     return label, (_meaning(label) if label else "") or "down is bad"
+
+
+#: Words that name the player's own side on a screen, and words that name the side against her.
+_HERS = re.compile(r"\b(?:you|your|yours|me|my|mine|player|p1|1p|1up|player ?1)\b", re.I)
+_THEIRS = re.compile(r"\b(?:enemy|enemies|opponents?|rivals?|foes?|boss|cpu|computer|them|their|p2|2p|2up|player ?2)\b", re.I)
+
+
+def _the_other_sides(label: str, regions: list[dict[str, Any]], row: float) -> bool:
+    """Whether a bar's words name the side against her: a word for that side ("ENEMY", "CPU", "P2"), or, on a line
+    where another label names her own ("YOU"), any other name. A contest shows each side what both have left, side by
+    side: offline 2026-10-12 a food fight's "YOU" and "JOHNNY" bars were both taken for hers, every hit she landed was
+    counted a loss, and what came before her hits was learned as what comes before harm."""
+    if _HERS.search(label):
+        return False
+    if _THEIRS.search(label):
+        return True
+    for region in regions:
+        said = " ".join(str(region.get("text") or "").split())
+        if said and said != label and _HERS.fullmatch(said.strip(" :")) and abs(float(region.get("center_y", -1.0)) - row) <= 0.06:
+            return True
+    return False
 
 
 def bars_read(bars: Any, picture: Any, at: float, regions: list[dict[str, Any]],

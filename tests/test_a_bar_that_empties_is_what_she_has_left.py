@@ -364,3 +364,20 @@ def test_a_bar_drawn_in_cells_is_read_through_the_lines_between_them_and_a_shake
     assert len(found) == 1 and found[0].anchored == "start"
     assert changes and all(c["to"] < c["from"] for c in changes)
     assert round(found[0].full, 1) == 0.2
+
+
+def test_in_a_contest_the_bar_named_for_the_other_side_falling_is_hers_gaining():
+    """Offline 2026-10-12 a food fight's "YOU" and "JOHNNY" bars were both taken for hers, and every hit she landed was
+    counted a loss. Nothing here is that game: two mirrored bars, and bars named for a side in other ways."""
+    from core.agency.what_she_has_left import what_a_bar_measures
+    from core.perception.how_full_a_bar_is import Bar
+
+    regions = [{"text": "YOU", "center_x": 0.06, "center_y": 0.05}, {"text": "HAROLD", "center_x": 0.84, "center_y": 0.05}]
+    hers = Bar(row=10, thick=6, colour=(250, 150, 30), start=40, end=130)       # 0.12 to 0.41 of 320 across
+    theirs = Bar(row=10, thick=6, colour=(250, 150, 30), start=178, end=250)    # 0.56 to 0.78, its name after it
+    assert what_a_bar_measures(hers, regions, 320, 200) == ("YOU", "down is bad")
+    assert what_a_bar_measures(theirs, regions, 320, 200) == ("HAROLD", "down is good")
+    boss = [{"text": "BOSS", "center_x": 0.5, "center_y": 0.02}]
+    assert what_a_bar_measures(Bar(row=10, thick=6, colour=(200, 0, 0), start=100, end=220), boss, 320, 200)[1] == "down is good"
+    alone = [{"text": "HEALTH", "center_x": 0.03, "center_y": 0.05}]
+    assert what_a_bar_measures(hers, alone, 320, 200) == ("HEALTH", "down is bad")
