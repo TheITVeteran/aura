@@ -30,6 +30,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -191,6 +192,52 @@ async def _one(number: int, address: str, minutes: float, visible: bool, trace: 
     }
 
 
+#: What may be asked of her model over the wire, and the arguments that cannot be sent (they hold something of the
+#: asker's own, not words).
+_ASKED_OVER_THE_WIRE = ("generate_with_metadata", "generate", "think")
+_NOT_SENT = ("_generation_metadata_sink", "_gate_already_held", "on_token", "callback", "stream_callback")
+
+
+class HerModelOverTheWire:
+    """Her router, as every part of her asks it, answered by her model held in another process (tools/her_model_server.py):
+    each game process holding its own copy of her model is more than the machine holds, and without one, everything her
+    model reads live was read here by her word patterns alone."""
+
+    def __init__(self, address: str) -> None:
+        self.address = address.rstrip("/")
+
+    async def _ask(self, how: str, args: tuple, kwargs: dict) -> Any:
+        import aiohttp
+
+        sent = {key: value for key, value in kwargs.items() if key not in _NOT_SENT and not callable(value)}
+        timeout = float(kwargs.get("timeout") or (args[2] if len(args) > 2 and isinstance(args[2], (int, float)) else 900))
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout + 60)) as session:
+                async with session.post(f"{self.address}/ask", json={"how": how, "args": list(args), "kwargs": sent}) as reply:
+                    body = await reply.json()
+        except (aiohttp.ClientError, TimeoutError, OSError) as why:
+            raise RuntimeError(f"her model could not be reached: {why}") from why
+        if "error" in body:
+            kind = {"TimeoutError": TimeoutError, "ValueError": ValueError, "TypeError": TypeError}.get(body.get("kind"), RuntimeError)
+            raise kind(body["error"])
+        return body.get("said")
+
+    async def generate_with_metadata(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._ask("generate_with_metadata", args, kwargs)
+
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._ask("generate", args, kwargs)
+
+    async def think(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._ask("think", args, kwargs)
+
+
+def _her_model_from(address: str) -> None:
+    from core.container import ServiceContainer
+
+    ServiceContainer.register_instance("llm_router", HerModelOverTheWire(address))
+
+
 async def main(argv: list[str]) -> list[dict]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--games", nargs="*", type=int, default=[])
@@ -200,7 +247,10 @@ async def main(argv: list[str]) -> list[dict]:
     parser.add_argument("--out", default="")
     parser.add_argument("--trace", default="", help="a folder for each game's log of decisions and its last screen")
     parser.add_argument("--bundle", default="", help="the offline bundle to play the games from, instead of their archived copies")
+    parser.add_argument("--her-model", default="", help="where her model answers (tools/her_model_server.py), as live")
     args = parser.parse_args(argv)
+    if args.her_model:
+        _her_model_from(args.her_model)
     os.environ.setdefault("AURA_BROWSER_STEALTH", "0")
     # What her live process refuses to load is refused here too: on 11 October her seeing of a well asked for OpenCV,
     # every run of this tool passed, and live it ended every game she opened.
