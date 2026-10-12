@@ -48,3 +48,16 @@ def test_a_key_held_and_let_go_is_a_charge_and_not_a_send(said, sends):
     from core.agency.playing_by_shots import sends_by_letting_go
 
     assert sends_by_letting_go(said) is sends
+
+
+@pytest.mark.parametrize("said, sends", [
+    ("Gumball throws bowling balls at the mutant pins.", False),
+    ("Throw the ball where the mouse points.", True),
+    ("Aim, then throw the snowball.", True),
+])
+def test_a_throw_told_of_is_not_a_throw_told(said, sends):
+    """LIVE 2026-10-11 what fans wrote of a bowling game, that its hero throws bowling balls at pins, had her pulling and
+    letting go at its level select for three minutes."""
+    from core.agency.playing_by_shots import sends_by_letting_go
+
+    assert sends_by_letting_go(said) is sends
