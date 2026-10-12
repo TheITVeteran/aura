@@ -179,6 +179,19 @@ def clicks_a_screen_asks_for(words: str, clickable: Sequence[str]) -> tuple[str,
     return tuple(asked)
 
 
+def _not_worked_with_arrows() -> bool:
+    """Whether she understands, surely, that the place before her is not worked with keys that move."""
+    from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+    guide = THE_GUIDE.get()
+    if guide is None or not hasattr(guide, "controls"):
+        return False
+    from core.agency.how_a_game_works import understood
+
+    how = understood(guide)
+    return how.me.known() and not how.arrows_are_a_guess_worth_trying()
+
+
 def worth_trying(told: Sequence[str] = ()) -> tuple[str, ...]:
     """Everything she could try here, hers first and the rest after.
 
@@ -313,8 +326,14 @@ class WhatWorksHere(TakingAndUsing, ThingsThatGoTogether, PuttingInPlace):
         names both for this (``said_here``): one that names only the pointer is clicked, and keeps the guess for the
         next. Where keys that move are named, the arrows are what is pressed again."""
         arrows = {"up", "down", "left", "right"}
+        if _not_worked_with_arrows() and set(self.told) <= arrows:
+            # As she understands the place (core/agency/how_a_game_works.py), nothing of hers is moved by keys: keys its
+            # program alone listens for are not hers to try. Offline 2026-10-11 a game whose words said the mouse moves
+            # its hero had each arrow pressed and watched while its eggs fell, its program listening for up and down.
+            self.told, self.keys_known = (), frozenset(known - {"the pointer"} - arrows - set("wasd"))
+            return
         if known & arrows or len(known & set("wasd")) >= 3:
-            if self.keys_known is not None:
+            if said_here and self.keys_known is not None:
                 self.told, self.keys_known = COMMITS_TO_NOTHING, None
             return
         if (known and pointer if said_here else known or pointer) and set(self.told) <= arrows:

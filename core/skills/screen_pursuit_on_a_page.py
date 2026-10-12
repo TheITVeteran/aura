@@ -156,7 +156,13 @@ class OnAPage:
             self.watching.start()
             return
         from .screen_pursuit import _tell
+        from .screen_pursuit_as_it_happens import AS_IT_HAPPENS, a_screen_of_play_in_time
 
+        # Play that goes on without her is not waited out, it is played: offline 2026-10-11 a game's eggs fell while she
+        # watched them "play out on its own" twice, and it was over before she played.
+        reflexes = AS_IT_HAPPENS.get()
+        if getattr(reflexes, "play_in_sight", False) or a_screen_of_play_in_time(reflexes):
+            return
         # Inside one look, which has its own few seconds: a wait longer than the look is a look that never comes back.
         await self.watching.watch(at_most_s=self.WATCH_IN_A_LOOK_S, tell=_tell)
 

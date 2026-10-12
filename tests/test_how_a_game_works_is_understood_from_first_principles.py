@@ -70,3 +70,25 @@ def test_what_play_shows_outweighs_what_was_said_and_is_kept_for_every_part_of_h
     understood = how.understood(guide)
     assert (understood.me.value, understood.tempo.value) == (how.FOLLOWS, how.RUNS)
     assert understood.me.sure == how.SEEN_SURE and understood.has_a_body()
+
+
+def test_a_place_understood_to_be_worked_otherwise_has_no_arrows_guessed_nor_its_programs_keys_played():
+    """Offline 2026-10-11 a game whose words said the mouse moves its hero had each arrow pressed and watched while its
+    eggs fell; its program listened for up and down, and it was played with them."""
+    from core.agency.what_i_can_do_here import THE_PICTURE, WhatWorksHere, a_click_on
+    from core.cognition.a_guide_to_a_place import PROGRAM, THE_GUIDE, Control
+    from core.skills.screen_pursuit_as_it_happens import _keys_of_play
+
+    guide = Guide(place="eggs")
+    guide.take_in(SCREEN, "Use the mouse to move the boy. Click to throw the ball and crack the eggs before they fall. "
+                          "Press the space bar to jump.")
+    for key in ("up", "down"):
+        guide.controls[key] = Control(key, "", PROGRAM, 0.0)
+    token = THE_GUIDE.set(guide)
+    try:
+        here = WhatWorksHere(told=("up", "down", "left", "right"))
+        here.asked_for_by("")
+        assert set(here.available()) == {"space", a_click_on(THE_PICTURE)}
+        assert _keys_of_play(guide, "") == ["space"]
+    finally:
+        THE_GUIDE.reset(token)

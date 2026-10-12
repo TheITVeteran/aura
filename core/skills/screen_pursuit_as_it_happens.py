@@ -65,6 +65,20 @@ def _played_neither_by_turns_nor_by_pieces(reflexes: Any) -> bool:
     return any(situation.name in _NEITHER_A_BOARD_NOR_A_WELL for situation in situations_in(said))
 
 
+def _keys_of_play(guide: Any, read: str) -> list[str]:
+    """The keys the guide knows play is worked by; where she understands surely that nothing of hers is moved by keys
+    (core/agency/how_a_game_works.py), not those its program alone listens for: offline 2026-10-11 a game whose words
+    said the mouse moves its hero was played with up and down, which its program listened for."""
+    from core.agency.how_a_game_works import understood
+    from core.cognition.a_guide_to_a_place import PROGRAM
+
+    keys = list(guide.keys_for_play())
+    how = understood(guide, also=read)
+    if how.me.known() and not how.arrows_are_a_guess_worth_trying():
+        keys = [key for key in keys if getattr(guide.controls.get(key), "source", PROGRAM) != PROGRAM]
+    return keys
+
+
 def _what_she_understands_said(keep: dict[str, Any], guide: Any, read: str) -> None:
     """How she understands the place works (core/agency/how_a_game_works.py), said once a game as play begins, for
     whoever watches to hear what she is going by."""
@@ -817,7 +831,7 @@ class PlayingAsItHappens:
             return
         acts = pointer_acts(guide)
         if guide is not None:
-            named = list(dict.fromkeys([*named, *guide.keys_for_play()]))
+            named = list(dict.fromkeys([*named, *_keys_of_play(guide, read)]))
             # Where keys move her and the pointer only aims, her body is looked for by the keys: what follows the
             # pointer then is where she aims.
             pointer_first = (pointer_first or guide.pointer_named()) and not guide.pointer_aims()

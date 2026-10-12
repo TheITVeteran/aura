@@ -266,13 +266,15 @@ def _what_i_am(how: HowItWorks, said: str, guide: Any, rules: Any) -> None:
     elif moving:
         how.me.held_to(STEERED, SAID_SURE, "its words give keys that move")
     elif rules.a_click_is_a_shot:
-        how.me.held_to(AIMS_FROM_HERE, SAID_SURE, "its words say to aim with the pointer and click, and no key moves")
+        # Less sure where its program listens for keys that move: a body may be steered that the words leave unsaid.
+        how.me.held_to(AIMS_FROM_HERE, CODED_SURE if coded_moving else SAID_SURE,
+                       "its words say to aim with the pointer and click, and no key moves")
     elif guide is not None and pointer_acts(guide):
         how.me.held_to(TIMES, SAID_SURE, f"its words say a click is to {pointer_acts(guide)}")
     elif "dragging" in mechanics_in(said):
         how.me.held_to(PLACES, sure, "its words speak of dragging things")
     elif pointer:
-        how.me.held_to(POINTS, sure, "its words name the pointer and no key")
+        how.me.held_to(POINTS, CODED_SURE if coded_moving else sure, "its words name the pointer and no key")
     elif coded_moving:
         how.me.held_to(STEERED, CODED_SURE, "its program listens for keys that move")
     elif keys:
