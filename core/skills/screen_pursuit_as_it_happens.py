@@ -1229,6 +1229,11 @@ class PlayingAsItHappens:
             self.keep["typed_asked_by"] = asked.asked_by
             # A question she put, or one put to her that she answered: a place of questions and answers.
             self.keep["asked_a_question"] = self.keep.get("asked_a_question") or done.get("kind") in (QUESTION, ANSWER)
+            if done.get("kind") in (QUESTION, ANSWER):
+                from core.agency.how_a_game_works import seen_to_type
+                from core.cognition.a_guide_to_a_place import THE_GUIDE
+
+                seen_to_type(THE_GUIDE.get())
             if done.get("kind") == QUESTION:
                 self.keep["answered"] = await _what_it_answered(self.look, recognize_text)
         return bool(done.get("typed"))

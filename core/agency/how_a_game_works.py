@@ -34,6 +34,7 @@ __all__ = [
     "AIMS_FROM_A_BODY",
     "AGAINST_SOMEONE",
     "AIMS_FROM_HERE",
+    "ANSWERS",
     "FOLLOWS",
     "MAKES",
     "PLACES",
@@ -52,6 +53,7 @@ __all__ = [
     "seen_going_on_by_itself",
     "seen_to_answer",
     "seen_to_send",
+    "seen_to_type",
     "understood",
 ]
 
@@ -65,6 +67,7 @@ SENDS = "someone who sends a thing by pulling back and letting go"
 PLACES = "a hand that puts things in place"
 POINTS = "a hand among things"
 MAKES = "someone making something"
+ANSWERS = "someone who answers what it asks, by typing"
 UNKNOWN = ""
 
 # Who else is there.
@@ -127,7 +130,7 @@ class HowItWorks:
         """Whether there is a body of hers in the picture to be found; None where that is not known."""
         if not self.me.known():
             return None
-        return self.me.value not in (AIMS_FROM_HERE, SENDS, PLACES, POINTS, MAKES)
+        return self.me.value not in (AIMS_FROM_HERE, SENDS, PLACES, POINTS, MAKES, ANSWERS)
 
     def arrows_are_a_guess_worth_trying(self) -> bool:
         """Whether the arrows, which nothing named, are worth pressing to see what they do: not where she is known to
@@ -245,6 +248,15 @@ def seen_to_answer(guide: Any, by: str) -> None:
         answer.held_to(STEERED, SEEN_SURE, "something moved when I pressed the keys")
 
 
+def seen_to_type(guide: Any) -> None:
+    """That she put a question to the place, or answered one it put, by typing, kept on the guide: she answers it, and
+    has no body in it. Live 2026-10-12 a riddler that took her answer was taken for a body steered by keys, and she
+    said so, and pressed keys at its answer screen."""
+    seen = _seen(guide)
+    if seen is not None:
+        seen.setdefault("me", Answer()).held_to(ANSWERS, SEEN_SURE, "I typed what it asked, and it took it")
+
+
 def seen_to_send(guide: Any) -> None:
     """That a thing went when she pressed it, pulled and let go, kept on the guide: she is someone who sends."""
     seen = _seen(guide)
@@ -331,6 +343,8 @@ def _what_i_am(how: HowItWorks, said: str, guide: Any, rules: Any) -> None:
     sure = SAID_SURE if (moving or pointer or keys) else CODED_SURE
     if how.counts.value == "make":
         how.me.held_to(MAKES, SAID_SURE, "its words say it is for making something")
+    elif "questions" in mechanics_in(said) and not moving:
+        how.me.held_to(ANSWERS, SAID_SURE, "its words ask questions and take answers")
     elif moves_with_pointer:
         how.me.held_to(FOLLOWS, SAID_SURE, f"its words say the pointer moves {moves_with_pointer}")
     elif sends_by_letting_go(said) and not moving:

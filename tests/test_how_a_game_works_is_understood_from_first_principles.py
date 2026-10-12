@@ -33,6 +33,7 @@ def _understood(said: str) -> how.HowItWorks:
     ("Drag the parts onto the machine, then press TEST to see if it works.", how.PLACES, how.WAITS, ""),
     ("Create your own monster by choosing its parts, then click MAKE.", how.MAKES, how.WAITS, "make"),
     ("Click on the doors to open them and find the hidden key.", how.POINTS, "", "win"),
+    ("Answer the riddle: type your answer in the box and press GO.", how.ANSWERS, "", ""),
     ("Use the mouse to move the boy. Click to throw the ball and pop the balloons before they fly away.", how.FOLLOWS,
      how.RUNS, ""),
 ])
@@ -98,3 +99,12 @@ def test_a_clock_said_as_what_loses_is_a_place_that_goes_on_without_her():
     """Offline 2026-10-11 a corridor of doors said only that "Out of Time" loses, and was taken for a place that waits."""
     understood = _understood("Click on the doors. Out of Time! You have failed.")
     assert understood.me.value == how.POINTS and understood.goes_on_without_her()
+
+
+def test_a_place_she_typed_her_answer_into_is_one_she_answers_with_no_body_in_it():
+    """Live 2026-10-12 a riddler that took her answer was taken for a body steered by keys."""
+    guide = Guide(place="a place that said little")
+    guide.take_in(SCREEN, "Press return to see what you are.")
+    how.seen_to_type(guide)
+    understood = how.understood(guide)
+    assert understood.me.value == how.ANSWERS and understood.has_a_body() is False
