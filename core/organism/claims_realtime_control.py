@@ -413,7 +413,10 @@ def _visual_motion_claims() -> tuple:
     from core.perception.boundary_support_for_translation import _visible_boundary_invariant
     from core.perception.frames_as_they_are_drawn import _frame_time_invariant
     from core.perception.points_that_keep_their_motion import _point_identity_invariant
-    from core.perception.position_from_the_same_points import _point_path_invariant
+    from core.perception.position_from_the_same_points import (
+        _point_handoff_invariant,
+        _point_path_invariant,
+    )
     from core.perception.reading_again_after_loss import _reading_renewal_invariant
     from core.perception.the_whole_patch_around_a_visible_corner import _whole_patch_invariant
     from core.perception.translation_from_visible_support import _translation_support_invariant
@@ -421,6 +424,9 @@ def _visual_motion_claims() -> tuple:
     from core.perception.what_the_points_on_a_thing_say import _point_meaning_invariant
 
     return (
+        ("new_point_marks_require_a_measured_origin_bridge", "core/perception/position_from_the_same_points.py",
+         "tests/test_new_marks_join_only_through_a_measured_bridge.py", lambda: _point_handoff_invariant() == (),
+         "Three continuing spread-out owned marks can admit a minority of new marks into the same measured origin; a replacement without that bridge cannot extend the path."),
         ("exposed_background_keeps_enclosed_body_detail", "core/perception/background_visible_beside_a_patch.py",
          "tests/test_exposed_background_can_be_a_minority.py", lambda: _exposed_background_invariant() == (),
          "Quiet agreeing opposite-side pixels can identify exposed background inside a foreground patch; enclosed matching details and unsupported boundaries remain uncorrected."),
@@ -450,7 +456,7 @@ def _visual_motion_claims() -> tuple:
          "Carried arrival plans need measured braking pushes and finite goals; terminal closing speed is weighed against room before first contact."),
         ("point_paths_keep_their_original_visible_marks", "core/perception/position_from_the_same_points.py",
          "tests/test_a_point_path_keeps_its_original_marks.py", lambda: _point_path_invariant() == (),
-         "A path measured from points retains original named marks, current owned pixels and coherent displacement; lost or replacement marks end the path."),
+         "A path measured from points retains its origin through continuing admitted marks, current owned pixels and coherent displacement; an unbridged replacement ends the path."),
         ("secondary_inputs_end_independent_body_observations", "core/agency/inputs_while_measuring_control.py",
          "tests/test_inputs_while_measuring_control.py", lambda: _single_input_interval_invariant() == (),
          "Another delivered action ends the isolated control interval; measured prefixes remain intact and later mixed motion cannot extend them."),

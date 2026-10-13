@@ -38,8 +38,9 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
 
     An anchor starts at the current box's middle. Its offset need not be a
     physical centre: only displacement is learned from it. At least three
-    of its original, spread-out marks must remain, move together, and still
-    belong to current visible pixels. A replacement set starts afresh.
+    previously admitted, spread-out marks must remain, move together, and
+    still belong to current visible pixels. They can admit a minority of
+    new marks into the same origin. An unbridged replacement starts afresh.
     """
     previous = getattr(thing, "point_pose", None)
     current = _owned_marks(thing, blob, motion, at)
@@ -70,6 +71,14 @@ def position_from_points(thing: Any, blob: dict, motion: Any, at: float) -> tupl
         thing.point_pose = seed
         return None
     before = previous.position
+    qualified = [name for name, good in zip(names, coherent, strict=True) if good]
+    anchors = {name: previous.anchors[name] for name in qualified}
+    # Current owned marks join only after three retained marks independently
+    # located the same body. Back-project them into that origin; no new box
+    # centre is substituted. Admissions cannot outnumber the retained marks.
+    for name in sorted(current.keys() - names)[:len(qualified) // 2]:
+        anchors[name] = tuple(float(v) for v in np.asarray(current[name]) - middle)
+    previous.anchors = anchors
     previous.position, previous.at = position, at
     thing.point_pose = previous
     return before, position
@@ -126,4 +135,23 @@ def _point_path_invariant() -> tuple:
     assert position_from_points(thing, blob, motion(1.1, 1.2, 2., (1, 2, 3, 4)), 1.2) == ((20., 20.), (22., 20.))
     thing.seen = 1.2
     assert position_from_points(thing, blob, motion(1.2, 1.3, 2., (5, 6, 7, 8)), 1.3) is None
+    return ()
+
+
+@invariant("perception.new_marks_need_a_measured_bridge_to_the_same_origin", scope="perception",
+           owner="core/perception/position_from_the_same_points.py", observational=False)
+def _point_handoff_invariant() -> tuple:
+    from types import SimpleNamespace
+
+    from core.perception.points_that_keep_their_motion import PointMotion
+
+    thing = SimpleNamespace(born=0., seen=1., point_pose=None)
+    blob = dict(x=20., y=20., w=20., h=20., support=np.ones((20, 20), bool))
+    places = {1: (15., 15.), 2: (25., 15.), 3: (15., 25.), 4: (25., 25.)}
+    for at, names in ((1.1, (1, 2, 3)), (1.2, (1, 2, 3, 4)), (1.3, (2, 3, 4))):
+        motion = PointMotion(0., 0., .01, len(names), thing.seen, at, names, tuple(places[n] for n in names))
+        result = position_from_points(thing, blob, motion, at)
+        assert result is None if at == 1.1 else result == ((20., 20.), (20., 20.))
+        thing.seen = at
+    assert thing.point_pose.origin == (20., 20.)
     return ()
